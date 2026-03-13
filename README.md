@@ -83,6 +83,3 @@ To safely host NorthernLights on a public domain:
    ```bash
    npx tsx server/index.ts
    ```
-
-## License
-MIT License
