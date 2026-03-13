@@ -1,0 +1,176 @@
+import React, { useState } from 'react';
+import { usePlayerStore } from '../store/index';
+import { Settings, FolderPlus, Key, Database, ChevronRight, CheckCircle2 } from 'lucide-react';
+
+export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
+    const { addLibraryFolder, setLastFmApiKey, setGeniusApiKey } = usePlayerStore();
+    const [step, setStep] = useState(1);
+    
+    // Step 1 State
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
+    const [authError, setAuthError] = useState('');
+    
+    // Step 2 State
+    const [libraryPath, setLibraryPath] = useState('');
+    
+    // Step 3 State
+    const [lastFmKey, setLastFmKeyState] = useState('');
+    const [geniusKey, setGeniusKeyState] = useState('');
+
+    const [isSaving, setIsSaving] = useState(false);
+
+    const handleCreateAdmin = async () => {
+        setAuthError('');
+        if (username.length < 3 || password.length < 5) {
+            setAuthError('Username > 3 chars, Password > 5 chars required.');
+            return;
+        }
+        
+        setIsSaving(true);
+        try {
+            const res = await fetch('/api/setup/complete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+
+            if (!res.ok) {
+                const data = await res.json();
+                setAuthError(data.error || 'Failed to securely configure server.');
+                setIsSaving(false);
+                return;
+            }
+
+            // Immediately persist these locally so subsequent API calls this session work implicitly
+            usePlayerStore.getState().setAuthToken(btoa(`${username}:${password}`));
+            
+            setStep(2);
+        } catch (e) {
+            setAuthError('Network error connecting to setup API.');
+        }
+        setIsSaving(false);
+    };
+
+    const handleAddLibrary = async () => {
+        if (libraryPath) {
+            await addLibraryFolder(libraryPath);
+        }
+        setStep(3);
+    };
+
+    const handleFinish = async () => {
+        if (lastFmKey) setLastFmApiKey(lastFmKey);
+        if (geniusKey) setGeniusApiKey(geniusKey);
+        onComplete();
+    };
+
+    return (
+        <div className="fixed inset-0 z-[100] bg-[var(--color-bg)] flex items-center justify-center p-4">
+            <div className="absolute inset-0 z-0 opacity-30 bg-gradient-to-br from-[var(--color-primary-dark)] via-[var(--color-bg)] to-purple-900 pointer-events-none" />
+            
+            <div className="relative z-10 w-full max-w-2xl bg-[var(--glass-bg)] border border-[var(--glass-border)] shadow-2xl rounded-3xl p-8 md:p-12 backdrop-blur-3xl overflow-hidden">
+                
+                {/* Header */}
+                <div className="flex flex-col items-center mb-10">
+                    <div className="w-16 h-16 bg-[var(--color-primary)]/20 text-[var(--color-primary)] rounded-full flex items-center justify-center mb-4">
+                        <Settings className="w-8 h-8" />
+                    </div>
+                    <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-[var(--color-text-primary)]">Welcome to NorthernLights</h1>
+                    <p className="text-[var(--color-text-secondary)] mt-2 text-center">Let's get your personal media server set up in a few simple steps.</p>
+                </div>
+
+                {/* Step Indicators */}
+                <div className="flex items-center justify-center gap-2 mb-10">
+                    {[1, 2, 3].map(i => (
+                        <div key={i} className="flex items-center">
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm transition-all duration-300 ${step === i ? 'bg-[var(--color-primary)] text-white scale-110 shadow-[var(--shadow-md)]' : step > i ? 'bg-[var(--color-primary-dark)] text-white' : 'bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]'}`}>
+                                {step > i ? <CheckCircle2 className="w-4 h-4" /> : i}
+                            </div>
+                            {i < 3 && <div className={`w-12 h-1 mx-2 rounded ${step > i ? 'bg-[var(--color-primary)]' : 'bg-[var(--glass-border)]'}`} />}
+                        </div>
+                    ))}
+                </div>
+
+                {/* Step 1: Admin */}
+                {step === 1 && (
+                    <div className="space-y-6 animate-in slide-in-from-right-8 fade-in duration-500 fill-mode-both">
+                        <div className="text-center mb-6">
+                            <h2 className="text-xl font-bold flex justify-center items-center gap-2"><Key className="w-5 h-5 text-[var(--color-primary)]"/> Secure Your Server</h2>
+                            <p className="text-sm text-[var(--color-text-secondary)] mt-1">Create an admin username and password. This protects your library from public access over the internet.</p>
+                        </div>
+                        
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">Username</label>
+                                <input type="text" value={username} onChange={e => setUsername(e.target.value)} placeholder="admin" className="w-full bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/50 transition-all font-mono text-[var(--color-text-primary)]" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">Password</label>
+                                <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" className="w-full bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/50 transition-all font-mono text-[var(--color-text-primary)]" />
+                            </div>
+                            {authError && <p className="text-red-400 text-sm opacity-90">{authError}</p>}
+                        </div>
+
+                        <button onClick={handleCreateAdmin} disabled={isSaving} className="w-full mt-6 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white font-semibold py-4 rounded-xl shadow-lg transition-transform active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-50">
+                            {isSaving ? 'Securing Server...' : 'Next Step'} <ChevronRight className="w-5 h-5" />
+                        </button>
+                    </div>
+                )}
+
+                {/* Step 2: Library mappings */}
+                {step === 2 && (
+                    <div className="space-y-6 animate-in slide-in-from-right-8 fade-in duration-500 fill-mode-both">
+                        <div className="text-center mb-6">
+                            <h2 className="text-xl font-bold flex justify-center items-center gap-2"><Database className="w-5 h-5 text-[var(--color-primary)]"/> Map Your Music</h2>
+                            <p className="text-sm text-[var(--color-text-secondary)] mt-1">Provide the absolute path to your music folder on this server to begin importing tracks.</p>
+                        </div>
+
+                        <div className="bg-[var(--color-surface)]/50 border border-[var(--glass-border)] rounded-xl p-4 text-sm text-[var(--color-text-secondary)] mb-4">
+                            Example: <code className="bg-black/30 px-1 py-0.5 rounded text-[var(--color-text-primary)]">/mnt/storage/music</code> or <code className="bg-black/30 px-1 py-0.5 rounded text-[var(--color-text-primary)]">C:\Users\Andreas\Music</code>
+                        </div>
+                        
+                        <div>
+                            <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">Absolute Directory Path</label>
+                            <input type="text" value={libraryPath} onChange={e => setLibraryPath(e.target.value)} placeholder="/path/to/music" className="w-full bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/50 transition-all font-mono text-[var(--color-text-primary)]" />
+                        </div>
+
+                        <div className="flex gap-4 mt-6">
+                            <button onClick={handleAddLibrary} className="flex-1 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white font-semibold py-4 rounded-xl shadow-lg transition-transform active:scale-[0.98] flex items-center justify-center gap-2">
+                                <FolderPlus className="w-5 h-5" /> Import Library
+                            </button>
+                            <button onClick={() => setStep(3)} className="px-6 bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] border border-[var(--glass-border)] text-[var(--color-text-primary)] font-semibold rounded-xl transition-all">
+                                Skip
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Step 3: APIs */}
+                {step === 3 && (
+                    <div className="space-y-6 animate-in slide-in-from-right-8 fade-in duration-500 fill-mode-both">
+                        <div className="text-center mb-6">
+                            <h2 className="text-xl font-bold flex justify-center items-center gap-2"><Settings className="w-5 h-5 text-[var(--color-primary)]"/> External Enablers</h2>
+                            <p className="text-sm text-[var(--color-text-secondary)] mt-1">Optionally add API keys to fetch rich artist imagery, bios, and fallback album art directly in the frontend.</p>
+                        </div>
+                        
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">Last.fm API Key</label>
+                                <input type="password" value={lastFmKey} onChange={e => setLastFmKeyState(e.target.value)} placeholder="32-character API key" className="w-full bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/50 transition-all font-mono text-[var(--color-text-primary)]" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">Genius Access Token</label>
+                                <input type="password" value={geniusKey} onChange={e => setGeniusKeyState(e.target.value)} placeholder="64-character Bearer Token" className="w-full bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/50 transition-all font-mono text-[var(--color-text-primary)]" />
+                            </div>
+                        </div>
+
+                        <button onClick={handleFinish} className="w-full mt-6 bg-gradient-to-r from-[var(--color-primary)] to-purple-600 hover:from-[var(--color-primary-dark)] hover:to-purple-700 text-white font-bold py-4 rounded-xl shadow-lg transition-transform active:scale-[0.98] flex items-center justify-center gap-2">
+                            <CheckCircle2 className="w-5 h-5" /> Finish Setup & Launch
+                        </button>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};

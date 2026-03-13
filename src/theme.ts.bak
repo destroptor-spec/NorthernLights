@@ -1,0 +1,137 @@
+// Theme system for Modern Web Music Player
+import React from 'react';
+
+export interface ColorPalette {
+  primary: string;
+  primaryDark: string;
+  secondary: string;
+  background: string;
+  surface: string;
+  surfaceVariant: string;
+  textPrimary: string;
+  textSecondary: string;
+  textMuted: string;
+  border: string;
+  accent: string;
+  error: string;
+  success: string;
+}
+
+export interface Theme {
+  name: 'dark' | 'light';
+  colors: ColorPalette;
+  borderRadius: number;
+  spacing: {
+    xs: number;
+    sm: number;
+    md: number;
+    lg: number;
+    xl: number;
+  };
+  shadows: {
+    sm: string;
+    md: string;
+    lg: string;
+  };
+  transitions: {
+    fast: string;
+    normal: string;
+    slow: string;
+  };
+}
+
+export const darkTheme: Theme = {
+  name: 'dark',
+  colors: {
+    primary: '#6750a4',
+    primaryDark: '#524783',
+    secondary: '#6d5c7a',
+    background: '#1c1b1f',
+    surface: '#2d2b31',
+    surfaceVariant: '#49474e',
+    textPrimary: '#e7e1e9',
+    textSecondary: '#c4bfd7',
+    textMuted: '#8d8994',
+    border: '#8d8994',
+    accent: '#03dac6',
+    error: '#ffcccc',
+    success: ''
+  },
+  borderRadius: 8,
+  spacing: {
+    xs: 4,
+    sm: 8,
+    md: 16,
+    lg: 24,
+    xl: 32,
+  },
+  shadows: {
+    sm: '0 1px 2px rgba(0, 0, 0, 0.3)',
+    md: '0 4px 6px rgba(0, 0, 0, 0.4)',
+    lg: '0 8px 12px rgba(0, 0, 0, 0.5)',
+  },
+  transitions: {
+    fast: '150ms ease-in-out',
+    normal: '250ms ease-in-out',
+    slow: '350ms ease-in-out',
+  },
+};
+
+export const lightTheme: Theme = {
+  name: 'light',
+  colors: {
+    primary: '#6750a4',
+    primaryDark: '#4e3d8c',
+    secondary: '#6d5c7a',
+    background: '#fdfbf7',
+    surface: '#ffffff',
+    surfaceVariant: '#f2edeb',
+    textPrimary: '#1c1b1f',
+    textSecondary: '#58545e',
+    textMuted: '#736e77',
+    border: '#d0cdc7',
+    accent: '#03dac6',
+    error: '#930000',
+    success: '',
+  },
+  borderRadius: 8,
+  spacing: {
+    xs: 4,
+    sm: 8,
+    md: 16,
+    lg: 24,
+    xl: 32,
+  },
+  shadows: {
+    sm: '0 1px 2px rgba(0, 0, 0, 0.1)',
+    md: '0 2px 4px rgba(0, 0, 0, 0.15)',
+    lg: '0 4px 8px rgba(0, 0, 0, 0.2)',
+  },
+  transitions: {
+    fast: '150ms ease-in-out',
+    normal: '250ms ease-in-out',
+    slow: '350ms ease-in-out',
+  },
+};
+
+export type ThemeName = 'dark' | 'light';
+
+// Context for theme
+export const ThemeContext = React.createContext<Theme>(darkTheme);
+
+export const useTheme = () => React.useContext(ThemeContext);
+
+interface ThemeProviderProps {
+  children: React.ReactNode;
+  theme?: Theme;
+}
+
+export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children, theme = darkTheme }) => {
+  return <ThemeContext.Provider value={theme}>{children}</ThemeContext.Provider>;
+};
+
+// Utility hooks
+export const useDarkMode = () => {
+  const theme = useTheme();
+  return theme.name === 'dark';
+};

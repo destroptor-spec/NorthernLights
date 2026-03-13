@@ -1,0 +1,34 @@
+# Nice‑to‑Have / Future Enhancements
+- Chromecast / DLNA streaming
+- Network streaming from URLs or local servers
+- Social sharing of tracks/queues
+- User authentication + cloud sync
+- Recommendation engine
+- Lyrics fetching from services like Musixmatch or Genius (with attribution)
+- Gapless playback for CD‑like track lists (requires accurate timing metadata)
+- Multiple audio outputs and device selection
+- Touch gestures for mobile: swipe next/prev, pinch volume, long‑press repeat cycle
+- Drag‑drop to reorder within playlist or move between playlists
+- Playback history & last position resume
+- Theme editor – custom color schemes
+- Dark mode auto‑detect with system colors
+- Keyboard media keys support (play/pause, next/prev)
+- Customizable equalizer curves + presets
+- Advanced filtering: by year, genre, rating, custom tags
+- Track, Artist, Genre Radios via last.fm API or similar services
+- Album / artist view pages with track lists and sorting
+- Album art cover grid view
+- Playback queue preview on hover or sidebar
+- Export playlist to M3U, PLS, XSPF
+- Import/export library in common formats
+- Integration with web music services (e.g., Spotify Web API for preview tracks)
+- Accessibility: support VoiceOver/JAWS/etc.
+- Code quality: ESLint, Prettier, unit tests
+- CI/CD for build & lint
+- Documentation and onboarding guide
+- Service worker for offline caching of UI assets
+- Progressive Web App (PWA) installable
+- Dark mode support with system theme detection
+- Audio output selection via Web Audio API if multiple devices
+- Plex media server library backend
+- Tag import and recognition with MusicBrainz or similar
