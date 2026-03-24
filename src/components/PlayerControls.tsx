@@ -80,6 +80,7 @@ const PlayerControls = () => {
   const toggleInfinityMode = usePlayerStore((state) => state.toggleInfinityMode);
   const playlist = usePlayerStore((state) => state.playlist);
   const currentIndex = usePlayerStore((state) => state.currentIndex);
+  const currentTrack = currentIndex !== null ? playlist[currentIndex] : null;
 
   const togglePlay = React.useCallback(() => {
     if (playlist.length === 0) return;
@@ -132,58 +133,101 @@ const PlayerControls = () => {
   const volumePercent = Math.round(volume * 100);
 
   return (
-    <div className="player-controls">
-      <button onClick={toggleShuffle} aria-label="Toggle shuffle" className="player-control-btn"
-        style={{ opacity: shuffle ? 1 : 0.4 }}>
-        {shuffle ? <IconShuffle /> : <IconSequential />}
-      </button>
+    <div className="w-full flex items-center justify-between gap-6 px-2">
+      {/* Left: Spacer to keep center truly centered */}
+      <div className="flex-1 hidden md:block" />
 
-      <button onClick={prevTrackAction} aria-label="Previous track" className="player-control-btn">
-        <IconPrev />
-      </button>
+      {/* Center: Now Playing + Main Controls */}
+      <div className="flex flex-col items-center gap-3 flex-[2] min-w-0">
+        {/* Metadata Stack */}
+        {currentTrack ? (
+          <div className="flex flex-col items-center min-w-0 w-full animate-in fade-in slide-in-from-bottom-2 duration-500">
+            <div className="text-sm font-bold text-[var(--color-text-primary)] truncate max-w-full tracking-tight" title={`${currentTrack.artist || 'Unknown Artist'} - ${currentTrack.title || currentTrack.path.split(/[\\/]/).pop()}`}>
+              <span className="text-[var(--color-primary)]">{currentTrack.artist || 'Unknown Artist'}</span>
+              <span className="text-[var(--color-text-muted)] mx-2 opacity-50">•</span>
+              <span>{currentTrack.title || currentTrack.path.split(/[\\/]/).pop()}</span>
+            </div>
+            
+            <div className="flex items-center justify-center gap-2 mt-1 flex-wrap">
+              {currentTrack.bitrate && (
+                <span className="text-[0.6rem] px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/10 text-[var(--color-text-secondary)] border border-[var(--glass-border)] whitespace-nowrap font-bold tracking-wider uppercase">
+                  {Math.round(currentTrack.bitrate / 1000)} kbps
+                </span>
+              )}
+              {currentTrack.format && (
+                <span className="text-[0.6rem] px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/10 text-[var(--color-text-secondary)] border border-[var(--glass-border)] uppercase whitespace-nowrap font-bold tracking-wider">
+                  {currentTrack.format}
+                </span>
+              )}
+              {currentTrack.genre && (
+                <span className="text-[0.6rem] px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/10 text-[var(--color-text-secondary)] border border-[var(--glass-border)] whitespace-nowrap truncate max-w-[100px] font-bold tracking-wider uppercase">
+                  {currentTrack.genre}
+                </span>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="h-10" /> /* Placeholder to keep layout stable */
+        )}
 
-      <button onClick={togglePlay} aria-label={isPlaying ? "Pause" : "Play"} className="player-control-btn play-btn-main">
-        {isPlaying ? <IconPause /> : <IconPlay />}
-      </button>
+        {/* Transport Buttons */}
+        <div className="player-controls">
+          <button onClick={toggleShuffle} aria-label="Toggle shuffle" className="player-control-btn"
+            style={{ opacity: shuffle ? 1 : 0.4 }}>
+            {shuffle ? <IconShuffle /> : <IconSequential />}
+          </button>
 
-      <button onClick={nextTrackAction} aria-label="Next track" className="player-control-btn">
-        <IconNext />
-      </button>
+          <button onClick={prevTrackAction} aria-label="Previous track" className="player-control-btn">
+            <IconPrev />
+          </button>
 
-      <div className="repeat-toggle">
-        <button onClick={cycleRepeatAction} aria-label="Cycle repeat mode" className="player-control-btn"
-          style={{ opacity: repeat === 'none' ? 0.4 : 1 }}>
-          {repeat === 'one' ? <IconRepeatOne /> : <IconRepeatAll />}
-        </button>
+          <button onClick={togglePlay} aria-label={isPlaying ? "Pause" : "Play"} className="player-control-btn play-btn-main">
+            {isPlaying ? <IconPause /> : <IconPlay />}
+          </button>
+
+          <button onClick={nextTrackAction} aria-label="Next track" className="player-control-btn">
+            <IconNext />
+          </button>
+
+          <div className="repeat-toggle">
+            <button onClick={cycleRepeatAction} aria-label="Cycle repeat mode" className="player-control-btn"
+              style={{ opacity: repeat === 'none' ? 0.4 : 1 }}>
+              {repeat === 'one' ? <IconRepeatOne /> : <IconRepeatAll />}
+            </button>
+          </div>
+
+          <div className="infinity-toggle" style={{ marginLeft: '12px' }}>
+            <button onClick={toggleInfinityMode} aria-label="Toggle Infinity Mode" className="player-control-btn"
+              style={{ 
+                opacity: isInfinityMode ? 1 : 0.4, 
+                color: isInfinityMode ? 'var(--aurora-purple)' : 'inherit',
+                filter: isInfinityMode ? 'drop-shadow(0 0 6px var(--aurora-purple))' : 'none',
+                transition: 'all 0.3s ease'
+              }}>
+              <IconInfinity />
+            </button>
+          </div>
+        </div>
       </div>
 
-      <div className="infinity-toggle" style={{ marginLeft: '12px' }}>
-        <button onClick={toggleInfinityMode} aria-label="Toggle Infinity Mode" className="player-control-btn"
-          style={{ 
-            opacity: isInfinityMode ? 1 : 0.4, 
-            color: isInfinityMode ? 'var(--aurora-purple)' : 'inherit',
-            filter: isInfinityMode ? 'drop-shadow(0 0 6px var(--aurora-purple))' : 'none',
-            transition: 'all 0.3s ease'
-          }}>
-          <IconInfinity />
-        </button>
-      </div>
-
-      <div className="volume-control" style={{ marginLeft: 'auto' }}>
-        <span className="volume-icon"><IconVolume /></span>
-        <input
-          id="volume-slider"
-          type="range"
-          min={0}
-          max={1}
-          step={0.01}
-          value={volume}
-          onChange={(e) => setVolume(parseFloat(e.target.value))}
-          className="volume-slider"
-        />
-        <span style={{ minWidth: 28, fontSize: '0.68rem', color: 'var(--color-text-muted)', fontVariantNumeric: 'tabular-nums' }}>
-          {volumePercent}%
-        </span>
+      {/* Right Column: Volume Control */}
+      <div className="flex-1 flex justify-end">
+        <div className="volume-control">
+          <span className="volume-icon"><IconVolume /></span>
+          <input
+            id="volume-slider"
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={volume}
+            onChange={(e) => setVolume(parseFloat(e.target.value))}
+            className="volume-slider"
+          />
+          <span style={{ minWidth: 28, fontSize: '0.68rem', color: 'var(--color-text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+            {volumePercent}%
+          </span>
+        </div>
       </div>
     </div>
   );

@@ -1,6 +1,16 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { playbackManager } from '../utils/PlaybackManager';
+import { safeBtoa } from '../utils/safeBtoa';
+const buildTrackUrls = (path, token) => {
+    const base = `${window.location.protocol}//${window.location.host}`;
+    const tokenParam = token ? `&token=${token}` : '';
+    const pathB64 = safeBtoa(path);
+    return {
+        url: `${base}/api/stream?pathB64=${pathB64}${tokenParam}`,
+        artUrl: `${base}/api/art?pathB64=${pathB64}${tokenParam}`,
+    };
+};
 // Remove `PlayerPersist` hack as it was unnecessary and broke inference further
 export const usePlayerStore = create()(persist((set, get) => {
     // Setup PlaybackManager callbacks to update store state
@@ -40,9 +50,10 @@ export const usePlayerStore = create()(persist((set, get) => {
         library: [],
         libraryFolders: [],
         playlists: [],
+        artists: [],
+        albums: [],
+        genres: [],
         playlist: [],
-        currentView: 'home',
-        selectedItem: null,
         isScanning: false,
         scanPhase: 'idle',
         scannedFiles: 0,
@@ -75,6 +86,9 @@ export const usePlayerStore = create()(persist((set, get) => {
         llmModelName: 'gpt-4',
         genreMatrixLastRun: null,
         genreMatrixLastResult: null,
+        genreMatrixProgress: null,
+        isSidebarCollapsed: false,
+        setIsSidebarCollapsed: (collapsed) => set({ isSidebarCollapsed: collapsed }),
         sessionHistoryTrackIds: [],
         // Actions
         checkSetupStatus: async () => {
@@ -137,7 +151,8 @@ export const usePlayerStore = create()(persist((set, get) => {
                         llmApiKey: data.llmApiKey || '',
                         llmModelName: data.llmModelName || 'gpt-4',
                         genreMatrixLastRun: data.genreMatrixLastRun || null,
-                        genreMatrixLastResult: data.genreMatrixLastResult || null
+                        genreMatrixLastResult: data.genreMatrixLastResult || null,
+                        genreMatrixProgress: data.genreMatrixProgress || null
                     });
                 }
             }
@@ -213,19 +228,11 @@ export const usePlayerStore = create()(persist((set, get) => {
                     if (data.track) {
                         const { authToken } = state;
                         const token = authToken || '';
-                        const host = window.location.host;
-                        const protocol = window.location.protocol;
-                        const safeBtoa = (str) => {
-                            return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (match, p1) => {
-                                return String.fromCharCode(parseInt(p1, 16));
-                            }));
-                        };
                         const track = {
                             ...data.track,
                             isInfinity: true,
                             artists: typeof data.track.artists === 'string' ? JSON.parse(data.track.artists) : data.track.artists,
-                            url: `${protocol}//${host}/api/stream?pathB64=${safeBtoa(data.track.path)}${token ? '&token=' + token : ''}`,
-                            artUrl: `${protocol}//${host}/api/art?pathB64=${safeBtoa(data.track.path)}${token ? '&token=' + token : ''}`
+                            ...buildTrackUrls(data.track.path, token),
                         };
                         get().addTrackToPlaylist(track);
                         if (!isPrefetch) {
@@ -256,14 +263,6 @@ export const usePlayerStore = create()(persist((set, get) => {
                     const data = await res.json();
                     const { authToken } = get();
                     const token = authToken || '';
-                    const host = window.location.host; // e.g. localhost:3000
-                    const protocol = window.location.protocol;
-                    // Helper to safely base64 encode strings that might contain multibyte characters
-                    const safeBtoa = (str) => {
-                        return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (match, p1) => {
-                            return String.fromCharCode(parseInt(p1, 16));
-                        }));
-                    };
                     const libraryWithUrls = data.tracks.map((t) => {
                         let artistsArray = t.artists;
                         if (typeof t.artists === 'string') {
@@ -275,11 +274,16 @@ export const usePlayerStore = create()(persist((set, get) => {
                         return {
                             ...t,
                             artists: artistsArray,
-                            url: `${protocol}//${host}/api/stream?pathB64=${safeBtoa(t.path)}${token ? `&token=${token}` : ''}`,
-                            artUrl: `${protocol}//${host}/api/art?pathB64=${safeBtoa(t.path)}${token ? `&token=${token}` : ''}`
+                            ...buildTrackUrls(t.path, token),
                         };
                     });
-                    set({ library: libraryWithUrls, libraryFolders: data.directories });
+                    set({
+                        library: libraryWithUrls,
+                        libraryFolders: data.directories,
+                        artists: data.artists || [],
+                        albums: data.albums || [],
+                        genres: data.genres || []
+                    });
                 }
             }
             catch (e) {
@@ -294,23 +298,17 @@ export const usePlayerStore = create()(persist((set, get) => {
                     const data = await res.json();
                     const { authToken, library } = get();
                     const token = authToken || '';
-                    const host = window.location.host;
-                    const protocol = window.location.protocol;
-                    const safeBtoa = (str) => {
-                        return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (match, p1) => {
-                            return String.fromCharCode(parseInt(p1, 16));
-                        }));
-                    };
                     // Map track objects inside playlists to have full stream URLs
                     const populatedPlaylists = data.playlists.map((pl) => {
                         const mappedTracks = pl.tracks.map((t) => {
+                            // Prefer library track (up-to-date art, etc.), fall back to API data
                             const fullTrack = library.find((lt) => lt.id === t.id);
-                            if (!fullTrack)
+                            const track = fullTrack || t;
+                            if (!track.path)
                                 return null;
                             return {
-                                ...fullTrack,
-                                url: `${protocol}//${host}/api/stream?pathB64=${safeBtoa(fullTrack.path)}${token ? `&token=${token}` : ''}`,
-                                artUrl: `${protocol}//${host}/api/art?pathB64=${safeBtoa(fullTrack.path)}${token ? `&token=${token}` : ''}`
+                                ...track,
+                                ...buildTrackUrls(track.path, token),
                             };
                         }).filter(Boolean);
                         return { ...pl, tracks: mappedTracks };
@@ -336,6 +334,21 @@ export const usePlayerStore = create()(persist((set, get) => {
             }
             catch (e) {
                 console.error("Failed to create playlist", e);
+            }
+        },
+        deletePlaylist: async (playlistId) => {
+            try {
+                const authHeaders = get().getAuthHeader();
+                const res = await fetch(`/api/playlists/${playlistId}`, {
+                    method: 'DELETE',
+                    headers: authHeaders,
+                });
+                if (res.ok) {
+                    set({ playlists: get().playlists.filter((p) => p.id !== playlistId) });
+                }
+            }
+            catch (e) {
+                console.error("Failed to delete playlist", e);
             }
         },
         addTracksToUserPlaylist: async (playlistId, trackIds) => {
@@ -471,13 +484,6 @@ export const usePlayerStore = create()(persist((set, get) => {
                     const data = await fetchRes.json();
                     const { authToken } = get();
                     const token = authToken || '';
-                    const host = window.location.host;
-                    const protocol = window.location.protocol;
-                    const safeBtoa = (str) => {
-                        return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (match, p1) => {
-                            return String.fromCharCode(parseInt(p1, 16));
-                        }));
-                    };
                     const latestLibrary = data.tracks.map((t) => {
                         let artistsArray = t.artists;
                         if (typeof t.artists === 'string') {
@@ -486,22 +492,18 @@ export const usePlayerStore = create()(persist((set, get) => {
                             }
                             catch (e) { }
                         }
-                        const streamUrl = new URL(`${protocol}//${host}/api/stream`);
-                        streamUrl.searchParams.append('pathB64', safeBtoa(t.path));
-                        if (token)
-                            streamUrl.searchParams.append('token', token);
-                        const artUrlObj = new URL(`${protocol}//${host}/api/art`);
-                        artUrlObj.searchParams.append('pathB64', safeBtoa(t.path));
-                        if (token)
-                            artUrlObj.searchParams.append('token', token);
                         return {
                             ...t,
                             artists: artistsArray,
-                            url: streamUrl.toString(),
-                            artUrl: artUrlObj.toString()
+                            ...buildTrackUrls(t.path, token),
                         };
                     });
-                    set({ library: latestLibrary });
+                    set({
+                        library: latestLibrary,
+                        artists: data.artists || [],
+                        albums: data.albums || [],
+                        genres: data.genres || []
+                    });
                 }
             }
             catch (e) {
@@ -563,9 +565,6 @@ export const usePlayerStore = create()(persist((set, get) => {
             }
             return { playlist: newPlaylist, currentIndex: newIndex };
         }),
-        navigateView: (view, item = null) => {
-            set({ currentView: view, selectedItem: item });
-        },
         // Playback Actions
         playAtIndex: async (index) => {
             const { playlist, volume } = get();

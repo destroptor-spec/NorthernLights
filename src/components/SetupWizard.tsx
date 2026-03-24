@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { usePlayerStore } from '../store/index';
 import { Settings, FolderPlus, Key, Database, ChevronRight, CheckCircle2, Cpu } from 'lucide-react';
+import { useLlmConnectionTest } from '../hooks/useLlmConnectionTest';
 
 export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
     const { addLibraryFolder, setLastFmApiKey, setGeniusApiKey, setSettings, getAuthHeader } = usePlayerStore();
@@ -18,10 +19,20 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
     const [llmBaseUrl, setLlmBaseUrl] = useState('http://localhost:1234/v1');
     const [llmApiKey, setLlmApiKey] = useState('');
     const [llmModelName, setLlmModelName] = useState('');
-    const [availableModels, setAvailableModels] = useState<string[]>([]);
-    const [showModelDropdown, setShowModelDropdown] = useState(false);
-    const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
-    const [connectionMessage, setConnectionMessage] = useState('');
+
+    const {
+        connectionStatus,
+        connectionMessage,
+        availableModels,
+        showModelDropdown,
+        setShowModelDropdown,
+        testLlmConnection: runConnectionTest,
+    } = useLlmConnectionTest({
+        getAuthHeader,
+        onModelsReceived: (models) => {
+            if (!llmModelName) setLlmModelName(models[0]);
+        },
+    });
 
     // Step 4 State
     const [lastFmKey, setLastFmKeyState] = useState('');
@@ -71,35 +82,6 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
             await addLibraryFolder(libraryPath);
         }
         setStep(3);
-    };
-
-    const testLlmConnection = async () => {
-        setConnectionStatus('testing');
-        setConnectionMessage('');
-        setAvailableModels([]);
-        try {
-            const authHeaders = getAuthHeader();
-            const res = await fetch('/api/health/llm', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...authHeaders },
-                body: JSON.stringify({ llmBaseUrl, llmApiKey })
-            });
-            const data = await res.json();
-            if (res.ok && data.status === 'ok') {
-                setConnectionStatus('success');
-                setConnectionMessage('Connection OK');
-                if (data.models && data.models.length > 0) {
-                    setAvailableModels(data.models);
-                    if (!llmModelName) setLlmModelName(data.models[0]);
-                }
-            } else {
-                setConnectionStatus('error');
-                setConnectionMessage(data.error || 'Connection failed');
-            }
-        } catch (err: any) {
-            setConnectionStatus('error');
-            setConnectionMessage(err.message || 'Network error');
-        }
     };
 
     const handleSaveLlm = async () => {
@@ -281,7 +263,7 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
                             {/* Test Connection */}
                             <div className="flex items-center gap-3">
                                 <button
-                                    onClick={testLlmConnection}
+                                    onClick={() => runConnectionTest(llmBaseUrl, llmApiKey)}
                                     disabled={connectionStatus === 'testing'}
                                     className="font-semibold text-sm px-4 py-2 bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-lg hover:bg-[var(--glass-bg-hover)] transition-colors text-[var(--color-text-primary)] disabled:opacity-50 shadow-sm"
                                 >

@@ -62,15 +62,26 @@ dpr, isDark) {
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
-export const WaveformProgressBar = ({ audioUrl, currentTime, duration, onSeek, }) => {
+export const WaveformProgressBar = ({ audioUrl, currentTime, duration: rawDuration, onSeek, dbDuration, allowWaveformDecode = true, }) => {
+    // For transcoded streams, the audio element reports Infinity duration.
+    // Fall back to the DB-stored duration (in seconds) in that case.
+    const duration = (!isFinite(rawDuration) || rawDuration === 0) && dbDuration
+        ? dbDuration
+        : rawDuration;
     const canvasRef = useRef(null);
     const [peaks, setPeaks] = useState(null);
     const [loading, setLoading] = useState(false);
     const lastUrlRef = useRef('');
     const dpr = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, 2) : 1;
     const isDark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
-    // Load and decode audio when URL changes
+    // Load and decode audio when URL changes -- only when allowed (skip for live transcoded streams)
     useEffect(() => {
+        if (!allowWaveformDecode) {
+            setLoading(false);
+            setPeaks(null);
+            lastUrlRef.current = ''; // Reset so switching back to a decodable URL works
+            return;
+        }
         if (!audioUrl || audioUrl === lastUrlRef.current)
             return;
         lastUrlRef.current = audioUrl;
@@ -104,7 +115,7 @@ export const WaveformProgressBar = ({ audioUrl, currentTime, duration, onSeek, }
             }
         })();
         return () => abortCtrl.abort();
-    }, [audioUrl]);
+    }, [audioUrl, allowWaveformDecode]);
     // Redraw whenever peaks or progress changes
     useEffect(() => {
         const canvas = canvasRef.current;

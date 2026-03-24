@@ -14,6 +14,8 @@ A modern, self-hosted web music player built with React, Vite, Tailwind CSS, and
 - **Theme Parity**: Native Light and Dark mode support with carefully tuned contrast and theme-aware UI components.
 - **Cross-Device Ready**: Progressive Web App (PWA) compatible with fully responsive layouts down to mobile sizes.
 - **Production Secure**: Features path sanitization, express-based security policies, Basic API Authentication, and graceful Database failure handling to safely put your library on the public internet.
+- **Universal Format Support**: Native support for **MP3, FLAC, OGG, M4A, AAC, and WAV**. Seamless on-the-fly transcoding for **WMA (Windows Media Audio)** using FFmpeg.
+
 
 ## Tech Stack
 
@@ -30,11 +32,24 @@ A modern, self-hosted web music player built with React, Vite, Tailwind CSS, and
 - music-metadata (Tag parsing)
 - Basic Auth Middleware (Secure streaming)
 
+## Supported Formats
+
+| Format | Support Type | Notes |
+| :--- | :--- | :--- |
+| **MP3** | Native | Full range/seek support |
+| **FLAC** | Native | Lossless, full range/seek support |
+| **OGG** | Native | Vorbis/Opus, full range/seek support |
+| **M4A / AAC** | Native | Full range/seek support |
+| **WAV** | Native | Full range/seek support |
+| **WMA** | Transcoded | **Requires FFmpeg** on server. Seek support currently disabled. |
+
+
 ## Getting Started
 
 ### Prerequisites
 - Node.js (v18+ recommended)
 - `npm` or `yarn`
+- **FFmpeg** (v4.0+ recommended) — *Required for on-the-fly transcoding of non-native formats like WMA.*
 
 ### Setup
 

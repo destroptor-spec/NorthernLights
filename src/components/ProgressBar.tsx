@@ -1,14 +1,8 @@
 import { usePlayerStore } from '../store/index';
 import { playbackManager } from '../utils/PlaybackManager';
 import { WaveformProgressBar } from './WaveformProgressBar';
+import { formatTime } from '../utils/formatTime';
 import React from 'react';
-
-const formatTime = (seconds: number): string => {
-  if (!isFinite(seconds) || seconds < 0) return '0:00';
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
-};
 
 const ProgressBar = () => {
   const currentTime = usePlayerStore((state) => state.currentTime);
@@ -17,6 +11,16 @@ const ProgressBar = () => {
   const currentIndex = usePlayerStore((state) => state.currentIndex);
 
   const currentTrack = currentIndex !== null ? playlist[currentIndex] : null;
+
+  // WMA files are transcoded on-the-fly — the browser cannot decode the raw stream
+  // for waveform analysis, and duration will be Infinity. Use DB duration as fallback.
+  const isTranscoded = currentTrack?.format?.toUpperCase().includes('WMA') ||
+    currentTrack?.path?.toLowerCase().endsWith('.wma');
+
+  const dbDuration = currentTrack?.duration; // duration in seconds from DB scan
+  const displayDuration = (!isFinite(duration) || duration === 0) && dbDuration
+    ? dbDuration
+    : duration;
 
   const handleSeek = (time: number) => {
     playbackManager.seek(time);
@@ -29,25 +33,28 @@ const ProgressBar = () => {
         <WaveformProgressBar
           audioUrl={currentTrack.url}
           currentTime={currentTime}
-          duration={duration}
+          duration={displayDuration}
           onSeek={handleSeek}
+          dbDuration={dbDuration}
+          allowWaveformDecode={!isTranscoded}
         />
       ) : (
         // Fallback plain bar if no URL
         <div
           className="progress-track"
           onClick={(e: React.MouseEvent<HTMLDivElement>) => {
-            if (!duration) return;
+            if (!displayDuration) return;
             const rect = e.currentTarget.getBoundingClientRect();
-            handleSeek((e.clientX - rect.left) / rect.width * duration);
+            handleSeek((e.clientX - rect.left) / rect.width * displayDuration);
           }}
         >
-          <div className="progress-fill" style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }} />
+          <div className="progress-fill" style={{ width: `${displayDuration ? (currentTime / displayDuration) * 100 : 0}%` }} />
         </div>
       )}
-      <span className="progress-time">{formatTime(duration)}</span>
+      <span className="progress-time">{formatTime(displayDuration)}</span>
     </div>
   );
 };
 
 export default ProgressBar;
+

@@ -14,7 +14,6 @@ async function getDB() {
                 db.createObjectStore(STORE_NAME, { keyPath: "fileHandle" });
             }
             if (!db.objectStoreNames.contains(FOLDERS_STORE)) {
-                // Store directory handles by their unique name or id
                 db.createObjectStore(FOLDERS_STORE, { keyPath: "name" });
             }
         },

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { usePlayerStore } from '../store/index';
+import { useLlmConnectionTest } from '../hooks/useLlmConnectionTest';
 
 interface SettingsModalProps {
     onClose: () => void;
@@ -29,19 +30,68 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     const llmModelName = usePlayerStore(state => state.llmModelName);
     const genreMatrixLastRun = usePlayerStore(state => state.genreMatrixLastRun);
     const genreMatrixLastResult = usePlayerStore(state => state.genreMatrixLastResult);
+    const genreMatrixProgress = usePlayerStore(state => state.genreMatrixProgress);
     const setSettings = usePlayerStore(state => state.setSettings);
     const saveSettings = usePlayerStore(state => state.saveSettings);
-
+    const loadSettings = usePlayerStore(state => state.loadSettings);
     const getAuthHeader = usePlayerStore(state => state.getAuthHeader);
     const fetchLibraryFromServer = usePlayerStore(state => state.fetchLibraryFromServer);
-    const setIsScanning = usePlayerStore(state => state.setIsScanning);
+    const library = usePlayerStore(state => state.library);
+    
     const [isClosing, setIsClosing] = useState(false);
     const [activeTab, setActiveTab] = useState<'General' | 'Playback' | 'System' | 'Providers'>('General');
-    const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
-    const [connectionMessage, setConnectionMessage] = useState('');
-    const [availableModels, setAvailableModels] = useState<string[]>([]);
-    const [showModelDropdown, setShowModelDropdown] = useState(false);
     const [isRunningMatrix, setIsRunningMatrix] = useState(false);
+    const [mappings, setMappings] = useState<Record<string, string>>({});
+
+    // 1. On mount: fetch latest settings and mappings
+    React.useEffect(() => {
+        loadSettings();
+        fetchMappings();
+    }, []);
+
+    // 2. Initialize/Sync isRunningMatrix based on progress string
+    React.useEffect(() => {
+        const isActive = !!genreMatrixProgress && 
+                         genreMatrixProgress !== 'Complete' && 
+                        !genreMatrixProgress.startsWith('Error') &&
+                        !genreMatrixProgress.startsWith('Interrupted') &&
+                        !genreMatrixProgress.startsWith('All genres');
+        setIsRunningMatrix(isActive);
+    }, [genreMatrixProgress]);
+
+    // 3. Poll while progress is active
+    React.useEffect(() => {
+        let interval: any;
+        if (isRunningMatrix) {
+            interval = setInterval(() => {
+                loadSettings();
+                fetchMappings();
+            }, 2000);
+        }
+        return () => clearInterval(interval);
+    }, [isRunningMatrix, loadSettings]);
+
+    const {
+        connectionStatus,
+        connectionMessage,
+        availableModels,
+        showModelDropdown,
+        setShowModelDropdown,
+        testLlmConnection: runConnectionTest,
+    } = useLlmConnectionTest({
+        getAuthHeader,
+        onModelsReceived: (models) => {
+            if (!llmModelName) setSettings({ llmModelName: models[0] });
+        },
+    });
+
+    const fetchMappings = async () => {
+        try {
+            const authHeaders = getAuthHeader();
+            const res = await fetch('/api/genre-matrix/mappings', { headers: authHeaders });
+            if (res.ok) setMappings(await res.json());
+        } catch(e) { console.error('Failed to fetch mappings', e); }
+    };
 
     const handleRunMatrix = async () => {
         setIsRunningMatrix(true);
@@ -60,41 +110,38 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             }
         } catch (e) {
             console.error('Failed to run genre matrix', e);
-        } finally {
+        }
+    };
+
+    const handleRemapAll = async () => {
+        const confirm = window.confirm('This will clear ALL existing genre mappings and re-categorize your entire library into the new 39-genre ontology. Proceed?');
+        if (!confirm) return;
+
+        setIsRunningMatrix(true);
+        try {
+            const authHeaders = getAuthHeader();
+            await fetch('/api/genre-matrix/remap-all', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...authHeaders }
+            });
+        } catch (e) {
+            console.error('Failed to start remap', e);
             setIsRunningMatrix(false);
         }
     };
 
-    const testLlmConnection = async () => {
-        setConnectionStatus('testing');
-        setConnectionMessage('');
-        setAvailableModels([]);
-        try {
-            const authHeaders = getAuthHeader();
-            const res = await fetch('/api/health/llm', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...authHeaders },
-                body: JSON.stringify({ llmBaseUrl, llmApiKey })
-            });
-            const data = await res.json();
-            if (res.ok && data.status === 'ok') {
-                setConnectionStatus('success');
-                setConnectionMessage('Connection OK');
-                if (data.models && data.models.length > 0) {
-                    setAvailableModels(data.models);
-                    if (!llmModelName) {
-                        setSettings({ llmModelName: data.models[0] });
-                    }
-                }
-            } else {
-                setConnectionStatus('error');
-                setConnectionMessage(data.error || 'Connection failed');
-            }
-        } catch (err: any) {
-            setConnectionStatus('error');
-            setConnectionMessage(err.message || 'Network error');
+    // Auto-disable isRunningMatrix when progress is "Complete"
+    React.useEffect(() => {
+        if (genreMatrixProgress === 'Complete' || 
+            (genreMatrixProgress && (genreMatrixProgress.startsWith('Error') || genreMatrixProgress.startsWith('Interrupted')))
+        ) {
+            setIsRunningMatrix(false);
         }
-    };
+    }, [genreMatrixProgress]);
+
+    const distinctGenres = Array.from(new Set(library.map(t => (t.genre || '').toLowerCase().trim()).filter(Boolean)));
+    const mappedCount = distinctGenres.filter(g => mappings[g.toLowerCase().replace(/[^\w\s-]/g, '')]).length;
+    const coveragePercent = distinctGenres.length > 0 ? Math.round((mappedCount / distinctGenres.length) * 100) : 100;
 
     const handleClose = async () => {
         setIsClosing(true);
@@ -105,6 +152,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     const handleAddFolder = async () => {
         const path = prompt("Enter the absolute path to your music folder (e.g., /home/andreas/Music):");
         if (path && path.trim() !== '') {
+            const addLibraryFolder = usePlayerStore.getState().addLibraryFolder;
             await addLibraryFolder(path.trim());
         }
     };
@@ -124,6 +172,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     };
 
     const handleManualHubRegen = async () => {
+        const confirm = window.confirm('Reset Hub? This will delete ALL existing LLM-generated playlists and regenerate fresh ones. User-created playlists will not be affected.');
+        if (!confirm) return;
+
         try {
             const authHeaders = getAuthHeader();
             await fetch('/api/hub/regenerate', {
@@ -131,10 +182,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 headers: { 'Content-Type': 'application/json', ...authHeaders },
                 body: JSON.stringify({ force: true })
             });
-            alert('Hub regeneration requested. It runs in the background.');
+            alert('Hub reset triggered. Playlists are being regenerated in the background.');
         } catch(e) {
             console.error(e);
-            alert('Failed to request generation');
+            alert('Failed to request reset');
         }
     };
 
@@ -257,19 +308,39 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                 </div>
 
                                 <div className="pt-6 border-t border-[var(--glass-border)]">
-                                    <div className="flex items-center justify-between mb-3">
+                                    <div className="flex flex-col mb-4">
                                         <div>
                                             <h4 className="font-semibold text-sm text-[var(--color-text-primary)]">Genre Transition Matrix</h4>
-                                            <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Maps hop costs between genres, powering Infinity Mode transitions.</p>
+                                            <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Maps hop costs between genres, powering Infinity Mode and Hub generation.</p>
                                         </div>
-                                        <button
-                                            onClick={handleRunMatrix}
-                                            disabled={isRunningMatrix}
-                                            className="ml-4 shrink-0 font-semibold text-xs px-4 py-2 bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-lg hover:bg-[var(--glass-bg-hover)] transition-colors text-[var(--color-text-primary)] disabled:opacity-50 shadow-sm inline-flex items-center gap-2"
-                                        >
-                                            {isRunningMatrix && <div className="w-3 h-3 border-2 border-current/30 border-t-current rounded-full animate-spin" />}
-                                            {isRunningMatrix ? 'Running...' : 'Run Now'}
-                                        </button>
+                                        <div className="flex items-center gap-2 mt-3">
+                                            <button
+                                                onClick={handleRunMatrix}
+                                                disabled={isRunningMatrix}
+                                                className="shrink-0 font-semibold text-xs px-4 py-2 bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-lg hover:bg-[var(--glass-bg-hover)] transition-colors text-[var(--color-text-primary)] disabled:opacity-50 shadow-sm inline-flex items-center gap-2"
+                                            >
+                                                {isRunningMatrix && <div className="w-3 h-3 border-2 border-current/30 border-t-current rounded-full animate-spin" />}
+                                                {isRunningMatrix ? (genreMatrixProgress?.replace('Categorizing ', '') || 'Running...') : 'Run Now'}
+                                            </button>
+                                            <button
+                                                onClick={handleRemapAll}
+                                                disabled={isRunningMatrix}
+                                                title="Destructive: Clears all mappings and starts fresh for the 39-genre ontology"
+                                                className="shrink-0 font-semibold text-xs px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg hover:bg-red-500/20 transition-colors text-red-400 disabled:opacity-50 shadow-sm"
+                                            >
+                                                Remap Library
+                                            </button>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4 mt-4 px-1">
+                                            <p className="text-[10px] leading-relaxed text-[var(--color-text-muted)]">
+                                                <strong className="text-[var(--color-text-secondary)] uppercase tracking-wider block mb-0.5">Incremental</strong>
+                                                Scans only new sub-genres added since last run. Safe and fast.
+                                            </p>
+                                            <p className="text-[10px] leading-relaxed text-[var(--color-text-muted)] border-l border-[var(--glass-border)] pl-3">
+                                                <strong className="text-red-400/80 uppercase tracking-wider block mb-0.5">Full Remap</strong>
+                                                Clears all mappings. Forces LLM to re-examine every track for the 39-genre ontology.
+                                            </p>
+                                        </div>
                                     </div>
                                     <div className="flex flex-col gap-2 text-sm p-3 rounded-xl bg-black/5 dark:bg-white/[0.04] border border-[var(--glass-border)]">
                                         <div className="flex justify-between items-center border-b border-[var(--glass-border)] pb-2">
@@ -278,11 +349,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                 {genreMatrixLastRun ? new Date(genreMatrixLastRun).toLocaleString() : 'Never'}
                                             </span>
                                         </div>
-                                        <div className="flex justify-between items-center pt-1">
+                                        <div className="flex justify-between items-center border-b border-[var(--glass-border)] pb-2 pt-1">
                                             <span className="text-[var(--color-text-secondary)]">Last Result</span>
                                             <span className="text-[var(--color-text-primary)] font-medium max-w-[200px] text-right truncate" title={genreMatrixLastResult || 'N/A'}>
                                                 {genreMatrixLastResult || 'N/A'}
                                             </span>
+                                        </div>
+                                        <div className="flex justify-between items-center pt-1">
+                                            <span className="text-[var(--color-text-secondary)]">Library Coverage</span>
+                                            <div className="flex flex-col items-end gap-1">
+                                                <span className="text-[var(--color-text-primary)] font-bold">{coveragePercent}%</span>
+                                                <div className="w-24 h-1 bg-black/20 dark:bg-white/10 rounded-full overflow-hidden">
+                                                    <div 
+                                                        className="h-full bg-[var(--color-primary)] transition-all duration-500"
+                                                        style={{ width: `${coveragePercent}%` }}
+                                                    />
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -321,11 +404,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                         <option value="Weekly">Weekly</option>
                                     </select>
                                     <div className="mt-4">
+                                        <p className="text-xs text-[var(--color-text-muted)] mb-2 max-w-sm leading-relaxed">
+                                            Manually trigger the AI to generate fresh playlists based on the time of day and your listening history. 
+                                            <span className="text-[var(--color-error)] block mt-1 font-medium">Warning: Resetting will delete all current LLM-generated playlists from your hub.</span>
+                                        </p>
                                         <button 
                                            onClick={handleManualHubRegen}
-                                           className="btn font-semibold text-sm bg-[var(--color-surface)] border border-[var(--glass-border)] px-4 py-2 rounded-lg hover:bg-[var(--glass-bg-hover)] text-[var(--color-text-primary)]"
+                                           className="btn font-semibold text-xs bg-[var(--color-error)]/10 border border-[var(--color-error)]/30 px-4 py-2 rounded-lg hover:bg-[var(--color-error)]/20 text-[var(--color-error)] transition-all shadow-sm flex items-center gap-2"
                                         >
-                                           Force Regenerate Hub Now
+                                           <span className="text-lg leading-none">↺</span> Reset Hub
                                         </button>
                                     </div>
                                 </div>
@@ -394,7 +481,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                     </div>
                                     <div className="flex items-center gap-4 mt-2">
                                         <button 
-                                            onClick={testLlmConnection}
+                                            onClick={() => runConnectionTest(llmBaseUrl, llmApiKey)}
                                             disabled={connectionStatus === 'testing'}
                                             className="font-semibold text-sm px-4 py-2 bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-lg hover:bg-[var(--glass-bg-hover)] transition-colors text-[var(--color-text-primary)] disabled:opacity-50 shadow-sm"
                                         >
