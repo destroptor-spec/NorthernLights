@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { usePlayerStore } from '../store/index';
-import { Settings, FolderPlus, Key, Database, ChevronRight, CheckCircle2 } from 'lucide-react';
+import { Settings, FolderPlus, Key, Database, ChevronRight, CheckCircle2, Cpu } from 'lucide-react';
 
 export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
-    const { addLibraryFolder, setLastFmApiKey, setGeniusApiKey } = usePlayerStore();
+    const { addLibraryFolder, setLastFmApiKey, setGeniusApiKey, setSettings, getAuthHeader } = usePlayerStore();
     const [step, setStep] = useState(1);
     
     // Step 1 State
@@ -14,11 +14,25 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
     // Step 2 State
     const [libraryPath, setLibraryPath] = useState('');
     
-    // Step 3 State
+    // Step 3 State — LLM Provider
+    const [llmBaseUrl, setLlmBaseUrl] = useState('http://localhost:1234/v1');
+    const [llmApiKey, setLlmApiKey] = useState('');
+    const [llmModelName, setLlmModelName] = useState('');
+    const [availableModels, setAvailableModels] = useState<string[]>([]);
+    const [showModelDropdown, setShowModelDropdown] = useState(false);
+    const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+    const [connectionMessage, setConnectionMessage] = useState('');
+
+    // Step 4 State
     const [lastFmKey, setLastFmKeyState] = useState('');
     const [geniusKey, setGeniusKeyState] = useState('');
 
+    // Token estimate
+    const [trackCount, setTrackCount] = useState(1000);
+
     const [isSaving, setIsSaving] = useState(false);
+
+    const TOTAL_STEPS = 4;
 
     const handleCreateAdmin = async () => {
         setAuthError('');
@@ -59,11 +73,61 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
         setStep(3);
     };
 
+    const testLlmConnection = async () => {
+        setConnectionStatus('testing');
+        setConnectionMessage('');
+        setAvailableModels([]);
+        try {
+            const authHeaders = getAuthHeader();
+            const res = await fetch('/api/health/llm', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...authHeaders },
+                body: JSON.stringify({ llmBaseUrl, llmApiKey })
+            });
+            const data = await res.json();
+            if (res.ok && data.status === 'ok') {
+                setConnectionStatus('success');
+                setConnectionMessage('Connection OK');
+                if (data.models && data.models.length > 0) {
+                    setAvailableModels(data.models);
+                    if (!llmModelName) setLlmModelName(data.models[0]);
+                }
+            } else {
+                setConnectionStatus('error');
+                setConnectionMessage(data.error || 'Connection failed');
+            }
+        } catch (err: any) {
+            setConnectionStatus('error');
+            setConnectionMessage(err.message || 'Network error');
+        }
+    };
+
+    const handleSaveLlm = async () => {
+        if (llmBaseUrl || llmApiKey || llmModelName) {
+            await setSettings({ llmBaseUrl, llmApiKey, llmModelName });
+            // Persist to backend
+            const authHeaders = getAuthHeader();
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...authHeaders },
+                body: JSON.stringify({ llmBaseUrl, llmApiKey, llmModelName })
+            });
+        }
+        setStep(4);
+    };
+
     const handleFinish = async () => {
         if (lastFmKey) setLastFmApiKey(lastFmKey);
         if (geniusKey) setGeniusApiKey(geniusKey);
         onComplete();
     };
+
+    const stepDotClass = (i: number) =>
+        `w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm transition-all duration-300 ${
+            step === i ? 'bg-[var(--color-primary)] text-white scale-110 shadow-[var(--shadow-md)]'
+            : step > i ? 'bg-[var(--color-primary-dark)] text-white'
+            : 'bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]'
+        }`;
 
     return (
         <div className="fixed inset-0 z-[100] bg-[var(--color-bg)] flex items-center justify-center p-4">
@@ -76,18 +140,18 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
                     <div className="w-16 h-16 bg-[var(--color-primary)]/20 text-[var(--color-primary)] rounded-full flex items-center justify-center mb-4">
                         <Settings className="w-8 h-8" />
                     </div>
-                    <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-[var(--color-text-primary)]">Welcome to NorthernLights</h1>
+                    <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-[var(--color-text-primary)]">Welcome to Aurora</h1>
                     <p className="text-[var(--color-text-secondary)] mt-2 text-center">Let's get your personal media server set up in a few simple steps.</p>
                 </div>
 
                 {/* Step Indicators */}
                 <div className="flex items-center justify-center gap-2 mb-10">
-                    {[1, 2, 3].map(i => (
+                    {[1, 2, 3, 4].map(i => (
                         <div key={i} className="flex items-center">
-                            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm transition-all duration-300 ${step === i ? 'bg-[var(--color-primary)] text-white scale-110 shadow-[var(--shadow-md)]' : step > i ? 'bg-[var(--color-primary-dark)] text-white' : 'bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]'}`}>
+                            <div className={stepDotClass(i)}>
                                 {step > i ? <CheckCircle2 className="w-4 h-4" /> : i}
                             </div>
-                            {i < 3 && <div className={`w-12 h-1 mx-2 rounded ${step > i ? 'bg-[var(--color-primary)]' : 'bg-[var(--glass-border)]'}`} />}
+                            {i < TOTAL_STEPS && <div className={`w-10 h-1 mx-2 rounded ${step > i ? 'bg-[var(--color-primary)]' : 'bg-[var(--glass-border)]'}`} />}
                         </div>
                     ))}
                 </div>
@@ -146,8 +210,128 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
                     </div>
                 )}
 
-                {/* Step 3: APIs */}
+                {/* Step 3: LLM Provider */}
                 {step === 3 && (
+                    <div className="space-y-5 animate-in slide-in-from-right-8 fade-in duration-500 fill-mode-both">
+                        <div className="text-center mb-4">
+                            <h2 className="text-xl font-bold flex justify-center items-center gap-2"><Cpu className="w-5 h-5 text-[var(--color-primary)]"/> AI Playlist Provider</h2>
+                            <p className="text-sm text-[var(--color-text-secondary)] mt-1">Optionally connect a local or cloud LLM to power AI-curated playlists and the Genre Matrix. Works great with LM Studio.</p>
+                        </div>
+
+                        {/* Token usage estimate */}
+                        {(() => {
+                            const genreCount = Math.max(10, Math.floor(trackCount / 30));
+                            const monthlyHubTokens = 180 * 850;
+                            const oneTimeMatrixTokens = genreCount * 600;
+                            const totalFirstMonth = monthlyHubTokens + oneTimeMatrixTokens;
+                            const fmt = (n: number) => n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M` : `${Math.round(n/1000)}K`;
+                            return (
+                                <div className="bg-[var(--color-surface)]/60 border border-[var(--glass-border)] rounded-2xl p-4 space-y-3">
+                                    <div className="flex items-center justify-between gap-4">
+                                        <label className="text-sm font-medium text-[var(--color-text-secondary)] shrink-0">Approx. track count</label>
+                                        <input
+                                            type="number"
+                                            min={100} max={100000} step={100}
+                                            value={trackCount}
+                                            onChange={e => setTrackCount(Math.max(100, Number(e.target.value)))}
+                                            className="w-28 text-right bg-[var(--color-bg)] border border-[var(--glass-border)] rounded-lg px-3 py-1.5 text-sm font-mono text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/40"
+                                        />
+                                    </div>
+                                    <div className="border-t border-[var(--glass-border)] pt-3 space-y-1.5 text-sm">
+                                        <div className="flex justify-between text-[var(--color-text-secondary)]">
+                                            <span>Hub playlists (monthly, 4h schedule)</span>
+                                            <span className="font-medium text-[var(--color-text-primary)]">~{fmt(monthlyHubTokens)} tokens</span>
+                                        </div>
+                                        <div className="flex justify-between text-[var(--color-text-secondary)]">
+                                            <span>Genre Matrix (one-time, ~{genreCount} genres)</span>
+                                            <span className="font-medium text-[var(--color-text-primary)]">~{fmt(oneTimeMatrixTokens)} tokens</span>
+                                        </div>
+                                        <div className="flex justify-between font-semibold border-t border-[var(--glass-border)] pt-2 mt-1 text-[var(--color-text-primary)]">
+                                            <span>Expected monthly token usage</span>
+                                            <span className="text-[var(--color-primary)]">~{fmt(totalFirstMonth)} tokens</span>
+                                        </div>
+                                        <p className="text-xs text-[var(--color-text-muted)] pt-1">Fully free with local providers (LM Studio, Ollama). OpenAI GPT-4o: ~$0.60/1M tokens.</p>
+                                    </div>
+                                </div>
+                            );
+                        })()}
+
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">API Base URL</label>
+                                <input
+                                    type="text"
+                                    value={llmBaseUrl}
+                                    onChange={e => setLlmBaseUrl(e.target.value)}
+                                    placeholder="http://localhost:1234/v1"
+                                    className="w-full bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/50 transition-all font-mono text-sm text-[var(--color-text-primary)]"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">API Key <span className="text-[var(--color-text-muted)] font-normal">(leave blank for local providers)</span></label>
+                                <input
+                                    type="password"
+                                    value={llmApiKey}
+                                    onChange={e => setLlmApiKey(e.target.value)}
+                                    placeholder="sk-... or leave blank"
+                                    className="w-full bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/50 transition-all font-mono text-sm text-[var(--color-text-primary)]"
+                                />
+                            </div>
+
+                            {/* Test Connection */}
+                            <div className="flex items-center gap-3">
+                                <button
+                                    onClick={testLlmConnection}
+                                    disabled={connectionStatus === 'testing'}
+                                    className="font-semibold text-sm px-4 py-2 bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-lg hover:bg-[var(--glass-bg-hover)] transition-colors text-[var(--color-text-primary)] disabled:opacity-50 shadow-sm"
+                                >
+                                    {connectionStatus === 'testing' ? 'Testing...' : 'Test Connection'}
+                                </button>
+                                {connectionStatus === 'success' && <span className="text-green-500 font-semibold text-sm">✓ {connectionMessage}</span>}
+                                {connectionStatus === 'error' && <span className="text-red-500 font-semibold text-sm truncate max-w-xs" title={connectionMessage}>✗ {connectionMessage}</span>}
+                            </div>
+
+                            {/* Model Name */}
+                            <div className="relative">
+                                <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">Model Name</label>
+                                <input
+                                    type="text"
+                                    value={llmModelName}
+                                    onChange={e => setLlmModelName(e.target.value)}
+                                    onFocus={() => setShowModelDropdown(true)}
+                                    onBlur={() => setTimeout(() => setShowModelDropdown(false), 200)}
+                                    placeholder="gpt-4o / llama-3 (auto-filled on test)"
+                                    className="w-full bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/50 transition-all font-mono text-sm text-[var(--color-text-primary)]"
+                                />
+                                {availableModels.length > 0 && showModelDropdown && (
+                                    <ul className="absolute left-0 right-0 z-50 w-full mt-1 max-h-40 overflow-y-auto bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl shadow-xl backdrop-blur-xl hide-scrollbar py-1">
+                                        {availableModels.map(m => (
+                                            <li
+                                                key={m}
+                                                className="px-4 py-2.5 text-sm text-[var(--color-text-primary)] hover:bg-[var(--glass-bg-hover)] cursor-pointer transition-colors border-b border-[var(--glass-border)] last:border-0"
+                                                onMouseDown={e => { e.preventDefault(); setLlmModelName(m); setShowModelDropdown(false); }}
+                                            >
+                                                {m}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="flex gap-4 mt-2">
+                            <button onClick={handleSaveLlm} className="flex-1 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white font-semibold py-4 rounded-xl shadow-lg transition-transform active:scale-[0.98] flex items-center justify-center gap-2">
+                                Save & Continue <ChevronRight className="w-5 h-5" />
+                            </button>
+                            <button onClick={() => setStep(4)} className="px-6 bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] border border-[var(--glass-border)] text-[var(--color-text-primary)] font-semibold rounded-xl transition-all">
+                                Skip
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Step 4: External APIs */}
+                {step === 4 && (
                     <div className="space-y-6 animate-in slide-in-from-right-8 fade-in duration-500 fill-mode-both">
                         <div className="text-center mb-6">
                             <h2 className="text-xl font-bold flex justify-center items-center gap-2"><Settings className="w-5 h-5 text-[var(--color-primary)]"/> External Enablers</h2>

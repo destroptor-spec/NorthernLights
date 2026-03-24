@@ -3,11 +3,43 @@ import { persist, PersistOptions } from 'zustand/middleware';
 import type { TrackInfo } from '../utils/fileSystem';
 import { extractMetadata } from '../utils/fileSystem';
 import { playbackManager, PlaybackState } from '../utils/PlaybackManager';
+import { safeBtoa } from '../utils/safeBtoa';
+
+const buildTrackUrls = (path: string, token: string) => {
+  const base = `${window.location.protocol}//${window.location.host}`;
+  const tokenParam = token ? `&token=${token}` : '';
+  const pathB64 = safeBtoa(path);
+  return {
+    url: `${base}/api/stream?pathB64=${pathB64}${tokenParam}`,
+    artUrl: `${base}/api/art?pathB64=${pathB64}${tokenParam}`,
+  };
+};
+
+export interface Playlist {
+  id: string;
+  title: string;
+  description: string | null;
+  isLlmGenerated: boolean;
+  tracks: TrackInfo[];
+}
+
+export interface EntityInfo {
+  id: string;
+  name?: string;
+  title?: string;
+  artist_name?: string;
+}
 
 export interface PlayerState {
   // Library State
   library: TrackInfo[];
   libraryFolders: string[];
+  playlists: Playlist[];
+
+  // Entity State (for navigation)
+  artists: EntityInfo[];
+  albums: EntityInfo[];
+  genres: EntityInfo[];
 
   // Playlist State (Current Play Queue)
   playlist: TrackInfo[];
@@ -25,10 +57,6 @@ export interface PlayerState {
   needsSetup: boolean | null;
   checkSetupStatus: () => Promise<void>;
 
-  // View State (Library Navigation)
-  currentView: 'home' | 'artists' | 'albums' | 'genres' | 'artist' | 'album' | 'genre';
-  selectedItem: string | null;
-
   // Playback State (Transient)
   currentIndex: number | null;
   playbackState: PlaybackState;
@@ -45,13 +73,42 @@ export interface PlayerState {
   preferredProvider: 'lastfm' | 'genius';
   authToken: string | null;
 
-  // Actions
+  // Global Engine Settings
+  discoveryLevel: number;
+  genreStrictness: number;
+  artistAmnesiaLimit: number;
+  audioAnalysisCpu: string;
+  hubGenerationSchedule: string;
+  llmBaseUrl: string;
+  llmApiKey: string;
+  llmModelName: string;
+  genreMatrixLastRun: number | null;
+  genreMatrixLastResult: string | null;
+  genreMatrixProgress: string | null;
+
+  isSidebarCollapsed: boolean;
+  setIsSidebarCollapsed: (collapsed: boolean) => void;
+
+  setSettings: (settings: Partial<PlayerState>) => void;
+  loadSettings: () => Promise<void>;
+  saveSettings: () => Promise<void>;
+  
+  isInfinityMode: boolean;
+  isFetchingInfinity: boolean;
+  toggleInfinityMode: () => void;
+  ensureInfinityQueue: () => Promise<void>;
+  fetchNextInfinityTrack: (isPrefetch?: boolean) => Promise<void>;
+
   fetchLibraryFromServer: () => Promise<void>;
+  fetchPlaylistsFromServer: () => Promise<void>;
+  createPlaylist: (title: string, description?: string) => Promise<void>;
+  deletePlaylist: (playlistId: string) => Promise<void>;
+  addTracksToUserPlaylist: (playlistId: string, trackIds: string[]) => Promise<void>;
   setAuthToken: (token: string) => void;
   getAuthHeader: () => Record<string, string>;
   addLibraryFolder: (folderPath: string) => Promise<void>;
   removeLibraryFolder: (folderName: string) => Promise<void>;
-  rescanLibrary: () => Promise<void>;
+  rescanLibrary: (specificFolder?: string) => Promise<void>;
   addTracksToLibrary: (newTracks: TrackInfo[]) => void;
   setIsScanning: (
     isScanning: boolean,
@@ -66,14 +123,17 @@ export interface PlayerState {
   // Library Actions
   deleteTrackFromLibrary: (trackId: string) => Promise<void>;
 
-  // Playlist Actions
+  // Play Queue Actions
   setPlaylist: (tracks: TrackInfo[], startIndex?: number) => Promise<void>;
   addTrackToPlaylist: (track: TrackInfo) => void;
+  playNext: (track: TrackInfo) => void;
   removeFromPlaylist: (index: number) => void;
   moveInPlaylist: (fromIndex: number, toIndex: number) => void;
 
-  // View Actions
-  navigateView: (view: 'home' | 'artists' | 'albums' | 'genres' | 'artist' | 'album' | 'genre', item?: string | null) => void;
+  // Global Track Context Menu
+  contextMenu: { track: TrackInfo; x: number; y: number } | null;
+  openContextMenu: (track: TrackInfo, x: number, y: number) => void;
+  closeContextMenu: () => void;
 
   // Playback Actions
   playAtIndex: (index: number) => Promise<void>;
@@ -94,6 +154,11 @@ export interface PlayerState {
   syncTimeUpdate: (time: number) => void;
   syncDuration: (duration: number) => void;
   syncPlaybackState: (state: PlaybackState) => void;
+
+  // Engine session state
+  sessionHistoryTrackIds: string[];
+  recordPlay: (trackId: string) => void;
+  recordSkip: (trackId: string) => void;
 }
 
 // Remove `PlayerPersist` hack as it was unnecessary and broke inference further
@@ -108,15 +173,18 @@ export const usePlayerStore = create<PlayerState>()(
         onPlayStateChange: (state) => set({ playbackState: state }),
         onEnded: () => {
           // Auto-play next track based on repeat and shuffle rules
-          const { repeat, nextTrack, stop } = get();
+          const { repeat, nextTrack, stop, fetchNextInfinityTrack } = get();
           if (repeat === 'one') {
             // Let the audio element handle loop if we implemented it, or manually replay
             get().playAtIndex(get().currentIndex!);
           } else if (repeat === 'none') {
             // Stop at end of list
             const currentIdx = get().currentIndex!;
-            if (currentIdx < get().tracks.length - 1 || get().shuffle) {
+            if (currentIdx < get().playlist.length - 1 || get().shuffle) {
               nextTrack();
+            } else if (get().isInfinityMode) {
+              // Infinity Mode bounds reached! Fetch the next track natively
+              fetchNextInfinityTrack(false);
             } else {
               stop();
             }
@@ -131,9 +199,11 @@ export const usePlayerStore = create<PlayerState>()(
         // Initial State
         library: [] as TrackInfo[],
         libraryFolders: [] as string[],
+        playlists: [] as Playlist[],
+        artists: [] as EntityInfo[],
+        albums: [] as EntityInfo[],
+        genres: [] as EntityInfo[],
         playlist: [] as TrackInfo[],
-        currentView: 'artists' as 'home' | 'artists' | 'albums' | 'genres' | 'artist' | 'album' | 'genre',
-        selectedItem: null as string | null,
 
         isScanning: false as boolean,
         scanPhase: 'idle' as 'idle' | 'walk' | 'metadata',
@@ -157,6 +227,27 @@ export const usePlayerStore = create<PlayerState>()(
         geniusApiKey: '',
         preferredProvider: 'lastfm' as 'lastfm' | 'genius',
         authToken: null as string | null,
+
+        isInfinityMode: true as boolean,
+        isFetchingInfinity: false as boolean,
+
+
+        discoveryLevel: 50,
+        genreStrictness: 50,
+        artistAmnesiaLimit: 50,
+        audioAnalysisCpu: 'Balanced',
+        hubGenerationSchedule: 'Daily',
+        llmBaseUrl: 'https://api.openai.com/v1',
+        llmApiKey: '',
+        llmModelName: 'gpt-4',
+        genreMatrixLastRun: null as number | null,
+        genreMatrixLastResult: null as string | null,
+        genreMatrixProgress: null as string | null,
+
+        isSidebarCollapsed: false as boolean,
+        setIsSidebarCollapsed: (collapsed: boolean) => set({ isSidebarCollapsed: collapsed }),
+
+        sessionHistoryTrackIds: [] as string[],
 
         // Actions
         checkSetupStatus: async () => {
@@ -204,6 +295,130 @@ export const usePlayerStore = create<PlayerState>()(
           return {} as Record<string, string>;
         },
 
+        setSettings: (settings: Partial<PlayerState>) => {
+          set((state: PlayerState) => ({ ...state, ...settings }));
+        },
+
+        loadSettings: async () => {
+          try {
+            const authHeaders = (get() as any).getAuthHeader();
+            const res = await fetch('/api/settings', { headers: authHeaders });
+            if (res.ok) {
+              const data = await res.json();
+              set({
+                discoveryLevel: data.discoveryLevel !== undefined ? data.discoveryLevel : 50,
+                genreStrictness: data.genreStrictness !== undefined ? data.genreStrictness : 50,
+                artistAmnesiaLimit: data.artistAmnesiaLimit !== undefined ? data.artistAmnesiaLimit : 50,
+                audioAnalysisCpu: data.audioAnalysisCpu || 'Balanced',
+                hubGenerationSchedule: data.hubGenerationSchedule || 'Daily',
+                llmBaseUrl: data.llmBaseUrl || 'https://api.openai.com/v1',
+                llmApiKey: data.llmApiKey || '',
+                llmModelName: data.llmModelName || 'gpt-4',
+                genreMatrixLastRun: data.genreMatrixLastRun || null,
+                genreMatrixLastResult: data.genreMatrixLastResult || null,
+                genreMatrixProgress: data.genreMatrixProgress || null
+              });
+            }
+          } catch (e) {
+            console.error('Failed to load DB settings', e);
+          }
+        },
+
+        saveSettings: async () => {
+           try {
+              const state = get();
+              const authHeaders = (state as any).getAuthHeader();
+              const payload = {
+                discoveryLevel: state.discoveryLevel,
+                genreStrictness: state.genreStrictness,
+                artistAmnesiaLimit: state.artistAmnesiaLimit,
+                audioAnalysisCpu: state.audioAnalysisCpu,
+                hubGenerationSchedule: state.hubGenerationSchedule,
+                llmBaseUrl: state.llmBaseUrl,
+                llmApiKey: state.llmApiKey,
+                llmModelName: state.llmModelName
+              };
+              await fetch('/api/settings', {
+                 method: 'POST',
+                 headers: { 'Content-Type': 'application/json', ...authHeaders },
+                 body: JSON.stringify(payload)
+              });
+           } catch(e) {
+              console.error('Failed to save settings', e);
+           }
+        },
+        toggleInfinityMode: () => {
+          const state = get();
+          const newMode = !state.isInfinityMode;
+          set({ isInfinityMode: newMode });
+          if (newMode) {
+            get().ensureInfinityQueue();
+          }
+        },
+
+        ensureInfinityQueue: async () => {
+          const state = get();
+          if (!state.isInfinityMode || state.isFetchingInfinity) return;
+
+          const currentIndex = state.currentIndex !== null ? state.currentIndex : 0;
+          const remaining = Math.max(0, state.playlist.length - 1 - currentIndex);
+          
+          // Prefetch if there are no upcoming tracks in the queue
+          if (remaining < 1 && state.playlist.length > 0) {
+            await get().fetchNextInfinityTrack(true);
+          }
+        },
+
+        fetchNextInfinityTrack: async (isPrefetch = false) => {
+          const state = get();
+          if (state.isFetchingInfinity) return;
+          
+          set({ isFetchingInfinity: true });
+          try {
+            const authHeaders = (state as any).getAuthHeader();
+            const payload = {
+              sessionHistoryTrackIds: state.sessionHistoryTrackIds,
+              settings: {
+                discoveryLevel: state.discoveryLevel,
+                genreStrictness: state.genreStrictness,
+                artistAmnesiaLimit: state.artistAmnesiaLimit,
+              }
+            };
+            const res = await fetch('/api/recommend', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', ...authHeaders },
+              body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.track) {
+                const { authToken } = state;
+                const token = authToken || '';
+
+                const track = {
+                  ...data.track,
+                  isInfinity: true,
+                  artists: typeof data.track.artists === 'string' ? JSON.parse(data.track.artists) : data.track.artists,
+                  ...buildTrackUrls(data.track.path, token),
+                };
+                get().addTrackToPlaylist(track);
+                if (!isPrefetch) {
+                  get().playAtIndex(state.playlist.length); // Play the newly appended track
+                }
+              } else if (!isPrefetch) {
+                get().stop();
+              }
+            } else if (!isPrefetch) {
+               get().stop();
+            }
+          } catch (e) {
+            console.error("Failed to fetch infinity track", e);
+            if (!isPrefetch) get().stop();
+          } finally {
+            set({ isFetchingInfinity: false });
+          }
+        },
+
         fetchLibraryFromServer: async () => {
           try {
             const res = await fetch('/api/library');
@@ -212,10 +427,7 @@ export const usePlayerStore = create<PlayerState>()(
               
               const { authToken } = get();
               const token = authToken || '';
-              
-              const host = window.location.host; // e.g. localhost:3000
-              const protocol = window.location.protocol;
-              
+
               const libraryWithUrls = data.tracks.map((t: any) => {
                 let artistsArray = t.artists;
                 if (typeof t.artists === 'string') {
@@ -225,16 +437,100 @@ export const usePlayerStore = create<PlayerState>()(
                 return {
                   ...t,
                   artists: artistsArray,
-                  url: `${protocol}//${host}/api/stream?path=${encodeURIComponent(t.path)}${token ? `&token=${token}` : ''}`,
-                  artUrl: `${protocol}//${host}/api/art?path=${encodeURIComponent(t.path)}${token ? `&token=${token}` : ''}`
+                  ...buildTrackUrls(t.path, token),
                 };
               });
 
-              set({ library: libraryWithUrls, libraryFolders: data.directories });
+              set({
+                library: libraryWithUrls,
+                libraryFolders: data.directories,
+                artists: data.artists || [],
+                albums: data.albums || [],
+                genres: data.genres || []
+              });
             }
           } catch (e) {
             console.error("Failed to fetch library from server", e);
           }
+        },
+
+        fetchPlaylistsFromServer: async () => {
+           try {
+              const authHeaders = (get() as any).getAuthHeader();
+              const res = await fetch('/api/playlists', { headers: authHeaders });
+              if (res.ok) {
+                 const data = await res.json();
+                 
+                 const { authToken, library } = get();
+                 const token = authToken || '';
+
+                 // Map track objects inside playlists to have full stream URLs
+                 const populatedPlaylists = data.playlists.map((pl: any) => {
+                    const mappedTracks = pl.tracks.map((t: any) => {
+                       // Prefer library track (up-to-date art, etc.), fall back to API data
+                       const fullTrack = library.find((lt: TrackInfo) => lt.id === t.id);
+                       const track = fullTrack || t;
+                       if (!track.path) return null;
+                       return {
+                         ...track,
+                         ...buildTrackUrls(track.path, token),
+                       };
+                    }).filter(Boolean);
+                    return { ...pl, tracks: mappedTracks };
+                 });
+
+                 set({ playlists: populatedPlaylists });
+              }
+           } catch (e) {
+              console.error("Failed to fetch playlists from server", e);
+           }
+        },
+
+        createPlaylist: async (title: string, description?: string) => {
+           try {
+              const authHeaders = (get() as any).getAuthHeader();
+              const res = await fetch('/api/playlists', {
+                 method: 'POST',
+                 headers: { 'Content-Type': 'application/json', ...authHeaders },
+                 body: JSON.stringify({ title, description })
+              });
+              if (res.ok) {
+                 await get().fetchPlaylistsFromServer();
+              }
+           } catch (e) {
+               console.error("Failed to create playlist", e);
+            }
+         },
+
+         deletePlaylist: async (playlistId: string) => {
+            try {
+               const authHeaders = (get() as any).getAuthHeader();
+               const res = await fetch(`/api/playlists/${playlistId}`, {
+                  method: 'DELETE',
+                  headers: authHeaders,
+               });
+               if (res.ok) {
+                  set({ playlists: get().playlists.filter((p: Playlist) => p.id !== playlistId) });
+               }
+            } catch (e) {
+               console.error("Failed to delete playlist", e);
+            }
+         },
+
+         addTracksToUserPlaylist: async (playlistId: string, trackIds: string[]) => {
+           try {
+              const authHeaders = (get() as any).getAuthHeader();
+              const res = await fetch(`/api/playlists/${playlistId}/tracks`, {
+                 method: 'POST',
+                 headers: { 'Content-Type': 'application/json', ...authHeaders },
+                 body: JSON.stringify({ trackIds })
+              });
+              if (res.ok) {
+                 await get().fetchPlaylistsFromServer();
+              }
+           } catch (e) {
+              console.error(`Failed to add tracks to playlist ${playlistId}`, e);
+           }
         },
 
         addTracksToLibrary: (newTracks: TrackInfo[]) => set((state: PlayerState) => {
@@ -277,7 +573,22 @@ export const usePlayerStore = create<PlayerState>()(
           if (state.libraryFolders.includes(folderPath)) return;
 
           set({ libraryFolders: [...state.libraryFolders, folderPath] });
-          await get().rescanLibrary();
+
+          try {
+            const authHeaders = (get() as any).getAuthHeader();
+            
+            // Instantly register the folder to the DB so page refreshes don't lose it
+            await fetch('/api/library/add', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', ...authHeaders },
+              body: JSON.stringify({ path: folderPath })
+            });
+
+            // Queue a scan for JUST this newly added folder
+            await get().rescanLibrary(folderPath);
+          } catch (e) {
+            console.error('Failed to add and scan folder', e);
+          }
         },
 
         removeLibraryFolder: async (folderPath: string) => {
@@ -298,11 +609,13 @@ export const usePlayerStore = create<PlayerState>()(
           }
         },
 
-        rescanLibrary: async () => {
+        rescanLibrary: async (specificFolder?: string) => {
           const state = get();
 
-          // Trigger scans for all mapped folders sequentially with backoff
-          for (const folderPath of state.libraryFolders) {
+          const foldersToScan = specificFolder ? [specificFolder] : state.libraryFolders;
+
+          // Trigger scans sequentially with backoff
+          for (const folderPath of foldersToScan) {
             let scanStarted = false;
             while (!scanStarted) {
               try {
@@ -344,31 +657,25 @@ export const usePlayerStore = create<PlayerState>()(
               
               const { authToken } = get();
               const token = authToken || '';
-              const host = window.location.host;
-              const protocol = window.location.protocol;
 
-              const latestLibrary = data.tracks.map((t: any) => {
+               const latestLibrary = data.tracks.map((t: any) => {
                 let artistsArray = t.artists;
                 if (typeof t.artists === 'string') {
                   try { artistsArray = JSON.parse(t.artists); } catch(e) {}
                 }
                 
-                const streamUrl = new URL(`${protocol}//${host}/api/stream`);
-                streamUrl.searchParams.append('path', t.path);
-                if (token) streamUrl.searchParams.append('token', token);
-
-                const artUrlObj = new URL(`${protocol}//${host}/api/art`);
-                artUrlObj.searchParams.append('path', t.path);
-                if (token) artUrlObj.searchParams.append('token', token);
-                
                 return {
                   ...t,
                   artists: artistsArray,
-                  url: streamUrl.toString(),
-                  artUrl: artUrlObj.toString()
+                  ...buildTrackUrls(t.path, token),
                 };
               });
-              set({ library: latestLibrary });
+              set({
+                library: latestLibrary,
+                artists: data.artists || [],
+                albums: data.albums || [],
+                genres: data.genres || []
+              });
             }
           } catch (e) {
             console.error('Failed to fetch updated library', e);
@@ -387,6 +694,18 @@ export const usePlayerStore = create<PlayerState>()(
         addTrackToPlaylist: (track: TrackInfo) => set((state: PlayerState) => {
           return { playlist: [...state.playlist, track] };
         }),
+
+        playNext: (track: TrackInfo) => set((state: PlayerState) => {
+          const newPlaylist = [...state.playlist];
+          const insertAt = state.currentIndex !== null ? state.currentIndex + 1 : newPlaylist.length;
+          newPlaylist.splice(insertAt, 0, track);
+          return { playlist: newPlaylist };
+        }),
+
+        // Global context menu
+        contextMenu: null as { track: TrackInfo; x: number; y: number } | null,
+        openContextMenu: (track: TrackInfo, x: number, y: number) => set({ contextMenu: { track, x, y } }),
+        closeContextMenu: () => set({ contextMenu: null }),
 
         removeFromPlaylist: (index: number) => set((state: PlayerState) => {
           const newPlaylist = [...state.playlist];
@@ -421,10 +740,6 @@ export const usePlayerStore = create<PlayerState>()(
           return { playlist: newPlaylist, currentIndex: newIndex };
         }),
 
-        navigateView: (view: 'home' | 'artists' | 'albums' | 'genres' | 'artist' | 'album' | 'genre', item: string | null = null) => {
-          set({ currentView: view, selectedItem: item });
-        },
-
         // Playback Actions
         playAtIndex: async (index: number) => {
           const { playlist, volume } = get();
@@ -442,6 +757,12 @@ export const usePlayerStore = create<PlayerState>()(
                await playbackManager.playFile(track.fileHandle);
             }
             set({ currentIndex: index });
+
+            // Telemetry: record successful playback and push to session history
+            get().recordPlay(track.id);
+
+            // Pre-fetch infinite track if bounds are reached
+            get().ensureInfinityQueue();
           } catch (e) {
             console.error("Error playing track", e);
             get().nextTrack(); // try skipping to next
@@ -464,6 +785,11 @@ export const usePlayerStore = create<PlayerState>()(
         nextTrack: async () => {
           const { playlist, currentIndex, shuffle } = get();
           if (playlist.length === 0) return;
+
+          // Telemetry: record skip for the track we are leaving
+          if (currentIndex !== null && playlist[currentIndex]) {
+            get().recordSkip(playlist[currentIndex].id);
+          }
 
           let nextIndex = 0;
           if (shuffle) {
@@ -511,6 +837,31 @@ export const usePlayerStore = create<PlayerState>()(
         setLastFmApiKey: (key: string) => set({ lastFmApiKey: key }),
         setGeniusApiKey: (key: string) => set({ geniusApiKey: key }),
         setPreferredProvider: (provider: 'lastfm' | 'genius') => set({ preferredProvider: provider }),
+
+        recordPlay: (trackId: string) => {
+          // Push trackId to the 50-item rolling session history
+          set((state: PlayerState) => {
+            const updated = [...state.sessionHistoryTrackIds, trackId].slice(-50);
+            return { sessionHistoryTrackIds: updated };
+          });
+          // Fire-and-forget telemetry to backend
+          const authHeaders = (get() as any).getAuthHeader();
+          fetch('/api/playback/record', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders },
+            body: JSON.stringify({ trackId })
+          }).catch((e: Error) => console.warn('Telemetry record failed:', e));
+        },
+
+        recordSkip: (trackId: string) => {
+          // Fire-and-forget telemetry to backend
+          const authHeaders = (get() as any).getAuthHeader();
+          fetch('/api/playback/skip', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders },
+            body: JSON.stringify({ trackId })
+          }).catch((e: Error) => console.warn('Telemetry skip failed:', e));
+        },
       };
     },
     {
@@ -525,7 +876,10 @@ export const usePlayerStore = create<PlayerState>()(
         lastFmApiKey: state.lastFmApiKey,
         geniusApiKey: state.geniusApiKey,
         preferredProvider: state.preferredProvider,
-        authToken: state.authToken
+        authToken: state.authToken,
+        
+        // We do *not* persist DB settings (API keys) in localStorage, we ONLY load them from DB on mount
+        // by calling loadSettings() from an effect in the app root
       }),
     }
   )

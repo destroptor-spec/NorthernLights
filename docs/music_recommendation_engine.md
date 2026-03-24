@@ -1,88 +1,114 @@
 # Antigravity Context: Smart Music Recommendation Engine
 
 ## System Overview
-This document outlines the architecture and constraints for building a precise, non-repetitive music recommendation engine for a local audio library. The goal is to avoid "greedy" nearest-neighbor algorithms (the "Plex Sonic trap") that result in looping, repetitive playlists. The engine must act like a DJ, balancing mathematical similarity with serendipity, history awareness, dynamic feature weighting, and total library size.
+This document outlines the architecture and constraints for building a precise, non-repetitive music recommendation engine. The engine leverages mathematical Audio Feature Extraction stored as vector embeddings, combined with an LLM-driven "Creative Director" to generate dynamic, scheduled Hub playlists.
 
-## 1. Database Schema (SQLite3)
-We are using SQLite3. The database must separate standard metadata from normalized audio features to keep queries performant.
+## 1. Database Migration & Schema (PostgreSQL + pgvector)
+**Migration Requirement:** The system must be migrated from the current SQLite setup to PostgreSQL. We use PostgreSQL with the `pgvector` extension enabled. This allows us to store audio features as native vector arrays and perform lightning-fast similarity searches at the database level.
 
 **Table 1: `tracks`**
-Standard metadata.
-- `id` (INTEGER PRIMARY KEY)
-- `title`, `artist`, `album`, `file_path`, `duration_seconds`
-- `analysis_status` (TEXT) - e.g., 'pending', 'processing', 'completed', 'failed'
+- `id` (SERIAL PRIMARY KEY)
+- `title`, `artist`, `album`, `file_path` (VARCHAR)
+- `duration_seconds` (INTEGER)
+- `analysis_status` (VARCHAR) - e.g., 'pending', 'processing', 'completed', 'failed'
 
 **Table 2: `track_features`**
-Audio analysis data linked via foreign key. All feature columns (except BPM) MUST be normalized (0.0 to 1.0) using Z-score normalization before insertion.
-- `track_id` (FOREIGN KEY REFERENCES tracks(id) ON DELETE CASCADE)
-- `bpm` (REAL)
-- `energy` (REAL) - RMS Energy
-- `brightness` (REAL) - Spectral Centroid
-- `percussiveness` (REAL) - Zero-Crossing Rate
-- `chromagram` (REAL) - Harmonic/Key signature mapping
+Audio analysis data linked via foreign key. The 7 core features are stored in a single `VECTOR(7)` column to allow for native Euclidean distance queries.
+- `track_id` (INTEGER REFERENCES tracks(id) ON DELETE CASCADE)
+- `bpm` (NUMERIC) - Kept separate from the vector as it operates on a different scale.
+- `acoustic_vector` (VECTOR(7)) - An array containing normalized (0.0 to 1.0) values in this strict order:
+  `[energy, brightness, percussiveness, chromagram, instrumentalness, acousticness, danceability]`
+
+*Index:* Apply an HNSW (Hierarchical Navigable Small World) index to the `acoustic_vector` column to ensure query times remain performant even with 100,000+ tracks.
 
 ## 2. Background Worker Architecture (Job Queue)
-Audio extraction is CPU-bound. Antigravity, you MUST implement an asynchronous background worker queue to handle this without blocking the Node.js event loop.
+Audio extraction is CPU-bound. Antigravity, you MUST implement these audio analysis scanning jobs within our **existing asynchronous background worker queue** (if possible) rather than introducing a new queueing architecture.
+- **Concurrency Limits:** Restrict simultaneous processing based on server CPU cores (e.g., `os.cpus().length - 1`).
+- **Error Handling:** Catch exceptions on corrupted tracks, set `analysis_status = 'failed'`, and move to the next job without crashing the worker process.
 
-**Worker Constraints & Logic:**
-1.  **Enqueueing:** When a new folder is scanned, basic metadata is inserted into `tracks` with `analysis_status = 'pending'`. The `track_id` is pushed to the queue.
-2.  **Concurrency Limits:** The worker must restrict simultaneous processing based on server CPU cores (e.g., `os.cpus().length - 1`).
-3.  **The Extraction Pipeline:** Worker picks up job -> reads file -> extracts raw features -> updates `analysis_status` to 'processing'.
-4.  **Error Handling:** If a track is corrupted, the worker must catch the exception, set `analysis_status = 'failed'`, and move to the next job without crashing the worker process.
-
-## 3. Server-Side Normalization
-Once the worker extracts the raw features, apply Z-score normalization across the entire feature dataset so no single feature mathematically dominates the vector distance:
-
-z = (x - μ) / σ
-
-*Note: Normalization should ideally be recalculated periodically via a background job as the library grows.*
+## 3. Server-Side Normalization & Vector Construction
+Upon extraction, apply Z-score normalization to each feature so no single attribute dominates the vector distance. Construct the 7-dimensional array and insert it into the `acoustic_vector` column.
 
 ## 4. Querying & Mathematical Distance
-When querying the SQLite database for the next track, fetch candidate rows and calculate the true Euclidean distance in the TypeScript application code across all normalized features.
+Do NOT perform distance math in TypeScript. Leverage `pgvector`'s native Euclidean distance operator (`<->`) directly in the SQL query.
 
-**Euclidean Distance Formula:**
-d(p,q) = √((p1 - q1)² + (p2 - q2)² + ... + (pn - qn)²)
-*(Where `p` is the seed track, `q` is the candidate, and `1...n` are the feature weights).*
+*Example Query Strategy:*
+```sql
+SELECT track_id, acoustic_vector <-> '[0.8, 0.4, 0.9, 0.2, 0.1, 0.0, 0.8]' AS distance
+FROM track_features
+ORDER BY distance ASC
+LIMIT 50;
+```
+## 5. "Anti-Repetition" Application Logic
+1. **The Wander Factor:** Query the top N nearest neighbors using Postgres, then use a weighted randomizer in TypeScript to pick the final track.
+2. **History Penalty:** Pass a session array of recently_played_artist_ids into the Postgres query (WHERE artist_id NOT IN (...)) to enforce library exploration.
+3. **Dynamic Feature Targeting:** To shift feature weights dynamically, construct a modified target vector in TypeScript before querying Postgres.
+4. **Behavioral Telemetry:** Apply negative weights to target vectors based on skipped tracks.
 
-## 5. "Anti-Repetition" Application Logic (Crucial)
-Antigravity, when implementing the playlist generation algorithm, you MUST implement the following constraints:
+## 6. Dynamic Constraint Scaling
 
-1. **The Wander Factor (Temperature):** Query the top N nearest neighbors from SQLite, then use a weighted randomizer to pick one.
-2. **History Penalty:** Maintain a session array of `recently_played_artist_ids`. Heavily penalize tracks by recently played artists to force library exploration.
-3. **Dynamic Feature Targeting (DJ EQ):** Every 4-5 tracks, randomly shift feature weights (e.g., ignore `energy`, double `chromagram`) to create seamless harmonic transitions while resetting energy.
-4. **Behavioral Telemetry:** If a user skips a track within 15 seconds, dynamically apply a negative weight to that track's specific feature cluster for the remainder of the session.
+Constraints MUST scale based on total indexed tracks (SELECT COUNT(*) FROM tracks).
 
-## 6. Dynamic Constraint Scaling (Library Size Awareness)
-The engine's constraints MUST scale dynamically based on total indexed tracks (`SELECT COUNT(*) FROM tracks`). 
+- **Small (< 500):** Loosen distance thresholds, reduce history penalty.
+- **Medium (500 - 5,000):** 10-track History Penalty, 20-track randomizer pool.
+- **Large (> 5,000):** Strict constraints: 50+ track pool, strict artist/album bans.
 
-- **Small (< 500 tracks):** Reduce History Penalty to 2-3 tracks. Loosen Euclidean distance thresholds.
-- **Medium (500 - 5,000 tracks):** Standard constraints: 10-track History Penalty, 20-track randomizer pool.
-- **Large (> 5,000 tracks):** Strict constraints: 50+ track randomizer pool. Apply album-level or extended artist bans.
+## 7. The "Hub" & Scheduled Generation Pipeline
 
-## 7. LLM-Driven Smart Collections (Prompt-to-Query Pipeline)
-Dynamic playlists ("Smart Collections") will be generated using an external LLM acting as a "Creative Director."
+The Hub is the primary discovery dashboard. This will be our primary library tab, to the left of the "artist" library. Collections are pre-generated by background jobs on a schedule (e.g., nightly) for instant UI load times.
 
-**7.1 Configuration & Provider Setup**
-- The UI must include an "External Providers" section.
-- Required fields: `API Base URL` (defaults to `https://api.openai.com/v1`), `API Key`, and `Model Name`.
+### 7.1 Hub Categories
 
-**7.2 The Execution Pipeline**
-1. **Context Gathering:** The backend generates a text summary of the user's library.
-2. **The Prompt:** The system sends the context to the configured LLM API endpoint instructing it to generate 3-5 creative playlist concepts and assign optimal acoustic target values (0.0 to 1.0) for each.
+- **Up Next:** (Engine-Driven). Nearest neighbors to recent history.
+- **Jump Back In:** (Engine-Driven). Highly-rated tracks not played in > 6 months.
+- **The Vault:** (Engine-Driven). 0-play tracks with high vector similarity to the user's top tracks.
+- **LLM Curated:** (LLM-Driven). Prompt-based thematic and time-of-day collections.
+
+### 7.2 LLM Configuration
+
+- Leverage Existing UI: Utilize the existing "External Providers" section in the app's settings.
+- Ensure the pipeline reads from these existing fields: API Base URL (defaults to OpenAI, configurable for Ollama/LM Studio), API Key, and Model Name.
+
+### 7.3 The LLM Prompt-to-Query Pipeline
+
+1. **Context:** A cron job summarizes user listening history and time-context.
+2. **The Prompt:** Instruct the LLM to act as a Creative Director and request 3-5 Hub playlist concepts with optimal acoustic target values (0.0 to 1.0).
 3. **Expected JSON Output Schema:**
-   The LLM MUST return exactly this JSON structure:
-   ```json
-   {
-     "collections": [
-       {
-         "title": "Neon Night Drive",
-         "description": "Pulsing synthpop with steady beats.",
-         "target_vectors": {
-           "energy": 0.7,
-           "brightness": 0.8,
-           "percussiveness": 0.9
-         },
-         "metadata_bias": {"era": "1980s"}
-       }
-     ]
-   }
+  ```json
+  {
+    "hub_collections": [
+      {
+        "section": "Time-of-Day",
+        "title": "Deep Work Coding",
+        "description": "Driving electronic beats with zero vocals.",
+        "target_vectors": [0.6, 0.3, 0.8, 0.5, 0.9, 0.1, 0.8] 
+      }
+    ]
+  }
+  ```
+4. **Resolution & Caching:** The backend queries Postgres using the target_vectors array, retrieving the top 50 local tracks, and caches the results in a hub_cache table.
+
+## 8. Tech Stack & Approved Dependencies
+
+- **Audio Feature Extraction:** essentia.js (preferred for deep acoustic/MFCC analysis) or meyda.
+- **Background Queue:** Utilize the app's existing background worker queue setup.
+- **Database:** PostgreSQL (v15+) with the pgvector extension.
+- **ORM / Query Builder:** drizzle-orm or prisma (ensure the chosen tool has standard pgvector support) or raw pg queries.
+- **LLM Integration:** Official openai Node SDK with configurable baseURL pulling from the existing settings store.
+
+## 9. Future Roadmap: "Don't Stop the Music" (Infinity Mode)
+When a user enables "Don't Stop the Music," the engine will automatically append tracks once the current queue/playlist ends. To maintain the overarching context of the listening session, the engine MUST NOT rely solely on the final track's vector. 
+
+Antigravity, implement the following multi-track context logic for Infinity Mode:
+
+**9.1 The Weighted Decay Centroid**
+Calculate the target vector by taking a weighted average of the last 10 played tracks. Apply an exponential decay factor (e.g., `lambda = 0.8`) so the most recent track heavily influences the immediate vibe, while the previous 9 tracks anchor the overall genre and acoustic signature.
+- This prevents a single outlier track at the end of a playlist from derailing the entire radio session.
+
+**9.2 Momentum & Trajectory Tracking**
+Before querying Postgres, analyze the delta (rate of change) of the `energy` and `danceability` vectors across the last 3 tracks. 
+- If the trend is strictly positive (a build-up), apply a slight positive multiplier (e.g., +10%) to the target vector's energy before executing the Euclidean distance search.
+- If the trend is negative (a wind-down), apply a slight negative multiplier.
+
+**9.3 Extended History Penalties**
+Because Infinity Mode can run for hours, the standard session history penalty must be expanded. Maintain a rolling queue of the last 50 played `track_id`s and `artist_id`s. Pass these into the Postgres query (`WHERE track_id NOT IN (...)`) to guarantee zero track repetition and minimal artist clustering during marathon sessions.

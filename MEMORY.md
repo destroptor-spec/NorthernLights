@@ -1,5 +1,14 @@
 # Project Memory / Changelog
 
+## [2026-03-23] AI Playlists, Queue Architecture & System Resilience
+- **Database Resilience**: App now boots even if PostgreSQL is unreachable, displaying a full-page graceful error UI that polls for health recovery.
+- **Robust LLM Integration**: Rewrote `llm.service` response parsing to handle unpredictable local LLM outputs (LM Studio, Ollama). SetupWizard now includes a dedicated LLM configuration step with token usage estimation and live connection testing. Added manual custom playlist generation via a prompt modal.
+- **Recommendation Engine Upgrades**: Engine-driven playlists now use advanced math:
+  - *Up Next & The Vault*: Re-ranked using a custom `reRankByHopCost` blending acoustic vector distance with a pre-calculated genre adjacency matrix.
+  - *Jump Back In*: Replaced a broken rating system with a Heat Score calculation (`playCount × quadratic time decay`).
+- **Global Track Context Menu**: Engineered a React Portal-based context menu (`TrackContextMenu`) accessible via a `⋯` button anywhere a track is rendered (Album, Search, Queue). Supports "Play Next" and "Add to Playlist" globally.
+- **Drag-and-Drop Play Queue**: Refactored the `PlaylistSidebar` to support smooth drag-and-drop track reordering with visual drop indicators, hover drag handles, and transparent drag ghosts.
+
 ## [2026-03-13] Glassy UI Phase 2 & Audio Waveforms
 - **Waveform Progress Bar**: Implemented a canvas-based `WaveformProgressBar` using the Web Audio API to decode audio files on-the-fly and render amplitude peaks as interactive bars.
 - **Glassy Design System**: Refined the theme with a "premium glass" aesthetic:

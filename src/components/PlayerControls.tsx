@@ -57,6 +57,12 @@ const IconVolume = () => (
   </svg>
 );
 
+const IconInfinity = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="20" height="20">
+    <path d="M12 12c-2-2.67-4-4-6-4a4 4 0 1 0 0 8c2 0 4-1.33 6-4Zm0 0c2 2.67 4 4 6 4a4 4 0 1 0 0-8c-2 0-4 1.33-6 4Z"/>
+  </svg>
+);
+
 const PlayerControls = () => {
   const playbackState = usePlayerStore((state) => state.playbackState);
   const isPlaying = playbackState === 'playing';
@@ -70,6 +76,8 @@ const PlayerControls = () => {
   const toggleShuffle = usePlayerStore((state) => state.toggleShuffle);
   const repeat = usePlayerStore((state) => state.repeat);
   const cycleRepeatAction = usePlayerStore((state) => state.cycleRepeat);
+  const isInfinityMode = usePlayerStore((state) => state.isInfinityMode);
+  const toggleInfinityMode = usePlayerStore((state) => state.toggleInfinityMode);
   const playlist = usePlayerStore((state) => state.playlist);
   const currentIndex = usePlayerStore((state) => state.currentIndex);
 
@@ -146,6 +154,18 @@ const PlayerControls = () => {
         <button onClick={cycleRepeatAction} aria-label="Cycle repeat mode" className="player-control-btn"
           style={{ opacity: repeat === 'none' ? 0.4 : 1 }}>
           {repeat === 'one' ? <IconRepeatOne /> : <IconRepeatAll />}
+        </button>
+      </div>
+
+      <div className="infinity-toggle" style={{ marginLeft: '12px' }}>
+        <button onClick={toggleInfinityMode} aria-label="Toggle Infinity Mode" className="player-control-btn"
+          style={{ 
+            opacity: isInfinityMode ? 1 : 0.4, 
+            color: isInfinityMode ? 'var(--aurora-purple)' : 'inherit',
+            filter: isInfinityMode ? 'drop-shadow(0 0 6px var(--aurora-purple))' : 'none',
+            transition: 'all 0.3s ease'
+          }}>
+          <IconInfinity />
         </button>
       </div>
 

@@ -1,11 +1,11 @@
 /**
  * Split an ID3/Vorbis artist string into individual artist names.
- * Handles common multi-artist delimiters: / \ ; feat. &
+ * Handles common multi-artist delimiters: / \ ; feat. ft. featuring &
  */
 export function parseArtists(artistStr?: string): string[] {
   if (!artistStr) return [];
   return artistStr
-    .split(/\s*[\/\\;]\s*|\s+feat\.?\s+|\s+&\s+/i)
+    .split(/\s*[\/\\;]\s*|\s+(?:feat\.?|ft\.?|featuring)\s+|\s+&\s+/i)
     .map(a => a.trim())
     .filter(Boolean);
 }

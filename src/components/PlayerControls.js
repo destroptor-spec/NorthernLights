@@ -12,6 +12,7 @@ const IconSequential = () => (_jsx("svg", { viewBox: "0 0 24 24", fill: "current
 const IconRepeatAll = () => (_jsx("svg", { viewBox: "0 0 24 24", fill: "currentColor", children: _jsx("path", { d: "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z" }) }));
 const IconRepeatOne = () => (_jsx("svg", { viewBox: "0 0 24 24", fill: "currentColor", children: _jsx("path", { d: "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z" }) }));
 const IconVolume = () => (_jsx("svg", { viewBox: "0 0 24 24", fill: "currentColor", width: "16", height: "16", children: _jsx("path", { d: "M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" }) }));
+const IconInfinity = () => (_jsx("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", width: "20", height: "20", children: _jsx("path", { d: "M12 12c-2-2.67-4-4-6-4a4 4 0 1 0 0 8c2 0 4-1.33 6-4Zm0 0c2 2.67 4 4 6 4a4 4 0 1 0 0-8c-2 0-4 1.33-6 4Z" }) }));
 const PlayerControls = () => {
     const playbackState = usePlayerStore((state) => state.playbackState);
     const isPlaying = playbackState === 'playing';
@@ -25,6 +26,8 @@ const PlayerControls = () => {
     const toggleShuffle = usePlayerStore((state) => state.toggleShuffle);
     const repeat = usePlayerStore((state) => state.repeat);
     const cycleRepeatAction = usePlayerStore((state) => state.cycleRepeat);
+    const isInfinityMode = usePlayerStore((state) => state.isInfinityMode);
+    const toggleInfinityMode = usePlayerStore((state) => state.toggleInfinityMode);
     const playlist = usePlayerStore((state) => state.playlist);
     const currentIndex = usePlayerStore((state) => state.currentIndex);
     const togglePlay = React.useCallback(() => {
@@ -77,6 +80,11 @@ const PlayerControls = () => {
     }, [togglePlay, nextTrackAction, prevTrackAction, setVolume, volume, toggleShuffle, cycleRepeatAction]);
     useVolumeSync();
     const volumePercent = Math.round(volume * 100);
-    return (_jsxs("div", { className: "player-controls", children: [_jsx("button", { onClick: toggleShuffle, "aria-label": "Toggle shuffle", className: "player-control-btn", style: { opacity: shuffle ? 1 : 0.4 }, children: shuffle ? _jsx(IconShuffle, {}) : _jsx(IconSequential, {}) }), _jsx("button", { onClick: prevTrackAction, "aria-label": "Previous track", className: "player-control-btn", children: _jsx(IconPrev, {}) }), _jsx("button", { onClick: togglePlay, "aria-label": isPlaying ? "Pause" : "Play", className: "player-control-btn play-btn-main", children: isPlaying ? _jsx(IconPause, {}) : _jsx(IconPlay, {}) }), _jsx("button", { onClick: nextTrackAction, "aria-label": "Next track", className: "player-control-btn", children: _jsx(IconNext, {}) }), _jsx("div", { className: "repeat-toggle", children: _jsx("button", { onClick: cycleRepeatAction, "aria-label": "Cycle repeat mode", className: "player-control-btn", style: { opacity: repeat === 'none' ? 0.4 : 1 }, children: repeat === 'one' ? _jsx(IconRepeatOne, {}) : _jsx(IconRepeatAll, {}) }) }), _jsxs("div", { className: "volume-control", style: { marginLeft: 'auto' }, children: [_jsx("span", { className: "volume-icon", children: _jsx(IconVolume, {}) }), _jsx("input", { id: "volume-slider", type: "range", min: 0, max: 1, step: 0.01, value: volume, onChange: (e) => setVolume(parseFloat(e.target.value)), className: "volume-slider" }), _jsxs("span", { style: { minWidth: 28, fontSize: '0.68rem', color: 'var(--color-text-muted)', fontVariantNumeric: 'tabular-nums' }, children: [volumePercent, "%"] })] })] }));
+    return (_jsxs("div", { className: "player-controls", children: [_jsx("button", { onClick: toggleShuffle, "aria-label": "Toggle shuffle", className: "player-control-btn", style: { opacity: shuffle ? 1 : 0.4 }, children: shuffle ? _jsx(IconShuffle, {}) : _jsx(IconSequential, {}) }), _jsx("button", { onClick: prevTrackAction, "aria-label": "Previous track", className: "player-control-btn", children: _jsx(IconPrev, {}) }), _jsx("button", { onClick: togglePlay, "aria-label": isPlaying ? "Pause" : "Play", className: "player-control-btn play-btn-main", children: isPlaying ? _jsx(IconPause, {}) : _jsx(IconPlay, {}) }), _jsx("button", { onClick: nextTrackAction, "aria-label": "Next track", className: "player-control-btn", children: _jsx(IconNext, {}) }), _jsx("div", { className: "repeat-toggle", children: _jsx("button", { onClick: cycleRepeatAction, "aria-label": "Cycle repeat mode", className: "player-control-btn", style: { opacity: repeat === 'none' ? 0.4 : 1 }, children: repeat === 'one' ? _jsx(IconRepeatOne, {}) : _jsx(IconRepeatAll, {}) }) }), _jsx("div", { className: "infinity-toggle", style: { marginLeft: '12px' }, children: _jsx("button", { onClick: toggleInfinityMode, "aria-label": "Toggle Infinity Mode", className: "player-control-btn", style: {
+                        opacity: isInfinityMode ? 1 : 0.4,
+                        color: isInfinityMode ? 'var(--aurora-purple)' : 'inherit',
+                        filter: isInfinityMode ? 'drop-shadow(0 0 6px var(--aurora-purple))' : 'none',
+                        transition: 'all 0.3s ease'
+                    }, children: _jsx(IconInfinity, {}) }) }), _jsxs("div", { className: "volume-control", style: { marginLeft: 'auto' }, children: [_jsx("span", { className: "volume-icon", children: _jsx(IconVolume, {}) }), _jsx("input", { id: "volume-slider", type: "range", min: 0, max: 1, step: 0.01, value: volume, onChange: (e) => setVolume(parseFloat(e.target.value)), className: "volume-slider" }), _jsxs("span", { style: { minWidth: 28, fontSize: '0.68rem', color: 'var(--color-text-muted)', fontVariantNumeric: 'tabular-nums' }, children: [volumePercent, "%"] })] })] }));
 };
 export default PlayerControls;

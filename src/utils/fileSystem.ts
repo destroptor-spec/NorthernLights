@@ -34,6 +34,13 @@ export interface TrackInfo {
   year?: number;
   releaseType?: string;
   isCompilation?: boolean | number;
+  bitrate?: number;
+  format?: string;
+  
+  // Entity IDs for navigation
+  artistId?: string;
+  albumId?: string;
+  genreId?: string;
   
   // Legacy / UI fields
   fileHandle?: FileSystemFileHandle;
@@ -41,6 +48,7 @@ export interface TrackInfo {
   artUrl?: string;
   _pictureData?: { data: string; format: string };
   _format?: string;
+  isInfinity?: boolean;
 }
 
 const DB_NAME = "MusicPlayerDB";
@@ -54,7 +62,6 @@ async function getDB() {
         db.createObjectStore(STORE_NAME, { keyPath: "fileHandle" });
       }
       if (!db.objectStoreNames.contains(FOLDERS_STORE)) {
-        // Store directory handles by their unique name or id
         db.createObjectStore(FOLDERS_STORE, { keyPath: "name" });
       }
     },

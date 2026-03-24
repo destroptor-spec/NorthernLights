@@ -1,24 +1,26 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { AlbumArt } from '../AlbumArt';
+import { Play } from 'lucide-react';
 
 interface AlbumCardProps {
     title: string;
     artist: string;
     artUrl?: string;
-    subtitle?: string; // e.g. track count or secondary text
+    subtitle?: string;
     onPlay: (e: React.MouseEvent) => void;
-    onOpen: () => void;
+    onOpen?: () => void;
+    linkTo?: string;
 }
 
-export const AlbumCard: React.FC<AlbumCardProps> = ({ title, artist, artUrl, subtitle, onPlay, onOpen }) => {
-    return (
+export const AlbumCard: React.FC<AlbumCardProps> = ({ title, artist, artUrl, subtitle, onPlay, onOpen, linkTo }) => {
+    const cardContent = (
         <div
             className="album-card group flex flex-col cursor-pointer"
             onClick={onOpen}
         >
             {/* Art container */}
             <div className="relative aspect-square w-full mb-3 rounded-2xl border border-[var(--glass-border)] bg-[var(--color-surface)] shadow-[var(--shadow-md)] overflow-hidden">
-                {/* Album art fills the container */}
                 <AlbumArt
                     artUrl={artUrl}
                     artist={artist}
@@ -29,7 +31,6 @@ export const AlbumCard: React.FC<AlbumCardProps> = ({ title, artist, artUrl, sub
 
                 {/* Hover overlay */}
                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-all duration-300 flex items-center justify-center">
-                    {/* Play button — stops propagation so it plays without entering album view */}
                     <button
                         onClick={(e) => { e.stopPropagation(); onPlay(e); }}
                         aria-label={`Play ${title}`}
@@ -50,10 +51,7 @@ export const AlbumCard: React.FC<AlbumCardProps> = ({ title, artist, artUrl, sub
                             color: '#fff',
                         }}
                     >
-                        {/* Inline play triangle */}
-                        <svg viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
-                            <path d="M8 5v14l11-7z" />
-                        </svg>
+                        <Play size={24} className="text-white ml-0.5" />
                     </button>
                 </div>
             </div>
@@ -69,4 +67,10 @@ export const AlbumCard: React.FC<AlbumCardProps> = ({ title, artist, artUrl, sub
             </div>
         </div>
     );
+
+    if (linkTo) {
+        return <Link to={linkTo} className="no-underline">{cardContent}</Link>;
+    }
+
+    return cardContent;
 };

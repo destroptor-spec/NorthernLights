@@ -34,25 +34,15 @@ export const LibraryHome = () => {
     const currentView = usePlayerStore(state => state.currentView);
     // Derive unique Albums, Artists, and Genres from the library
     const { albums, artists, genres } = useMemo(() => {
-        const albumMap = new Map();
+        const albumGroups = new Map();
         const artistSet = new Set();
         const genreSet = new Set();
         library.forEach((track) => {
-            // Album
+            // Album Grouping - Pass 1
             if (track.album) {
-                const albumArtist = track.albumArtist || track.artist || 'Unknown Artist';
-                const key = `${track.album}-${albumArtist}`;
-                if (!albumMap.has(key)) {
-                    albumMap.set(key, {
-                        title: track.album,
-                        artist: albumArtist,
-                        artUrl: track.artUrl,
-                        trackCount: 1
-                    });
-                }
-                else {
-                    albumMap.get(key).trackCount++;
-                }
+                const group = albumGroups.get(track.album) || [];
+                group.push(track);
+                albumGroups.set(track.album, group);
             }
             // Artist
             if (track.artists && Array.isArray(track.artists)) {
@@ -62,13 +52,52 @@ export const LibraryHome = () => {
                 artistSet.add(track.artist);
             }
             // Genre
-            // Extract from any generic property if added later, falling back to empty for now
             if (track.genre) {
                 genreSet.add(track.genre);
             }
         });
+        // Album Grouping - Pass 2 (Partition by AlbumArtist, or collapse to Various Artists)
+        const finalAlbums = [];
+        for (const [albumTitle, tracks] of albumGroups.entries()) {
+            const subAlbums = new Map();
+            tracks.forEach(track => {
+                const explicitAA = track.albumArtist || '';
+                const subGroup = subAlbums.get(explicitAA) || [];
+                subGroup.push(track);
+                subAlbums.set(explicitAA, subGroup);
+            });
+            for (const [explicitAA, subTracks] of subAlbums.entries()) {
+                if (explicitAA !== '') {
+                    finalAlbums.push({
+                        title: albumTitle,
+                        artist: explicitAA,
+                        artUrl: subTracks.find(t => t.artUrl)?.artUrl,
+                        trackCount: subTracks.length
+                    });
+                }
+                else {
+                    const uniqueArtists = new Set(subTracks.map(t => t.artist || 'Unknown Artist'));
+                    if (uniqueArtists.size === 1) {
+                        finalAlbums.push({
+                            title: albumTitle,
+                            artist: Array.from(uniqueArtists)[0],
+                            artUrl: subTracks.find(t => t.artUrl)?.artUrl,
+                            trackCount: subTracks.length
+                        });
+                    }
+                    else {
+                        finalAlbums.push({
+                            title: albumTitle,
+                            artist: 'Various Artists',
+                            artUrl: subTracks.find(t => t.artUrl)?.artUrl,
+                            trackCount: subTracks.length
+                        });
+                    }
+                }
+            }
+        }
         return {
-            albums: Array.from(albumMap.values()).sort((a, b) => a.title.localeCompare(b.title)),
+            albums: finalAlbums.sort((a, b) => a.title.localeCompare(b.title)),
             artists: Array.from(artistSet).sort((a, b) => a.localeCompare(b)),
             genres: Array.from(genreSet).sort(),
         };
@@ -76,24 +105,18 @@ export const LibraryHome = () => {
     if (library.length === 0) {
         return null; // Handled by App.tsx empty state
     }
-    return (_jsxs("div", { className: "library-home p-4 md:p-8 lg:p-12 overflow-y-auto flex-1", children: [_jsx("div", { className: "flex gap-3 mb-8 md:mb-10", children: ['artists', 'albums', 'genres'].map(tab => {
-                    const isActive = currentView === tab;
-                    return (_jsx("button", { onClick: () => navigateView(tab), className: `
-                                capitalize font-semibold text-sm px-5 py-2 rounded-full
-                                border backdrop-blur-md
-                                transition-all duration-200 cursor-pointer
-                                active:scale-95
-                                ${isActive
-                            ? 'text-white border-purple-500/50 shadow-[0_0_18px_rgba(139,92,246,0.4)] hover:shadow-[0_0_24px_rgba(139,92,246,0.55)] hover:brightness-110'
-                            : 'text-[var(--color-text-secondary)] border-[var(--color-border)] bg-black/5 dark:bg-white/[0.06] hover:bg-black/10 dark:hover:bg-white/[0.12] hover:text-[var(--color-text-primary)] hover:border-[var(--glass-border-hover)]'}
-                            `, style: isActive ? {
-                            background: 'linear-gradient(145deg, rgba(139, 92, 246, 0.85), rgba(109, 40, 217, 0.9))',
-                            border: '1px solid rgba(168, 85, 247, 0.5)',
-                            boxShadow: '0 0 18px rgba(139, 92, 246, 0.4), inset 0 1px 0 rgba(255,255,255,0.15)',
-                        } : {}, children: tab }, tab));
-                }) }), _jsxs("div", { className: "library-sections", children: [(currentView === 'albums' || currentView === 'home') && (_jsx("section", { className: "library-section mb-8 md:mb-12", children: _jsx("div", { className: "album-grid grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 md:gap-6", children: albums.map(album => {
-                                const albumTracks = library.filter(t => t.album === album.title && (t.albumArtist || t.artist) === album.artist).sort((a, b) => (a.trackNumber ?? 999) - (b.trackNumber ?? 999));
-                                return (_jsx(AlbumCard, { title: album.title, artist: album.artist, artUrl: album.artUrl, subtitle: album.artist, onOpen: () => navigateView('album', `${album.title}::::${album.artist}`), onPlay: (e) => { if (albumTracks.length)
-                                        setPlaylist(albumTracks, 0); } }, `${album.title}-${album.artist}`));
-                            }) }) })), (currentView === 'artists') && (_jsx("section", { className: "library-section mb-8 md:mb-12", children: _jsx("div", { className: "artist-grid grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 md:gap-6", children: artists.map(artist => (_jsx(ArtistCard, { artist: artist, onClick: () => navigateView('artist', artist) }, artist))) }) })), (currentView === 'genres') && (_jsx("section", { className: "library-section", children: genres.length === 0 ? (_jsx("p", { style: { color: 'var(--color-text-muted)' }, children: "No genres found in your library." })) : (_jsx("div", { className: "genre-grid grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 md:gap-6", children: genres.map(genre => (_jsx(GenreCard, { genre: genre, onClick: () => navigateView('genre', genre) }, genre))) })) }))] })] }));
+    return (_jsx("div", { className: "library-home p-4 md:p-8 lg:p-12 overflow-y-auto flex-1", children: _jsxs("div", { className: "library-sections", children: [(currentView === 'albums' || currentView === 'home') && (_jsx("section", { className: "library-section mb-8 md:mb-12", children: _jsx("div", { className: "album-grid grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 md:gap-6", children: albums.map(album => {
+                            const albumTracks = library.filter(t => t.album === album.title);
+                            // We don't need to filter by artist here because we pass navigateView('album', ...) which does the tight filtering in AlbumDetail.
+                            // But for the direct play button on the card, we want just *this* album's tracks:
+                            const explicitTracks = albumTracks.filter(t => {
+                                if (t.albumArtist)
+                                    return t.albumArtist === album.artist;
+                                if (album.artist === 'Various Artists')
+                                    return !t.albumArtist;
+                                return (t.artist || 'Unknown Artist') === album.artist && !t.albumArtist;
+                            }).sort((a, b) => (a.trackNumber ?? 999) - (b.trackNumber ?? 999));
+                            return (_jsx(AlbumCard, { title: album.title, artist: album.artist, artUrl: album.artUrl, subtitle: album.artist, onOpen: () => navigateView('album', `${album.title}::::${album.artist}`), onPlay: (e) => { if (explicitTracks.length)
+                                    setPlaylist(explicitTracks, 0); } }, `${album.title}-${album.artist}`));
+                        }) }) })), (currentView === 'artists') && (_jsx("section", { className: "library-section mb-8 md:mb-12", children: _jsx("div", { className: "artist-grid grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 md:gap-6", children: artists.map(artist => (_jsx(ArtistCard, { artist: artist, onClick: () => navigateView('artist', artist) }, artist))) }) })), (currentView === 'genres') && (_jsx("section", { className: "library-section", children: genres.length === 0 ? (_jsx("p", { style: { color: 'var(--color-text-muted)' }, children: "No genres found in your library." })) : (_jsx("div", { className: "genre-grid grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 md:gap-6", children: genres.map(genre => (_jsx(GenreCard, { genre: genre, onClick: () => navigateView('genre', genre) }, genre))) })) }))] }) }));
 };

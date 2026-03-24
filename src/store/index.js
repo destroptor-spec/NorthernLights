@@ -10,7 +10,7 @@ export const usePlayerStore = create()(persist((set, get) => {
         onPlayStateChange: (state) => set({ playbackState: state }),
         onEnded: () => {
             // Auto-play next track based on repeat and shuffle rules
-            const { repeat, nextTrack, stop } = get();
+            const { repeat, nextTrack, stop, fetchNextInfinityTrack } = get();
             if (repeat === 'one') {
                 // Let the audio element handle loop if we implemented it, or manually replay
                 get().playAtIndex(get().currentIndex);
@@ -18,8 +18,12 @@ export const usePlayerStore = create()(persist((set, get) => {
             else if (repeat === 'none') {
                 // Stop at end of list
                 const currentIdx = get().currentIndex;
-                if (currentIdx < get().tracks.length - 1 || get().shuffle) {
+                if (currentIdx < get().playlist.length - 1 || get().shuffle) {
                     nextTrack();
+                }
+                else if (get().isInfinityMode) {
+                    // Infinity Mode bounds reached! Fetch the next track natively
+                    fetchNextInfinityTrack(false);
                 }
                 else {
                     stop();
@@ -35,8 +39,9 @@ export const usePlayerStore = create()(persist((set, get) => {
         // Initial State
         library: [],
         libraryFolders: [],
+        playlists: [],
         playlist: [],
-        currentView: 'artists',
+        currentView: 'home',
         selectedItem: null,
         isScanning: false,
         scanPhase: 'idle',
@@ -58,6 +63,19 @@ export const usePlayerStore = create()(persist((set, get) => {
         geniusApiKey: '',
         preferredProvider: 'lastfm',
         authToken: null,
+        isInfinityMode: true,
+        isFetchingInfinity: false,
+        discoveryLevel: 50,
+        genreStrictness: 50,
+        artistAmnesiaLimit: 50,
+        audioAnalysisCpu: 'Balanced',
+        hubGenerationSchedule: 'Daily',
+        llmBaseUrl: 'https://api.openai.com/v1',
+        llmApiKey: '',
+        llmModelName: 'gpt-4',
+        genreMatrixLastRun: null,
+        genreMatrixLastResult: null,
+        sessionHistoryTrackIds: [],
         // Actions
         checkSetupStatus: async () => {
             try {
@@ -100,6 +118,137 @@ export const usePlayerStore = create()(persist((set, get) => {
             // The browser will use its native basic auth popup if no authorization header is explicit
             return {};
         },
+        setSettings: (settings) => {
+            set((state) => ({ ...state, ...settings }));
+        },
+        loadSettings: async () => {
+            try {
+                const authHeaders = get().getAuthHeader();
+                const res = await fetch('/api/settings', { headers: authHeaders });
+                if (res.ok) {
+                    const data = await res.json();
+                    set({
+                        discoveryLevel: data.discoveryLevel !== undefined ? data.discoveryLevel : 50,
+                        genreStrictness: data.genreStrictness !== undefined ? data.genreStrictness : 50,
+                        artistAmnesiaLimit: data.artistAmnesiaLimit !== undefined ? data.artistAmnesiaLimit : 50,
+                        audioAnalysisCpu: data.audioAnalysisCpu || 'Balanced',
+                        hubGenerationSchedule: data.hubGenerationSchedule || 'Daily',
+                        llmBaseUrl: data.llmBaseUrl || 'https://api.openai.com/v1',
+                        llmApiKey: data.llmApiKey || '',
+                        llmModelName: data.llmModelName || 'gpt-4',
+                        genreMatrixLastRun: data.genreMatrixLastRun || null,
+                        genreMatrixLastResult: data.genreMatrixLastResult || null
+                    });
+                }
+            }
+            catch (e) {
+                console.error('Failed to load DB settings', e);
+            }
+        },
+        saveSettings: async () => {
+            try {
+                const state = get();
+                const authHeaders = state.getAuthHeader();
+                const payload = {
+                    discoveryLevel: state.discoveryLevel,
+                    genreStrictness: state.genreStrictness,
+                    artistAmnesiaLimit: state.artistAmnesiaLimit,
+                    audioAnalysisCpu: state.audioAnalysisCpu,
+                    hubGenerationSchedule: state.hubGenerationSchedule,
+                    llmBaseUrl: state.llmBaseUrl,
+                    llmApiKey: state.llmApiKey,
+                    llmModelName: state.llmModelName
+                };
+                await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...authHeaders },
+                    body: JSON.stringify(payload)
+                });
+            }
+            catch (e) {
+                console.error('Failed to save settings', e);
+            }
+        },
+        toggleInfinityMode: () => {
+            const state = get();
+            const newMode = !state.isInfinityMode;
+            set({ isInfinityMode: newMode });
+            if (newMode) {
+                get().ensureInfinityQueue();
+            }
+        },
+        ensureInfinityQueue: async () => {
+            const state = get();
+            if (!state.isInfinityMode || state.isFetchingInfinity)
+                return;
+            const currentIndex = state.currentIndex !== null ? state.currentIndex : 0;
+            const remaining = Math.max(0, state.playlist.length - 1 - currentIndex);
+            // Prefetch if there are no upcoming tracks in the queue
+            if (remaining < 1 && state.playlist.length > 0) {
+                await get().fetchNextInfinityTrack(true);
+            }
+        },
+        fetchNextInfinityTrack: async (isPrefetch = false) => {
+            const state = get();
+            if (state.isFetchingInfinity)
+                return;
+            set({ isFetchingInfinity: true });
+            try {
+                const authHeaders = state.getAuthHeader();
+                const payload = {
+                    sessionHistoryTrackIds: state.sessionHistoryTrackIds,
+                    settings: {
+                        discoveryLevel: state.discoveryLevel,
+                        genreStrictness: state.genreStrictness,
+                        artistAmnesiaLimit: state.artistAmnesiaLimit,
+                    }
+                };
+                const res = await fetch('/api/recommend', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...authHeaders },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.track) {
+                        const { authToken } = state;
+                        const token = authToken || '';
+                        const host = window.location.host;
+                        const protocol = window.location.protocol;
+                        const safeBtoa = (str) => {
+                            return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (match, p1) => {
+                                return String.fromCharCode(parseInt(p1, 16));
+                            }));
+                        };
+                        const track = {
+                            ...data.track,
+                            isInfinity: true,
+                            artists: typeof data.track.artists === 'string' ? JSON.parse(data.track.artists) : data.track.artists,
+                            url: `${protocol}//${host}/api/stream?pathB64=${safeBtoa(data.track.path)}${token ? '&token=' + token : ''}`,
+                            artUrl: `${protocol}//${host}/api/art?pathB64=${safeBtoa(data.track.path)}${token ? '&token=' + token : ''}`
+                        };
+                        get().addTrackToPlaylist(track);
+                        if (!isPrefetch) {
+                            get().playAtIndex(state.playlist.length); // Play the newly appended track
+                        }
+                    }
+                    else if (!isPrefetch) {
+                        get().stop();
+                    }
+                }
+                else if (!isPrefetch) {
+                    get().stop();
+                }
+            }
+            catch (e) {
+                console.error("Failed to fetch infinity track", e);
+                if (!isPrefetch)
+                    get().stop();
+            }
+            finally {
+                set({ isFetchingInfinity: false });
+            }
+        },
         fetchLibraryFromServer: async () => {
             try {
                 const res = await fetch('/api/library');
@@ -109,6 +258,12 @@ export const usePlayerStore = create()(persist((set, get) => {
                     const token = authToken || '';
                     const host = window.location.host; // e.g. localhost:3000
                     const protocol = window.location.protocol;
+                    // Helper to safely base64 encode strings that might contain multibyte characters
+                    const safeBtoa = (str) => {
+                        return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (match, p1) => {
+                            return String.fromCharCode(parseInt(p1, 16));
+                        }));
+                    };
                     const libraryWithUrls = data.tracks.map((t) => {
                         let artistsArray = t.artists;
                         if (typeof t.artists === 'string') {
@@ -120,8 +275,8 @@ export const usePlayerStore = create()(persist((set, get) => {
                         return {
                             ...t,
                             artists: artistsArray,
-                            url: `${protocol}//${host}/api/stream?path=${encodeURIComponent(t.path)}${token ? `&token=${token}` : ''}`,
-                            artUrl: `${protocol}//${host}/api/art?path=${encodeURIComponent(t.path)}${token ? `&token=${token}` : ''}`
+                            url: `${protocol}//${host}/api/stream?pathB64=${safeBtoa(t.path)}${token ? `&token=${token}` : ''}`,
+                            artUrl: `${protocol}//${host}/api/art?pathB64=${safeBtoa(t.path)}${token ? `&token=${token}` : ''}`
                         };
                     });
                     set({ library: libraryWithUrls, libraryFolders: data.directories });
@@ -129,6 +284,74 @@ export const usePlayerStore = create()(persist((set, get) => {
             }
             catch (e) {
                 console.error("Failed to fetch library from server", e);
+            }
+        },
+        fetchPlaylistsFromServer: async () => {
+            try {
+                const authHeaders = get().getAuthHeader();
+                const res = await fetch('/api/playlists', { headers: authHeaders });
+                if (res.ok) {
+                    const data = await res.json();
+                    const { authToken, library } = get();
+                    const token = authToken || '';
+                    const host = window.location.host;
+                    const protocol = window.location.protocol;
+                    const safeBtoa = (str) => {
+                        return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (match, p1) => {
+                            return String.fromCharCode(parseInt(p1, 16));
+                        }));
+                    };
+                    // Map track objects inside playlists to have full stream URLs
+                    const populatedPlaylists = data.playlists.map((pl) => {
+                        const mappedTracks = pl.tracks.map((t) => {
+                            const fullTrack = library.find((lt) => lt.id === t.id);
+                            if (!fullTrack)
+                                return null;
+                            return {
+                                ...fullTrack,
+                                url: `${protocol}//${host}/api/stream?pathB64=${safeBtoa(fullTrack.path)}${token ? `&token=${token}` : ''}`,
+                                artUrl: `${protocol}//${host}/api/art?pathB64=${safeBtoa(fullTrack.path)}${token ? `&token=${token}` : ''}`
+                            };
+                        }).filter(Boolean);
+                        return { ...pl, tracks: mappedTracks };
+                    });
+                    set({ playlists: populatedPlaylists });
+                }
+            }
+            catch (e) {
+                console.error("Failed to fetch playlists from server", e);
+            }
+        },
+        createPlaylist: async (title, description) => {
+            try {
+                const authHeaders = get().getAuthHeader();
+                const res = await fetch('/api/playlists', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...authHeaders },
+                    body: JSON.stringify({ title, description })
+                });
+                if (res.ok) {
+                    await get().fetchPlaylistsFromServer();
+                }
+            }
+            catch (e) {
+                console.error("Failed to create playlist", e);
+            }
+        },
+        addTracksToUserPlaylist: async (playlistId, trackIds) => {
+            try {
+                const authHeaders = get().getAuthHeader();
+                const res = await fetch(`/api/playlists/${playlistId}/tracks`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...authHeaders },
+                    body: JSON.stringify({ trackIds })
+                });
+                if (res.ok) {
+                    await get().fetchPlaylistsFromServer();
+                }
+            }
+            catch (e) {
+                console.error(`Failed to add tracks to playlist ${playlistId}`, e);
             }
         },
         addTracksToLibrary: (newTracks) => set((state) => {
@@ -169,7 +392,20 @@ export const usePlayerStore = create()(persist((set, get) => {
             if (state.libraryFolders.includes(folderPath))
                 return;
             set({ libraryFolders: [...state.libraryFolders, folderPath] });
-            await get().rescanLibrary();
+            try {
+                const authHeaders = get().getAuthHeader();
+                // Instantly register the folder to the DB so page refreshes don't lose it
+                await fetch('/api/library/add', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...authHeaders },
+                    body: JSON.stringify({ path: folderPath })
+                });
+                // Queue a scan for JUST this newly added folder
+                await get().rescanLibrary(folderPath);
+            }
+            catch (e) {
+                console.error('Failed to add and scan folder', e);
+            }
         },
         removeLibraryFolder: async (folderPath) => {
             set((state) => ({
@@ -188,10 +424,11 @@ export const usePlayerStore = create()(persist((set, get) => {
                 console.error('Failed to remove folder from backend', e);
             }
         },
-        rescanLibrary: async () => {
+        rescanLibrary: async (specificFolder) => {
             const state = get();
-            // Trigger scans for all mapped folders sequentially with backoff
-            for (const folderPath of state.libraryFolders) {
+            const foldersToScan = specificFolder ? [specificFolder] : state.libraryFolders;
+            // Trigger scans sequentially with backoff
+            for (const folderPath of foldersToScan) {
                 let scanStarted = false;
                 while (!scanStarted) {
                     try {
@@ -236,6 +473,11 @@ export const usePlayerStore = create()(persist((set, get) => {
                     const token = authToken || '';
                     const host = window.location.host;
                     const protocol = window.location.protocol;
+                    const safeBtoa = (str) => {
+                        return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (match, p1) => {
+                            return String.fromCharCode(parseInt(p1, 16));
+                        }));
+                    };
                     const latestLibrary = data.tracks.map((t) => {
                         let artistsArray = t.artists;
                         if (typeof t.artists === 'string') {
@@ -245,11 +487,11 @@ export const usePlayerStore = create()(persist((set, get) => {
                             catch (e) { }
                         }
                         const streamUrl = new URL(`${protocol}//${host}/api/stream`);
-                        streamUrl.searchParams.append('path', t.path);
+                        streamUrl.searchParams.append('pathB64', safeBtoa(t.path));
                         if (token)
                             streamUrl.searchParams.append('token', token);
                         const artUrlObj = new URL(`${protocol}//${host}/api/art`);
-                        artUrlObj.searchParams.append('path', t.path);
+                        artUrlObj.searchParams.append('pathB64', safeBtoa(t.path));
                         if (token)
                             artUrlObj.searchParams.append('token', token);
                         return {
@@ -278,6 +520,16 @@ export const usePlayerStore = create()(persist((set, get) => {
         addTrackToPlaylist: (track) => set((state) => {
             return { playlist: [...state.playlist, track] };
         }),
+        playNext: (track) => set((state) => {
+            const newPlaylist = [...state.playlist];
+            const insertAt = state.currentIndex !== null ? state.currentIndex + 1 : newPlaylist.length;
+            newPlaylist.splice(insertAt, 0, track);
+            return { playlist: newPlaylist };
+        }),
+        // Global context menu
+        contextMenu: null,
+        openContextMenu: (track, x, y) => set({ contextMenu: { track, x, y } }),
+        closeContextMenu: () => set({ contextMenu: null }),
         removeFromPlaylist: (index) => set((state) => {
             const newPlaylist = [...state.playlist];
             newPlaylist.splice(index, 1);
@@ -332,6 +584,10 @@ export const usePlayerStore = create()(persist((set, get) => {
                     await playbackManager.playFile(track.fileHandle);
                 }
                 set({ currentIndex: index });
+                // Telemetry: record successful playback and push to session history
+                get().recordPlay(track.id);
+                // Pre-fetch infinite track if bounds are reached
+                get().ensureInfinityQueue();
             }
             catch (e) {
                 console.error("Error playing track", e);
@@ -352,6 +608,10 @@ export const usePlayerStore = create()(persist((set, get) => {
             const { playlist, currentIndex, shuffle } = get();
             if (playlist.length === 0)
                 return;
+            // Telemetry: record skip for the track we are leaving
+            if (currentIndex !== null && playlist[currentIndex]) {
+                get().recordSkip(playlist[currentIndex].id);
+            }
             let nextIndex = 0;
             if (shuffle) {
                 nextIndex = Math.floor(Math.random() * playlist.length);
@@ -391,6 +651,29 @@ export const usePlayerStore = create()(persist((set, get) => {
         setLastFmApiKey: (key) => set({ lastFmApiKey: key }),
         setGeniusApiKey: (key) => set({ geniusApiKey: key }),
         setPreferredProvider: (provider) => set({ preferredProvider: provider }),
+        recordPlay: (trackId) => {
+            // Push trackId to the 50-item rolling session history
+            set((state) => {
+                const updated = [...state.sessionHistoryTrackIds, trackId].slice(-50);
+                return { sessionHistoryTrackIds: updated };
+            });
+            // Fire-and-forget telemetry to backend
+            const authHeaders = get().getAuthHeader();
+            fetch('/api/playback/record', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...authHeaders },
+                body: JSON.stringify({ trackId })
+            }).catch((e) => console.warn('Telemetry record failed:', e));
+        },
+        recordSkip: (trackId) => {
+            // Fire-and-forget telemetry to backend
+            const authHeaders = get().getAuthHeader();
+            fetch('/api/playback/skip', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...authHeaders },
+                body: JSON.stringify({ trackId })
+            }).catch((e) => console.warn('Telemetry skip failed:', e));
+        },
     };
 }, {
     name: "player-store",
@@ -404,6 +687,8 @@ export const usePlayerStore = create()(persist((set, get) => {
         lastFmApiKey: state.lastFmApiKey,
         geniusApiKey: state.geniusApiKey,
         preferredProvider: state.preferredProvider,
-        authToken: state.authToken
+        authToken: state.authToken,
+        // We do *not* persist DB settings (API keys) in localStorage, we ONLY load them from DB on mount
+        // by calling loadSettings() from an effect in the app root
     }),
 }));

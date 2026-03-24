@@ -1,23 +1,33 @@
 import React, { useMemo } from 'react';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { usePlayerStore } from '../../store/index';
 import { AlbumArt } from '../AlbumArt';
 import { parseArtists } from '../../utils/artistUtils';
+import { formatTime } from '../../utils/formatTime';
+import { BackButton } from './BackButton';
+
+import { MoreHorizontal } from 'lucide-react';
 
 export const AlbumDetail: React.FC = () => {
-    const { library, selectedItem, setPlaylist, navigateView } = usePlayerStore();
+    const { albumId } = useParams<{ albumId: string }>();
+    const navigate = useNavigate();
+    const { library, albums, artists, setPlaylist, openContextMenu } = usePlayerStore();
 
-    const [albumTitle, albumArtist] = (selectedItem || '').split('::::');
+    // Find album info from the entity list
+    const albumInfo = useMemo(() => albums.find(a => a.id === albumId), [albums, albumId]);
 
-    // Filter tracks to just this album
+    // Filter tracks by album_id
     const albumTracks = useMemo(() => {
-        return library.filter(t => t.album === albumTitle && ((t.albumArtist || t.artist || 'Unknown Artist') === albumArtist));
-    }, [library, albumTitle, albumArtist]);
+        if (!albumId) return [];
+        return library.filter(t => t.albumId === albumId);
+    }, [library, albumId]);
 
-    // Note: we need to parse track numbers from the track titles, or fall back to name sorting since TrackInfo currently lacks track Number.
-    // We'll update extractMetadata to grab track number soon. For now we just use the name to guarantee deterministic sorting.
     const sortedTracks = useMemo(() => {
         return [...albumTracks].sort((a, b) => {
-            // By metadata ID3 title/filename
+            // Sort by track number first, then by name
+            if (a.trackNumber != null && b.trackNumber != null) {
+                return a.trackNumber - b.trackNumber;
+            }
             const aName = a.title || a.path.split(/[\\/]/).pop() || '';
             const bName = b.title || b.path.split(/[\\/]/).pop() || '';
             return aName.localeCompare(bName, undefined, { numeric: true, sensitivity: 'base' });
@@ -25,15 +35,28 @@ export const AlbumDetail: React.FC = () => {
     }, [albumTracks]);
 
 
-    if (!selectedItem || albumTracks.length === 0) {
+    if (!albumId || albumTracks.length === 0) {
         return <div>Album not found.</div>;
     }
 
+    const albumTitle = albumInfo?.title || albumTracks[0]?.album || 'Unknown Album';
+    const albumArtist = albumInfo?.artist_name || albumTracks[0]?.albumArtist || albumTracks[0]?.artist || 'Unknown Artist';
     const artUrl = albumTracks.find(t => t.artUrl)?.artUrl;
-    // Pick genre from the first track that has one
     const albumGenre = albumTracks.find(t => t.genre)?.genre;
-    // Parse album-level artists for the header
     const headerArtists = parseArtists(albumArtist);
+
+    // Build artist name -> ID lookup from entity list, with fallback to track data
+    const getArtistLink = (artistName: string): string | null => {
+        // First try entity list (case-insensitive)
+        const entity = artists.find((a: any) => a.name?.toLowerCase() === artistName.toLowerCase());
+        if (entity) return `/library/artist/${entity.id}`;
+        // Fallback: find a track where this artist is the album artist (has artistId)
+        const track = albumTracks.find(t => 
+            (t.albumArtist || t.artist || '').toLowerCase() === artistName.toLowerCase()
+        );
+        if (track?.artistId) return `/library/artist/${track.artistId}`;
+        return null;
+    };
 
     const handlePlayAll = () => {
         setPlaylist(sortedTracks, 0);
@@ -44,16 +67,11 @@ export const AlbumDetail: React.FC = () => {
     };
 
     return (
-        <div className="album-detail p-4 md:p-8 lg:p-12 overflow-y-auto flex-1 flex flex-col">
+        <div className="album-detail flex flex-col overflow-hidden p-4 md:p-8 lg:p-12 flex-1">
 
-            <button
-                onClick={() => navigateView('home')}
-                className="font-medium text-sm md:text-base text-[var(--color-primary)] hover:text-[var(--color-primary-dark)] px-4 py-2 w-fit flex items-center gap-2 mb-8 md:mb-12 transition-all duration-200"
-            >
-                ← Back to Library
-            </button>
+            <div className="shrink-0"><BackButton onClick={() => navigate(-1)} /></div>
 
-            <div className="album-header flex flex-col md:flex-row gap-6 md:gap-8 mb-8 md:mb-12 items-center md:items-end text-center md:text-left">
+            <div className="album-header shrink-0 flex flex-col md:flex-row gap-6 md:gap-8 mb-8 md:mb-12 items-center md:items-end text-center md:text-left">
                 <div className="w-48 h-48 md:w-60 md:h-60 shrink-0 rounded-2xl border border-[var(--glass-border)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)] relative overflow-hidden backdrop-blur-md">
                     <AlbumArt artUrl={artUrl} artist={albumArtist} size={240} className="w-full h-full object-cover" />
                 </div>
@@ -61,15 +79,22 @@ export const AlbumDetail: React.FC = () => {
                     <div className="font-semibold text-sm tracking-wider uppercase text-[var(--color-primary)]">Album</div>
                     <h1 className="font-bold text-4xl md:text-5xl lg:text-6xl tracking-tight my-2 leading-tight text-[var(--color-text-primary)]">{albumTitle}</h1>
                     <h2 className="text-xl text-[var(--color-text-secondary)] mb-1">
-                        {headerArtists.map((a, i) => (
-                            <React.Fragment key={a}>
-                                {i > 0 && ' · '}
-                                <span
-                                    className="hover:text-[var(--color-primary)] cursor-pointer transition-colors"
-                                    onClick={(e) => { e.stopPropagation(); navigateView('artist', a); }}
-                                >{a}</span>
-                            </React.Fragment>
-                        ))}
+                        {headerArtists.map((a, i) => {
+                            const link = getArtistLink(a);
+                            return (
+                                <React.Fragment key={a}>
+                                    {i > 0 && ' · '}
+                                    {link ? (
+                                        <Link
+                                            to={link}
+                                            className="hover:text-[var(--color-primary)] transition-colors no-underline text-inherit"
+                                        >{a}</Link>
+                                    ) : (
+                                        <span>{a}</span>
+                                    )}
+                                </React.Fragment>
+                            );
+                        })}
                         {' '} • {albumTracks.length} track{albumTracks.length !== 1 ? 's' : ''}
                     </h2>
                     {albumGenre && (
@@ -89,7 +114,7 @@ export const AlbumDetail: React.FC = () => {
                 </div>
             </div>
 
-            <div className="album-tracks mt-4">
+            <div className="album-tracks mt-4 overflow-y-auto flex-1 min-h-0">
                 <div className="grid grid-cols-[40px_1fr_100px] px-4 py-3 border-b border-[var(--glass-border)] font-semibold text-xs uppercase tracking-wider text-[var(--color-text-muted)]">
                     <div>#</div>
                     <div>Title</div>
@@ -106,20 +131,40 @@ export const AlbumDetail: React.FC = () => {
                             <span>{track.title || track.path.split(/[\/\\]/).pop()}</span>
                             {((track.artists && Array.isArray(track.artists) && track.artists.length > 0) || (track.artist && parseArtists(track.artist).length > 0)) && (
                                 <span className="block text-xs text-[var(--color-text-muted)] mt-0.5">
-                                    {(Array.isArray(track.artists) && track.artists.length > 0 ? track.artists : parseArtists(track.artist || '')).map((a, i) => (
-                                        <React.Fragment key={a}>
-                                            {i > 0 && ' · '}
-                                            <span
-                                                className="hover:text-[var(--color-primary)] cursor-pointer transition-colors"
-                                                onClick={(e) => { e.stopPropagation(); navigateView('artist', a); }}
-                                            >{a}</span>
-                                        </React.Fragment>
-                                    ))}
+                                    {(Array.isArray(track.artists) && track.artists.length > 0 ? track.artists : parseArtists(track.artist || '')).map((a, i) => {
+                                        const link = getArtistLink(a);
+                                        return (
+                                            <React.Fragment key={a}>
+                                                {i > 0 && ' · '}
+                                                {link ? (
+                                                    <Link
+                                                        to={link}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                        className="hover:text-[var(--color-primary)] transition-colors no-underline text-inherit"
+                                                    >{a}</Link>
+                                                ) : (
+                                                    <span>{a}</span>
+                                                )}
+                                            </React.Fragment>
+                                        );
+                                    })}
                                 </span>
                             )}
                         </div>
-                        <div className="text-[var(--color-text-muted)] text-right group-hover:text-[var(--color-text-primary)] transition-colors">
-                            {track.duration ? `${Math.floor(track.duration / 60)}:${Math.floor(track.duration % 60).toString().padStart(2, '0')}` : '--:--'}
+                        <div className="text-[var(--color-text-muted)] text-right group-hover:text-[var(--color-text-primary)] transition-colors flex items-center justify-end gap-3">
+                            <span className="w-12 text-right">
+                                {formatTime(track.duration, '--:--')}
+                            </span>
+                            <button
+                                aria-label="More options"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    openContextMenu(track, e.clientX, e.clientY);
+                                }}
+                                className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-primary)] transition-all p-1"
+                            >
+                                <MoreHorizontal size={16} />
+                            </button>
                         </div>
                     </div>
                 ))}

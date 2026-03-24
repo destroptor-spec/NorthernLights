@@ -5,13 +5,15 @@ A modern, self-hosted web music player built with React, Vite, Tailwind CSS, and
 ## Features
 
 - **Blazing Fast Frontend**: Built using React, Vite, and Zustand for state management.
-- **Robust Backend**: Node.js & Express server parsing metadata with `music-metadata` and persisting to an SQLite database (`libraryDB`).
+- **Robust Backend**: Node.js & Express server parsing metadata with `music-metadata` and persisting to a PostgreSQL database.
 - **Gapless Playback**: Custom `PlaybackManager` supporting HTTP range requests to seamlessly stream high-quality audio files from your server to your browser.
 - **Dynamic User Interface**: Premium "glassy" design system with frosted glass effects and interactive pill buttons. Features a custom **Canvas-based Waveform Progress Bar** that decodes audio peaks on-the-fly.
+- **AI-Driven Playlists & Vector Recommendations**: Connect to local or cloud LLMs (like LM Studio or OpenAI) to generate hyper-personalized playlists via natural language. Uses rigorous **PGVector** similarity searches and **Genre Hop Cost adjacency matrices** for natural sonic progression.
+- **Advanced Play Queue & Context Menus**: Drag-and-drop track reordering, global "Play Next" and "Add to Playlist" context menus anywhere a track is visible.
 - **Rich External Metadata**: Native integrations with the **Last.fm** and **Genius** APIs to automatically fetch missing album artwork, high-resolution artist hero imagery, and rich biographies seamlessly on the frontend.
 - **Theme Parity**: Native Light and Dark mode support with carefully tuned contrast and theme-aware UI components.
 - **Cross-Device Ready**: Progressive Web App (PWA) compatible with fully responsive layouts down to mobile sizes.
-- **Production Secure**: Features path sanitization, express-based security policies, and Basic API Authentication to safely put your library on the public internet.
+- **Production Secure**: Features path sanitization, express-based security policies, Basic API Authentication, and graceful Database failure handling to safely put your library on the public internet.
 
 ## Tech Stack
 
@@ -24,7 +26,7 @@ A modern, self-hosted web music player built with React, Vite, Tailwind CSS, and
 
 ### Backend
 - Node.js & Express
-- SQLite3
+- PostgreSQL (`pg` + `pgvector` via Podman/Docker)
 - music-metadata (Tag parsing)
 - Basic Auth Middleware (Secure streaming)
 
@@ -42,7 +44,13 @@ A modern, self-hosted web music player built with React, Vite, Tailwind CSS, and
    cd "Music App"
    ```
 
-2. **Install dependencies:**
+2. **Start the Database:**
+   ```bash
+   ./start-db.sh
+   ```
+   *This starts the required `pgvector` PostgreSQL container via Podman or Docker.*
+
+3. **Install dependencies:**
    ```bash
    npm install
    ```
