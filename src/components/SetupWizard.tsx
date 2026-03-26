@@ -67,8 +67,12 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
                 return;
             }
 
-            // Immediately persist these locally so subsequent API calls this session work implicitly
-            usePlayerStore.getState().setAuthToken(btoa(`${username}:${password}`));
+            const data = await res.json();
+            // Store JWT token and user info
+            usePlayerStore.getState().setAuthToken(data.token);
+            if (data.user) {
+                usePlayerStore.setState({ currentUser: data.user });
+            }
             
             setStep(2);
         } catch (e) {

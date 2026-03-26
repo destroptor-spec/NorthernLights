@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { fetchAlbumImage } from '../utils/externalImagery';
+import { Disc3 } from 'lucide-react';
 
 interface AlbumArtProps {
   artUrl?: string;
@@ -8,33 +9,6 @@ interface AlbumArtProps {
   size?: number;
   className?: string;
 }
-
-// Vinyl record SVG shown when no artwork is available or art fetch fails
-const VinylPlaceholder: React.FC<{ size?: number }> = ({ size = 200 }) => (
-  <div
-    className="flex items-center justify-center"
-    style={{ width: '100%', height: '100%', minHeight: size }}
-  >
-    <svg
-      viewBox="0 0 100 100"
-      style={{ width: '60%', height: '60%', opacity: 0.25 }}
-      xmlns="http://www.w3.org/2000/svg"
-      fill="currentColor"
-    >
-      {/* Outer disc */}
-      <circle cx="50" cy="50" r="48" />
-      {/* Label ring */}
-      <circle cx="50" cy="50" r="20" fill="var(--color-background, #111)" />
-      {/* Grooves */}
-      <circle cx="50" cy="50" r="38" fill="none" stroke="var(--color-background, #111)" strokeWidth="1.2" />
-      <circle cx="50" cy="50" r="30" fill="none" stroke="var(--color-background, #111)" strokeWidth="1.2" />
-      {/* Center hole */}
-      <circle cx="50" cy="50" r="3.5" fill="var(--color-background, #111)" />
-      {/* Music note */}
-      <text x="42" y="55" fontSize="14" fill="var(--color-text-secondary, #888)" fontFamily="sans-serif">♪</text>
-    </svg>
-  </div>
-);
 
 const AlbumArt: React.FC<AlbumArtProps> = ({ artUrl, artist, album, size = 300, className = '' }) => {
   const [imageError, setImageError] = useState(false);
@@ -76,7 +50,9 @@ const AlbumArt: React.FC<AlbumArtProps> = ({ artUrl, artist, album, size = 300, 
           loading="lazy"
         />
       ) : (
-        <VinylPlaceholder size={size} />
+        <div className="flex items-center justify-center w-full h-full">
+          <Disc3 size={Math.min(size * 0.5, 64)} className="text-[var(--color-text-muted)] opacity-30" />
+        </div>
       )}
     </div>
   );

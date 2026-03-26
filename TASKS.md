@@ -12,6 +12,7 @@ The core music player architecture has transitioned to a client-server model usi
 - [x] **V5: Deep Metadata**: Multi-artist extraction, Release Type grouping (Albums, EPs, Singles, Compilations), Universal ID3/Vorbis parsing.
 - [x] **V7: AI & Playlists**: Native LLM integration, custom playlist generation, vector recommendations, drag-and-drop queues, and global context menus.
 - [x] **V8: React Router Navigation**: UUID-based entity tables (artists, albums, genres), react-router-dom integration, browser history support, meaningful URLs (`/library/artist/:id`, `/library/album/:id`, `/library/genre/:id`), back/forward navigation within app.
+- [x] **V9: Multi-User System**: JWT authentication, invite-based registration, admin panel, user roles (admin/user), per-user playback telemetry (`user_playback_stats`), per-user playlists, per-user Hub/Infinity Mode recommendations, per-user settings (`user_settings`).
 
 ---
 

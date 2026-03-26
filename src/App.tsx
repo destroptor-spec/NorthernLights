@@ -11,10 +11,13 @@ import { AlbumDetail } from './components/library/AlbumDetail';
 import { ArtistDetail } from './components/library/ArtistDetail';
 import { GenreDetail } from './components/library/GenreDetail';
 import { SetupWizard } from './components/SetupWizard';
+import { LoginPage } from './components/LoginPage';
 import { Hub } from './components/Hub';
 import { Playlists } from './components/library/Playlists';
 import { GlobalSearch } from './components/GlobalSearch';
 import { SettingsModal } from './components/SettingsModal';
+import { InviteRegister } from './components/InviteRegister';
+import { UserMenu } from './components/UserMenu';
 import { Settings as SettingsIcon, Menu } from 'lucide-react';
 import { TrackContextMenu } from './components/library/TrackContextMenu';
 
@@ -32,6 +35,8 @@ const App: React.FC = () => {
   const library = usePlayerStore(state => state.library);
   const needsSetup = usePlayerStore(state => state.needsSetup);
   const checkSetupStatus = usePlayerStore(state => state.checkSetupStatus);
+  const authToken = usePlayerStore(state => state.authToken);
+  const login = usePlayerStore(state => state.login);
 
   const libraryFolders = usePlayerStore(state => state.libraryFolders);
   const rescanLibrary = usePlayerStore(state => state.rescanLibrary);
@@ -77,10 +82,9 @@ const App: React.FC = () => {
           const ok = await checkHealth();
           if (ok) {
             clearInterval(interval);
-            // Now do the normal startup
             checkSetupStatus().then(() => {
-              const { needsSetup } = usePlayerStore.getState();
-              if (!needsSetup) {
+              const { needsSetup, authToken } = usePlayerStore.getState();
+              if (!needsSetup && authToken) {
                 usePlayerStore.getState().loadSettings();
                 usePlayerStore.getState().fetchLibraryFromServer();
                 usePlayerStore.getState().fetchPlaylistsFromServer();
@@ -90,10 +94,9 @@ const App: React.FC = () => {
         }, 5000);
         return;
       }
-      // Check if we need to show the First Time Setup Wizard
       checkSetupStatus().then(() => {
-         const { needsSetup } = usePlayerStore.getState();
-         if (!needsSetup) {
+         const { needsSetup, authToken } = usePlayerStore.getState();
+         if (!needsSetup && authToken) {
              usePlayerStore.getState().loadSettings();
              usePlayerStore.getState().fetchLibraryFromServer();
              usePlayerStore.getState().fetchPlaylistsFromServer();
@@ -101,15 +104,21 @@ const App: React.FC = () => {
       });
     });
 
-    // Listen to real-time scanning progress from backend
-    const eventSource = new EventSource('/api/library/scan/status');
+    // Theme setup only — scan status SSE is handled in a separate effect
+  }, []);
+
+  // Connect to scan status SSE only when authenticated (EventSource can't send headers)
+  React.useEffect(() => {
+    // Don't connect if we're in setup mode or not yet authenticated
+    if (needsSetup || !authToken) return;
+
+    const eventSource = new EventSource(`/api/library/scan/status?token=${authToken}`);
     eventSource.onmessage = (e) => {
       const data = JSON.parse(e.data);
       const wasScanning = usePlayerStore.getState().isScanning;
-      
-      // Update global UI state
+
       usePlayerStore.getState().setIsScanning(
-        data.isScanning, 
+        data.isScanning,
         data.phase,
         data.scannedFiles,
         data.totalFiles,
@@ -117,15 +126,14 @@ const App: React.FC = () => {
         data.activeFiles,
         data.currentFile
       );
-      
-      // If a scan just finished, refresh the library automatically
+
       if (wasScanning && !data.isScanning) {
         usePlayerStore.getState().fetchLibraryFromServer();
       }
     };
 
     return () => eventSource.close();
-  }, []);
+  }, [authToken, needsSetup]);
 
   const [folderPathInput, setFolderPathInput] = React.useState('');
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
@@ -140,6 +148,24 @@ const App: React.FC = () => {
           usePlayerStore.getState().fetchLibraryFromServer();
           usePlayerStore.getState().fetchPlaylistsFromServer();
       })} />;
+  }
+
+  if (!authToken) {
+      // Invite registration doesn't require auth
+      if (location.pathname.startsWith('/invite/')) {
+          return <InviteRegister />;
+      }
+
+      const handleLogin = async (username: string, password: string) => {
+          const success = await login(username, password);
+          if (success) {
+              usePlayerStore.getState().loadSettings();
+              usePlayerStore.getState().fetchLibraryFromServer();
+              usePlayerStore.getState().fetchPlaylistsFromServer();
+          }
+          return success;
+      };
+      return <LoginPage onLogin={handleLogin} />;
   }
 
   return (
@@ -292,6 +318,7 @@ const App: React.FC = () => {
             })}
             <div className="flex items-center gap-2 ml-auto">
               <GlobalSearch />
+              <UserMenu />
               <button
                 onClick={() => setIsSettingsOpen(true)}
                 className="p-2 rounded-full text-[var(--color-text-secondary)] bg-black/5 dark:bg-white/[0.06] hover:text-[var(--color-text-primary)] hover:bg-black/10 dark:hover:bg-white/[0.12] transition-all duration-300 border border-[var(--color-border)] hover:border-[var(--glass-border-hover)] flex-shrink-0"
@@ -306,38 +333,44 @@ const App: React.FC = () => {
           <div className="flex-1 flex overflow-hidden">
             <div className="flex-1 overflow-y-auto pb-48">
               {library.length === 0 ? (
-                <div className="empty-state font-body flex flex-col items-center justify-center p-8 flex-1">
-                  <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-transparent bg-clip-text bg-gradient-to-br from-[var(--aurora-green)] to-[var(--aurora-purple)] mb-4">
-                    Aurora Media Server
-                  </h1>
-                  <p className="text-lg text-[var(--color-text-secondary)] mb-8 max-w-md text-center">
-                    Provide the absolute path to your local music directory to let the host scan and stream it.
-                  </p>
-                  <div className="flex flex-col md:flex-row gap-4 w-full max-w-lg">
-                    <input 
-                      type="text" 
-                      placeholder="/home/andreas/Music"
-                      value={folderPathInput}
-                      onChange={(e) => setFolderPathInput(e.target.value)}
-                      className="flex-1 px-4 py-3 rounded-full border border-[var(--glass-border)] bg-[var(--glass-bg)] backdrop-blur-md text-[var(--color-text-primary)] shadow-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent transition-all duration-300"
-                      disabled={isScanningGlobal}
-                    />
-                    <button
-                      onClick={async () => {
-                        if (!folderPathInput.trim()) return;
-                        await usePlayerStore.getState().addLibraryFolder(folderPathInput.trim());
-                        setFolderPathInput('');
-                      }}
-                      className="btn whitespace-nowrap"
-                      disabled={isScanningGlobal || !folderPathInput.trim()}
-                    >
-                      {isScanningGlobal ? '✦ Scanning...' : '✦ Map Folder'}
-                    </button>
-                  </div>
-                </div>
+                <Routes>
+                  <Route path="/invite/:token" element={<InviteRegister />} />
+                  <Route path="*" element={
+                    <div className="empty-state font-body flex flex-col items-center justify-center p-8 flex-1">
+                      <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-transparent bg-clip-text bg-gradient-to-br from-[var(--aurora-green)] to-[var(--aurora-purple)] mb-4">
+                        Aurora Media Server
+                      </h1>
+                      <p className="text-lg text-[var(--color-text-secondary)] mb-8 max-w-md text-center">
+                        Provide the absolute path to your local music directory to let the host scan and stream it.
+                      </p>
+                      <div className="flex flex-col md:flex-row gap-4 w-full max-w-lg">
+                        <input
+                          type="text"
+                          placeholder="/home/andreas/Music"
+                          value={folderPathInput}
+                          onChange={(e) => setFolderPathInput(e.target.value)}
+                          className="flex-1 px-4 py-3 rounded-full border border-[var(--glass-border)] bg-[var(--glass-bg)] backdrop-blur-md text-[var(--color-text-primary)] shadow-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent transition-all duration-300"
+                          disabled={isScanningGlobal}
+                        />
+                        <button
+                          onClick={async () => {
+                            if (!folderPathInput.trim()) return;
+                            await usePlayerStore.getState().addLibraryFolder(folderPathInput.trim());
+                            setFolderPathInput('');
+                          }}
+                          className="btn whitespace-nowrap"
+                          disabled={isScanningGlobal || !folderPathInput.trim()}
+                        >
+                          {isScanningGlobal ? '✦ Scanning...' : '✦ Map Folder'}
+                        </button>
+                      </div>
+                    </div>
+                  } />
+                </Routes>
               ) : (
                 <Routes>
                   <Route path="/" element={<Navigate to="/library" replace />} />
+                  <Route path="/invite/:token" element={<InviteRegister />} />
                   <Route path="/library" element={<Hub />} />
                   <Route path="/library/artists" element={<LibraryHome section="artists" />} />
                   <Route path="/library/artist/:artistId" element={<ArtistDetail />} />

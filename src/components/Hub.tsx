@@ -156,7 +156,7 @@ export const Hub: React.FC = () => {
     try {
       // GET-only: reads engine-driven + cached LLM playlists from the server.
       // LLM generation is triggered separately after scans and on a 4h schedule.
-      const res = await fetch('/api/hub');
+      const res = await fetch('/api/hub', { headers: getAuthHeader() });
       
       if (res.ok) {
         const data = await res.json();

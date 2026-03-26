@@ -79,13 +79,17 @@ A modern, self-hosted web music player built with React, Vite, Tailwind CSS, and
    ```bash
    cp .env.example .env
    ```
-   - Edit the `.env` file and **change the `VITE_AUTH_PASSWORD` and `AUTH_PASSWORD` variables** to secure your application.
+   - Edit the `.env` file to set your PostgreSQL connection details and CORS origins.
 
 5. **Running Locally (Development):**
    ```bash
    npm run dev
    ```
    This will concurrently start the Vite frontend server on `http://localhost:3000` and the Express backend on port `3001` (or whichever port specified in `.env`).
+
+6. **First-Time Setup:**
+   - Open the app in your browser. The Setup Wizard will guide you through creating your first admin account.
+   - After setup, use the Settings gear icon to manage your library, invite users, and configure integrations.
 
 ## Settings & Integrations
 

@@ -71,7 +71,10 @@ export interface PlayerState {
   lastFmApiKey: string;
   geniusApiKey: string;
   preferredProvider: 'lastfm' | 'genius';
-  authToken: string | null;
+  authToken: string | null; // JWT token
+
+  // Current User State
+  currentUser: { id: string; username: string; role: string } | null;
 
   // Global Engine Settings
   discoveryLevel: number;
@@ -105,6 +108,9 @@ export interface PlayerState {
   deletePlaylist: (playlistId: string) => Promise<void>;
   addTracksToUserPlaylist: (playlistId: string, trackIds: string[]) => Promise<void>;
   setAuthToken: (token: string) => void;
+  clearAuthToken: () => void;
+  login: (username: string, password: string) => Promise<boolean>;
+  register: (inviteToken: string, username: string, password: string) => Promise<boolean>;
   getAuthHeader: () => Record<string, string>;
   addLibraryFolder: (folderPath: string) => Promise<void>;
   removeLibraryFolder: (folderName: string) => Promise<void>;
@@ -227,6 +233,7 @@ export const usePlayerStore = create<PlayerState>()(
         geniusApiKey: '',
         preferredProvider: 'lastfm' as 'lastfm' | 'genius',
         authToken: null as string | null,
+        currentUser: null as { id: string; username: string; role: string } | null,
 
         isInfinityMode: true as boolean,
         isFetchingInfinity: false as boolean,
@@ -285,13 +292,50 @@ export const usePlayerStore = create<PlayerState>()(
 
         setAuthToken: (token: string) => set({ authToken: token }),
 
-        // Helper for Auth Header
+        clearAuthToken: () => set({ authToken: null, currentUser: null }),
+
+        login: async (username: string, password: string) => {
+          try {
+            const res = await fetch('/api/auth/login', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ username, password })
+            });
+            if (res.ok) {
+              const data = await res.json();
+              set({ authToken: data.token, currentUser: data.user });
+              return true;
+            }
+            return false;
+          } catch {
+            return false;
+          }
+        },
+
+        register: async (inviteToken: string, username: string, password: string) => {
+          try {
+            const res = await fetch('/api/auth/register', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ inviteToken, username, password })
+            });
+            if (res.ok) {
+              const data = await res.json();
+              set({ authToken: data.token, currentUser: data.user });
+              return true;
+            }
+            return false;
+          } catch {
+            return false;
+          }
+        },
+
+        // Helper for Auth Header (JWT Bearer)
         getAuthHeader: () => {
           const { authToken } = get();
           if (authToken) {
-            return { 'Authorization': 'Basic ' + authToken };
+            return { 'Authorization': 'Bearer ' + authToken };
           }
-          // The browser will use its native basic auth popup if no authorization header is explicit
           return {} as Record<string, string>;
         },
 
@@ -421,7 +465,8 @@ export const usePlayerStore = create<PlayerState>()(
 
         fetchLibraryFromServer: async () => {
           try {
-            const res = await fetch('/api/library');
+            const authHeaders = (get() as any).getAuthHeader();
+            const res = await fetch('/api/library', { headers: authHeaders });
             if (res.ok) {
               const data = await res.json();
               
@@ -877,7 +922,8 @@ export const usePlayerStore = create<PlayerState>()(
         geniusApiKey: state.geniusApiKey,
         preferredProvider: state.preferredProvider,
         authToken: state.authToken,
-        
+        currentUser: state.currentUser,
+
         // We do *not* persist DB settings (API keys) in localStorage, we ONLY load them from DB on mount
         // by calling loadSettings() from an effect in the app root
       }),

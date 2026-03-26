@@ -17,12 +17,15 @@ Be specific and thorough so progress can be picked up easily.
 
 ## Project Structure & Data Flow
 Follow this directory hierarchy strictly:
-- `src/components/`: Pure UI & layout (PlayerControls, ProgressBar, Sidebar).
+- `src/components/`: Pure UI & layout (PlayerControls, ProgressBar, Sidebar, UserMenu, AdminPanel, InviteRegister).
 - `src/components/library/`: Library views (AlbumDetail, GenreDetail, ArtistDetail, LibraryHome, Playlists).
 - `src/hooks/`: Custom React hooks (useLoadLibrary, useVolumeSync, useDominantColor, useExternalImage, useLlmConnectionTest).
 - `src/store/`: Zustand state definitions + persistence middleware.
 - `src/utils/`: Pure utility functions (formatTime, safeBtoa, fileSystem, artistUtils, PlaybackManager, externalImagery, metadataCache).
 - `src/App.tsx`: Layout orchestration. `main.tsx`: Entry point.
+- `server/`: Express backend (index.ts, database/, services/, middleware/).
+- `server/middleware/`: Auth middleware (auth.ts — JWT requireAuth + requireAdmin).
+- `server/services/`: Business logic (auth.service.ts, llm.service.ts, recommendation.service.ts, etc.).
 - `docs/`: Detailed feature specs and plans.
 
 ### Shared Components (src/components/library/)
@@ -63,5 +66,5 @@ Follow this directory hierarchy strictly:
 
 ## Key Dependencies
 - **Frontend:** React, Zustand, lucide-react, color-thief-react, idb-keyval
-- **Backend:** Express, pg (PostgreSQL), music-metadata
+- **Backend:** Express, pg (PostgreSQL), music-metadata, jsonwebtoken, bcrypt
 - **Build:** Vite, TypeScript, Tailwind CSS

@@ -153,6 +153,55 @@ export async function initDB(): Promise<Pool> {
     CREATE INDEX IF NOT EXISTS tracks_artist_id_idx ON tracks(artist_id);
     CREATE INDEX IF NOT EXISTS tracks_album_id_idx ON tracks(album_id);
     CREATE INDEX IF NOT EXISTS tracks_genre_id_idx ON tracks(genre_id);
+
+    -- ==========================================
+    -- MULTI-USER TABLES
+    -- ==========================================
+
+    CREATE TABLE IF NOT EXISTS users (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      username TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
+      created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT,
+      last_login_at BIGINT DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS invites (
+      token TEXT PRIMARY KEY DEFAULT encode(gen_random_bytes(32), 'hex'),
+      created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+      role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
+      max_uses INTEGER DEFAULT 1,
+      uses INTEGER DEFAULT 0,
+      expires_at BIGINT,
+      created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
+    );
+
+    CREATE TABLE IF NOT EXISTS user_playback_stats (
+      user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+      track_id TEXT REFERENCES tracks(id) ON DELETE CASCADE,
+      play_count INTEGER NOT NULL DEFAULT 0,
+      rating INTEGER NOT NULL DEFAULT 0,
+      last_played_at BIGINT NOT NULL DEFAULT 0,
+      PRIMARY KEY (user_id, track_id)
+    );
+    CREATE INDEX IF NOT EXISTS ups_user_id_idx ON user_playback_stats(user_id);
+    CREATE INDEX IF NOT EXISTS ups_track_id_idx ON user_playback_stats(track_id);
+
+    CREATE TABLE IF NOT EXISTS user_settings (
+      user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+      key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      PRIMARY KEY (user_id, key)
+    );
+
+    -- Add user_id to playlists (nullable for backward compat)
+    DO $$
+    BEGIN
+      ALTER TABLE playlists ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE;
+    EXCEPTION WHEN OTHERS THEN null;
+    END $$;
+    CREATE INDEX IF NOT EXISTS playlists_user_id_idx ON playlists(user_id);
   `);
   
     client.release();
@@ -539,13 +588,13 @@ export async function migrateEntityIds() {
 // PLAYLISTS API 
 // ==========================================
 
-export async function createPlaylist(id: string, title: string, description: string | null = null, isLlmGenerated: boolean = false) {
+export async function createPlaylist(id: string, title: string, description: string | null = null, isLlmGenerated: boolean = false, userId: string | null = null) {
   const db = await initDB();
   await db.query(`
-    INSERT INTO playlists (id, title, description, createdAt, isLlmGenerated)
-    VALUES ($1, $2, $3, $4, $5)
+    INSERT INTO playlists (id, title, description, createdAt, isLlmGenerated, user_id)
+    VALUES ($1, $2, $3, $4, $5, $6)
     ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, description = EXCLUDED.description
-  `, [id, title, description, Date.now(), isLlmGenerated ? 1 : 0]);
+  `, [id, title, description, Date.now(), isLlmGenerated ? 1 : 0, userId]);
 }
 
 export async function addTracksToPlaylist(playlistId: string, trackIds: string[]) {
@@ -563,26 +612,47 @@ export async function addTracksToPlaylist(playlistId: string, trackIds: string[]
   }
 }
 
-export async function deleteOldLlmPlaylists(maxAgeMs: number) {
+export async function deleteOldLlmPlaylists(maxAgeMs: number, userId: string | null = null) {
   const db = await initDB();
   const threshold = Date.now() - maxAgeMs;
-  // Delete the playlist_tracks first (CASCADE would also work but being explicit is safer with PGLite/PG)
-  await db.query(`
-    DELETE FROM playlist_tracks 
-    WHERE playlistId IN (SELECT id FROM playlists WHERE isLlmGenerated = 1 AND createdAt < $1)
-  `, [threshold]);
-  
-  const res = await db.query(`
-    DELETE FROM playlists 
-    WHERE isLlmGenerated = 1 AND createdAt < $1
-  `, [threshold]);
-  
-  return res.rowCount;
+  let query: string;
+  let params: any[];
+
+  if (userId) {
+    // User-scoped cleanup
+    await db.query(`
+      DELETE FROM playlist_tracks
+      WHERE playlistId IN (SELECT id FROM playlists WHERE isLlmGenerated = 1 AND createdAt < $1 AND user_id = $2)
+    `, [threshold, userId]);
+
+    const res = await db.query(`
+      DELETE FROM playlists
+      WHERE isLlmGenerated = 1 AND createdAt < $1 AND user_id = $2
+    `, [threshold, userId]);
+    return res.rowCount;
+  } else {
+    // Global cleanup (backward compat)
+    await db.query(`
+      DELETE FROM playlist_tracks
+      WHERE playlistId IN (SELECT id FROM playlists WHERE isLlmGenerated = 1 AND createdAt < $1)
+    `, [threshold]);
+
+    const res = await db.query(`
+      DELETE FROM playlists
+      WHERE isLlmGenerated = 1 AND createdAt < $1
+    `, [threshold]);
+    return res.rowCount;
+  }
 }
 
-export async function getPlaylists() {
+export async function getPlaylists(userId: string | null = null) {
   const db = await initDB();
-  const res = await db.query('SELECT * FROM playlists ORDER BY createdAt DESC');
+  let res;
+  if (userId) {
+    res = await db.query('SELECT * FROM playlists WHERE user_id = $1 ORDER BY createdAt DESC', [userId]);
+  } else {
+    res = await db.query('SELECT * FROM playlists ORDER BY createdAt DESC');
+  }
   return res.rows.map((row: any) => ({
     ...row,
     isLlmGenerated: row.isllmgenerated === 1
@@ -600,10 +670,24 @@ export async function getPlaylistTracks(playlistId: string) {
   return res.rows.map(mapTrackRow);
 }
 
-export async function deletePlaylist(playlistId: string) {
+export async function deletePlaylist(playlistId: string, userId: string | null = null) {
   const db = await initDB();
-  await db.query('DELETE FROM playlist_tracks WHERE playlistId = $1', [playlistId]);
-  await db.query('DELETE FROM playlists WHERE id = $1', [playlistId]);
+  if (userId) {
+    // Only delete if user owns the playlist
+    await db.query('DELETE FROM playlist_tracks WHERE playlistId = $1', [playlistId]);
+    await db.query('DELETE FROM playlists WHERE id = $1 AND user_id = $2', [playlistId, userId]);
+  } else {
+    // Admin/global delete
+    await db.query('DELETE FROM playlist_tracks WHERE playlistId = $1', [playlistId]);
+    await db.query('DELETE FROM playlists WHERE id = $1', [playlistId]);
+  }
+}
+
+export async function getPlaylistOwner(playlistId: string): Promise<string | null> {
+  const db = await initDB();
+  const res = await db.query('SELECT user_id FROM playlists WHERE id = $1', [playlistId]);
+  if (res.rows.length === 0) return null;
+  return (res.rows[0] as any).user_id || null;
 }
 
 export async function getVectorStats() {
@@ -752,4 +836,232 @@ export async function setSystemSetting(key: string, value: any) {
     VALUES ($1, $2)
     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
   `, [key, valStr]);
+}
+
+// ==========================================
+// USER MANAGEMENT
+// ==========================================
+
+export async function createUser(username: string, passwordHash: string, role: string = 'user') {
+  const db = await initDB();
+  const res = await db.query(`
+    INSERT INTO users (username, password_hash, role)
+    VALUES ($1, $2, $3)
+    RETURNING *
+  `, [username, passwordHash, role]);
+  return res.rows[0] as any;
+}
+
+export async function getUserById(id: string) {
+  const db = await initDB();
+  const res = await db.query('SELECT * FROM users WHERE id = $1', [id]);
+  return res.rows[0] || null;
+}
+
+export async function getUserByUsername(username: string) {
+  const db = await initDB();
+  const res = await db.query('SELECT * FROM users WHERE username = $1', [username]);
+  return res.rows[0] || null;
+}
+
+export async function listUsers() {
+  const db = await initDB();
+  const res = await db.query('SELECT id, username, role, created_at, last_login_at FROM users ORDER BY created_at ASC');
+  return res.rows;
+}
+
+export async function updateUser(id: string, fields: { username?: string; passwordHash?: string; role?: string }) {
+  const db = await initDB();
+  const sets: string[] = [];
+  const vals: any[] = [];
+  let idx = 1;
+
+  if (fields.username) { sets.push(`username = $${idx++}`); vals.push(fields.username); }
+  if (fields.passwordHash) { sets.push(`password_hash = $${idx++}`); vals.push(fields.passwordHash); }
+  if (fields.role) { sets.push(`role = $${idx++}`); vals.push(fields.role); }
+
+  if (sets.length === 0) return;
+  vals.push(id);
+  await db.query(`UPDATE users SET ${sets.join(', ')} WHERE id = $${idx}`, vals);
+}
+
+export async function updateLastLogin(id: string) {
+  const db = await initDB();
+  await db.query('UPDATE users SET last_login_at = $1 WHERE id = $2', [Date.now(), id]);
+}
+
+export async function deleteUser(id: string) {
+  const db = await initDB();
+  await db.query('DELETE FROM users WHERE id = $1', [id]);
+}
+
+export async function hasUsers(): Promise<boolean> {
+  const db = await initDB();
+  const res = await db.query('SELECT COUNT(*) as count FROM users');
+  return parseInt((res.rows[0] as any).count, 10) > 0;
+}
+
+// ==========================================
+// INVITE MANAGEMENT
+// ==========================================
+
+export async function createInvite(createdBy: string | null, role: string = 'user', maxUses: number = 1, expiresAt: number | null = null) {
+  const db = await initDB();
+  const res = await db.query(`
+    INSERT INTO invites (created_by, role, max_uses, expires_at)
+    VALUES ($1, $2, $3, $4)
+    RETURNING *
+  `, [createdBy, role, maxUses, expiresAt]);
+  return res.rows[0] as any;
+}
+
+export async function getInvite(token: string) {
+  const db = await initDB();
+  const res = await db.query('SELECT * FROM invites WHERE lower(trim(token)) = lower(trim($1))', [token]);
+  return res.rows[0] || null;
+}
+
+export async function listInvites() {
+  const db = await initDB();
+  const res = await db.query('SELECT * FROM invites ORDER BY created_at DESC');
+  return res.rows;
+}
+
+export async function deleteInvite(token: string) {
+  const db = await initDB();
+  await db.query('DELETE FROM invites WHERE token = $1', [token]);
+}
+
+export async function incrementInviteUses(token: string) {
+  const db = await initDB();
+  await db.query('UPDATE invites SET uses = uses + 1 WHERE token = $1', [token]);
+}
+
+export async function isInviteValid(token: string): Promise<boolean> {
+  if (!token) return false;
+  const invite = await getInvite(token);
+  if (!invite) {
+    console.warn(`[Invite] Validation failed: Token "${token}" not found in database.`);
+    return false;
+  }
+  
+  // Safe comparison for BIGINT (postgres returns as string) vs JS timestamp
+  if (invite.expires_at) {
+    const expiresAt = typeof invite.expires_at === 'string' ? parseInt(invite.expires_at, 10) : Number(invite.expires_at);
+    if (Date.now() > expiresAt) {
+      console.warn(`[Invite] Validation failed: Token "${token}" has expired (expired at ${expiresAt}, now ${Date.now()}).`);
+      return false;
+    }
+  }
+  
+  if (Number(invite.uses) >= Number(invite.max_uses)) {
+    console.warn(`[Invite] Validation failed: Token "${token}" use limit reached (${invite.uses}/${invite.max_uses}).`);
+    return false;
+  }
+  
+  return true;
+}
+
+// ==========================================
+// USER PLAYBACK STATS (per-user telemetry)
+// ==========================================
+
+export async function recordPlaybackForUser(userId: string, trackId: string) {
+  const db = await initDB();
+  await db.query(`
+    INSERT INTO user_playback_stats (user_id, track_id, play_count, last_played_at, rating)
+    VALUES ($1, $2, 1, $3, LEAST(1, 5))
+    ON CONFLICT (user_id, track_id) DO UPDATE SET
+      play_count = user_playback_stats.play_count + 1,
+      last_played_at = $3,
+      rating = LEAST(user_playback_stats.rating + 1, 5)
+  `, [userId, trackId, Date.now()]);
+
+  // Also update the legacy tracks table for backward compat during migration
+  await db.query(`
+    UPDATE tracks
+    SET playCount = playCount + 1,
+        lastPlayedAt = $1,
+        rating = LEAST(rating + 1, 5)
+    WHERE id = $2
+  `, [Date.now(), trackId]);
+}
+
+export async function recordSkipForUser(userId: string, trackId: string) {
+  const db = await initDB();
+  await db.query(`
+    INSERT INTO user_playback_stats (user_id, track_id, play_count, last_played_at, rating)
+    VALUES ($1, $2, 0, 0, GREATEST(-1, 0))
+    ON CONFLICT (user_id, track_id) DO UPDATE SET
+      rating = GREATEST(user_playback_stats.rating - 1, 0)
+  `, [userId, trackId]);
+
+  // Also update the legacy tracks table
+  await db.query(`
+    UPDATE tracks
+    SET rating = GREATEST(rating - 1, 0)
+    WHERE id = $1
+  `, [trackId]);
+}
+
+export async function getUserPlaybackStats(userId: string) {
+  const db = await initDB();
+  const res = await db.query('SELECT * FROM user_playback_stats WHERE user_id = $1', [userId]);
+  return res.rows;
+}
+
+export async function getUserTopTracks(userId: string, limit: number = 10) {
+  const db = await initDB();
+  const res = await db.query(`
+    SELECT t.*, ups.play_count, ups.rating as user_rating, ups.last_played_at as user_last_played
+    FROM user_playback_stats ups
+    JOIN tracks t ON ups.track_id = t.id
+    WHERE ups.user_id = $1
+    ORDER BY ups.play_count DESC
+    LIMIT $2
+  `, [userId, limit]);
+  return res.rows.map(mapTrackRow);
+}
+
+export async function getUserRecentTracks(userId: string, limit: number = 5) {
+  const db = await initDB();
+  const res = await db.query(`
+    SELECT t.*, ups.play_count, ups.rating as user_rating, ups.last_played_at as user_last_played
+    FROM user_playback_stats ups
+    JOIN tracks t ON ups.track_id = t.id
+    WHERE ups.user_id = $1 AND ups.last_played_at > 0
+    ORDER BY ups.last_played_at DESC
+    LIMIT $2
+  `, [userId, limit]);
+  return res.rows.map(mapTrackRow);
+}
+
+// ==========================================
+// USER SETTINGS (per-user preferences)
+// ==========================================
+
+export async function getUserSetting(userId: string, key: string) {
+  const db = await initDB();
+  const res = await db.query('SELECT value FROM user_settings WHERE user_id = $1 AND key = $2', [userId, key]);
+  if (res.rows.length === 0 || !(res.rows[0] as any).value) return null;
+  try {
+    return JSON.parse((res.rows[0] as any).value);
+  } catch {
+    return null;
+  }
+}
+
+export async function setUserSetting(userId: string, key: string, value: any) {
+  const db = await initDB();
+  const valStr = JSON.stringify(value);
+  await db.query(`
+    INSERT INTO user_settings (user_id, key, value)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value
+  `, [userId, key, valStr]);
+}
+
+export async function deleteUserSettings(userId: string) {
+  const db = await initDB();
+  await db.query('DELETE FROM user_settings WHERE user_id = $1', [userId]);
 }

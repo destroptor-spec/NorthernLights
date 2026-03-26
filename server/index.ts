@@ -4,12 +4,14 @@ import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
 import { spawn } from 'child_process';
-import { addDirectory, addTrack, getAllTracks, getDirectories, removeDirectory, removeTracksByDirectory, getOrCreateArtist, getOrCreateAlbum, getOrCreateGenre, migrateEntityIds, getArtistById, getAlbumById, getGenreById, getAllArtists, getAllAlbums, getAllGenres, getTracksByArtist, getTracksByAlbum, getTracksByGenre } from './database';
+import { addDirectory, addTrack, getAllTracks, getDirectories, removeDirectory, removeTracksByDirectory, getOrCreateArtist, getOrCreateAlbum, getOrCreateGenre, migrateEntityIds, getArtistById, getAlbumById, getGenreById, getAllArtists, getAllAlbums, getAllGenres, getTracksByArtist, getTracksByAlbum, getTracksByGenre, hasUsers, createUser, getUserByUsername, updateUser, deleteUser, listUsers, updateLastLogin, createInvite, getInvite, listInvites, deleteInvite, incrementInviteUses, isInviteValid, recordPlaybackForUser, recordSkipForUser, getUserRecentTracks, getUserTopTracks, getUserSetting, setUserSetting, createPlaylist, getPlaylists, getPlaylistTracks, deletePlaylist, addTracksToPlaylist, deleteOldLlmPlaylists, getPlaylistOwner } from './database';
 import { extractAudioFeatures } from './services/audioExtraction.service';
 import { generateHubConcepts, generateCustomPlaylist, HubCollection } from './services/llm.service';
 import { getHubCollections, calculateNextInfinityTrack } from './services/recommendation.service';
 import { genreMatrixService } from './services/genreMatrix.service';
 import { getSystemSetting, setSystemSetting, getSubGenreMappings } from './database';
+import { hashPassword, verifyPassword, generateToken, verifyToken, regenerateJwtSecret, JwtPayload } from './services/auth.service';
+import { requireAuth as jwtAuthMiddleware, requireAdmin } from './middleware/auth';
 import * as mm from 'music-metadata';
 import OpenAI from 'openai';
 import { Response, Request, NextFunction } from 'express';
@@ -33,44 +35,19 @@ app.use(cors({
 }));
 app.use(express.json());
 
-let cachedNeedsSetup: boolean | null = null;
-const checkNeedsSetup = (): boolean => {
-  if (cachedNeedsSetup !== null) return cachedNeedsSetup;
-  const expectedUser = process.env.AUTH_USERNAME;
-  const expectedPass = process.env.AUTH_PASSWORD;
-  // If no auth is defined, or it's the exact default boilerplate, we need setup.
-  if (!expectedUser || !expectedPass || expectedPass === 'changeme') {
-    cachedNeedsSetup = true;
-  } else {
-    cachedNeedsSetup = false;
-  }
-  return cachedNeedsSetup;
-};
+// Server-side session history for Infinity Mode (per-user, in-memory, rolling 50 tracks)
+const userSessionHistory = new Map<string, string[]>();
 
-// Basic Authentication Middleware
-const requireAuth = (req: Request, res: Response, next: NextFunction) => {
-  if (checkNeedsSetup()) {
-      // If we are in setup mode, bypass auth so the frontend wizard can configure the server
-      return next();
-  }
+function addToSessionHistory(userId: string, trackId: string) {
+  const history = userSessionHistory.get(userId) || [];
+  history.push(trackId);
+  if (history.length > 50) history.shift();
+  userSessionHistory.set(userId, history);
+}
 
-  let b64auth = (req.headers.authorization || '').split(' ')[1] || '';
-  if (!b64auth && req.query.token) {
-    b64auth = req.query.token as string;
-  }
-
-  const [login, password] = Buffer.from(b64auth, 'base64').toString().split(':');
-
-  const expectedUser = process.env.AUTH_USERNAME || 'admin';
-  const expectedPass = process.env.AUTH_PASSWORD || 'changeme';
-
-  if (login && password && login === expectedUser && password === expectedPass) {
-    return next();
-  }
-
-  res.set('WWW-Authenticate', 'Basic realm="Aurora Media Server"');
-  res.status(401).send('Authentication required.');
-};
+function getSessionHistory(userId: string): string[] {
+  return userSessionHistory.get(userId) || [];
+}
 
 // Security: Check if a raw-byte path Buffer resides within an allowed directory.
 // Allowed dirs are typed as UTF-8 strings; file paths are raw byte Buffers.
@@ -123,26 +100,18 @@ function safeAtob(b64: string): string {
   return Buffer.from(bytes).toString('utf8');
 }
 
-// Ensure ALL API routes are protected (except public health/setup checks if necessary, but requireAuth handles setup bypass)
-app.use((req, res, next) => {
-  // Allow unprotected access to setup status so frontend knows if it should mount the wizard
-  if (req.path === '/api/setup/status') {
-    return next();
-  }
-  if (req.path.startsWith('/api')) {
-    return requireAuth(req, res, next);
-  }
-  next();
-});
+// Apply JWT auth middleware to all API routes
+app.use(jwtAuthMiddleware);
 
 // Setup API Routes
-app.get('/api/setup/status', (req, res) => {
-  res.json({ needsSetup: checkNeedsSetup() });
+app.get('/api/setup/status', async (req, res) => {
+  res.json({ needsSetup: !(await hasUsers()) });
 });
 
-app.post('/api/setup/complete', (req, res) => {
-  if (!checkNeedsSetup()) {
-    return res.status(403).json({ error: 'Setup is already complete. You must edit .env manually to change credentials.' });
+app.post('/api/setup/complete', async (req, res) => {
+  const needsSetup = !(await hasUsers());
+  if (!needsSetup) {
+    return res.status(403).json({ error: 'Setup is already complete.' });
   }
 
   const { username, password } = req.body;
@@ -151,44 +120,276 @@ app.post('/api/setup/complete', (req, res) => {
   }
 
   try {
-    // Write new credentials to .env file natively
-    const envPath = path.resolve(__dirname, '../.env');
-    let envContent = '';
-    if (fs.existsSync(envPath)) {
-      envContent = fs.readFileSync(envPath, 'utf8');
-    }
+    // Create first admin user in DB
+    const passwordHash = await hashPassword(password);
+    const user = await createUser(username, passwordHash, 'admin');
 
-    // Replace or append AUTH params
-    if (envContent.includes('AUTH_USERNAME=')) {
-      envContent = envContent.replace(/AUTH_USERNAME=.*/g, `AUTH_USERNAME=${username}`);
-    } else {
-      envContent += `\nAUTH_USERNAME=${username}`;
-    }
+    // Generate JWT token for immediate login
+    const token = await generateToken({ userId: user.id, username: user.username, role: user.role });
 
-    if (envContent.includes('AUTH_PASSWORD=')) {
-      envContent = envContent.replace(/AUTH_PASSWORD=.*/g, `AUTH_PASSWORD=${password}`);
-    } else {
-      envContent += `\nAUTH_PASSWORD=${password}`;
-    }
-
-    fs.writeFileSync(envPath, envContent.trim() + '\n');
-    
-    // Update active memory config so immediate API requests require the new auth
-    process.env.AUTH_USERNAME = username;
-    process.env.AUTH_PASSWORD = password;
-    cachedNeedsSetup = false;
-
-    res.json({ status: 'completed' });
+    res.json({ status: 'completed', token, user: { id: user.id, username: user.username, role: user.role } });
   } catch (error) {
     console.error('Failed to complete setup:', error);
-    res.status(500).json({ error: 'Failed to write credentials to server configuration.' });
+    res.status(500).json({ error: 'Failed to create admin user.' });
   }
 });
 
+// ==========================================
+// AUTH ENDPOINTS
+// ==========================================
 
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password required' });
+    }
 
+    const user = await getUserByUsername(username);
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
 
-// API: Test LLM Connection
+    const valid = await verifyPassword(password, user.password_hash);
+    if (!valid) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    await updateLastLogin(user.id);
+    const token = await generateToken({ userId: user.id, username: user.username, role: user.role });
+
+    res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { inviteToken, username, password } = req.body;
+    if (!inviteToken || !username || !password) {
+      return res.status(400).json({ error: 'Invite token, username, and password required' });
+    }
+
+    if (username.length < 3 || password.length < 5) {
+      return res.status(400).json({ error: 'Username must be 3+ chars, password 5+ chars' });
+    }
+
+    const valid = await isInviteValid(inviteToken);
+    if (!valid) {
+      return res.status(400).json({ error: 'Invalid or expired invite' });
+    }
+
+    const invite = await getInvite(inviteToken);
+    const existingUser = await getUserByUsername(username);
+    if (existingUser) {
+      return res.status(409).json({ error: 'Username already taken' });
+    }
+
+    const passwordHash = await hashPassword(password);
+    const user = await createUser(username, passwordHash, invite.role);
+
+    await incrementInviteUses(inviteToken);
+    const token = await generateToken({ userId: user.id, username: user.username, role: user.role });
+
+    res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({ error: 'Registration failed' });
+  }
+});
+
+app.get('/api/auth/me', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+  res.json({ user: req.user });
+});
+
+app.post('/api/auth/change-password', async (req, res) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Current and new password required' });
+    if (newPassword.length < 5) return res.status(400).json({ error: 'New password must be 5+ characters' });
+
+    const user = await getUserByUsername(req.user.username);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const valid = await verifyPassword(currentPassword, user.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
+
+    const newHash = await hashPassword(newPassword);
+    await updateUser(user.id, { passwordHash: newHash });
+    res.json({ status: 'changed' });
+  } catch (error) {
+    console.error('Password change error:', error);
+    res.status(500).json({ error: 'Failed to change password' });
+  }
+});
+
+app.delete('/api/auth/delete-account', async (req, res) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const { password } = req.body;
+    if (!password) return res.status(400).json({ error: 'Password required to delete account' });
+
+    const user = await getUserByUsername(req.user.username);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const valid = await verifyPassword(password, user.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Incorrect password' });
+
+    // Don't allow deleting the last admin
+    if (user.role === 'admin') {
+      const users = await listUsers();
+      const adminCount = users.filter((u: any) => u.role === 'admin').length;
+      if (adminCount <= 1) {
+        return res.status(400).json({ error: 'Cannot delete the last admin account' });
+      }
+    }
+
+    await deleteUser(user.id);
+    res.json({ status: 'deleted' });
+  } catch (error) {
+    console.error('Account deletion error:', error);
+    res.status(500).json({ error: 'Failed to delete account' });
+  }
+});
+
+// ==========================================
+// ADMIN ENDPOINTS
+// ==========================================
+
+app.get('/api/admin/users', requireAdmin, async (req, res) => {
+  try {
+    const users = await listUsers();
+    res.json({ users });
+  } catch (error) {
+    console.error('Users list error:', error);
+    res.status(500).json({ error: 'Failed to list users' });
+  }
+});
+
+app.post('/api/admin/users', requireAdmin, async (req, res) => {
+  try {
+    const { username, password, role } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password required' });
+    }
+    if (username.length < 3 || password.length < 5) {
+      return res.status(400).json({ error: 'Username 3+ chars, password 5+ chars' });
+    }
+
+    const existing = await getUserByUsername(username);
+    if (existing) {
+      return res.status(409).json({ error: 'Username already taken' });
+    }
+
+    const passwordHash = await hashPassword(password);
+    const user = await createUser(username, passwordHash, role || 'user');
+    res.json({ user: { id: user.id, username: user.username, role: user.role } });
+  } catch (error) {
+    console.error('User create error:', error);
+    res.status(500).json({ error: 'Failed to create user' });
+  }
+});
+
+app.put('/api/admin/users/:id', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { username, password, role } = req.body;
+
+    const fields: any = {};
+    if (username) fields.username = username;
+    if (password) fields.passwordHash = await hashPassword(password);
+    if (role) fields.role = role;
+
+    await updateUser(id as string, fields);
+    res.json({ status: 'updated' });
+  } catch (error) {
+    console.error('User update error:', error);
+    res.status(500).json({ error: 'Failed to update user' });
+  }
+});
+
+app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    // Prevent self-deletion
+    if (id === req.user!.userId) {
+      return res.status(400).json({ error: 'Cannot delete your own account' });
+    }
+    await deleteUser(id as string);
+    res.json({ status: 'deleted' });
+  } catch (error) {
+    console.error('User delete error:', error);
+    res.status(500).json({ error: 'Failed to delete user' });
+  }
+});
+
+// ==========================================
+// INVITE ENDPOINTS
+// ==========================================
+
+app.get('/api/admin/invites', requireAdmin, async (req, res) => {
+  try {
+    const invites = await listInvites();
+    res.json({ invites });
+  } catch (error) {
+    console.error('Invites list error:', error);
+    res.status(500).json({ error: 'Failed to list invites' });
+  }
+});
+
+app.post('/api/admin/invites', requireAdmin, async (req, res) => {
+  try {
+    const { role, maxUses, expiresIn } = req.body;
+    const expiresAt = expiresIn ? Date.now() + (parseInt(expiresIn, 10) * 1000) : null;
+    const invite = await createInvite(req.user!.userId, role || 'user', maxUses || 1, expiresAt);
+
+    // Build the invite URL from the request
+    const origin = req.headers.origin || `${req.protocol}://${req.get('host')}`;
+    const inviteUrl = `${origin}/invite/${invite.token}`;
+
+    res.json({ invite, inviteUrl });
+  } catch (error) {
+    console.error('Invite create error:', error);
+    res.status(500).json({ error: 'Failed to create invite' });
+  }
+});
+
+app.delete('/api/admin/invites/:token', requireAdmin, async (req, res) => {
+  try {
+    await deleteInvite(req.params.token as string);
+    res.json({ status: 'revoked' });
+  } catch (error) {
+    console.error('Invite delete error:', error);
+    res.status(500).json({ error: 'Failed to revoke invite' });
+  }
+});
+
+app.get('/api/invites/:token/validate', async (req, res) => {
+  try {
+    const valid = await isInviteValid(req.params.token);
+    res.json({ valid });
+  } catch (error) {
+    res.json({ valid: false });
+  }
+});
+
+// ==========================================
+// SESSION HISTORY ENDPOINTS
+// ==========================================
+
+app.post('/api/playback/history', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+  const { trackId } = req.body;
+  if (!trackId) return res.status(400).json({ error: 'trackId required' });
+  addToSessionHistory(req.user.userId, trackId);
+  res.json({ status: 'recorded' });
+});
+
+// ==========================================
 app.post('/api/health/llm', async (req, res) => {
   try {
     const { llmBaseUrl, llmApiKey } = req.body;
@@ -205,26 +406,66 @@ app.post('/api/health/llm', async (req, res) => {
   }
 });
 
-// API: Get settings
+// API: Get settings (merged: server-wide + user-specific)
 app.get('/api/settings', async (req, res) => {
   try {
-    const keys = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'audioAnalysisCpu', 'hubGenerationSchedule', 'llmBaseUrl', 'llmApiKey', 'llmModelName', 'genreMatrixLastRun', 'genreMatrixLastResult', 'genreMatrixProgress'];
+    const userId = req.user?.userId;
+
+    // Server-wide settings (from system_settings)
+    const serverKeys = ['audioAnalysisCpu', 'hubGenerationSchedule', 'llmBaseUrl', 'llmApiKey', 'llmModelName', 'genreMatrixLastRun', 'genreMatrixLastResult', 'genreMatrixProgress'];
     const settings: Record<string, any> = {};
-    for (const k of keys) {
+    for (const k of serverKeys) {
       settings[k] = await getSystemSetting(k);
     }
+
+    // User-specific settings (from user_settings, fall back to system_settings)
+    if (userId) {
+      const userKeys = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit'];
+      for (const k of userKeys) {
+        const userVal = await getUserSetting(userId, k);
+        if (userVal !== null) {
+          settings[k] = userVal;
+        } else {
+          settings[k] = await getSystemSetting(k); // backward compat fallback
+        }
+      }
+    } else {
+      // No user context, fall back to system settings
+      const fallbackKeys = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit'];
+      for (const k of fallbackKeys) {
+        settings[k] = await getSystemSetting(k);
+      }
+    }
+
     res.json(settings);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch settings' });
   }
 });
 
-// API: Update settings
+// API: Update settings (user-specific go to user_settings, server-wide to system_settings)
 app.post('/api/settings', async (req, res) => {
   try {
+    const userId = req.user?.userId;
     const settings = req.body;
+
+    // User-specific settings keys
+    const userKeys = new Set(['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit']);
+    // Server-wide settings that only admins can modify
+    const serverKeys = new Set(['llmBaseUrl', 'llmApiKey', 'llmModelName', 'hubGenerationSchedule', 'audioAnalysisCpu']);
+
     for (const [k, v] of Object.entries(settings)) {
-      await setSystemSetting(k, v);
+      if (userKeys.has(k) && userId) {
+        await setUserSetting(userId, k, v);
+      } else if (serverKeys.has(k)) {
+        // Only admins can modify server-wide settings
+        if (req.user?.role === 'admin') {
+          await setSystemSetting(k, v);
+        }
+      } else {
+        // Unknown keys go to system_settings (backward compat)
+        await setSystemSetting(k, v);
+      }
     }
     res.json({ status: 'updated' });
   } catch (error) {
@@ -232,7 +473,7 @@ app.post('/api/settings', async (req, res) => {
   }
 });
 
-// API: Get Genre Mappings (for coverage stats)
+// API: Genre Matrix mappings
 app.get('/api/genre-matrix/mappings', async (req, res) => {
   try {
     const mappings = await getSubGenreMappings();
@@ -242,19 +483,8 @@ app.get('/api/genre-matrix/mappings', async (req, res) => {
   }
 });
 
-// API: Regenerate Genre Matrix
-app.post('/api/genre-matrix/regenerate', async (req, res) => {
-  try {
-    // Non-blocking
-    genreMatrixService.runDiffAndGenerate();
-    res.json({ lastRun: Date.now(), lastResult: 'Categorization started...' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to start categorization' });
-  }
-});
-
 // API: Full Re-mapping of all genres
-app.post('/api/genre-matrix/remap-all', async (req, res) => {
+app.post('/api/genre-matrix/remap-all', requireAdmin, async (req, res) => {
   try {
     // Non-blocking
     genreMatrixService.remapAll();
@@ -652,12 +882,11 @@ app.post('/api/library/scan', async (req, res) => {
     await processFileBatch(fileBufs);
     console.log(`[Scanner] Scan completed for ${dirPath}: ${fileBufs.length} files processed`);
 
-    // Trigger LLM Hub regeneration asynchronously after the scan finishes
-    // This runs in the background and does not block the scan response
+    // Trigger Genre Matrix regeneration after scan (global, not per-user)
+    // Hub regeneration is now per-user and triggered when users visit the Hub
     setImmediate(() => {
       genreMatrixService.runDiffAndGenerate()
-        .then(() => runLlmHubRegeneration())
-        .catch(e => console.error('[LLM Hub] Post-scan generation failed:', e));
+        .catch(e => console.error('[Genre Matrix] Post-scan categorization failed:', e));
     });
 
     res.json({ status: 'completed', message: `Scan completed for ${dirPath}` });
@@ -708,18 +937,20 @@ app.get('/api/library', async (req, res) => {
   }
 });
 
-// API: Get all User and LLM Playlists
+// API: Get all User and LLM Playlists (user-scoped)
 app.get('/api/playlists', async (req, res) => {
   try {
-    const { getPlaylists, getPlaylistTracks } = await import('./database');
-    const playlists = await getPlaylists();
-    
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+    const playlists = await getPlaylists(userId);
+
     // Attach tracks to them for initial load
     const populated = await Promise.all(playlists.map(async (pl: any) => {
       const tracks = await getPlaylistTracks(pl.id);
       return { ...pl, tracks };
     }));
-    
+
     res.json({ playlists: populated });
   } catch (error) {
     console.error('Playlist fetch error:', error);
@@ -727,16 +958,18 @@ app.get('/api/playlists', async (req, res) => {
   }
 });
 
-// API: Create new User Playlist
+// API: Create new User Playlist (user-scoped)
 app.post('/api/playlists', async (req, res) => {
   try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
     const { title, description } = req.body;
     if (!title) return res.status(400).json({ error: 'Title required' });
-    
-    const { createPlaylist } = await import('./database');
+
     const id = `user_${Date.now()}`;
-    await createPlaylist(id, title, description, false);
-    
+    await createPlaylist(id, title, description, false, userId);
+
     res.json({ id, title, description, isLlmGenerated: false, tracks: [] });
   } catch (error) {
     console.error('Playlist create error:', error);
@@ -744,17 +977,24 @@ app.post('/api/playlists', async (req, res) => {
   }
 });
 
-// API: Save tracks to a playlist
+// API: Save tracks to a playlist (owner check)
 app.post('/api/playlists/:id/tracks', async (req, res) => {
   try {
     const { id } = req.params;
     const { trackIds } = req.body;
-    
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
     if (!Array.isArray(trackIds)) return res.status(400).json({ error: 'trackIds must be an array' });
-    
-    const { addTracksToPlaylist } = await import('./database');
-    await addTracksToPlaylist(id, trackIds);
-    
+
+    // Check ownership
+    const owner = await getPlaylistOwner(id as string);
+    if (owner && owner !== userId && req.user?.role !== 'admin') {
+      return res.status(403).json({ error: 'Not your playlist' });
+    }
+
+    await addTracksToPlaylist(id as string, trackIds);
+
     res.json({ status: 'success' });
   } catch (error) {
     console.error('Playlist track update error:', error);
@@ -762,12 +1002,20 @@ app.post('/api/playlists/:id/tracks', async (req, res) => {
   }
 });
 
-// API: Delete a playlist
+// API: Delete a playlist (owner or admin)
 app.delete('/api/playlists/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { deletePlaylist } = await import('./database');
-    await deletePlaylist(id);
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+    // Admin can delete any playlist
+    if (req.user?.role === 'admin') {
+      await deletePlaylist(id as string);
+    } else {
+      await deletePlaylist(id as string, userId);
+    }
+
     res.json({ status: 'deleted' });
   } catch (error) {
     console.error('Playlist delete error:', error);
@@ -776,10 +1024,13 @@ app.delete('/api/playlists/:id', async (req, res) => {
 });
 
 // API: Get Hub Data (READ-ONLY - assembles engine-driven + cached LLM collections)
-// Does NOT call the LLM. Call /api/hub/regenerate to trigger fresh LLM generation explicitly.
+// Per-user: each user gets personalized collections based on their playback stats
 app.get('/api/hub', async (req, res) => {
   try {
-    const collections = await getHubCollections([]);
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+    const collections = await getHubCollections([], userId);
     res.json({ collections });
   } catch (error) {
     console.error('Hub fetch error:', error);
@@ -788,8 +1039,8 @@ app.get('/api/hub', async (req, res) => {
 });
 
 // Internal helper: generate LLM playlists if config is present and cache is stale
-async function runLlmHubRegeneration(opts: { force?: boolean } = {}) {
-  const { getSystemSetting } = await import('./database');
+// Now per-user: generates playlists owned by the requesting user
+async function runLlmHubRegeneration(userId: string, opts: { force?: boolean } = {}) {
   const llmBaseUrl = (await getSystemSetting('llmBaseUrl')) || process.env.LLM_BASE_URL || '';
 
   // Only skip if no base URL is configured at all — local LLMs don't need an API key
@@ -797,46 +1048,50 @@ async function runLlmHubRegeneration(opts: { force?: boolean } = {}) {
     return { skipped: true, reason: 'No LLM base URL configured' };
   }
 
-  const { getPlaylists, deleteOldLlmPlaylists } = await import('./database');
-
-  // Cleanup stale LLM playlists to avoid database clutter
-  // If forced (Reset Hub), we delete ALL LLM playlists (maxAgeMs = 0)
+  // Cleanup stale LLM playlists for this user
   const maxAgeMs = opts.force ? 0 : 24 * 60 * 60 * 1000;
-  const deletedCount = await deleteOldLlmPlaylists(maxAgeMs);
+  const deletedCount = await deleteOldLlmPlaylists(maxAgeMs, userId);
   if (deletedCount && deletedCount > 0) {
-    console.log(`[LLM Hub] ${opts.force ? 'Reset' : 'Cleaned up'} ${deletedCount} LLM playlist(s)`);
+    console.log(`[LLM Hub] ${opts.force ? 'Reset' : 'Cleaned up'} ${deletedCount} LLM playlist(s) for user ${userId}`);
   }
 
-  const existingPlaylists = await getPlaylists();
+  // Check existing LLM playlists for this user
+  const existingPlaylists = await getPlaylists(userId);
 
-  // Determine age based on schedule using getSystemSetting('hubGenerationSchedule')
-  // For now we enforce at least 4 hours if not forced
+  // Determine age based on schedule
   const fourHoursMs = 4 * 60 * 60 * 1000;
   const hasRecentLlm = existingPlaylists.some((pl: any) =>
-    pl.isllmgenerated  && (Date.now() - pl.createdat) < fourHoursMs
+    pl.isLlmGenerated && (Date.now() - pl.createdAt) < fourHoursMs
   );
 
   if (hasRecentLlm && !opts.force) {
     return { skipped: true, reason: 'Recent LLM playlists exist (< 4h old)' };
   }
 
+  // Build user-specific history summary for LLM context
+  const recentTracks = await getUserRecentTracks(userId, 10);
+  const historySummary = recentTracks.map((t: any) => `${t.title} by ${t.artist}`).join(', ');
+
   const timeOfDay = new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 18 ? 'afternoon' : 'evening';
-  const concepts: HubCollection[] = await generateHubConcepts({ timeOfDay, historySummary: '' });
+  const concepts: HubCollection[] = await generateHubConcepts({ timeOfDay, historySummary });
 
   if (concepts.length > 0) {
-    // This does the vector search and writes playlists to the database
-    await getHubCollections(concepts);
+    // This does the vector search and writes playlists to the database (user-scoped)
+    await getHubCollections(concepts, userId);
   }
 
-  console.log(`[LLM Hub] Generated and saved ${concepts.length} playlist(s) for ${timeOfDay}`);
+  console.log(`[LLM Hub] Generated and saved ${concepts.length} playlist(s) for user ${userId} (${timeOfDay})`);
   return { generated: concepts.length };
 }
 
-// API: Trigger LLM Hub Regeneration explicitly (called after scan or from an admin action)
+// API: Trigger LLM Hub Regeneration explicitly (per-user)
 app.post('/api/hub/regenerate', async (req, res) => {
   try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
     const { force } = req.body;
-    const result = await runLlmHubRegeneration({ force: !!force });
+    const result = await runLlmHubRegeneration(userId, { force: !!force });
     res.json(result);
   } catch (error) {
     console.error('Hub regeneration error:', error);
@@ -867,7 +1122,7 @@ app.post('/api/hub/generate-custom', async (req, res) => {
 
 
 // API: Manually trigger genre matrix regeneration
-app.post('/api/genre-matrix/regenerate', async (req, res) => {
+app.post('/api/genre-matrix/regenerate', requireAdmin, async (req, res) => {
   try {
     await genreMatrixService.runDiffAndGenerate();
     const { getSystemSetting } = await import('./database');
@@ -880,28 +1135,40 @@ app.post('/api/genre-matrix/regenerate', async (req, res) => {
   }
 });
 
-// Schedule: Re-run LLM hub generation periodically
+// Schedule: Re-run LLM hub regeneration periodically (per-user)
 const LLM_HUB_INTERVAL_MS = 60 * 60 * 1000; // Check every hour
 setInterval(async () => {
-  const { getSystemSetting } = await import('./database');
   const schedule = await getSystemSetting('hubGenerationSchedule') || 'Daily';
   if (schedule === 'Manual Only') return;
 
   console.log('[LLM Hub] Scheduled refresh check...');
   try {
-    await runLlmHubRegeneration();
+    const users = await listUsers();
+    for (const user of users) {
+      try {
+        await runLlmHubRegeneration(user.id);
+      } catch (e) {
+        console.error(`[LLM Hub] Scheduled refresh failed for user ${user.username}:`, e);
+      }
+    }
   } catch (e) {
     console.error('[LLM Hub] Scheduled refresh failed:', e);
   }
 }, LLM_HUB_INTERVAL_MS);
 
-// API: Request next infinity mode track
+// API: Request next infinity mode track (per-user session history)
 app.post('/api/recommend', async (req, res) => {
   try {
-    const { sessionHistoryTrackIds, settings } = req.body;
-    
+    const userId = req.user?.userId;
+    const { sessionHistoryTrackIds: clientHistory, settings } = req.body;
+
+    // Prefer server-side session history, fall back to client-provided
+    const history = userId
+      ? getSessionHistory(userId)
+      : (clientHistory || []);
+
     const nextTrack = await calculateNextInfinityTrack(
-      sessionHistoryTrackIds || [],
+      history,
       settings || {}
     );
     res.json({ track: nextTrack });
@@ -911,13 +1178,17 @@ app.post('/api/recommend', async (req, res) => {
   }
 });
 
-// API: Record a successful playback
+// API: Record a successful playback (per-user)
 app.post('/api/playback/record', async (req, res) => {
   try {
     const { trackId } = req.body;
     if (!trackId) return res.status(400).json({ error: 'trackId required' });
-    const { recordPlayback } = await import('./database');
-    await recordPlayback(trackId);
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+    await recordPlaybackForUser(userId, trackId);
+    // Also add to server-side session history
+    addToSessionHistory(userId, trackId);
     res.json({ status: 'recorded' });
   } catch (err) {
     console.error('Playback record error:', err);
@@ -925,13 +1196,15 @@ app.post('/api/playback/record', async (req, res) => {
   }
 });
 
-// API: Record a track skip
+// API: Record a track skip (per-user)
 app.post('/api/playback/skip', async (req, res) => {
   try {
     const { trackId } = req.body;
     if (!trackId) return res.status(400).json({ error: 'trackId required' });
-    const { recordSkip } = await import('./database');
-    await recordSkip(trackId);
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+    await recordSkipForUser(userId, trackId);
     res.json({ status: 'recorded' });
   } catch (err) {
     console.error('Skip record error:', err);
