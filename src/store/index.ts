@@ -263,6 +263,8 @@ export const usePlayerStore = create<PlayerState>()(
             if (res.ok) {
               const data = await res.json();
               set({ needsSetup: data.needsSetup });
+            } else {
+              set({ needsSetup: false });
             }
           } catch (e) {
             console.error("Failed to check setup status", e);

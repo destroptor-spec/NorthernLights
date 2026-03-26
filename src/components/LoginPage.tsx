@@ -33,7 +33,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
             <Lock className="w-7 h-7" />
           </div>
           <h1 className="text-2xl font-extrabold tracking-tight text-[var(--color-text-primary)]">
-            Aurora
+            NorthernLights
           </h1>
           <p className="text-sm text-[var(--color-text-secondary)] mt-1">
             Sign in to access your library

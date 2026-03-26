@@ -599,21 +599,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                     <span className="text-sm font-medium text-[var(--color-text-primary)]">Service Status:</span>
                                                     <span className="text-xs px-2 py-1 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">Not Configured</span>
                                                 </div>
-                                                <p className="text-xs text-[var(--color-text-muted)] mb-4">
-                                                    To enable auto-start, run these commands in your terminal:
-                                                </p>
-                                                <div className="bg-black/40 rounded-lg p-3 font-mono text-xs text-green-400 overflow-x-auto">
-                                                    <p className="mb-1">mkdir -p ~/.config/systemd/user</p>
-                                                    <p className="mb-1">cat &gt; ~/.config/systemd/user/aurora.service &lt;&lt; 'EOF'</p>
-                                                    <p className="mb-1">[Unit]</p>
-                                                    <p className="mb-1">Description=Aurora Music Player</p>
-                                                    <p className="mb-1">After=default.target</p>
-                                                    <p className="mb-1"></p>
-                                                    <p className="mb-1">[Service]</p>
-                                                    <p className="mb-1">Type=simple</p>
-                                                    <p className="mb-1">ExecStart=/bin/bash -c 'cd /var/home/andreas/VS%%20Code/Music%%20App && npm run dev'</p>
-                                                    <p className="mb-1">Restart=on-failure</p>
-                                                    <p className="mb-1">RestartSec=10</p>
+                                                    <p className="mb-4 text-amber-200/80 italic">
+                                                        Note: You must run <b>npm run build</b> once before starting the service.
+                                                    </p>
+                                                    <div className="bg-black/40 rounded-lg p-3 font-mono text-xs text-green-400 overflow-x-auto">
+                                                        <p className="mb-1">mkdir -p ~/.config/systemd/user</p>
+                                                        <p className="mb-1">cat &gt; ~/.config/systemd/user/aurora.service &lt;&lt; 'EOF'</p>
+                                                        <p className="mb-1">[Unit]</p>
+                                                        <p className="mb-1">Description=Aurora Music Player</p>
+                                                        <p className="mb-1">After=default.target</p>
+                                                        <p className="mb-1"></p>
+                                                        <p className="mb-1">[Service]</p>
+                                                        <p className="mb-1">Type=simple</p>
+                                                        <p className="mb-1">ExecStart=/bin/bash -c 'cd "/var/home/andreas/VS Code/Music App" && npx tsx server/index.ts'</p>
+                                                        <p className="mb-1">Restart=on-failure</p>
+                                                        <p className="mb-1">RestartSec=10</p>
                                                     <p className="mb-1"></p>
                                                     <p className="mb-1">[Install]</p>
                                                     <p className="mb-1">WantedBy=default.target</p>

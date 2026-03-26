@@ -1,2 +1,30 @@
+# Dependencies
 node_modules
 .env
+
+# Build output (regenerated on npm run build)
+dist/
+index.html
+
+# Database files
+*.db
+*.sqlite
+postgres-data/
+
+# IDE & OS
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local dev files
+start-db.sh  # Use UI-based DB control instead
+
+# Logs
+*.log
+npm-debug.log*
+
+# Coverage
+coverage/
+
+# Production test files
+test-*.js

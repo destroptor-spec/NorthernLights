@@ -126,7 +126,7 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
                     <div className="w-16 h-16 bg-[var(--color-primary)]/20 text-[var(--color-primary)] rounded-full flex items-center justify-center mb-4">
                         <Settings className="w-8 h-8" />
                     </div>
-                    <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-[var(--color-text-primary)]">Welcome to Aurora</h1>
+                    <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-[var(--color-text-primary)]">Welcome to NorthernLights</h1>
                     <p className="text-[var(--color-text-secondary)] mt-2 text-center">Let's get your personal media server set up in a few simple steps.</p>
                 </div>
 

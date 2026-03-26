@@ -2,6 +2,21 @@
 
 A modern, self-hosted web music player built with React, Vite, Tailwind CSS, and Express. Stream your beautifully organized local music library from anywhere over the web.
 
+> 📖 **Deploying to a Server?** Read the comprehensive [Production Setup Guide](docs/production_guide.md) for step-by-step instructions on PM2, Systemd, reverse proxies, and firewall configurations.
+
+## Low-Level Quick Setup (TL;DR)
+
+Just want the raw commands to get the app running immediately in production?
+
+```bash
+git pull
+npm install
+cp .env.example .env
+npm run build
+pm2 start "npx tsx server/index.ts" --name northernlights
+# Then open http://<your-server-ip>:3001 to finish setup in the UI Wizard
+```
+
 ## Features
 
 - **URL-Based Navigation & Deep Linking**: Full React Router integration with meaningful URLs (`/library/artist/:id`, `/library/album/:id`, `/library/genre/:id`). Browser back/forward navigation works natively. Bookmark or share direct links to any artist, album, or genre page.
@@ -63,11 +78,10 @@ A modern, self-hosted web music player built with React, Vite, Tailwind CSS, and
    cd "Music App"
    ```
 
-2. **Start the Database:**
-   ```bash
-   ./start-db.sh
-   ```
-   *This starts the required `pgvector` PostgreSQL container via Podman or Docker.*
+2. **Database Container:**
+   - NorthernLights automatically manages its own PostgreSQL container using Podman or Docker. 
+   - No manual setup is required; the server will attempt to connect and start the container automatically on boot. 
+   - If the container does not exist, you can create it with a single click in the UI Setup Wizard.
 
 3. **Install dependencies:**
    ```bash
@@ -100,7 +114,7 @@ Once the app is running:
 
 ## Deployment
 
-*(See `docs/deployment.md` or `implementation_plan.md` for complete production strategies)*
+*(See the [Production Setup Guide](docs/production_guide.md) for complete production strategies)*
 
 To safely host NorthernLights on a public domain:
 1. Ensure your `.env` contains secure credentials.

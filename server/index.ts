@@ -68,6 +68,22 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Serve static files from the 'dist' directory in production
+const distPath = path.join(__dirname, '../dist');
+if (fs.existsSync(distPath)) {
+  console.log(`[Server] Serving static files from ${distPath}`);
+  app.use(express.static(distPath));
+
+  // Catch-all route to serve index.html for React SPA routing
+  app.get('/{*splat}', (req, res, next) => {
+    // If it's an API request that wasn't handled, let it fall through
+    if (req.path.startsWith('/api')) {
+      return next();
+    }
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+}
+
 // Server-side session history for Infinity Mode (per-user, in-memory, rolling 50 tracks)
 const userSessionHistory = new Map<string, string[]>();
 

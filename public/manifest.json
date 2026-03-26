@@ -1,6 +1,6 @@
 {
-  "name": "Modern Web Music Player",
-  "short_name": "Music Player",
+  "name": "NorthernLights",
+  "short_name": "NorthernLights",
   "description": "A modern web-based music player with local file playback, metadata editing, and playlist management.",
   "start_url": "/",
   "display": "standalone",

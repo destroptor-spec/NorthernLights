@@ -338,7 +338,7 @@ const App: React.FC = () => {
           
           {/* Mobile Header (Hidden on Desktop) */}
           <div className="md:hidden p-4 flex items-center justify-between border-b border-[var(--glass-border)] bg-[var(--glass-bg)] backdrop-blur-md">
-            <h1 className="font-bold text-lg text-[var(--color-primary)] tracking-wide">AURORA</h1>
+            <h1 className="font-bold text-lg text-[var(--color-primary)] tracking-wide">NORTHERNLIGHTS</h1>
             <button 
               className="p-2 text-[var(--color-text-primary)] focus:outline-none" 
               onClick={() => setIsSidebarOpen(true)}
@@ -397,7 +397,7 @@ const App: React.FC = () => {
                   <Route path="*" element={
                     <div className="empty-state font-body flex flex-col items-center justify-center p-8 flex-1">
                       <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-transparent bg-clip-text bg-gradient-to-br from-[var(--aurora-green)] to-[var(--aurora-purple)] mb-4">
-                        Aurora Media Server
+                        NorthernLights
                       </h1>
                       <p className="text-lg text-[var(--color-text-secondary)] mb-8 max-w-md text-center">
                         Provide the absolute path to your local music directory to let the host scan and stream it.

@@ -7,209 +7,247 @@ let initPromise: Promise<Pool> | null = null;
 export async function initDB(): Promise<Pool> {
   if (pool) return pool;
   if (initPromise) return initPromise;
-  
+
   initPromise = (async () => {
-    const instance = new Pool({
-      user: process.env.DB_USER || 'musicuser',
-      password: process.env.DB_PASSWORD || 'musicpass',
-      host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT || '5432', 10),
-      database: process.env.DB_NAME || 'musicdb',
-    });
+    let client;
+    try {
+      const instance = new Pool({
+        user: process.env.DB_USER || 'musicuser',
+        password: process.env.DB_PASSWORD || 'musicpass',
+        host: process.env.DB_HOST || 'localhost',
+        port: parseInt(process.env.DB_PORT || '5432', 10),
+        database: process.env.DB_NAME || 'musicdb',
+      });
 
-    // Test connection and initialize schema
-    const client = await instance.connect();
+      // Test connection and initialize schema
+      client = await instance.connect();
 
-  await client.query(`
-    CREATE EXTENSION IF NOT EXISTS vector;
+      await client.query(`
+        CREATE EXTENSION IF NOT EXISTS vector;
 
-    CREATE TABLE IF NOT EXISTS tracks (
-      id TEXT PRIMARY KEY,
-      title TEXT,
-      artist TEXT,
-      albumArtist TEXT,
-      artists TEXT,
-      album TEXT,
-      genre TEXT,
-      duration REAL,
-      trackNumber INTEGER,
-      year INTEGER,
-      releaseType TEXT,
-      isCompilation INTEGER,
-      path TEXT UNIQUE,
-      playCount INTEGER DEFAULT 0,
-      lastPlayedAt BIGINT DEFAULT 0,
-      rating INTEGER DEFAULT 0,
-      bitrate INTEGER,
-      format TEXT
-    );
+        CREATE TABLE IF NOT EXISTS tracks (
+          id TEXT PRIMARY KEY,
+          title TEXT,
+          artist TEXT,
+          albumArtist TEXT,
+          artists TEXT,
+          album TEXT,
+          genre TEXT,
+          duration REAL,
+          trackNumber INTEGER,
+          year INTEGER,
+          releaseType TEXT,
+          isCompilation INTEGER,
+          path TEXT UNIQUE,
+          playCount INTEGER DEFAULT 0,
+          lastPlayedAt BIGINT DEFAULT 0,
+          rating INTEGER DEFAULT 0,
+          bitrate INTEGER,
+          format TEXT
+        );
 
-    DO $$ 
-    BEGIN 
-      ALTER TABLE tracks ADD COLUMN IF NOT EXISTS playCount INTEGER DEFAULT 0;
-      ALTER TABLE tracks ADD COLUMN IF NOT EXISTS lastPlayedAt BIGINT DEFAULT 0;
-      ALTER TABLE tracks ADD COLUMN IF NOT EXISTS rating INTEGER DEFAULT 0;
-    EXCEPTION 
-      WHEN OTHERS THEN null; 
-    END $$;
+        DO $$ 
+        BEGIN 
+          ALTER TABLE tracks ADD COLUMN IF NOT EXISTS playCount INTEGER DEFAULT 0;
+          ALTER TABLE tracks ADD COLUMN IF NOT EXISTS lastPlayedAt BIGINT DEFAULT 0;
+          ALTER TABLE tracks ADD COLUMN IF NOT EXISTS rating INTEGER DEFAULT 0;
+        EXCEPTION 
+          WHEN OTHERS THEN null; 
+        END $$;
 
-    DO $$ 
-    BEGIN 
-      ALTER TABLE tracks ADD COLUMN IF NOT EXISTS bitrate INTEGER;
-      ALTER TABLE tracks ADD COLUMN IF NOT EXISTS format TEXT;
-    EXCEPTION 
-      WHEN OTHERS THEN null; 
-    END $$;
+        DO $$ 
+        BEGIN 
+          ALTER TABLE tracks ADD COLUMN IF NOT EXISTS bitrate INTEGER;
+          ALTER TABLE tracks ADD COLUMN IF NOT EXISTS format TEXT;
+        EXCEPTION 
+          WHEN OTHERS THEN null; 
+        END $$;
 
-    CREATE TABLE IF NOT EXISTS track_features (
-      track_id TEXT REFERENCES tracks(id) ON DELETE CASCADE PRIMARY KEY,
-      bpm NUMERIC,
-      acoustic_vector VECTOR(7)
-    );
+        CREATE TABLE IF NOT EXISTS track_features (
+          track_id TEXT REFERENCES tracks(id) ON DELETE CASCADE PRIMARY KEY,
+          bpm NUMERIC,
+          acoustic_vector VECTOR(7)
+        );
 
-    CREATE TABLE IF NOT EXISTS directories (
-      id TEXT PRIMARY KEY,
-      path TEXT UNIQUE
-    );
+        CREATE TABLE IF NOT EXISTS directories (
+          id TEXT PRIMARY KEY,
+          path TEXT UNIQUE
+        );
 
-    CREATE TABLE IF NOT EXISTS genre_matrix_cache (
-      id TEXT PRIMARY KEY,
-      matrix TEXT
-    );
+        CREATE TABLE IF NOT EXISTS genre_matrix_cache (
+          id TEXT PRIMARY KEY,
+          matrix TEXT
+        );
 
-    CREATE TABLE IF NOT EXISTS system_settings (
-      key TEXT PRIMARY KEY,
-      value TEXT
-    );
+        CREATE TABLE IF NOT EXISTS system_settings (
+          key TEXT PRIMARY KEY,
+          value TEXT
+        );
 
-    -- Ensure index exists for fast vector search
-    CREATE INDEX IF NOT EXISTS track_features_vector_idx ON track_features USING hnsw (acoustic_vector vector_l2_ops);
+        -- Ensure index exists for fast vector search
+        CREATE INDEX IF NOT EXISTS track_features_vector_idx ON track_features USING hnsw (acoustic_vector vector_l2_ops);
 
-    CREATE TABLE IF NOT EXISTS playlists (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      description TEXT,
-      createdAt BIGINT NOT NULL,
-      isLlmGenerated INTEGER NOT NULL DEFAULT 0
-    );
+        CREATE TABLE IF NOT EXISTS playlists (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          description TEXT,
+          createdAt BIGINT NOT NULL,
+          isLlmGenerated INTEGER NOT NULL DEFAULT 0
+        );
 
-    DO $$ 
-    BEGIN 
-      ALTER TABLE playlists ALTER COLUMN createdAt TYPE BIGINT; 
-    EXCEPTION 
-      WHEN OTHERS THEN null; 
-    END $$;
+        DO $$ 
+        BEGIN 
+          ALTER TABLE playlists ALTER COLUMN createdAt TYPE BIGINT; 
+        EXCEPTION 
+          WHEN OTHERS THEN null; 
+        END $$;
 
-    CREATE TABLE IF NOT EXISTS playlist_tracks (
-      playlistId TEXT REFERENCES playlists(id) ON DELETE CASCADE,
-      trackId TEXT REFERENCES tracks(id) ON DELETE CASCADE,
-      sortOrder INTEGER NOT NULL,
-      PRIMARY KEY (playlistId, trackId)
-    );
+        CREATE TABLE IF NOT EXISTS playlist_tracks (
+          playlistId TEXT REFERENCES playlists(id) ON DELETE CASCADE,
+          trackId TEXT REFERENCES tracks(id) ON DELETE CASCADE,
+          sortOrder INTEGER NOT NULL,
+          PRIMARY KEY (playlistId, trackId)
+        );
 
-    CREATE TABLE IF NOT EXISTS subgenre_mappings (
-      sub_genre TEXT PRIMARY KEY,
-      macro_genre TEXT NOT NULL
-    );
+        CREATE TABLE IF NOT EXISTS subgenre_mappings (
+          sub_genre TEXT PRIMARY KEY,
+          macro_genre TEXT NOT NULL
+        );
 
-    CREATE TABLE IF NOT EXISTS macro_matrix_cache (
-      id TEXT PRIMARY KEY,
-      matrix TEXT NOT NULL
-    );
+        CREATE TABLE IF NOT EXISTS macro_matrix_cache (
+          id TEXT PRIMARY KEY,
+          matrix TEXT NOT NULL
+        );
 
-    -- Entity tables for UUID-based navigation
-    CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+        -- Entity tables for UUID-based navigation
+        CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
-    CREATE TABLE IF NOT EXISTS artists (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      name TEXT NOT NULL UNIQUE,
-      created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
-    );
+        CREATE TABLE IF NOT EXISTS artists (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          name TEXT NOT NULL UNIQUE,
+          created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+        );
 
-    CREATE TABLE IF NOT EXISTS albums (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      title TEXT NOT NULL,
-      artist_name TEXT,
-      created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
-      UNIQUE(title, artist_name)
-    );
+        CREATE TABLE IF NOT EXISTS albums (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          title TEXT NOT NULL,
+          artist_name TEXT,
+          created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+          UNIQUE(title, artist_name)
+        );
 
-    CREATE TABLE IF NOT EXISTS genres (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      name TEXT NOT NULL UNIQUE,
-      created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
-    );
+        CREATE TABLE IF NOT EXISTS genres (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          name TEXT NOT NULL UNIQUE,
+          created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+        );
 
-    -- Add FK columns to tracks (nullable, backfilled by migration)
-    DO $$
-    BEGIN
-      ALTER TABLE tracks ADD COLUMN IF NOT EXISTS artist_id UUID REFERENCES artists(id);
-      ALTER TABLE tracks ADD COLUMN IF NOT EXISTS album_id UUID REFERENCES albums(id);
-      ALTER TABLE tracks ADD COLUMN IF NOT EXISTS genre_id UUID REFERENCES genres(id);
-    EXCEPTION WHEN OTHERS THEN null;
-    END $$;
+        -- Add FK columns to tracks (nullable, backfilled by migration)
+        DO $$
+        BEGIN
+          ALTER TABLE tracks ADD COLUMN IF NOT EXISTS artist_id UUID REFERENCES artists(id);
+          ALTER TABLE tracks ADD COLUMN IF NOT EXISTS album_id UUID REFERENCES albums(id);
+          ALTER TABLE tracks ADD COLUMN IF NOT EXISTS genre_id UUID REFERENCES genres(id);
+        EXCEPTION WHEN OTHERS THEN null;
+        END $$;
 
-    -- Indexes for FK lookups
-    CREATE INDEX IF NOT EXISTS tracks_artist_id_idx ON tracks(artist_id);
-    CREATE INDEX IF NOT EXISTS tracks_album_id_idx ON tracks(album_id);
-    CREATE INDEX IF NOT EXISTS tracks_genre_id_idx ON tracks(genre_id);
+        -- Indexes for FK lookups
+        CREATE INDEX IF NOT EXISTS tracks_artist_id_idx ON tracks(artist_id);
+        CREATE INDEX IF NOT EXISTS tracks_album_id_idx ON tracks(album_id);
+        CREATE INDEX IF NOT EXISTS tracks_genre_id_idx ON tracks(genre_id);
 
-    -- ==========================================
-    -- MULTI-USER TABLES
-    -- ==========================================
+        -- ==========================================
+        -- MULTI-USER TABLES
+        -- ==========================================
 
-    CREATE TABLE IF NOT EXISTS users (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      username TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
-      created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT,
-      last_login_at BIGINT DEFAULT 0
-    );
+        CREATE TABLE IF NOT EXISTS users (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          username TEXT UNIQUE NOT NULL,
+          password_hash TEXT NOT NULL,
+          role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
+          created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT,
+          last_login_at BIGINT DEFAULT 0
+        );
 
-    CREATE TABLE IF NOT EXISTS invites (
-      token TEXT PRIMARY KEY DEFAULT encode(gen_random_bytes(32), 'hex'),
-      created_by UUID REFERENCES users(id) ON DELETE SET NULL,
-      role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
-      max_uses INTEGER DEFAULT 1,
-      uses INTEGER DEFAULT 0,
-      expires_at BIGINT,
-      created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
-    );
+        CREATE TABLE IF NOT EXISTS invites (
+          token TEXT PRIMARY KEY DEFAULT encode(gen_random_bytes(32), 'hex'),
+          created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+          role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
+          max_uses INTEGER DEFAULT 1,
+          uses INTEGER DEFAULT 0,
+          expires_at BIGINT,
+          created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
+        );
 
-    CREATE TABLE IF NOT EXISTS user_playback_stats (
-      user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-      track_id TEXT REFERENCES tracks(id) ON DELETE CASCADE,
-      play_count INTEGER NOT NULL DEFAULT 0,
-      rating INTEGER NOT NULL DEFAULT 0,
-      last_played_at BIGINT NOT NULL DEFAULT 0,
-      PRIMARY KEY (user_id, track_id)
-    );
-    CREATE INDEX IF NOT EXISTS ups_user_id_idx ON user_playback_stats(user_id);
-    CREATE INDEX IF NOT EXISTS ups_track_id_idx ON user_playback_stats(track_id);
+        CREATE TABLE IF NOT EXISTS user_playback_stats (
+          user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+          track_id TEXT REFERENCES tracks(id) ON DELETE CASCADE,
+          play_count INTEGER NOT NULL DEFAULT 0,
+          rating INTEGER NOT NULL DEFAULT 0,
+          last_played_at BIGINT NOT NULL DEFAULT 0,
+          PRIMARY KEY (user_id, track_id)
+        );
+        CREATE INDEX IF NOT EXISTS ups_user_id_idx ON user_playback_stats(user_id);
+        CREATE INDEX IF NOT EXISTS ups_track_id_idx ON user_playback_stats(track_id);
 
-    CREATE TABLE IF NOT EXISTS user_settings (
-      user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-      key TEXT NOT NULL,
-      value TEXT NOT NULL,
-      PRIMARY KEY (user_id, key)
-    );
+        CREATE TABLE IF NOT EXISTS user_settings (
+          user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+          key TEXT NOT NULL,
+          value TEXT NOT NULL,
+          PRIMARY KEY (user_id, key)
+        );
 
-    -- Add user_id to playlists (nullable for backward compat)
-    DO $$
-    BEGIN
-      ALTER TABLE playlists ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE;
-    EXCEPTION WHEN OTHERS THEN null;
-    END $$;
-    CREATE INDEX IF NOT EXISTS playlists_user_id_idx ON playlists(user_id);
-  `);
-  
-    client.release();
-    pool = instance;
-    return instance;
+        -- Add user_id to playlists (nullable for backward compat)
+        DO $$
+        BEGIN
+          ALTER TABLE playlists ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE;
+        EXCEPTION WHEN OTHERS THEN null;
+        END $$;
+        CREATE INDEX IF NOT EXISTS playlists_user_id_idx ON playlists(user_id);
+      `);
+
+      client.release();
+      pool = instance;
+      return pool;
+    } catch (e) {
+      if (client) {
+        try { client.release(); } catch {}
+      }
+      initPromise = null;
+      throw e;
+    }
   })();
 
   return initPromise;
+}
+
+export async function getDatabaseStats() {
+  try {
+    const p = await initDB();
+    const queries = {
+      tables: "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'",
+      indexes: "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public'",
+      tracks: "SELECT count(*) FROM tracks",
+      artists: "SELECT count(*) FROM artists",
+      albums: "SELECT count(*) FROM albums",
+      genres: "SELECT count(*) FROM genres",
+      playlists: "SELECT count(*) FROM playlists"
+    };
+
+    const results: any = {};
+    for (const [key, query] of Object.entries(queries)) {
+      try {
+        const res = await p.query(query);
+        results[key] = parseInt(res.rows[0].count || '0', 10);
+      } catch (e) {
+        results[key] = 0;
+      }
+    }
+    return results;
+  } catch (e) {
+    console.error('[DB] Failed to get stats:', e);
+    return null;
+  }
 }
 
 // Graceful shutdown
@@ -896,9 +934,18 @@ export async function deleteUser(id: string) {
 }
 
 export async function hasUsers(): Promise<boolean> {
-  const db = await initDB();
-  const res = await db.query('SELECT COUNT(*) as count FROM users');
-  return parseInt((res.rows[0] as any).count, 10) > 0;
+  try {
+    const db = await initDB();
+    const res = await db.query('SELECT COUNT(*) as count FROM users');
+    return parseInt((res.rows[0] as any).count, 10) > 0;
+  } catch (error: any) {
+    // If database is not reachable, we can't determine setup status
+    if (error.code === 'ECONNREFUSED') {
+      console.warn('[DB] Cannot determine setup status - connection refused.');
+      throw error;
+    }
+    throw error;
+  }
 }
 
 // ==========================================

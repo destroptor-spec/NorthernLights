@@ -21,7 +21,6 @@ async function checkNeedsSetup(): Promise<boolean> {
 // Supports: Authorization: Bearer <token> or ?token=<token> query param
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const path = req.path;
-  console.log(`[AuthMiddleware] Checking path: ${path}`);
   
   // Allow unprotected access to setup status, health, auth, and invite validation
   if (
@@ -29,9 +28,11 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     path === '/api/health' ||
     path === '/api/auth/login' ||
     path === '/api/auth/register' ||
-    path.startsWith('/api/invites/')
+    path.startsWith('/api/invites/') ||
+    path === '/api/admin/db/status' ||
+    path === '/api/admin/db/stats' ||
+    path === '/api/admin/db/start'
   ) {
-    console.log(`[AuthMiddleware] Path ${path} is EXCLUDED from auth.`);
     return next();
   }
 
