@@ -13,6 +13,8 @@ The core music player architecture has transitioned to a client-server model usi
 - [x] **V7: AI & Playlists**: Native LLM integration, custom playlist generation, vector recommendations, drag-and-drop queues, and global context menus.
 - [x] **V8: React Router Navigation**: UUID-based entity tables (artists, albums, genres), react-router-dom integration, browser history support, meaningful URLs (`/library/artist/:id`, `/library/album/:id`, `/library/genre/:id`), back/forward navigation within app.
 - [x] **V9: Multi-User System**: JWT authentication, invite-based registration, admin panel, user roles (admin/user), per-user playback telemetry (`user_playback_stats`), per-user playlists, per-user Hub/Infinity Mode recommendations, per-user settings (`user_settings`).
+- [x] **V10: PWA & Chromecast**: Progressive Web App support via vite-plugin-pwa, service worker registration, manifest generation. Google Cast (Chromecast) audio streaming via CastManager, integrated into PlaybackManager and PlayerControls.
+- [x] **V11: Playlist Pinning & Hub Improvements**: Pin/unpin LLM playlists to protect them from Hub regeneration auto-cleanup. Pinned playlists stay visible in Hub beyond 4h and survive `deleteOldLlmPlaylists`. Database maintenance tab with orphaned playlist cleanup (respects pinned status). Disc3 fallback icon for missing artwork in Discover section.
 
 ---
 
@@ -63,3 +65,8 @@ The core music player architecture has transitioned to a client-server model usi
 8. Browser back/forward buttons navigate within app (not away from it). - DONE
 9. Refresh on `/library/artist/:id` loads the correct artist detail view. - DONE
 10. Deep links work for all entity types (artist, album, genre). - DONE
+11. Pin/unpin LLM playlists in Hub and Playlists view — verify immediate UI update. - DONE
+12. Pinned playlists survive Hub regeneration; unpinned old ones are removed. - DONE
+13. Orphaned playlist cleanup skips pinned playlists but removes them if user is deleted. - DONE
+14. PWA installs and works offline (service worker precache). - DONE
+15. Chromecast casting routes audio to cast device; local playback resumes when disconnected. - DONE

@@ -36,7 +36,7 @@ Follow this directory hierarchy strictly:
 
 ## Coding Standards
 - **State:** Use **Zustand**. Keep playback state (currentTrack, progress) in the store.
-- **Audio:** Wrap `HTMLAudioElement` and `AudioContext` in a singleton or custom hook to prevent duplicate instances.
+- **Audio:** Wrap `HTMLAudioElement` and `AudioContext` in a singleton or custom hook to prevent duplicate instances. `PlaybackManager` and `CastManager` handle routing.
 - **Storage:** Frontend uses `idb-keyval` for configs. Backend uses **PostgreSQL** (`pg` driver) for library management and vector embeddings.
 - **I/O:** Use Node.js `fs` streams and `music-metadata` for safe raw-byte extraction directly. Handle encoding explicitly.
 - **Types:** Interfaces for `Track`, `Metadata`, and `StoreState`. Avoid `any`.
@@ -50,6 +50,8 @@ Follow this directory hierarchy strictly:
 - `safeBtoa(str)` — Base64-encodes strings that may contain multibyte characters.
 - `parseArtists(raw)` — Parses artist strings from metadata (handles JSON arrays, separators).
 - `fetchGenreImage(genre)`, `fetchArtistData(artist)`, `fetchAlbumImage(album, artist)` — External image lookup from `externalImagery.ts`.
+- `CastManager` — Singleton Google Cast (Chromecast) manager. Handles cast context init, media loading, play/pause/seek/volume routing. Used by `PlaybackManager` to delegate controls when cast-connected.
+- `PlaybackManager` — Singleton audio playback manager. Routes play/pause/seek to local `HTMLAudioElement` or `CastManager` depending on connection state.
 
 ## Shared Hooks (src/hooks/)
 - `useDominantColor(tracks)` — Extracts art URLs and dominant color from a track list. Returns `{ artUrls, primaryArt, bgColor }`.

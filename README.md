@@ -24,13 +24,13 @@ pm2 start "npx tsx server/index.ts" --name northernlights
 - **Smart Library Scanning**: Recursive directory scanning with concurrent metadata extraction via `music-metadata`. Automatically detects and persists artist, album, genre, and release type (Album/EP/Single/Compilation) from ID3/Vorbis tags.
 - **Gapless Playback**: Custom `PlaybackManager` supporting HTTP range requests to seamlessly stream high-quality audio files from your server to your browser.
 - **AI-Driven Playlists & Vector Recommendations**: Connect to local or cloud LLMs (like LM Studio or OpenAI) to generate hyper-personalized playlists via natural language. Uses rigorous **PGVector** similarity searches and **Genre Hop Cost adjacency matrices** for natural sonic progression.
-- **Playlist Management**: Create and delete playlists manually or via AI generation. Drag-and-drop track reordering with persistent queue state.
+- **Playlist Management**: Create and delete playlists manually or via AI generation. Drag-and-drop track reordering with persistent queue state. **Pin** AI-generated playlists to protect them from auto-cleanup.
 - **Global Search**: Instant search across artists, albums, and tracks with clickable results that navigate directly to entity pages.
 - **Advanced Play Queue & Context Menus**: Drag-and-drop track reordering, global "Play Next" and "Add to Playlist" context menus anywhere a track is visible.
 - **Rich External Metadata**: Native integrations with the **Last.fm** and **Genius** APIs to automatically fetch missing album artwork, high-resolution artist hero imagery, and rich biographies seamlessly on the frontend.
 - **Dynamic User Interface**: Premium "glassy" design system with frosted glass effects and interactive pill buttons. Features a custom **Canvas-based Waveform Progress Bar** that decodes audio peaks on-the-fly.
 - **Theme Parity**: Native Light and Dark mode support with carefully tuned contrast and theme-aware UI components.
-- **Cross-Device Ready**: Progressive Web App (PWA) compatible with fully responsive layouts down to mobile sizes.
+- **Cross-Device Ready**: Progressive Web App (PWA) compatible with fully responsive layouts down to mobile sizes. **Google Cast (Chromecast)** support for streaming audio to cast devices.
 - **Production Secure**: Features path sanitization, express-based security policies, Basic API Authentication, and graceful Database failure handling to safely put your library on the public internet.
 - **Universal Format Support**: Native support for **MP3, FLAC, OGG, M4A, AAC, and WAV**. Seamless on-the-fly transcoding for **WMA (Windows Media Audio)** using FFmpeg.
 
