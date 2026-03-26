@@ -72,21 +72,22 @@ export async function getHubCollections(
   const fourHoursMs = 4 * 60 * 60 * 1000;
 
   for (const pl of existingPlaylists) {
-     // Hide LLM playlists older than 4 hours from the active Hub view
-     if (pl.isLlmGenerated && (Date.now() - pl.createdAt) > fourHoursMs) {
+     // Hide LLM playlists older than 4 hours from the active Hub view (unless pinned)
+     if (pl.isLlmGenerated && !pl.pinned && (Date.now() - pl.createdAt) > fourHoursMs) {
          continue;
      }
 
      if (!hubs.find((h: any) => h.id === pl.id)) {
         const tracks = await getPlaylistTracks(pl.id);
         if (tracks.length > 0) {
-           hubs.push({
-             id: pl.id,
-             title: pl.title,
-             description: pl.description,
-             isLlmGenerated: pl.isLlmGenerated,
-             tracks
-           });
+            hubs.push({
+              id: pl.id,
+              title: pl.title,
+              description: pl.description,
+              isLlmGenerated: pl.isLlmGenerated,
+              pinned: pl.pinned,
+              tracks
+            });
         }
      }
   }

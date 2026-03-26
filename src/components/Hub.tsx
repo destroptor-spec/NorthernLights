@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { usePlayerStore } from '../store';
-import { Play } from 'lucide-react';
+import { Play, Pin, PinOff, Disc3 } from 'lucide-react';
 import type { TrackInfo } from '../utils/fileSystem';
 import type { Playlist } from '../store';
 import { useDominantColor } from '../hooks/useDominantColor';
@@ -8,7 +8,7 @@ import { useDominantColor } from '../hooks/useDominantColor';
 type HubCollection = Partial<Playlist> & { tracks: TrackInfo[] };
 
 // Inner component to handle color extraction per playlist card
-const PlaylistCard: React.FC<{ collection: HubCollection; onPlay: () => void }> = ({ collection, onPlay }) => {
+const PlaylistCard: React.FC<{ collection: HubCollection; onPlay: () => void; onPinToggle?: () => void }> = ({ collection, onPlay, onPinToggle }) => {
   const { theme } = usePlayerStore();
   const { artUrls, primaryArt, bgColor } = useDominantColor(collection.tracks);
 
@@ -40,9 +40,20 @@ const PlaylistCard: React.FC<{ collection: HubCollection; onPlay: () => void }> 
 
       {/* Content - Z-Index 10 */}
       <div className="relative z-10 space-y-3 drop-shadow-md">
-        <h3 className="text-3xl font-bold text-white tracking-tight leading-tight">
-          {collection.title || 'Untitled Playlist'}
-        </h3>
+        <div className="flex items-start justify-between">
+          <h3 className="text-3xl font-bold text-white tracking-tight leading-tight">
+            {collection.title || 'Untitled Playlist'}
+          </h3>
+          {onPinToggle && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onPinToggle(); }}
+              className={`p-2 rounded-full transition-all duration-200 ${collection.pinned ? 'bg-white/30 text-white' : 'bg-white/10 text-white/50 opacity-0 group-hover:opacity-100'} hover:bg-white/30 hover:text-white`}
+              title={collection.pinned ? 'Unpin' : 'Pin'}
+            >
+              {collection.pinned ? <Pin className="w-4 h-4" /> : <PinOff className="w-4 h-4" />}
+            </button>
+          )}
+        </div>
         {collection.description && (
           <p className="text-white/80 text-sm line-clamp-3 leading-relaxed max-w-[85%]">
             {collection.description}
@@ -114,8 +125,8 @@ const NonLlmPlaylistCard: React.FC<{ collection: HubCollection; onPlay: () => vo
            );
         })}
         {artUrls.length === 0 && (
-          <div className="w-[120px] h-[120px] rounded-2xl bg-black/10 border border-white/10 flex items-center justify-center text-white/30 absolute z-10">
-            No Art
+          <div className="w-[120px] h-[120px] rounded-2xl bg-[var(--color-surface)] border border-[var(--glass-border)] flex items-center justify-center absolute z-10">
+            <Disc3 size={48} className="text-[var(--color-text-muted)] opacity-30" />
           </div>
         )}
       </div>
@@ -146,7 +157,7 @@ const NonLlmPlaylistCard: React.FC<{ collection: HubCollection; onPlay: () => vo
 };
 
 export const Hub: React.FC = () => {
-  const { library, setPlaylist, getAuthHeader } = usePlayerStore();
+  const { library, setPlaylist, getAuthHeader, togglePin } = usePlayerStore();
   const [collections, setCollections] = useState<HubCollection[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -202,6 +213,11 @@ export const Hub: React.FC = () => {
     }
   };
 
+  const handleTogglePin = (collectionId: string, pinned: boolean) => {
+    togglePin(collectionId, pinned);
+    setCollections(prev => prev.map(c => c.id === collectionId ? { ...c, pinned } : c));
+  };
+
   const handlePlayCollection = (tracks: TrackInfo[]) => {
     setPlaylist(tracks, 0);
   };
@@ -234,6 +250,7 @@ export const Hub: React.FC = () => {
                  key={collection.id || idx} 
                  collection={collection} 
                  onPlay={() => handlePlayCollection(collection.tracks)} 
+                 onPinToggle={() => collection.id && handleTogglePin(collection.id, !collection.pinned)}
                />
             ))}
           </div>

@@ -1,10 +1,11 @@
 import express from 'express';
 import cors from 'cors';
 import fs from 'fs';
+import { createServer } from 'http';
 import path from 'path';
 import dotenv from 'dotenv';
 import { spawn } from 'child_process';
-import { addDirectory, addTrack, getAllTracks, getDirectories, removeDirectory, removeTracksByDirectory, getOrCreateArtist, getOrCreateAlbum, getOrCreateGenre, migrateEntityIds, getArtistById, getAlbumById, getGenreById, getAllArtists, getAllAlbums, getAllGenres, getTracksByArtist, getTracksByAlbum, getTracksByGenre, hasUsers, createUser, getUserByUsername, updateUser, deleteUser, listUsers, updateLastLogin, createInvite, getInvite, listInvites, deleteInvite, incrementInviteUses, isInviteValid, recordPlaybackForUser, recordSkipForUser, getUserRecentTracks, getUserTopTracks, getUserSetting, setUserSetting, createPlaylist, getPlaylists, getPlaylistTracks, deletePlaylist, addTracksToPlaylist, deleteOldLlmPlaylists, getPlaylistOwner } from './database';
+import { addDirectory, addTrack, getAllTracks, getDirectories, removeDirectory, removeTracksByDirectory, getOrCreateArtist, getOrCreateAlbum, getOrCreateGenre, migrateEntityIds, getArtistById, getAlbumById, getGenreById, getAllArtists, getAllAlbums, getAllGenres, getTracksByArtist, getTracksByAlbum, getTracksByGenre, hasUsers, createUser, getUserByUsername, updateUser, deleteUser, listUsers, updateLastLogin, createInvite, getInvite, listInvites, deleteInvite, incrementInviteUses, isInviteValid, recordPlaybackForUser, recordSkipForUser, getUserRecentTracks, getUserTopTracks, getUserSetting, setUserSetting, createPlaylist, getPlaylists, getPlaylistTracks, deletePlaylist, addTracksToPlaylist, deleteOldLlmPlaylists, getPlaylistOwner, cleanupOrphanedPlaylists, togglePlaylistPin } from './database';
 import { extractAudioFeatures } from './services/audioExtraction.service';
 import { generateHubConcepts, generateCustomPlaylist, HubCollection } from './services/llm.service';
 import { getHubCollections, calculateNextInfinityTrack } from './services/recommendation.service';
@@ -58,13 +59,20 @@ async function initDatabaseConnection(retries = 15, delay = 2000) {
 const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : ['http://localhost:3000'];
 app.use(cors({
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-    // allow requests with no origin (like mobile apps or curl requests) if desired, but here we restrict or allow based on config
-    if (!origin || allowedOrigins.includes(origin)) {
+    // allow requests with no origin (like mobile apps or curl requests) or specific casting origins
+    if (
+      !origin || 
+      allowedOrigins.includes(origin) || 
+      origin.startsWith('https://www.gstatic.com') || 
+      origin.startsWith('https://cast.google.com') || 
+      origin.startsWith('chrome-extension://')
+    ) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
     }
-  }
+  },
+  exposedHeaders: ['Content-Range', 'Accept-Ranges', 'Content-Length', 'Content-Type']
 }));
 app.use(express.json());
 
@@ -423,6 +431,17 @@ app.delete('/api/admin/invites/:token', requireAdmin, async (req, res) => {
   } catch (error) {
     console.error('Invite delete error:', error);
     res.status(500).json({ error: 'Failed to revoke invite' });
+  }
+});
+
+// API: Cleanup orphaned playlists (admin only)
+app.post('/api/admin/cleanup-playlists', requireAdmin, async (req, res) => {
+  try {
+    const deletedCount = await cleanupOrphanedPlaylists();
+    res.json({ status: 'ok', deletedCount });
+  } catch (error) {
+    console.error('Cleanup orphaned playlists error:', error);
+    res.status(500).json({ error: 'Failed to cleanup orphaned playlists' });
   }
 });
 
@@ -1212,6 +1231,27 @@ app.delete('/api/playlists/:id', async (req, res) => {
   }
 });
 
+// API: Pin/unpin a playlist
+app.patch('/api/playlists/:id/pin', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+    const { pinned } = req.body;
+    if (typeof pinned !== 'boolean') {
+      return res.status(400).json({ error: 'pinned must be a boolean' });
+    }
+
+    const ok = await togglePlaylistPin(id, userId, pinned);
+    if (!ok) return res.status(404).json({ error: 'Playlist not found' });
+    res.json({ status: 'ok', pinned });
+  } catch (error) {
+    console.error('Playlist pin error:', error);
+    res.status(500).json({ error: 'Failed to update pin status' });
+  }
+});
+
 // API: Get Hub Data (READ-ONLY - assembles engine-driven + cached LLM collections)
 // Per-user: each user gets personalized collections based on their playback stats
 app.get('/api/hub', async (req, res) => {
@@ -1291,6 +1331,9 @@ app.post('/api/hub/regenerate', async (req, res) => {
 // API: Generate a single custom playlist from a user prompt
 app.post('/api/hub/generate-custom', async (req, res) => {
   try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
     const { prompt } = req.body;
     if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
       return res.status(400).json({ error: 'A prompt is required' });
@@ -1300,7 +1343,7 @@ app.post('/api/hub/generate-custom', async (req, res) => {
       return res.status(503).json({ error: 'LLM did not return a valid playlist concept. Check your LLM configuration.' });
     }
     // Reuse the same vector search + DB write pipeline as automated playlists
-    const saved = await getHubCollections([concept]);
+    const saved = await getHubCollections([concept], userId);
     const playlist = saved.find(c => c.isLlmGenerated);
     res.json({ playlist });
   } catch (error) {

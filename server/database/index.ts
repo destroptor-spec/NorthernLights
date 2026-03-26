@@ -204,6 +204,13 @@ export async function initDB(): Promise<Pool> {
         EXCEPTION WHEN OTHERS THEN null;
         END $$;
         CREATE INDEX IF NOT EXISTS playlists_user_id_idx ON playlists(user_id);
+
+        -- Add pinned column to playlists
+        DO $$
+        BEGIN
+          ALTER TABLE playlists ADD COLUMN IF NOT EXISTS pinned INTEGER NOT NULL DEFAULT 0;
+        EXCEPTION WHEN OTHERS THEN null;
+        END $$;
       `);
 
       client.release();
@@ -660,24 +667,24 @@ export async function deleteOldLlmPlaylists(maxAgeMs: number, userId: string | n
     // User-scoped cleanup
     await db.query(`
       DELETE FROM playlist_tracks
-      WHERE playlistId IN (SELECT id FROM playlists WHERE isLlmGenerated = 1 AND createdAt < $1 AND user_id = $2)
+      WHERE playlistId IN (SELECT id FROM playlists WHERE isLlmGenerated = 1 AND pinned = 0 AND createdAt < $1 AND user_id = $2)
     `, [threshold, userId]);
 
     const res = await db.query(`
       DELETE FROM playlists
-      WHERE isLlmGenerated = 1 AND createdAt < $1 AND user_id = $2
+      WHERE isLlmGenerated = 1 AND pinned = 0 AND createdAt < $1 AND user_id = $2
     `, [threshold, userId]);
     return res.rowCount;
   } else {
     // Global cleanup (backward compat)
     await db.query(`
       DELETE FROM playlist_tracks
-      WHERE playlistId IN (SELECT id FROM playlists WHERE isLlmGenerated = 1 AND createdAt < $1)
+      WHERE playlistId IN (SELECT id FROM playlists WHERE isLlmGenerated = 1 AND pinned = 0 AND createdAt < $1)
     `, [threshold]);
 
     const res = await db.query(`
       DELETE FROM playlists
-      WHERE isLlmGenerated = 1 AND createdAt < $1
+      WHERE isLlmGenerated = 1 AND pinned = 0 AND createdAt < $1
     `, [threshold]);
     return res.rowCount;
   }
@@ -693,7 +700,8 @@ export async function getPlaylists(userId: string | null = null) {
   }
   return res.rows.map((row: any) => ({
     ...row,
-    isLlmGenerated: row.isllmgenerated === 1
+    isLlmGenerated: row.isllmgenerated === 1,
+    pinned: row.pinned === 1
   }));
 }
 
@@ -726,6 +734,24 @@ export async function getPlaylistOwner(playlistId: string): Promise<string | nul
   const res = await db.query('SELECT user_id FROM playlists WHERE id = $1', [playlistId]);
   if (res.rows.length === 0) return null;
   return (res.rows[0] as any).user_id || null;
+}
+
+export async function cleanupOrphanedPlaylists() {
+  const db = await initDB();
+  const res = await db.query(`
+    DELETE FROM playlists
+    WHERE user_id IS NULL OR user_id NOT IN (SELECT id FROM users)
+  `);
+  return res.rowCount || 0;
+}
+
+export async function togglePlaylistPin(playlistId: string, userId: string, pinned: boolean) {
+  const db = await initDB();
+  const res = await db.query(
+    'UPDATE playlists SET pinned = $1 WHERE id = $2 AND user_id = $3 RETURNING *',
+    [pinned ? 1 : 0, playlistId, userId]
+  );
+  return res.rows.length > 0;
 }
 
 export async function getVectorStats() {

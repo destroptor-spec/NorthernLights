@@ -20,6 +20,7 @@ export interface Playlist {
   title: string;
   description: string | null;
   isLlmGenerated: boolean;
+  pinned?: boolean;
   tracks: TrackInfo[];
 }
 
@@ -106,6 +107,7 @@ export interface PlayerState {
   fetchPlaylistsFromServer: () => Promise<void>;
   createPlaylist: (title: string, description?: string) => Promise<void>;
   deletePlaylist: (playlistId: string) => Promise<void>;
+  togglePin: (playlistId: string, pinned: boolean) => Promise<void>;
   addTracksToUserPlaylist: (playlistId: string, trackIds: string[]) => Promise<void>;
   setAuthToken: (token: string) => void;
   clearAuthToken: () => void;
@@ -564,6 +566,26 @@ export const usePlayerStore = create<PlayerState>()(
             }
          },
 
+         togglePin: async (playlistId: string, pinned: boolean) => {
+            try {
+               const authHeaders = (get() as any).getAuthHeader();
+               const res = await fetch(`/api/playlists/${playlistId}/pin`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json', ...authHeaders },
+                  body: JSON.stringify({ pinned })
+               });
+               if (res.ok) {
+                  set({
+                     playlists: get().playlists.map((p: Playlist) =>
+                        p.id === playlistId ? { ...p, pinned } : p
+                     )
+                  });
+               }
+            } catch (e) {
+               console.error("Failed to toggle pin", e);
+            }
+         },
+
          addTracksToUserPlaylist: async (playlistId: string, trackIds: string[]) => {
            try {
               const authHeaders = (get() as any).getAuthHeader();
@@ -798,7 +820,7 @@ export const usePlayerStore = create<PlayerState>()(
             playbackManager.setVolume(volume);
             // Play using the HTTP stream URL
             if (track.url) {
-              await playbackManager.playUrl(track.url);
+              await playbackManager.playUrl(track.url, track.title, track.artist || ((track.artists as string[])?.join(', ')), track.artUrl);
             } else if (track.fileHandle) {
                // Fallback
                await playbackManager.playFile(track.fileHandle);

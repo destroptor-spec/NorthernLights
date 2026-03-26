@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { usePlayerStore } from '../../store';
-import { Play, Plus, Sparkles, X, Loader2, Trash2 } from 'lucide-react';
+import { Play, Plus, Sparkles, X, Loader2, Trash2, Pin, PinOff } from 'lucide-react';
 import { useDominantColor } from '../../hooks/useDominantColor';
 import type { Playlist } from '../../store';
 
-const PlaylistListItem: React.FC<{ playlist: Playlist; onPlay: () => void; onDelete: () => void }> = ({ playlist, onPlay, onDelete }) => {
+const PlaylistListItem: React.FC<{ playlist: Playlist; onPlay: () => void; onDelete: () => void; onPinToggle?: () => void }> = ({ playlist, onPlay, onDelete, onPinToggle }) => {
   const { theme } = usePlayerStore();
   const { artUrls, primaryArt, bgColor } = useDominantColor(playlist.tracks);
 
@@ -34,9 +34,23 @@ const PlaylistListItem: React.FC<{ playlist: Playlist; onPlay: () => void; onDel
             <span className="px-2 py-0.5 rounded-full bg-indigo-500/50 border border-indigo-400/50 text-xs">AI</span>
           )}
         </p>
+        {playlist.pinned && (
+          <span className="px-2 py-0.5 rounded-full bg-amber-500/50 border border-amber-400/50 text-xs flex items-center gap-1">
+            <Pin className="w-3 h-3" /> Pinned
+          </span>
+        )}
       </div>
       
       <div className="absolute top-4 right-4 z-10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2">
+        {onPinToggle && playlist.isLlmGenerated && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onPinToggle(); }}
+            className={`w-10 h-10 rounded-full backdrop-blur-md flex items-center justify-center text-white shadow-lg border transition-colors ${playlist.pinned ? 'bg-amber-500/30 border-amber-400/30 hover:bg-amber-500/50' : 'bg-white/20 border-white/30 hover:bg-white/30'}`}
+            title={playlist.pinned ? 'Unpin' : 'Pin'}
+          >
+            {playlist.pinned ? <Pin className="w-5 h-5" /> : <PinOff className="w-5 h-5" />}
+          </button>
+        )}
         <button
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
           className="w-10 h-10 rounded-full bg-red-500/30 backdrop-blur-md flex items-center justify-center text-white shadow-lg border border-red-400/30 hover:bg-red-500/50 transition-colors"
@@ -169,7 +183,7 @@ const GeneratePlaylistModal: React.FC<{ onClose: () => void; onGenerated: () => 
 };
 
 export const Playlists: React.FC = () => {
-  const { playlists, setPlaylist, createPlaylist, deletePlaylist } = usePlayerStore();
+  const { playlists, setPlaylist, createPlaylist, deletePlaylist, togglePin } = usePlayerStore();
   const [isCreating, setIsCreating] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [newTitle, setNewTitle] = useState('');
@@ -256,6 +270,7 @@ export const Playlists: React.FC = () => {
                 if(pl.tracks.length > 0) setPlaylist(pl.tracks, 0);
               }}
               onDelete={() => deletePlaylist(pl.id)}
+              onPinToggle={() => togglePin(pl.id, !pl.pinned)}
             />
           ))}
         </div>
