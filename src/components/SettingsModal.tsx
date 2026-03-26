@@ -5,7 +5,7 @@ import { useLlmConnectionTest } from '../hooks/useLlmConnectionTest';
 import { ConfirmModal } from './ConfirmModal';
 import { PromptModal } from './PromptModal';
 import { Toast, type ToastType } from './Toast';
-import { Folder, User, Palette, Play, Cpu, Globe, LogOut, Search, X, Shield, Users, Link, Trash2, Plus, Copy, Check, Database } from 'lucide-react';
+import { Folder, User, Palette, Play, Cpu, Globe, LogOut, Search, X, Shield, Users, Link, Trash2, Plus, Copy, Check, Database, BarChart2, Wrench } from 'lucide-react';
 import { DatabaseControl } from './DatabaseControl';
 
 interface SettingsModalProps {
@@ -219,8 +219,38 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         });
     };
 
+    const handleCleanupPlaylists = async () => {
+        setConfirmDialog({
+            title: 'Clean Orphaned Playlists',
+            message: 'This will permanently delete any playlists that do not belong to a valid user. This action cannot be undone.',
+            confirmLabel: 'Clean Up',
+            onConfirm: async () => {
+                setConfirmDialog(null);
+                try {
+                    const authHeaders = getAuthHeader();
+                    const res = await fetch('/api/admin/cleanup-playlists', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', ...authHeaders }
+                    });
+                    let data: any = {};
+                    try { data = await res.json(); } catch {}
+                    if (res.ok) {
+                        showToast(`Cleanup complete. Deleted ${data.deletedCount} orphaned playlist(s).`, 'success');
+                    } else {
+                        showToast(data.error || `Server error: ${res.status} ${res.statusText}`, 'error');
+                    }
+                } catch(e) {
+                    console.error(e);
+                    showToast('Failed to connect to server', 'error');
+                }
+            },
+        });
+    };
+
     const [searchQuery, setSearchQuery] = useState('');
+
     const [activeTab, setActiveTab] = useState('My Account');
+    const [dbTab, setDbTab] = useState<'stats' | 'maintenance'>('stats');
 
     const isAdmin = currentUser?.role === 'admin';
 
@@ -234,7 +264,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             { id: 'Providers', label: 'Providers', category: 'Server Settings' },
             { id: 'Genre Matrix', label: 'Genre Matrix', category: 'Server Settings' },
             { id: 'Database', label: 'Database', category: 'Server Settings' },
-            { id: 'Admin', label: 'Admin', category: 'Server Settings' },
+            { id: 'Users', label: 'Users', category: 'Admin' },
         ] : []),
     ];
 
@@ -250,12 +280,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         if (tab.id === 'Providers') return 'llm api host model key last.fm genius'.includes(query);
         if (tab.id === 'Genre Matrix') return 'genre matrix transition hop cost mapping'.includes(query);
         if (tab.id === 'Database') return 'database postgres container podman start stop status'.includes(query);
-        if (tab.id === 'Admin') return 'admin users invites manage'.includes(query);
+        if (tab.id === 'Users') return 'admin users invites manage'.includes(query);
         
         return false;
     });
 
-    const navGroups = ['User Settings', 'App Settings', 'Server Settings'];
+    const navGroups = ['User Settings', 'App Settings', 'Server Settings', 'Admin'];
 
     const username = currentUser?.username || 'User';
 
@@ -297,7 +327,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                  tab.id === 'Library' ? Folder :
                                                  tab.id === 'Playback' ? Play :
                                                  tab.id === 'System' ? Cpu :
-                                                 tab.id === 'Admin' ? Shield :
+                                                 tab.id === 'Users' ? Users :
                                                  tab.id === 'Database' ? Database :
                                                  tab.id === 'Genre Matrix' ? Globe : Globe;
                                     
@@ -491,8 +521,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                     <li key={folderPath} className="flex justify-between items-center p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] shadow-sm backdrop-blur-sm">
                                                         <span className="text-sm truncate mr-4 text-[var(--color-text-primary)] font-medium flex items-center gap-2"><Folder size={16} className="shrink-0 text-[var(--color-text-muted)]" /> {folderPath}</span>
                                                         <div className="flex gap-2 shrink-0">
-                                                            <button className="font-semibold text-xs bg-[var(--color-primary)] text-white px-3 py-1.5 rounded-full hover:bg-[var(--color-primary-dark)] transition-colors" onClick={() => handleRescanFolder(folderPath)}>Rescan</button>
-                                                            <button className="font-semibold text-xs bg-[var(--color-error)] text-white px-3 py-1.5 rounded-full hover:bg-red-600 transition-colors" onClick={() => removeLibraryFolder(folderPath)}>Remove</button>
+                                                            <button className="font-semibold text-xs bg-[var(--color-primary)] text-white px-3 py-1.5 rounded-lg hover:bg-[var(--color-primary-dark)] transition-colors" onClick={() => handleRescanFolder(folderPath)}>Rescan</button>
+                                                            <button className="font-semibold text-xs bg-[var(--color-error)] text-white px-3 py-1.5 rounded-lg hover:bg-red-600 transition-colors" onClick={() => removeLibraryFolder(folderPath)}>Remove</button>
                                                         </div>
                                                     </li>
                                                 ))
@@ -777,17 +807,57 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
                                  {activeTab === 'Database' && (
                                     <div className="settings-section mb-8">
-                                        <div className="settings-section-header mb-2">
+                                        <div className="settings-section-header mb-4">
                                             <h3 className="text-xl font-bold text-[var(--color-text-primary)]">Database Management</h3>
                                         </div>
-                                        <p className="text-sm text-[var(--color-text-muted)] mb-6">
-                                            Manage your PostgreSQL container instance and monitor its health.
-                                        </p>
-                                        <DatabaseControl inline={true} variant="stats" />
+
+                                        {/* Sub-tabs */}
+                                        <div className="flex gap-2 mb-6">
+                                            <button
+                                                onClick={() => setDbTab('stats')}
+                                                className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${dbTab === 'stats' ? 'bg-[var(--color-primary)] text-white' : 'bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`}
+                                            >
+                                                <BarChart2 size={16} className="inline mr-1 relative -top-[1px]" /> Stats
+                                            </button>
+                                            <button
+                                                onClick={() => setDbTab('maintenance')}
+                                                className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${dbTab === 'maintenance' ? 'bg-[var(--color-primary)] text-white' : 'bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`}
+                                            >
+                                                <Wrench size={16} className="inline mr-1 relative -top-[1px]" /> Maintenance
+                                            </button>
+                                        </div>
+
+                                        {dbTab === 'stats' && (
+                                            <div className="space-y-3">
+                                                <p className="text-sm text-[var(--color-text-muted)] mb-4">
+                                                    Manage your PostgreSQL container instance and monitor its health.
+                                                </p>
+                                                <DatabaseControl inline={true} variant="stats" />
+                                            </div>
+                                        )}
+
+                                        {dbTab === 'maintenance' && (
+                                            <div className="space-y-4">
+                                                <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--glass-border)] p-4">
+                                                    <div className="flex justify-between items-center mb-4">
+                                                        <div>
+                                                            <h4 className="text-lg font-semibold text-[var(--color-text-primary)]">Maintenance</h4>
+                                                            <p className="text-sm text-[var(--color-text-muted)]">Clean up orphaned playlists and optimize database storage.</p>
+                                                        </div>
+                                                    </div>
+                                                    <button 
+                                                        onClick={handleCleanupPlaylists}
+                                                        className="btn font-semibold text-sm bg-red-500/10 border border-red-500/30 px-4 py-2.5 rounded-xl hover:bg-red-500/20 text-red-400 transition-all shadow-sm flex items-center gap-2"
+                                                    >
+                                                        <Trash2 size={16} /> Clean Orphaned Playlists
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 )}
 
-                                {activeTab === 'Admin' && (
+                                {activeTab === 'Users' && (
                                     <AdminSettingsContent
                                         getAuthHeader={getAuthHeader}
                                         currentUser={currentUser}

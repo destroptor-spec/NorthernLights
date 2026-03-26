@@ -337,7 +337,7 @@ body::after {
   background: var(--glass-bg);
   color: var(--color-text-primary);
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   transition: all var(--transition-normal);
   position: relative;
   overflow: hidden;

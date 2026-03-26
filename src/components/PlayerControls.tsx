@@ -1,6 +1,15 @@
 import { usePlayerStore } from '../store/index';
 import { useVolumeSync } from '../hooks/useVolumeSync';
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { Infinity } from 'lucide-react';
+
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      'google-cast-launcher': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
+    }
+  }
+}
 
 /* ─── Inline SVG Icons ─── */
 const IconPrev = () => (
@@ -57,11 +66,6 @@ const IconVolume = () => (
   </svg>
 );
 
-const IconInfinity = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="20" height="20">
-    <path d="M12 12c-2-2.67-4-4-6-4a4 4 0 1 0 0 8c2 0 4-1.33 6-4Zm0 0c2 2.67 4 4 6 4a4 4 0 1 0 0-8c-2 0-4 1.33-6 4Z"/>
-  </svg>
-);
 
 const PlayerControls = () => {
   const playbackState = usePlayerStore((state) => state.playbackState);
@@ -130,12 +134,27 @@ const PlayerControls = () => {
 
   useVolumeSync();
 
+  const [showCast, setShowCast] = useState(false);
+  useEffect(() => {
+    const handleCastReady = () => setShowCast(true);
+    if ((window as any).cast?.framework) {
+      setShowCast(true);
+    } else {
+      window.addEventListener('castApiAvailable', handleCastReady);
+    }
+    return () => window.removeEventListener('castApiAvailable', handleCastReady);
+  }, []);
+
   const volumePercent = Math.round(volume * 100);
 
   return (
     <div className="w-full flex items-center justify-between gap-6 px-2">
-      {/* Left: Spacer to keep center truly centered */}
-      <div className="flex-1 hidden md:block" />
+      {/* Left Column: Aux Controls */}
+      <div className="flex-1 flex justify-start items-center pl-2">
+        {showCast && (
+          <google-cast-launcher style={{ width: '24px', height: '24px', cursor: 'pointer' }}></google-cast-launcher>
+        )}
+      </div>
 
       {/* Center: Now Playing + Main Controls */}
       <div className="flex flex-col items-center gap-3 flex-[2] min-w-0">
@@ -204,14 +223,14 @@ const PlayerControls = () => {
                 filter: isInfinityMode ? 'drop-shadow(0 0 6px var(--aurora-purple))' : 'none',
                 transition: 'all 0.3s ease'
               }}>
-              <IconInfinity />
+              <Infinity size={20} strokeWidth={2} />
             </button>
           </div>
         </div>
       </div>
 
-      {/* Right Column: Volume Control */}
-      <div className="flex-1 flex justify-end">
+      {/* Right Column: Aux Controls */}
+      <div className="flex-1 flex justify-end items-center gap-4">
         <div className="volume-control">
           <span className="volume-icon"><IconVolume /></span>
           <input

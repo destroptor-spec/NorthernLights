@@ -1,9 +1,17 @@
+import { castManager } from './CastManager';
+
 export type PlaybackState = 'playing' | 'paused' | 'stopped';
 
 class PlaybackManager {
     private static instance: PlaybackManager;
     private audio: HTMLAudioElement;
     private audioContext: AudioContext | null = null;
+    
+    // Internal state to track what's playing in case we switch to Cast mid-stream
+    private currentUrl: string | null = null;
+    private currentTitle: string | null = null;
+    private currentArtist: string | null = null;
+    private currentArtUrl: string | null = null;
 
     // Store callbacks for Zustand to update its state
     private onTimeUpdateCallback?: (time: number) => void;
@@ -18,20 +26,49 @@ class PlaybackManager {
 
         // Set up standard event listeners
         this.audio.addEventListener('timeupdate', () => {
-            this.onTimeUpdateCallback?.(this.audio.currentTime);
+            if (!castManager.isConnected()) {
+                this.onTimeUpdateCallback?.(this.audio.currentTime);
+            }
         });
 
         this.audio.addEventListener('loadedmetadata', () => {
-            this.onDurationCallback?.(this.audio.duration || 0);
+            if (!castManager.isConnected()) {
+                this.onDurationCallback?.(this.audio.duration || 0);
+            }
         });
 
         this.audio.addEventListener('ended', () => {
-            this.onPlayStateChangeCallback?.('stopped');
-            this.onEndedCallback?.();
+            if (!castManager.isConnected()) {
+                this.onPlayStateChangeCallback?.('stopped');
+                this.onEndedCallback?.();
+            }
         });
 
-        this.audio.addEventListener('play', () => this.onPlayStateChangeCallback?.('playing'));
-        this.audio.addEventListener('pause', () => this.onPlayStateChangeCallback?.('paused'));
+        this.audio.addEventListener('play', () => {
+             if (!castManager.isConnected()) this.onPlayStateChangeCallback?.('playing');
+        });
+        this.audio.addEventListener('pause', () => {
+             if (!castManager.isConnected()) this.onPlayStateChangeCallback?.('paused');
+        });
+
+        // Set up CastManager listeners
+        castManager.onTimeUpdate = (time) => {
+            if (castManager.isConnected()) this.onTimeUpdateCallback?.(time);
+        };
+        castManager.onDuration = (duration) => {
+            if (castManager.isConnected()) this.onDurationCallback?.(duration);
+        };
+        castManager.onPlayStateChange = (isPlaying) => {
+            if (castManager.isConnected()) {
+                this.onPlayStateChangeCallback?.(isPlaying ? 'playing' : 'paused');
+            }
+        };
+        castManager.onEnded = () => {
+            if (castManager.isConnected()) {
+                this.onPlayStateChangeCallback?.('stopped');
+                this.onEndedCallback?.();
+            }
+        };
     }
 
     public static getInstance(): PlaybackManager {
@@ -56,8 +93,19 @@ class PlaybackManager {
 
     // --- Core Playback Controls ---
 
-    public async playUrl(url: string): Promise<void> {
+    public async playUrl(url: string, title?: string, artist?: string, artUrl?: string): Promise<void> {
+        this.currentUrl = url;
+        this.currentTitle = title || 'Unknown Title';
+        this.currentArtist = artist || 'Unknown Artist';
+        this.currentArtUrl = artUrl || null;
+
         try {
+            if (castManager.isConnected()) {
+                this.audio.pause();
+                await castManager.castMedia(this.currentUrl, this.currentTitle, this.currentArtist, this.currentArtUrl || undefined);
+                return;
+            }
+
             // Clean up previous URL if it exists AND is a blob
             if (this.audio.src && this.audio.src.startsWith('blob:')) {
                 URL.revokeObjectURL(this.audio.src);
@@ -79,6 +127,8 @@ class PlaybackManager {
     }
 
     public async playFile(fileHandle: FileSystemFileHandle): Promise<void> {
+        // Cast cannot play files loaded locally directly by default without spinning up a local server inline.
+        // We just fallback to local playback.
         try {
             const file = await fileHandle.getFile();
             const url = URL.createObjectURL(file);
@@ -92,7 +142,6 @@ class PlaybackManager {
             this.audio.load();
             await this.audio.play();
 
-            // Initialize AudioContext lazily on user interaction
             if (!this.audioContext) {
                 this.initAudioContext();
             } else if (this.audioContext.state === 'suspended') {
@@ -106,36 +155,59 @@ class PlaybackManager {
     }
 
     public pause(): void {
-        this.audio.pause();
+        if (castManager.isConnected()) {
+            castManager.pause();
+        } else {
+            this.audio.pause();
+        }
     }
 
     public async resume(): Promise<void> {
-        if (this.audio.src) {
-            await this.audio.play();
-            if (this.audioContext?.state === 'suspended') {
-                await this.audioContext.resume();
+        if (castManager.isConnected()) {
+            castManager.resume();
+        } else {
+            if (this.audio.src) {
+                await this.audio.play();
+                if (this.audioContext?.state === 'suspended') {
+                    await this.audioContext.resume();
+                }
             }
         }
     }
 
     public stop(): void {
-        this.audio.pause();
-        this.audio.currentTime = 0;
-        this.onPlayStateChangeCallback?.('stopped');
+        if (castManager.isConnected()) {
+            castManager.stop();
+        } else {
+            this.audio.pause();
+            this.audio.currentTime = 0;
+            this.onPlayStateChangeCallback?.('stopped');
+        }
     }
 
     public seek(time: number): void {
-        if (isFinite(time) && time >= 0) {
-            this.audio.currentTime = time;
+        if (castManager.isConnected()) {
+            castManager.seek(time);
+        } else {
+            if (isFinite(time) && time >= 0) {
+                this.audio.currentTime = time;
+            }
         }
     }
 
     public setVolume(volume: number): void {
         // Clamp between 0 and 1
-        this.audio.volume = Math.max(0, Math.min(1, volume));
+        const v = Math.max(0, Math.min(1, volume));
+        if (castManager.isConnected()) {
+            castManager.setVolume(v);
+        } else {
+            this.audio.volume = v;
+        }
     }
 
     public getDuration(): number {
+        // Since getDuration is often synchronous, we rely on the state maintained locally if needed,
+        // but it's largely obsolete if Zustand stores it.
         return this.audio.duration || 0;
     }
 

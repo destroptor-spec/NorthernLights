@@ -106,7 +106,10 @@ export class GenreMatrixService {
     const macroA = this.subGenreMap?.[a] || 'unknown';
     const macroB = this.subGenreMap?.[b] || 'unknown';
     
-    if (macroA === 'unknown' || macroB === 'unknown' || macroA === macroB) {
+    if (macroA === 'unknown' || macroB === 'unknown') {
+      return 0.7; // high penalty for missing/unknown genres
+    }
+    if (macroA === macroB) {
       return 0.0;
     }
 
