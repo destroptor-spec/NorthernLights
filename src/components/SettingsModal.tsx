@@ -5,7 +5,8 @@ import { useLlmConnectionTest } from '../hooks/useLlmConnectionTest';
 import { ConfirmModal } from './ConfirmModal';
 import { PromptModal } from './PromptModal';
 import { Toast, type ToastType } from './Toast';
-import { Folder, User, Palette, Play, Cpu, Globe, LogOut, Search, X, Shield, Users, Link, Trash2, Plus, Copy, Check } from 'lucide-react';
+import { Folder, User, Palette, Play, Cpu, Globe, LogOut, Search, X, Shield, Users, Link, Trash2, Plus, Copy, Check, Database } from 'lucide-react';
+import { DatabaseControl } from './DatabaseControl';
 
 interface SettingsModalProps {
     onClose: () => void;
@@ -232,6 +233,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             { id: 'System', label: 'System', category: 'Server Settings' },
             { id: 'Providers', label: 'Providers', category: 'Server Settings' },
             { id: 'Genre Matrix', label: 'Genre Matrix', category: 'Server Settings' },
+            { id: 'Database', label: 'Database', category: 'Server Settings' },
             { id: 'Admin', label: 'Admin', category: 'Server Settings' },
         ] : []),
     ];
@@ -247,6 +249,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         if (tab.id === 'System') return 'cpu audio analysis hub schedule'.includes(query);
         if (tab.id === 'Providers') return 'llm api host model key last.fm genius'.includes(query);
         if (tab.id === 'Genre Matrix') return 'genre matrix transition hop cost mapping'.includes(query);
+        if (tab.id === 'Database') return 'database postgres container podman start stop status'.includes(query);
         if (tab.id === 'Admin') return 'admin users invites manage'.includes(query);
         
         return false;
@@ -295,6 +298,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                  tab.id === 'Playback' ? Play :
                                                  tab.id === 'System' ? Cpu :
                                                  tab.id === 'Admin' ? Shield :
+                                                 tab.id === 'Database' ? Database :
                                                  tab.id === 'Genre Matrix' ? Globe : Globe;
                                     
                                     return (
@@ -579,6 +583,48 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                 </button>
                                             </div>
                                         </div>
+
+                                        {/* Aurora App Auto-Start Configuration */}
+                                        <div className="mt-8 pt-6 border-t border-[var(--glass-border)]">
+                                            <div className="flex items-center gap-2 mb-3">
+                                                <h4 className="text-lg font-semibold text-[var(--color-text-primary)]">Aurora Auto-Start</h4>
+                                                <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">systemd</span>
+                                            </div>
+                                            <p className="text-sm text-[var(--color-text-muted)] mb-4 leading-relaxed">
+                                                Configure Aurora to automatically start when your computer starts. This requires a user-level systemd service.
+                                            </p>
+                                            
+                                            <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--glass-border)] p-4">
+                                                <div className="flex items-center gap-2 mb-3">
+                                                    <span className="text-sm font-medium text-[var(--color-text-primary)]">Service Status:</span>
+                                                    <span className="text-xs px-2 py-1 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">Not Configured</span>
+                                                </div>
+                                                <p className="text-xs text-[var(--color-text-muted)] mb-4">
+                                                    To enable auto-start, run these commands in your terminal:
+                                                </p>
+                                                <div className="bg-black/40 rounded-lg p-3 font-mono text-xs text-green-400 overflow-x-auto">
+                                                    <p className="mb-1">mkdir -p ~/.config/systemd/user</p>
+                                                    <p className="mb-1">cat &gt; ~/.config/systemd/user/aurora.service &lt;&lt; 'EOF'</p>
+                                                    <p className="mb-1">[Unit]</p>
+                                                    <p className="mb-1">Description=Aurora Music Player</p>
+                                                    <p className="mb-1">After=default.target</p>
+                                                    <p className="mb-1"></p>
+                                                    <p className="mb-1">[Service]</p>
+                                                    <p className="mb-1">Type=simple</p>
+                                                    <p className="mb-1">ExecStart=/bin/bash -c 'cd /var/home/andreas/VS%%20Code/Music%%20App && npm run dev'</p>
+                                                    <p className="mb-1">Restart=on-failure</p>
+                                                    <p className="mb-1">RestartSec=10</p>
+                                                    <p className="mb-1"></p>
+                                                    <p className="mb-1">[Install]</p>
+                                                    <p className="mb-1">WantedBy=default.target</p>
+                                                    <p className="mb-1">EOF</p>
+                                                    <p className="mb-1"></p>
+                                                    <p className="mb-1">systemctl --user daemon-reload</p>
+                                                    <p className="mb-1">systemctl --user enable aurora.service</p>
+                                                    <p className="mb-1">systemctl --user start aurora.service</p>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                 )}
 
@@ -675,10 +721,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
                                 {activeTab === 'Genre Matrix' && (
                                     <div className="settings-section mb-8">
-                                        <div className="settings-section-header mb-4">
+                                        <div className="settings-section-header mb-2">
                                             <h3 className="text-xl font-bold text-[var(--color-text-primary)]">Genre Transition Matrix</h3>
-                                            <p className="text-sm text-[var(--color-text-muted)] mt-1">Maps hop costs between genres, powering Infinity Mode and Hub generation.</p>
                                         </div>
+                                        <p className="text-sm text-[var(--color-text-muted)] mb-6">
+                                            Maps hop costs between genres, powering Infinity Mode and Hub generation.
+                                        </p>
 
                                         <div className="flex items-center gap-2 mb-6">
                                             <button
@@ -687,7 +735,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                 className="shrink-0 font-semibold text-sm px-4 py-2.5 bg-[var(--color-primary)] text-white rounded-xl hover:bg-[var(--color-primary-dark)] transition-colors disabled:opacity-50 shadow-sm inline-flex items-center gap-2"
                                             >
                                                 {isRunningMatrix && <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
-                                                {isRunningMatrix ? (genreMatrixProgress?.replace('Categorizing ', '') || 'Running...') : 'Run Now'}
+                                                {isRunningMatrix ? (genreMatrixProgress?.replace('Categorizing ', '') || 'Running...') : 'Incremental Run'}
                                             </button>
                                             <button
                                                 onClick={handleRemapAll}
@@ -724,6 +772,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                 </div>
                                             </div>
                                         </div>
+                                    </div>
+                                )}
+
+                                 {activeTab === 'Database' && (
+                                    <div className="settings-section mb-8">
+                                        <div className="settings-section-header mb-2">
+                                            <h3 className="text-xl font-bold text-[var(--color-text-primary)]">Database Management</h3>
+                                        </div>
+                                        <p className="text-sm text-[var(--color-text-muted)] mb-6">
+                                            Manage your PostgreSQL container instance and monitor its health.
+                                        </p>
+                                        <DatabaseControl inline={true} variant="stats" />
                                     </div>
                                 )}
 

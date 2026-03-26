@@ -9,9 +9,10 @@ import { extractAudioFeatures } from './services/audioExtraction.service';
 import { generateHubConcepts, generateCustomPlaylist, HubCollection } from './services/llm.service';
 import { getHubCollections, calculateNextInfinityTrack } from './services/recommendation.service';
 import { genreMatrixService } from './services/genreMatrix.service';
-import { getSystemSetting, setSystemSetting, getSubGenreMappings } from './database';
+import { getSystemSetting, setSystemSetting, getSubGenreMappings, getDatabaseStats } from './database';
 import { hashPassword, verifyPassword, generateToken, verifyToken, regenerateJwtSecret, JwtPayload } from './services/auth.service';
 import { requireAuth as jwtAuthMiddleware, requireAdmin } from './middleware/auth';
+import { getContainerStatus, startContainer, stopContainer, createContainer, recreateContainer, listContainers, getConfiguredDatabaseInfo, ContainerConfig } from './services/containerControl.service';
 import * as mm from 'music-metadata';
 import OpenAI from 'openai';
 import { Response, Request, NextFunction } from 'express';
@@ -20,6 +21,38 @@ dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3001;
+
+// Global DB connectivity flag
+let dbConnected = false;
+
+let isInitializing = false;
+async function initDatabaseConnection(retries = 15, delay = 2000) {
+  if (isInitializing) return;
+  isInitializing = true;
+  
+  for (let i = 0; i < retries; i++) {
+    try {
+      await genreMatrixService.init();
+      dbConnected = true;
+      console.log('[DB] Connected and genre matrix initialized.');
+      // Backfill entity IDs for existing tracks
+      try {
+        await migrateEntityIds();
+      } catch (e: any) {
+        console.error('[DB] Entity migration failed (non-fatal):', e.message || e);
+      }
+      isInitializing = false;
+      return; 
+    } catch (e: any) {
+      dbConnected = false;
+      console.error(`[DB] Connection attempt ${i + 1}/${retries} failed:`, e.message || e);
+      if (i < retries - 1) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  isInitializing = false;
+}
 
 // Allowed origins setup
 const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : ['http://localhost:3000'];
@@ -100,12 +133,21 @@ function safeAtob(b64: string): string {
   return Buffer.from(bytes).toString('utf8');
 }
 
+
 // Apply JWT auth middleware to all API routes
 app.use(jwtAuthMiddleware);
 
 // Setup API Routes
 app.get('/api/setup/status', async (req, res) => {
-  res.json({ needsSetup: !(await hasUsers()) });
+  try {
+    const usersExist = await hasUsers();
+    res.json({ needsSetup: !usersExist, dbConnected: true });
+  } catch (error: any) {
+    if (error.code === 'ECONNREFUSED') {
+      return res.json({ needsSetup: null, dbConnected: false, error: 'Database unavailable' });
+    }
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 app.post('/api/setup/complete', async (req, res) => {
@@ -374,6 +416,137 @@ app.get('/api/invites/:token/validate', async (req, res) => {
     res.json({ valid });
   } catch (error) {
     res.json({ valid: false });
+  }
+});
+
+// ==========================================
+// DATABASE CONTAINER ENDPOINTS (Admin only)
+// ==========================================
+
+// Special middleware to allow DB control even if DB is down (bootstrap/emergency)
+// If DB is up, require admin auth. If down, allow anyone to access status/start.
+const requireAdminOrDbDown = async (req: Request, res: Response, next: NextFunction) => {
+  if (dbConnected === false) {
+    return next();
+  }
+
+  // DB is up, so we require a valid admin token. 
+  // requireAuth might have skipped it to allow bootstrap access.
+  let token: string | undefined;
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7);
+  } else if (req.query.token) {
+    token = req.query.token as string;
+  }
+
+  if (!token) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  const payload = await verifyToken(token);
+  if (!payload || payload.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+
+  req.user = payload;
+  next();
+};
+
+app.get('/api/admin/db/status', requireAdminOrDbDown, async (req, res) => {
+  try {
+    const containerName = process.env.DB_CONTAINER_NAME || 'music-postgres';
+    const status = await getContainerStatus(containerName);
+    const configuredData = getConfiguredDatabaseInfo();
+    res.json({ ...status, configuredData });
+  } catch (error: any) {
+    console.error('DB status error:', error);
+    res.status(500).json({ error: error.message || 'Failed to get database status' });
+  }
+});
+
+app.get('/api/admin/db/stats', requireAdminOrDbDown, async (req, res) => {
+  try {
+    const stats = await getDatabaseStats();
+    res.json(stats);
+  } catch (error: any) {
+    console.error('DB stats error:', error);
+    res.status(500).json({ error: error.message || 'Failed to get database statistics' });
+  }
+});
+
+app.post('/api/admin/db/start', requireAdminOrDbDown, async (req, res) => {
+  try {
+    const containerName = process.env.DB_CONTAINER_NAME || 'music-postgres';
+    const result = await startContainer(containerName);
+    
+    // Trigger background initialization
+    initDatabaseConnection();
+    
+    res.json(result);
+  } catch (error: any) {
+    console.error('DB start error:', error);
+    res.status(500).json({ error: error.message || 'Failed to start database' });
+  }
+});
+
+app.post('/api/admin/db/stop', requireAdmin, async (req, res) => {
+  try {
+    const containerName = process.env.DB_CONTAINER_NAME || 'music-postgres';
+    const result = await stopContainer(containerName);
+    dbConnected = false;
+    res.json(result);
+  } catch (error: any) {
+    console.error('DB stop error:', error);
+    res.status(500).json({ error: error.message || 'Failed to stop database' });
+  }
+});
+
+app.post('/api/admin/db/create', requireAdmin, async (req, res) => {
+  try {
+    const config: ContainerConfig = {
+      name: 'music-postgres',
+      image: 'docker.io/pgvector/pgvector:pg16',
+      environment: {
+        POSTGRES_USER: process.env.DB_USER || 'musicuser',
+        POSTGRES_PASSWORD: process.env.DB_PASSWORD || 'musicpass',
+        POSTGRES_DB: process.env.DB_NAME || 'musicdb'
+      },
+      ports: {},
+      volumes: {},
+      restartPolicy: 'no'
+    };
+    const result = await createContainer(config);
+    // Trigger background initialization
+    initDatabaseConnection();
+    res.json(result);
+  } catch (error: any) {
+    console.error('DB create error:', error);
+    res.status(500).json({ error: error.message || 'Failed to create database' });
+  }
+});
+
+app.post('/api/admin/db/recreate', requireAdmin, async (req, res) => {
+  try {
+    const config: ContainerConfig = {
+      name: 'music-postgres',
+      image: 'docker.io/pgvector/pgvector:pg16',
+      environment: {
+        POSTGRES_USER: process.env.DB_USER || 'musicuser',
+        POSTGRES_PASSWORD: process.env.DB_PASSWORD || 'musicpass',
+        POSTGRES_DB: process.env.DB_NAME || 'musicdb'
+      },
+      ports: {},
+      volumes: {},
+      restartPolicy: 'no'
+    };
+    const result = await recreateContainer(config);
+    // Trigger background initialization
+    initDatabaseConnection();
+    res.json(result);
+  } catch (error: any) {
+    console.error('DB recreate error:', error);
+    res.status(500).json({ error: error.message || 'Failed to recreate database' });
   }
 });
 
@@ -1329,28 +1502,15 @@ app.get('/api/art', async (req, res) => {
 });
 
 // API: Check Health (reports DB connectivity)
-let dbConnected = false;
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', dbConnected, message: 'Aurora Media Server is running!' });
 });
 
 // Start server always, even if DB is unavailable.
-// genreMatrixService.init() is attempted once; if it fails, dbConnected stays false.
 app.listen(port, () => {
   console.log(`Aurora Media Server listening at http://localhost:${port}`);
 });
 
-genreMatrixService.init().then(async () => {
-  dbConnected = true;
-  console.log('[DB] Connected and genre matrix initialized.');
-  // Backfill entity IDs for existing tracks
-  try {
-    await migrateEntityIds();
-  } catch (e) {
-    console.error('[DB] Entity migration failed (non-fatal):', (e as Error).message || e);
-  }
-}).catch(e => {
-  dbConnected = false;
-  console.error('[DB] Failed to connect — server is running but database is unavailable.', e.message || e);
-});
+// Initial connection attempt
+initDatabaseConnection();
 

@@ -20,6 +20,7 @@ import { InviteRegister } from './components/InviteRegister';
 import { UserMenu } from './components/UserMenu';
 import { Settings as SettingsIcon, Menu } from 'lucide-react';
 import { TrackContextMenu } from './components/library/TrackContextMenu';
+import { DatabaseControl } from './components/DatabaseControl';
 
 const TAB_CONFIG = [
   { path: '/library', label: 'Hub', end: true },
@@ -31,7 +32,14 @@ const TAB_CONFIG = [
 
 const App: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
-  const [dbConnected, setDbConnected] = React.useState<boolean | null>(null);
+  const [dbConnected, _setDbConnected] = React.useState<boolean | null>(null);
+  const dbConnectedRef = React.useRef<boolean | null>(null);
+  
+  const setDbConnected = React.useCallback((val: boolean | null) => {
+    dbConnectedRef.current = val;
+    _setDbConnected(val);
+  }, []);
+  const [isDatabaseStarting, setIsDatabaseStarting] = React.useState(false);
   const library = usePlayerStore(state => state.library);
   const needsSetup = usePlayerStore(state => state.needsSetup);
   const checkSetupStatus = usePlayerStore(state => state.checkSetupStatus);
@@ -46,6 +54,19 @@ const App: React.FC = () => {
   const isSidebarCollapsed = usePlayerStore(state => state.isSidebarCollapsed);
 
   const location = useLocation();
+
+  // Health check function accessible from render
+  const checkHealth = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/health');
+      const data = await res.json();
+      setDbConnected(data.dbConnected === true);
+      return data.dbConnected === true;
+    } catch {
+      setDbConnected(false);
+      return false;
+    }
+  }, []);
 
   // Determine which tab should be active based on current route
   const getActiveTab = (path: string): string => {
@@ -62,50 +83,41 @@ const App: React.FC = () => {
   React.useEffect(() => {
     usePlayerStore.getState().setTheme(usePlayerStore.getState().theme);
 
-    // Check DB health first, then load normally
-    const checkHealth = async () => {
-      try {
-        const res = await fetch('/api/health');
-        const data = await res.json();
-        setDbConnected(data.dbConnected === true);
-        return data.dbConnected === true;
-      } catch {
-        setDbConnected(false);
-        return false;
+    const performInitialChecks = async () => {
+      const ok = await checkHealth();
+      if (ok) {
+        await checkSetupStatus();
+        const { needsSetup, authToken } = usePlayerStore.getState();
+        if (!needsSetup && authToken) {
+          usePlayerStore.getState().loadSettings();
+          usePlayerStore.getState().fetchLibraryFromServer();
+          usePlayerStore.getState().fetchPlaylistsFromServer();
+        }
       }
     };
 
-    checkHealth().then((ok) => {
-      if (!ok) {
-        // Poll every 5 seconds until DB comes back
-        const interval = setInterval(async () => {
-          const ok = await checkHealth();
-          if (ok) {
-            clearInterval(interval);
-            checkSetupStatus().then(() => {
-              const { needsSetup, authToken } = usePlayerStore.getState();
-              if (!needsSetup && authToken) {
-                usePlayerStore.getState().loadSettings();
-                usePlayerStore.getState().fetchLibraryFromServer();
-                usePlayerStore.getState().fetchPlaylistsFromServer();
-              }
-            });
-          }
-        }, 5000);
-        return;
-      }
-      checkSetupStatus().then(() => {
-         const { needsSetup, authToken } = usePlayerStore.getState();
-         if (!needsSetup && authToken) {
-             usePlayerStore.getState().loadSettings();
-             usePlayerStore.getState().fetchLibraryFromServer();
-             usePlayerStore.getState().fetchPlaylistsFromServer();
-         }
-      });
-    });
+    performInitialChecks();
 
-    // Theme setup only — scan status SSE is handled in a separate effect
-  }, []);
+    // Persistent health poller
+    const interval = setInterval(async () => {
+      const previouslyConnected = dbConnectedRef.current;
+      const ok = await checkHealth();
+      
+      // Only trigger a sync if we just became healthy (transition from false to true)
+      if (ok && previouslyConnected === false) {
+        const { needsSetup } = usePlayerStore.getState();
+        if (needsSetup === null) {
+          await checkSetupStatus();
+        }
+        if (authToken) {
+          usePlayerStore.getState().fetchLibraryFromServer();
+          usePlayerStore.getState().fetchPlaylistsFromServer();
+        }
+      }
+    }, 10000); // 10s is a good balance for background polling
+
+    return () => clearInterval(interval);
+  }, [checkSetupStatus, checkHealth]);
 
   // Connect to scan status SSE only when authenticated (EventSource can't send headers)
   React.useEffect(() => {
@@ -138,9 +150,86 @@ const App: React.FC = () => {
   const [folderPathInput, setFolderPathInput] = React.useState('');
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
 
-  if (needsSetup === null) {
-      // Still checking setup status...
-      return <div className="h-screen w-full flex items-center justify-center text-[var(--color-primary)]">Loading Application...</div>;
+  const handleDatabaseReady = React.useCallback(() => {
+    setIsDatabaseStarting(true);
+    setDbConnected(null);
+
+    // Initial check
+    checkHealth().then(ok => {
+      if (ok) {
+        setIsDatabaseStarting(false);
+        checkSetupStatus();
+        if (authToken) {
+          usePlayerStore.getState().fetchLibraryFromServer();
+          usePlayerStore.getState().fetchPlaylistsFromServer();
+        }
+        return;
+      }
+
+      // If not immediately ok, poll aggressively every 2s
+      let attempts = 0;
+      const interval = setInterval(async () => {
+        attempts++;
+        const healthy = await checkHealth();
+        if (healthy || attempts > 15) {
+          clearInterval(interval);
+          setIsDatabaseStarting(false);
+          if (healthy) {
+            checkSetupStatus();
+            if (authToken) {
+              usePlayerStore.getState().fetchLibraryFromServer();
+              usePlayerStore.getState().fetchPlaylistsFromServer();
+            }
+          } else {
+            // If still not healthy after 30s, go back to recovery UI
+            setDbConnected(false);
+          }
+        }
+      }, 2000);
+    });
+  }, [checkHealth, checkSetupStatus, authToken]);
+
+  // If database is not connected, show the control panel immediately
+  if (dbConnected === false && !isDatabaseStarting) {
+    return (
+      <DatabaseControl
+        onReady={handleDatabaseReady}
+      />
+    );
+  }
+
+  // Loading / Initializing gate
+  // Shows if: 
+  // 1. We are explicitly starting the database
+  // 2. We don't know the connection status yet
+  // 3. We are connected but don't know the setup status yet
+  if (isDatabaseStarting || dbConnected === null || (dbConnected === true && needsSetup === null)) {
+      const showStartingLabel = isDatabaseStarting;
+      const showConnectingLabel = dbConnected === null;
+      const showSetupLabel = dbConnected === true && needsSetup === null;
+
+      return (
+        <div className="h-screen w-full flex flex-col items-center justify-center bg-[var(--color-bg-primary)]">
+          <div className="flex flex-col items-center space-y-6">
+            <div className="relative">
+              <div className="w-16 h-16 border-4 border-[var(--color-primary)]/20 border-t-[var(--color-primary)] rounded-full animate-spin" />
+              <div className="absolute inset-x-0 -bottom-1 w-full h-1 bg-[var(--color-primary)]/10 blur-md" />
+            </div>
+            <div className="text-center">
+              <h1 className="text-xl font-bold text-[var(--color-text-primary)]">
+                {showStartingLabel ? 'Establishing Database Connection...' : 
+                 showConnectingLabel ? 'Connecting to Server...' :
+                 'Initializing Application...'}
+              </h1>
+              <p className="text-sm text-[var(--color-text-secondary)] mt-2">
+                {showStartingLabel ? 'The database is booting up, this may take a few seconds.' : 
+                 showConnectingLabel ? 'Verifying server and database health.' :
+                 'Checking application setup status.'}
+              </p>
+            </div>
+          </div>
+        </div>
+      );
   }
 
   if (needsSetup) {
@@ -243,36 +332,6 @@ const App: React.FC = () => {
       )}
 
       <div className="flex h-screen relative z-10 overflow-hidden text-[var(--color-text-primary)]">
-
-      {/* DB not connected? Show full-screen error instead of the app */}
-      {dbConnected === false && (
-        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-[var(--color-bg)] text-[var(--color-text-primary)]">
-          <div className="max-w-lg w-full mx-4 p-8 rounded-3xl border border-red-500/30 bg-red-500/5 backdrop-blur-2xl shadow-2xl text-center space-y-6">
-            <div className="text-5xl">🗄️</div>
-            <h1 className="text-2xl font-bold text-red-400">Database Unavailable</h1>
-            <p className="text-[var(--color-text-secondary)] text-sm">
-              Aurora cannot connect to PostgreSQL on <code className="bg-black/20 px-1.5 py-0.5 rounded text-red-300 text-xs">localhost:5432</code>.
-              The server is running, but waiting for the database to come online.
-            </p>
-            <div className="text-left bg-black/20 rounded-2xl p-5 space-y-3 text-sm">
-              <p className="font-semibold text-[var(--color-text-primary)] mb-2">Troubleshooting</p>
-              <div className="space-y-2 text-[var(--color-text-secondary)]">
-                <p>① Start your PostgreSQL / Podman container:<br/>
-                  <code className="text-xs text-amber-300 mt-1 block">podman start musicdb</code>
-                </p>
-                <p>② Verify the DB is listening:<br/>
-                  <code className="text-xs text-amber-300 mt-1 block">psql -U postgres -h localhost</code>
-                </p>
-                <p>③ Check your <code className="text-xs text-amber-300">.env</code> for the correct <code className="text-xs text-amber-300">DATABASE_URL</code>.</p>
-              </div>
-            </div>
-            <div className="flex items-center justify-center gap-2 text-xs text-[var(--color-text-muted)]">
-              <div className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
-              Retrying every 5 seconds…
-            </div>
-          </div>
-        </div>
-      )}
 
 
         <main className="flex-1 flex flex-col min-w-0 relative">
