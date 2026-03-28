@@ -72,6 +72,12 @@
   /* Fonts - Keep the same families but we'll use them differently */
   --font-display: 'Syne', sans-serif;
   --font-body: 'DM Sans', sans-serif;
+
+  /* Aliases used by components */
+  --color-bg-primary: var(--color-background);
+  --color-bg-secondary: var(--color-surface);
+  --color-bg-tertiary: var(--color-surface-variant);
+  --color-bg-hover: rgba(0, 0, 0, 0.04);
 }
 
 .aurora-background {
@@ -121,6 +127,12 @@
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.5);
   --shadow-glow: 0 0 30px rgba(139, 92, 246, 0.12);
+
+  /* Aliases used by components */
+  --color-bg-primary: var(--color-background);
+  --color-bg-secondary: var(--color-surface);
+  --color-bg-tertiary: var(--color-surface-variant);
+  --color-bg-hover: rgba(255, 255, 255, 0.06);
 }
 
 /* ─── BASE ─── */
