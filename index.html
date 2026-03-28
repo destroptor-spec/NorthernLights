@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NorthernLights</title>
+  <meta name="description"
+    content="A modern web-based music player with local file playback, metadata editing, and playlist management.">
+  <meta name="theme-color" content="#050311">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+  <!-- PWA Manifest Link -->
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      min-height: 100vh;
+    }
+
+    #root {
+      width: 100%;
+      height: 100vh;
+    }
+  </style>
+    <!-- Google Cast SDK -->
+    <script type="text/javascript">
+      window['__onGCastApiAvailable'] = function(isAvailable) {
+        if (isAvailable) {
+          window.dispatchEvent(new Event('castApiAvailable'));
+        }
+      };
+    </script>
+    <script 
+      type="text/javascript" 
+      src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1">
+    </script>
+  </head>
+  
+  <body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+
+</html>
