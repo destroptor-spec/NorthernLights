@@ -124,6 +124,22 @@ If the app crashes or isn't behaving as expected, looking at the server logs is 
 ### "Database Error" with no Create button
 *   **Fix:** The server can't find Podman or Docker. Install one of them (`sudo apt install podman` or `sudo apt install docker.io`) and restart the app.
 
+### "Out of memory" or server crashing during scans
+*   **Cause:** The server runs Node.js, PostgreSQL, and a container runtime simultaneously. 2GB RAM is not enough for all components plus metadata scanning.
+*   **Recommended RAM:**
+
+    | Use Case | RAM |
+    |---|---|
+    | Minimum (small library, no AI) | 4GB |
+    | Comfortable (medium library, AI features) | 8GB |
+    | Large library (10k+ tracks, AI) | 16GB |
+
+*   **Workaround on low-memory VMs:** Add these to your `.env` to limit resource usage:
+    ```bash
+    NODE_OPTIONS=--max-old-space-size=512
+    SCAN_CONCURRENCY=2
+    ```
+
 ---
 
 **Need more help?** Check the `README.md` or the [Deployment Docs](file:///home/andreas/VS%20Code/Music%20App/docs/architecture_overview.md).
