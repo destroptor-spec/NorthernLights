@@ -211,6 +211,16 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
                             const oneTimeMatrixTokens = genreCount * 600;
                             const totalFirstMonth = monthlyHubTokens + oneTimeMatrixTokens;
                             const fmt = (n: number) => n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M` : `${Math.round(n/1000)}K`;
+                            
+                            // Cost calculation (70% input, 30% output based on typical LLM usage)
+                            const inputRatio = 0.7;
+                            const outputRatio = 0.3;
+                            const inputTokens = Math.round(totalFirstMonth * inputRatio);
+                            const outputTokens = Math.round(totalFirstMonth * outputRatio);
+                            const inputCost = (inputTokens / 1_000_000) * 0.20;
+                            const outputCost = (outputTokens / 1_000_000) * 1.25;
+                            const totalCost = inputCost + outputCost;
+                            
                             return (
                                 <div className="bg-[var(--color-surface)]/60 border border-[var(--glass-border)] rounded-2xl p-4 space-y-3">
                                     <div className="flex items-center justify-between gap-4">
@@ -236,7 +246,11 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
                                             <span>Expected monthly token usage</span>
                                             <span className="text-[var(--color-primary)]">~{fmt(totalFirstMonth)} tokens</span>
                                         </div>
-                                        <p className="text-xs text-[var(--color-text-muted)] pt-1">Fully free with local providers (LM Studio, Ollama). OpenAI GPT-4o: ~$0.60/1M tokens.</p>
+                                        <div className="flex justify-between text-[var(--color-text-secondary)] pt-2">
+                                            <span>Estimated first month cost</span>
+                                            <span className="font-medium text-[var(--color-primary)]">${totalCost.toFixed(2)}</span>
+                                        </div>
+                                        <p className="text-xs text-[var(--color-text-muted)] pt-1">Fully free with local providers (LM Studio, Ollama). GPT-5.4-nano: $0.20/1M input, $1.25/1M output.</p>
                                     </div>
                                 </div>
                             );
