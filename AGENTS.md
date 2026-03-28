@@ -67,6 +67,6 @@ Follow this directory hierarchy strictly:
 - Run typecheck after every code change.
 
 ## Key Dependencies
-- **Frontend:** React, Zustand, lucide-react, color-thief-react, idb-keyval
+- **Frontend:** React, Zustand, lucide-react, idb-keyval
 - **Backend:** Express, pg (PostgreSQL), music-metadata, jsonwebtoken, bcrypt
 - **Build:** Vite, TypeScript, Tailwind CSS
