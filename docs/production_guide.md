@@ -54,10 +54,17 @@ In production, you want the app to keep running even if you close your terminal.
     ```bash
     pm2 start "npx tsx server/index.ts" --name northernlights
     ```
-3.  **Save the state:**
+3.  **Generate startup script** (run the command it outputs with sudo):
+    ```bash
+    pm2 startup
+    ```
+4.  **Save the process list:**
     ```bash
     pm2 save
     ```
+
+> [!NOTE]
+> `pm2 startup` prints a command like `sudo env PATH=... pm2 startup ...`. You must copy and run that command with `sudo`, then run `pm2 save`. Without both steps, PM2 won't survive a reboot.
 
 > [!TIP]
 > **Prefer Systemd?** If you are on Linux and prefer using `systemd` instead of PM2, go to **Settings > System** in the app. It provides a copy-paste template for a user-level service that handles auto-starting for you.
