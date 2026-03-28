@@ -539,6 +539,8 @@ app.post('/api/admin/db/stop', requireAdmin, async (req, res) => {
 
 app.post('/api/admin/db/create', requireAdminOrDbDown, async (req, res) => {
   try {
+    const dbPort = process.env.DB_PORT || '5432';
+    const dataDir = process.env.DB_DATA_DIR || './postgres-data';
     const config: ContainerConfig = {
       name: 'music-postgres',
       image: 'docker.io/pgvector/pgvector:pg16',
@@ -547,8 +549,8 @@ app.post('/api/admin/db/create', requireAdminOrDbDown, async (req, res) => {
         POSTGRES_PASSWORD: process.env.DB_PASSWORD || 'musicpass',
         POSTGRES_DB: process.env.DB_NAME || 'musicdb'
       },
-      ports: {},
-      volumes: {},
+      ports: { '5432': dbPort },
+      volumes: { [dataDir]: '/var/lib/postgresql/data' },
       restartPolicy: 'no'
     };
     const result = await createContainer(config);
@@ -563,6 +565,8 @@ app.post('/api/admin/db/create', requireAdminOrDbDown, async (req, res) => {
 
 app.post('/api/admin/db/recreate', requireAdminOrDbDown, async (req, res) => {
   try {
+    const dbPort = process.env.DB_PORT || '5432';
+    const dataDir = process.env.DB_DATA_DIR || './postgres-data';
     const config: ContainerConfig = {
       name: 'music-postgres',
       image: 'docker.io/pgvector/pgvector:pg16',
@@ -571,8 +575,8 @@ app.post('/api/admin/db/recreate', requireAdminOrDbDown, async (req, res) => {
         POSTGRES_PASSWORD: process.env.DB_PASSWORD || 'musicpass',
         POSTGRES_DB: process.env.DB_NAME || 'musicdb'
       },
-      ports: {},
-      volumes: {},
+      ports: { '5432': dbPort },
+      volumes: { [dataDir]: '/var/lib/postgresql/data' },
       restartPolicy: 'no'
     };
     const result = await recreateContainer(config);

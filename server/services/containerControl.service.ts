@@ -250,7 +250,7 @@ export async function createContainer(config: ContainerConfig): Promise<CreateRe
     podmanArgs.push('--name', containerName);
 
     // Ports
-    const ports = config.ports || { [port]: port };
+    const ports = config.ports && Object.keys(config.ports).length > 0 ? config.ports : { [port]: port };
     for (const [containerPort, hostPort] of Object.entries(ports)) {
       podmanArgs.push('-p', `${hostPort}:${containerPort}`);
     }
@@ -262,7 +262,7 @@ export async function createContainer(config: ContainerConfig): Promise<CreateRe
     }
 
     // Volumes
-    const volumes = config.volumes || { [dataDir]: '/var/lib/postgresql/data' };
+    const volumes = config.volumes && Object.keys(config.volumes).length > 0 ? config.volumes : { [dataDir]: '/var/lib/postgresql/data' };
     for (const [host, container] of Object.entries(volumes)) {
       podmanArgs.push('-v', `${host}:${container}:Z`);
     }
