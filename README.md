@@ -23,7 +23,7 @@ If you prefer to install manually or are on a non-Debian system:
 Just want the raw commands to get the app running immediately in production?
 
 ```bash
-git pull
+git clone https://github.com/destroptor-spec/NorthernLights.git
 npm install
 cp .env.example .env
 npm run build
