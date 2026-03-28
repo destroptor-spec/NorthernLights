@@ -4,7 +4,21 @@ A modern, self-hosted web music player built with React, Vite, Tailwind CSS, and
 
 > 📖 **Deploying to a Server?** Read the comprehensive [Production Setup Guide](docs/production_guide.md) for step-by-step instructions on PM2, Systemd, reverse proxies, and firewall configurations.
 
-## Low-Level Quick Setup (TL;DR)
+## One-Liner Install (Ubuntu/Debian)
+
+Installs everything — Node.js, Podman, FFmpeg, PM2 — and starts the server:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/destroptor-spec/NorthernLights/main/install.sh | bash
+```
+
+Then open the URL it prints to finish setup in the browser.
+
+> **Other systems (Fedora, macOS, Windows):** See [Getting Started](#getting-started) below for manual setup.
+
+## Quick Setup (Manual)
+
+If you prefer to install manually or are on a non-Debian system:
 
 Just want the raw commands to get the app running immediately in production?
 
