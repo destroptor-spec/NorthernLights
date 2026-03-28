@@ -38,7 +38,7 @@ export default defineConfig({
       buffer: path.resolve(__dirname, './node_modules/buffer/'),
     },
   },
-  base: './',
+  base: '/',
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
