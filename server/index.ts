@@ -537,7 +537,7 @@ app.post('/api/admin/db/stop', requireAdmin, async (req, res) => {
   }
 });
 
-app.post('/api/admin/db/create', requireAdmin, async (req, res) => {
+app.post('/api/admin/db/create', requireAdminOrDbDown, async (req, res) => {
   try {
     const config: ContainerConfig = {
       name: 'music-postgres',
@@ -561,7 +561,7 @@ app.post('/api/admin/db/create', requireAdmin, async (req, res) => {
   }
 });
 
-app.post('/api/admin/db/recreate', requireAdmin, async (req, res) => {
+app.post('/api/admin/db/recreate', requireAdminOrDbDown, async (req, res) => {
   try {
     const config: ContainerConfig = {
       name: 'music-postgres',
