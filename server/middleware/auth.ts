@@ -31,7 +31,9 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     path.startsWith('/api/invites/') ||
     path === '/api/admin/db/status' ||
     path === '/api/admin/db/stats' ||
-    path === '/api/admin/db/start'
+    path === '/api/admin/db/start' ||
+    path === '/api/admin/db/create' ||
+    path === '/api/admin/db/recreate'
   ) {
     return next();
   }
