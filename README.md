@@ -69,6 +69,7 @@ pm2 start "npx tsx server/index.ts" --name northernlights
 - Node.js (v18+ recommended)
 - `npm` or `yarn`
 - **FFmpeg** (v4.0+ recommended) — *Required for on-the-fly transcoding of non-native formats like WMA.*
+- **Podman** or **Docker** — *Required for the automatic PostgreSQL database container. The app auto-detects which is available (Podman preferred).*
 
 ### Setup
 

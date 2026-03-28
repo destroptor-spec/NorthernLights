@@ -83,8 +83,10 @@ By default, the built-in server runs on port `3001`. To access the interface fro
 
 Open your browser and go to your server's address (e.g., **`http://your-server-ip:3001`**).
 
-1.  **Database Connection:** Click the **"Create/Start Database Container"** button. The app will set up its own database via Podman/Docker.
-2.  **Create Admin:** Set up your username and password.
+You will first see the **Database Control** screen showing "Database Not Found". This is expected.
+
+1.  **Create the Database:** Click the green **"Create Database"** button. The app will pull the PostgreSQL image and start a container via Podman or Docker. This may take a minute on first run.
+2.  **Setup Wizard:** Once the database is online, the app will automatically advance to the Setup Wizard. Create your admin account.
 3.  **Add Music:** In Settings (gear icon ⚙️), enter the absolute path to your music folder (e.g., `/home/user/Music`).
 
 ---
@@ -118,6 +120,9 @@ If the app crashes or isn't behaving as expected, looking at the server logs is 
 
 ### "Database container keeps stopping"
 *   **Fix:** Ensure Podman or Docker has enough permissions to create and write to the `./postgres-data` folder in your app directory.
+
+### "Database Error" with no Create button
+*   **Fix:** The server can't find Podman or Docker. Install one of them (`sudo apt install podman` or `sudo apt install docker.io`) and restart the app.
 
 ---
 
