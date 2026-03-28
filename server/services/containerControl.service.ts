@@ -1,6 +1,21 @@
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import { execSync } from 'child_process';
+
+// Detect available container runtime (prefer podman, fallback to docker)
+let containerRuntime: 'podman' | 'docker' | null = null;
+try {
+  execSync('podman --version', { stdio: 'ignore' });
+  containerRuntime = 'podman';
+} catch {
+  try {
+    execSync('docker --version', { stdio: 'ignore' });
+    containerRuntime = 'docker';
+  } catch {
+    containerRuntime = null;
+  }
+}
 
 export interface ContainerConfig {
   name: string;
@@ -49,15 +64,19 @@ function getDefaultPort(): string {
   return process.env.DB_PORT || '5432';
 }
 
-async function runPodman(args: string[], timeout = 60000): Promise<string> {
+async function runContainer(args: string[], timeout = 60000): Promise<string> {
+  if (!containerRuntime) {
+    throw new Error('No container runtime found. Install Podman or Docker.');
+  }
+
   return new Promise((resolve, reject) => {
-    const proc = spawn('podman', args);
+    const proc = spawn(containerRuntime!, args);
     let stdout = '';
     let stderr = '';
 
     const timeoutId = setTimeout(() => {
       proc.kill('SIGKILL');
-      reject(new Error('Podman command timed out after ' + timeout + 'ms'));
+      reject(new Error(`${containerRuntime} command timed out after ` + timeout + 'ms'));
     }, timeout);
 
     proc.stdout.on('data', (data) => {
@@ -101,7 +120,7 @@ async function runPodman(args: string[], timeout = 60000): Promise<string> {
 
 export async function getContainerStatus(containerName: string): Promise<ContainerStatus> {
   try {
-    const output = await runPodman(['ps', '-a', '--format', 'json', '--filter', `name=${containerName}`]);
+    const output = await runContainer(['ps', '-a', '--format', 'json', '--filter', `name=${containerName}`]);
     
     // Extract the JSON array from potential stdout noise/warnings
     const trimmed = output.trim();
@@ -171,7 +190,7 @@ export async function startContainer(containerName: string): Promise<CreateResul
       return { status: 'started', message: `Container ${containerName} is already running` };
     }
 
-    await runPodman(['start', containerName]);
+    await runContainer(['start', containerName]);
     return { status: 'started', message: `Container ${containerName} started` };
   } catch (error: any) {
     return { status: 'error', message: error.message, error: error.message };
@@ -190,7 +209,7 @@ export async function stopContainer(containerName: string): Promise<CreateResult
       return { status: 'started', message: `Container ${containerName} is already stopped` };
     }
 
-    await runPodman(['stop', containerName]);
+    await runContainer(['stop', containerName]);
     return { status: 'created', message: `Container ${containerName} stopped` };
   } catch (error: any) {
     return { status: 'error', message: error.message, error: error.message };
@@ -210,7 +229,7 @@ export async function createContainer(config: ContainerConfig): Promise<CreateRe
     }
     
     if (status.status === 'stopped') {
-      await runPodman(['start', containerName]);
+      await runContainer(['start', containerName]);
       return { status: 'started', message: `Container ${containerName} started` };
     }
 
@@ -251,7 +270,7 @@ export async function createContainer(config: ContainerConfig): Promise<CreateRe
     // Image
     podmanArgs.push(config.image || 'pgvector/pgvector:pg16');
 
-    await runPodman(podmanArgs);
+    await runContainer(podmanArgs);
     return { status: 'created', message: `Container ${containerName} created and started` };
   } catch (error: any) {
     const errorMessage = error.message || 'unknown';
@@ -310,7 +329,7 @@ export async function recreateContainer(config: ContainerConfig): Promise<Create
     const status = await getContainerStatus(containerName);
     
     if (status.status !== 'not_found') {
-      await runPodman(['rm', '-f', containerName]);
+      await runContainer(['rm', '-f', containerName]);
     }
 
     return createContainer(config);
@@ -325,7 +344,7 @@ export async function recreateContainer(config: ContainerConfig): Promise<Create
 
 export async function listContainers(): Promise<ContainerListItem[]> {
   try {
-    const output = await runPodman(['ps', '-a', '--format', 'json']);
+    const output = await runContainer(['ps', '-a', '--format', 'json']);
     
     // Extract the JSON array from potential stdout noise/warnings
     const jsonMatch = output.match(/\[[\s\S]*\]/);
@@ -357,7 +376,8 @@ export function getConfiguredDatabaseInfo() {
     dataDir,
     port,
     user: 'musicuser',
-    name: process.env.DB_CONTAINER_NAME || 'music-postgres'
+    name: process.env.DB_CONTAINER_NAME || 'music-postgres',
+    runtime: containerRuntime
   };
 }
 
@@ -365,7 +385,7 @@ export async function getPortInUse(): Promise<string | null> {
   const port = getDefaultPort();
   try {
     const containerName = process.env.DB_CONTAINER_NAME || 'music-postgres';
-    await runPodman(['port', containerName, port]);
+    await runContainer(['port', containerName, port]);
     return port;
   } catch {
     return null;

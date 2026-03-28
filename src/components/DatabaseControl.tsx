@@ -241,7 +241,10 @@ export function DatabaseControl({ onReady, inline = false, variant = 'full' }: D
             )}
           </div>
           <div>
-            <h2 className="text-xl font-bold tracking-tight">Database {status === 'running' ? 'Online' : status === 'stopped' ? 'Stopped' : 'Not Found'}</h2>
+            <h2 className="text-xl font-bold tracking-tight">Database {status === 'running' ? 'Online' : status === 'stopped' ? 'Stopped' : status === 'error' ? 'Error' : 'Not Found'}</h2>
+            {dbStatus?.error && status === 'error' && (
+              <p className="text-sm text-red-400 mt-1 max-w-xs">{dbStatus.error}</p>
+            )}
             {dbStatus?.configuredData && (
               <p className="text-sm text-[var(--color-text-muted)] mt-1 font-medium bg-black/10 px-3 py-0.5 rounded-full inline-block">
                 {dbStatus.configuredData.name} • Port {dbStatus.configuredData.port}
@@ -275,7 +278,7 @@ export function DatabaseControl({ onReady, inline = false, variant = 'full' }: D
         {/* Action Buttons - Hidden if variant === 'stats' */}
         {variant === 'full' && (
             <div className="flex flex-col gap-3">
-            {status === 'not_found' && (
+            {(status === 'not_found' || status === 'error') && (
                 <button
                 onClick={() => handleAction('creating', '/api/admin/db/create')}
                 className="w-full py-3 px-4 rounded-xl font-medium bg-green-600 hover:bg-green-700 text-white flex items-center justify-center gap-2 transition-colors shadow-lg shadow-green-900/20"
