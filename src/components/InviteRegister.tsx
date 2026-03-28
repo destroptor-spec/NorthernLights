@@ -62,7 +62,7 @@ export const InviteRegister: React.FC = () => {
 
   if (isValid === null) {
     return (
-      <div className="fixed inset-0 z-[100] bg-[var(--color-bg)] flex items-center justify-center">
+      <div className="fixed inset-0 z-[100] bg-[var(--color-bg-primary)] flex items-center justify-center">
         <div className="text-[var(--color-text-secondary)]">Validating invite...</div>
       </div>
     );
@@ -70,7 +70,7 @@ export const InviteRegister: React.FC = () => {
 
   if (!isValid) {
     return (
-      <div className="fixed inset-0 z-[100] bg-[var(--color-bg)] flex items-center justify-center p-4">
+      <div className="fixed inset-0 z-[100] bg-[var(--color-bg-primary)] flex items-center justify-center p-4">
         <div className="text-center space-y-4">
           <XCircle className="w-16 h-16 text-red-400 mx-auto" />
           <h1 className="text-2xl font-bold text-[var(--color-text-primary)]">Invalid Invite</h1>
@@ -81,8 +81,8 @@ export const InviteRegister: React.FC = () => {
   }
 
   return (
-    <div className="fixed inset-0 z-[100] bg-[var(--color-bg)] flex items-center justify-center p-4">
-      <div className="absolute inset-0 z-0 opacity-30 bg-gradient-to-br from-[var(--color-primary-dark)] via-[var(--color-bg)] to-purple-900 pointer-events-none" />
+    <div className="fixed inset-0 z-[100] bg-[var(--color-bg-primary)] flex items-center justify-center p-4">
+      <div className="absolute inset-0 z-0 opacity-30 bg-gradient-to-br from-[var(--color-primary-dark)] via-[var(--color-bg-primary)] to-purple-900 pointer-events-none" />
 
       <div className="relative z-10 w-full max-w-sm bg-[var(--glass-bg)] border border-[var(--glass-border)] shadow-2xl rounded-3xl p-8 backdrop-blur-3xl">
         <div className="flex flex-col items-center mb-8">
