@@ -13,7 +13,10 @@ const PlaylistCard: React.FC<{ collection: HubCollection; onPlay: () => void; on
   const { artUrls, primaryArt, bgColor } = useDominantColor(collection.tracks);
 
   return (
-    <div className="relative group overflow-hidden rounded-[2rem] p-8 w-[28rem] h-80 flex-none snap-start flex flex-col justify-between transition-transform duration-300 hover:scale-[1.02]">
+    <div
+      className="relative group overflow-hidden rounded-[2rem] p-6 sm:p-8 w-[80vw] sm:w-[28rem] h-64 sm:h-80 flex-none snap-start flex flex-col justify-between transition-transform duration-300 hover:scale-[1.02] cursor-pointer"
+      onClick={onPlay}
+    >
       {/* Matte Glass Background */}
       <div 
         className="absolute inset-0 z-0 transition-all duration-300"
@@ -41,7 +44,7 @@ const PlaylistCard: React.FC<{ collection: HubCollection; onPlay: () => void; on
       {/* Content - Z-Index 10 */}
       <div className="relative z-10 space-y-3 drop-shadow-md">
         <div className="flex items-start justify-between">
-          <h3 className="text-3xl font-bold text-white tracking-tight leading-tight">
+          <h3 className="text-xl sm:text-3xl font-bold text-white tracking-tight leading-tight">
             {collection.title || 'Untitled Playlist'}
           </h3>
           {onPinToggle && (
@@ -63,8 +66,8 @@ const PlaylistCard: React.FC<{ collection: HubCollection; onPlay: () => void; on
 
       <div className="relative z-10 mt-auto pt-6 flex items-end justify-between">
         <button 
-          onClick={onPlay}
-          className="px-6 py-3 rounded-full bg-white/20 hover:bg-white/30 border border-white/30 backdrop-blur-md text-white font-medium flex items-center space-x-2 transition-all duration-300 hover:shadow-[0_0_20px_rgba(255,255,255,0.3)] group/btn"
+          onClick={(e) => { e.stopPropagation(); onPlay(); }}
+          className="hidden sm:flex px-6 py-3 rounded-full bg-white/20 hover:bg-white/30 border border-white/30 backdrop-blur-md text-white font-medium items-center space-x-2 transition-all duration-300 hover:shadow-[0_0_20px_rgba(255,255,255,0.3)] group/btn"
         >
           <span>Start Listening</span>
         </button>
@@ -91,7 +94,10 @@ const NonLlmPlaylistCard: React.FC<{ collection: HubCollection; onPlay: () => vo
   const { artUrls, primaryArt, bgColor } = useDominantColor(collection.tracks);
 
   return (
-    <div className="relative group overflow-hidden rounded-[2rem] p-8 w-[28rem] h-80 flex-none snap-start flex flex-col transition-transform duration-300 hover:scale-[1.02] bg-[var(--glass-bg)] border border-[var(--glass-border)] shadow-[var(--shadow-md)]">
+    <div
+      className="relative group overflow-hidden rounded-[2rem] p-6 sm:p-8 w-[80vw] sm:w-[28rem] h-64 sm:h-80 flex-none snap-start flex flex-col transition-transform duration-300 hover:scale-[1.02] bg-[var(--glass-bg)] border border-[var(--glass-border)] shadow-[var(--shadow-md)] cursor-pointer"
+      onClick={onPlay}
+    >
       
       {/* Background Soft Glow */}
       <div 
@@ -102,22 +108,17 @@ const NonLlmPlaylistCard: React.FC<{ collection: HubCollection; onPlay: () => vo
       />
 
       {/* Cascading Covers (Left aligned) */}
-      <div className="relative z-10 flex items-center h-[140px] w-full mb-4">
+      <div className="relative z-10 flex items-center h-[120px] sm:h-[140px] w-full mb-4">
         {artUrls.map((url, i) => {
-           const scale = 1 - (i * 0.15);
-           const leftOffset = i * 45;
+           const leftOffset = i * 60;
            return (
              <div 
                key={i} 
-               className="absolute rounded-2xl overflow-hidden shadow-2xl border border-white/20 transition-all duration-500 ease-out group-hover:translate-x-3 group-hover:rotate-1"
+               className="absolute rounded-2xl overflow-hidden shadow-2xl border border-white/20 transition-all duration-500 ease-out group-hover:translate-x-3 group-hover:rotate-1 hub-discover-cover"
                style={{
-                 width: '120px',
-                 height: '120px',
                  left: `${leftOffset}px`,
                  zIndex: 10 - i,
-                 transform: `scale(${scale})`,
                  transformOrigin: 'left center',
-                 filter: `brightness(${1 - i*0.15})`,
                }}
              >
                 <img src={url} alt="" className="w-full h-full object-cover" />
@@ -125,7 +126,7 @@ const NonLlmPlaylistCard: React.FC<{ collection: HubCollection; onPlay: () => vo
            );
         })}
         {artUrls.length === 0 && (
-          <div className="w-[120px] h-[120px] rounded-2xl bg-[var(--color-surface)] border border-[var(--glass-border)] flex items-center justify-center absolute z-10">
+          <div className="w-[80px] h-[80px] sm:w-[120px] sm:h-[120px] rounded-2xl bg-[var(--color-surface)] border border-[var(--glass-border)] flex items-center justify-center absolute z-10">
             <Disc3 size={48} className="text-[var(--color-text-muted)] opacity-30" />
           </div>
         )}
@@ -133,19 +134,19 @@ const NonLlmPlaylistCard: React.FC<{ collection: HubCollection; onPlay: () => vo
 
       {/* Content */}
       <div className="relative z-10 flex flex-col items-start gap-1 flex-1 justify-end pb-2">
-        <h3 className="text-2xl font-bold tracking-tight text-[var(--color-primary)] drop-shadow-sm">
+        <h3 className="text-xl sm:text-2xl font-bold tracking-tight text-[var(--color-primary)] drop-shadow-sm">
           {collection.title || 'Untitled Playlist'}
         </h3>
         {collection.description && (
-          <p className="text-[var(--color-text-secondary)] text-sm line-clamp-2 mb-2 font-medium">
+          <p className="text-[var(--color-text-secondary)] text-xs sm:text-sm line-clamp-2 mb-2 font-medium">
             {collection.description}
           </p>
         )}
       </div>
 
-      <div className="relative z-10 pt-2 flex items-center mt-auto border-t border-[var(--glass-border)]">
+      <div className="relative z-10 pt-2 hidden sm:flex items-center mt-auto border-t border-[var(--glass-border)]">
         <button 
-          onClick={onPlay}
+          onClick={(e) => { e.stopPropagation(); onPlay(); }}
           className="mt-4 px-6 py-2.5 rounded-full bg-[var(--color-primary)] hover:brightness-110 text-white font-semibold shadow-lg shadow-[var(--color-primary)]/30 transition-all duration-300 transform active:scale-95 inline-flex items-center gap-2"
         >
           <Play className="w-4 h-4" />

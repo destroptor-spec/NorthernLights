@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { usePlayerStore } from '../store';
-import { Home, Library, Settings as SettingsIcon, Search as SearchIcon, X, PlusCircle, GripVertical, MoreHorizontal, ChevronLeft, ChevronRight, ListMusic } from 'lucide-react';
+import { Home, Library, Settings as SettingsIcon, Search as SearchIcon, X, PlusCircle, GripVertical, MoreHorizontal, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ListMusic } from 'lucide-react';
 import { parseArtists } from '../utils/artistUtils';
 import { AlbumArt } from './AlbumArt';
 import { formatTime } from '../utils/formatTime';
@@ -99,7 +99,7 @@ export const PlaylistSidebar: React.FC = () => {
                   onDragEnter={(e) => handleDragEnter(e, idx)}
                   onDragOver={handleDragOver}
                   onDrop={(e) => handleDrop(e, idx)}
-                  onDoubleClick={() => playAtIndex(idx)}
+                  onClick={() => playAtIndex(idx)}
                   className={`playlist-item group ${currentIndex === idx ? 'active' : ''} ${draggingIndex === idx ? 'dragging' : ''} ${isSidebarCollapsed ? 'justify-center p-2' : ''}`}
                   style={{
                     opacity: draggingIndex === idx ? 0.35 : (t.isInfinity && (currentIndex === null || idx > currentIndex)) ? 0.6 : 1,
@@ -112,14 +112,36 @@ export const PlaylistSidebar: React.FC = () => {
                       : 'none',
                   }}
                 >
-                  {/* Drag handle - only show when expanded */}
+                  {/* Drag handle — desktop only */}
                   {!isSidebarCollapsed && (
                     <span
-                      className="shrink-0 cursor-grab active:cursor-grabbing text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 pl-1 pr-0.5 select-none"
+                      className="shrink-0 cursor-grab active:cursor-grabbing text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 pl-1 pr-0.5 select-none hidden md:inline-flex"
                       style={{ fontSize: '1rem', lineHeight: 1 }}
                       title="Drag to reorder"
                     >
                       <GripVertical size={14} />
+                    </span>
+                  )}
+
+                  {/* Mobile reorder arrows */}
+                  {!isSidebarCollapsed && (
+                    <span className="shrink-0 flex flex-col md:hidden text-[var(--color-text-muted)]">
+                      <button
+                        aria-label="Move up"
+                        onClick={(e) => { e.stopPropagation(); if (idx > 0) moveInPlaylist(idx, idx - 1); }}
+                        className="leading-none p-0.5 hover:text-[var(--color-text-primary)] active:scale-90 transition-transform disabled:opacity-20"
+                        disabled={idx === 0}
+                      >
+                        <ChevronUp size={14} />
+                      </button>
+                      <button
+                        aria-label="Move down"
+                        onClick={(e) => { e.stopPropagation(); if (idx < playlist.length - 1) moveInPlaylist(idx, idx + 1); }}
+                        className="leading-none p-0.5 hover:text-[var(--color-text-primary)] active:scale-90 transition-transform disabled:opacity-20"
+                        disabled={idx === playlist.length - 1}
+                      >
+                        <ChevronDown size={14} />
+                      </button>
                     </span>
                   )}
 

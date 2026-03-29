@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { usePlayerStore } from '../../store';
-import { Play, Plus, Sparkles, X, Loader2, Trash2, Pin, PinOff } from 'lucide-react';
+import { Play, Plus, Sparkles, X, Loader2, Trash2, Pin, PinOff, MoreHorizontal } from 'lucide-react';
 import { useDominantColor } from '../../hooks/useDominantColor';
 import type { Playlist } from '../../store';
 
 const PlaylistListItem: React.FC<{ playlist: Playlist; onPlay: () => void; onDelete: () => void; onPinToggle?: () => void }> = ({ playlist, onPlay, onDelete, onPinToggle }) => {
   const { theme } = usePlayerStore();
   const { artUrls, primaryArt, bgColor } = useDominantColor(playlist.tracks);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   return (
     <div 
@@ -41,26 +42,50 @@ const PlaylistListItem: React.FC<{ playlist: Playlist; onPlay: () => void; onDel
         )}
       </div>
       
-      <div className="absolute top-4 right-4 z-10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2">
-        {onPinToggle && playlist.isLlmGenerated && (
-          <button
-            onClick={(e) => { e.stopPropagation(); onPinToggle(); }}
-            className={`w-10 h-10 rounded-full backdrop-blur-md flex items-center justify-center text-white shadow-lg border transition-colors ${playlist.pinned ? 'bg-amber-500/30 border-amber-400/30 hover:bg-amber-500/50' : 'bg-white/20 border-white/30 hover:bg-white/30'}`}
-            title={playlist.pinned ? 'Unpin' : 'Pin'}
-          >
-            {playlist.pinned ? <Pin className="w-5 h-5" /> : <PinOff className="w-5 h-5" />}
-          </button>
-        )}
+      {/* Three-dot menu button */}
+      <div className="absolute top-4 right-4 z-10">
         <button
-          onClick={(e) => { e.stopPropagation(); onDelete(); }}
-          className="w-10 h-10 rounded-full bg-red-500/30 backdrop-blur-md flex items-center justify-center text-white shadow-lg border border-red-400/30 hover:bg-red-500/50 transition-colors"
-          title="Delete playlist"
+          onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen); }}
+          className="w-9 h-9 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-white shadow-lg border border-white/30 hover:bg-white/30 transition-colors"
+          title="More options"
         >
-          <Trash2 className="w-5 h-5" />
+          <MoreHorizontal size={18} />
         </button>
-        <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-white shadow-lg border border-white/30">
-          <Play className="w-5 h-5 ml-0.5" />
-        </div>
+
+        {/* Dropdown menu */}
+        {menuOpen && (
+          <>
+            <div className="fixed inset-0 z-20" onClick={(e) => { e.stopPropagation(); setMenuOpen(false); }} />
+            <div
+              className="absolute top-full right-0 mt-1 z-30 w-40 py-1 rounded-xl bg-[var(--color-surface)] border border-[var(--glass-border)] shadow-xl backdrop-blur-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                onClick={() => { onPlay(); setMenuOpen(false); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] transition-colors"
+              >
+                <Play size={15} />
+                Play
+              </button>
+              {onPinToggle && playlist.isLlmGenerated && (
+                <button
+                  onClick={() => { onPinToggle(); setMenuOpen(false); }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] transition-colors"
+                >
+                  {playlist.pinned ? <PinOff size={15} /> : <Pin size={15} />}
+                  {playlist.pinned ? 'Unpin' : 'Pin'}
+                </button>
+              )}
+              <button
+                onClick={() => { onDelete(); setMenuOpen(false); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-[var(--color-error)] hover:bg-[var(--color-bg-hover)] transition-colors"
+              >
+                <Trash2 size={15} />
+                Delete
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

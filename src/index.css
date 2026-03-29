@@ -50,6 +50,12 @@
   --spacing-xl: 32px;
   --spacing-2xl: 48px;
 
+  /* Safe Area Insets (for notched devices) */
+  --safe-area-top: env(safe-area-inset-top, 0px);
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-left: env(safe-area-inset-left, 0px);
+  --safe-area-right: env(safe-area-inset-right, 0px);
+
   /* Radius (rounded for glassmorphism) */
   --radius: 20px; 
   --radius-sm: 12px;
@@ -194,6 +200,7 @@ body {
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  touch-action: manipulation;
   
   /* Light Mode Background */
   background-color: var(--color-background);
@@ -1565,5 +1572,68 @@ body::after {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+/* ─── MOBILE MINI PLAYER ─── */
+.safe-area-bottom {
+  padding-bottom: var(--safe-area-bottom);
+}
+
+.safe-area-top {
+  padding-top: var(--safe-area-top);
+}
+
+/* ─── HUB DISCOVER CARD COVERS ─── */
+.hub-discover-cover {
+  width: 100px;
+  height: 100px;
+  box-shadow: 4px 0 8px rgba(0, 0, 0, 0.25);
+}
+
+@media (min-width: 640px) {
+  .hub-discover-cover {
+    width: 120px;
+    height: 120px;
+  }
+}
+
+/* ─── MOBILE TOUCH IMPROVEMENTS ─── */
+@media (max-width: 767px) {
+  /* Larger touch targets on mobile */
+  .player-control-btn {
+    width: 48px;
+    height: 48px;
+  }
+
+  .play-btn-main {
+    width: 64px;
+    height: 64px;
+  }
+
+  .play-btn-main svg {
+    width: 26px;
+    height: 26px;
+  }
+
+  /* Hide volume controls on mobile */
+  .volume-control {
+    display: none;
+  }
+
+  /* Hide keyboard hint on mobile */
+  .keyboard-hint {
+    display: none;
+  }
+
+  /* Larger volume slider thumb for touch */
+  .volume-slider::-webkit-slider-thumb {
+    width: 16px;
+    height: 16px;
+  }
+
+  .volume-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
   }
 }

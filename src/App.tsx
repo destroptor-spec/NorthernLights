@@ -3,6 +3,8 @@ import { Routes, Route, Navigate, NavLink, useLocation } from 'react-router-dom'
 import { PlaylistSidebar } from './components/PlaylistSidebar';
 import PlayerControls from './components/PlayerControls';
 import ProgressBar from './components/ProgressBar';
+import MobileMiniPlayer from './components/MobileMiniPlayer';
+import MobileBottomTabs from './components/MobileBottomTabs';
 import KeyboardHint from './components/KeyboardHint';
 import { usePlayerStore } from './store/index';
 import { TrackInfo } from './utils/fileSystem';
@@ -18,7 +20,7 @@ import { GlobalSearch } from './components/GlobalSearch';
 import { SettingsModal } from './components/SettingsModal';
 import { InviteRegister } from './components/InviteRegister';
 import { UserMenu } from './components/UserMenu';
-import { Settings as SettingsIcon, Menu } from 'lucide-react';
+import { Settings as SettingsIcon, AudioWaveform } from 'lucide-react';
 import { TrackContextMenu } from './components/library/TrackContextMenu';
 import { DatabaseControl } from './components/DatabaseControl';
 
@@ -52,6 +54,7 @@ const App: React.FC = () => {
   const isScanningGlobal = usePlayerStore(state => state.isScanning);
   const scanningFileGlobal = usePlayerStore(state => state.scanningFile);
   const isSidebarCollapsed = usePlayerStore(state => state.isSidebarCollapsed);
+  const playlist = usePlayerStore(state => state.playlist);
 
   const location = useLocation();
 
@@ -337,17 +340,15 @@ const App: React.FC = () => {
         <main className="flex-1 flex flex-col min-w-0 relative">
           
           {/* Mobile Header (Hidden on Desktop) */}
-          <div className="md:hidden p-4 flex items-center justify-between border-b border-[var(--glass-border)] bg-[var(--glass-bg)] backdrop-blur-md">
-            <h1 className="font-bold text-lg text-[var(--color-primary)] tracking-wide">NORTHERNLIGHTS</h1>
-            <button 
-              className="p-2 text-[var(--color-text-primary)] focus:outline-none" 
-              onClick={() => setIsSidebarOpen(true)}
-            >
-              <Menu size={24} />
-            </button>
+          <div className="md:hidden px-4 pt-[max(0.75rem,var(--safe-area-top))] pb-3 flex items-center justify-between border-b border-[var(--glass-border)] bg-[var(--glass-bg)] backdrop-blur-md">
+            <AudioWaveform size={22} className="text-[var(--color-primary)]" />
+            <div className="flex items-center gap-1">
+              <GlobalSearch />
+              <UserMenu />
+            </div>
           </div>
 
-          <div className="flex-none flex gap-3 overflow-x-auto hide-scrollbar z-20 w-full py-3 px-4 md:px-8 lg:px-12">
+          <div className="hidden md:flex flex-none gap-3 overflow-x-auto hide-scrollbar z-20 w-full py-3 px-4 md:px-8 lg:px-12">
             {TAB_CONFIG.map(tab => {
                 const isActive = activeTab === tab.path;
                 return (
@@ -390,7 +391,7 @@ const App: React.FC = () => {
 
           {/* Main Content Area (Routing) */}
           <div className="flex-1 flex overflow-hidden">
-            <div className="flex-1 overflow-y-auto pb-48">
+            <div className={`flex-1 overflow-y-auto ${playlist.length > 0 ? 'pb-32 md:pb-48' : 'pb-16 md:pb-4'}`}>
               {library.length === 0 ? (
                 <Routes>
                   <Route path="/invite/:token" element={<InviteRegister />} />
@@ -444,13 +445,24 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          {/* Floating Playback Controls Footer */}
-          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-11/12 max-w-4xl z-40 bg-[var(--glass-bg)] backdrop-blur-2xl border border-[var(--glass-border)] rounded-[2rem] p-4 pb-5 shadow-2xl">
-            <ProgressBar />
-            <div className="mt-2">
-              <PlayerControls />
+          {/* Floating Playback Controls Footer — Desktop Only */}
+          {playlist.length > 0 && (
+            <div className="hidden md:block absolute bottom-6 left-1/2 -translate-x-1/2 w-11/12 max-w-4xl z-40 bg-[var(--glass-bg)] backdrop-blur-2xl border border-[var(--glass-border)] rounded-[2rem] p-4 pb-5 shadow-2xl">
+              <ProgressBar />
+              <div className="mt-2">
+                <PlayerControls />
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* Mobile Mini Player */}
+          {playlist.length > 0 && <MobileMiniPlayer />}
+
+          {/* Mobile Bottom Tabs */}
+          <MobileBottomTabs
+            onOpenQueue={() => setIsSidebarOpen(true)}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+          />
 
           {/* Keyboard Hint Overlay */}
           <KeyboardHint />

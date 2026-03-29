@@ -17,9 +17,9 @@ Be specific and thorough so progress can be picked up easily.
 
 ## Project Structure & Data Flow
 Follow this directory hierarchy strictly:
-- `src/components/`: Pure UI & layout (PlayerControls, ProgressBar, Sidebar, UserMenu, AdminPanel, InviteRegister).
+- `src/components/`: Pure UI & layout (PlayerControls, ProgressBar, Sidebar, UserMenu, AdminPanel, InviteRegister, MobileMiniPlayer, MobileBottomTabs, MobileNowPlaying, GlobalSearch).
 - `src/components/library/`: Library views (AlbumDetail, GenreDetail, ArtistDetail, LibraryHome, Playlists).
-- `src/hooks/`: Custom React hooks (useLoadLibrary, useVolumeSync, useDominantColor, useExternalImage, useLlmConnectionTest).
+- `src/hooks/`: Custom React hooks (useLoadLibrary, useVolumeSync, useDominantColor, useExternalImage, useLlmConnectionTest, useSwipe).
 - `src/store/`: Zustand state definitions + persistence middleware.
 - `src/utils/`: Pure utility functions (formatTime, safeBtoa, fileSystem, artistUtils, PlaybackManager, externalImagery, metadataCache).
 - `src/App.tsx`: Layout orchestration. `main.tsx`: Entry point.
@@ -52,6 +52,18 @@ Use the global button classes — do NOT write inline Tailwind button strings. C
 
 Example: `<button className="btn btn-primary btn-sm">Rescan</button>`
 
+## CSS Utilities (`src/index.css`)
+| Class | Purpose |
+|-------|---------|
+| `.safe-area-bottom` | `padding-bottom: env(safe-area-inset-bottom)` — notched device support |
+| `.safe-area-top` | `padding-top: env(safe-area-inset-top)` — notched device support |
+| `.hub-discover-cover` | Responsive cover art size (100px mobile, 120px desktop) with right shadow |
+| `--safe-area-*` | CSS custom properties wrapping `env(safe-area-inset-*)` |
+
+Mobile-specific rules (in `@media (max-width: 767px)` block):
+- Larger touch targets: `.player-control-btn` 48px, `.play-btn-main` 64px
+- `.volume-control` and `.keyboard-hint` hidden on mobile
+
 ## Coding Standards
 - **State:** Use **Zustand**. Keep playback state (currentTrack, progress) in the store.
 - **Audio:** Wrap `HTMLAudioElement` and `AudioContext` in a singleton or custom hook to prevent duplicate instances. `PlaybackManager` and `CastManager` handle routing.
@@ -75,6 +87,7 @@ Example: `<button className="btn btn-primary btn-sm">Rescan</button>`
 - `useDominantColor(tracks)` — Extracts art URLs and dominant color from a track list. Returns `{ artUrls, primaryArt, bgColor }`.
 - `useExternalImage(fetcher, deps)` — Generic image fetching with mounted guard. Returns `string | undefined`.
 - `useLlmConnectionTest({ getAuthHeader, onModelsReceived })` — LLM connection testing state + logic.
+- `useSwipe(ref, { onSwipeLeft, onSwipeRight, onSwipeUp, onSwipeDown, threshold })` — Reusable touch swipe gesture detection hook. Returns a ref to attach to the target element.
 
 ## Workflow
 - Always check `package.json` before installing new dependencies.

@@ -241,6 +241,7 @@ export const WaveformProgressBar: React.FC<WaveformProgressBarProps> = ({
                     display: 'block',
                     cursor: 'pointer',
                     borderRadius: '6px',
+                    touchAction: 'manipulation',
                 }}
             />
             {loading && (

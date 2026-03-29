@@ -44,7 +44,7 @@ pm2 start "npx tsx server/index.ts" --name northernlights
 - **Rich External Metadata**: Native integrations with the **Last.fm** and **Genius** APIs to automatically fetch missing album artwork, high-resolution artist hero imagery, and rich biographies seamlessly on the frontend.
 - **Dynamic User Interface**: Premium "glassy" design system with frosted glass effects and interactive pill buttons. Features a custom **Canvas-based Waveform Progress Bar** that decodes audio peaks on-the-fly.
 - **Theme Parity**: Native Light and Dark mode support with carefully tuned contrast and theme-aware UI components.
-- **Cross-Device Ready**: Progressive Web App (PWA) compatible with fully responsive layouts down to mobile sizes. **Google Cast (Chromecast)** support for streaming audio to cast devices.
+- **Cross-Device Ready**: Progressive Web App (PWA) compatible with a mobile-first design — edge-to-edge mini player, bottom tab navigation, full-screen Now Playing view with swipe gestures, and safe-area support for notched devices. Desktop keeps the premium floating player pill. **Google Cast (Chromecast)** support for streaming audio to cast devices.
 - **Production Secure**: Features path sanitization, express-based security policies, Basic API Authentication, and graceful Database failure handling to safely put your library on the public internet.
 - **Universal Format Support**: Native support for **MP3, FLAC, OGG, M4A, AAC, and WAV**. Seamless on-the-fly transcoding for **WMA (Windows Media Audio)** using FFmpeg.
 
