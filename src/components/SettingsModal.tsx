@@ -252,6 +252,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     };
 
     const [searchQuery, setSearchQuery] = useState('');
+    const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
+    React.useEffect(() => {
+        const handler = () => setIsMobile(window.innerWidth < 768);
+        window.addEventListener('resize', handler);
+        return () => window.removeEventListener('resize', handler);
+    }, []);
 
     const [activeTab, setActiveTab] = useState('My Account');
     const [dbTab, setDbTab] = useState<'stats' | 'maintenance'>('stats');
@@ -305,7 +312,51 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     <span className="settings-close-hint">ESC</span>
                 </div>
 
-                <div className="settings-sidebar">
+                {/* Mobile: Horizontal tab bar at top */}
+                {isMobile && (
+                    <div className="settings-mobile-tabs">
+                        <div className="flex items-center gap-1 overflow-x-auto hide-scrollbar px-2 pt-3 pb-2">
+                            {filteredTabs.map(tab => {
+                                const Icon = tab.id === 'My Account' ? User : 
+                                             tab.id === 'Appearance' ? Palette :
+                                             tab.id === 'Library' ? Folder :
+                                             tab.id === 'Playback' ? Play :
+                                             tab.id === 'System' ? Cpu :
+                                             tab.id === 'Users' ? Users :
+                                             tab.id === 'Database' ? Database :
+                                             tab.id === 'Genre Matrix' ? Globe : Globe;
+                                return (
+                                    <button
+                                        key={tab.id}
+                                        onClick={() => setActiveTab(tab.id)}
+                                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors flex-shrink-0 ${
+                                            activeTab === tab.id
+                                                ? 'bg-[var(--color-primary)] text-white'
+                                                : 'text-[var(--color-text-muted)] bg-[var(--color-surface)]'
+                                        }`}
+                                    >
+                                        <Icon size={14} />
+                                        {tab.label}
+                                    </button>
+                                );
+                            })}
+                            <button
+                                onClick={() => {
+                                    usePlayerStore.getState().clearAuthToken();
+                                    handleClose();
+                                }}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors flex-shrink-0 text-red-400 bg-[var(--color-surface)] ml-auto"
+                            >
+                                <LogOut size={14} />
+                                Sign Out
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Desktop: Sidebar */}
+                {!isMobile && (
+                    <div className="settings-sidebar">
                     <div className="settings-sidebar-header">
                         <h2 className="text-xl font-bold px-3 py-4 text-[var(--color-text-primary)] tracking-tight">Settings</h2>
                     </div>
@@ -365,7 +416,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                             </div>
                         </div>
                     </div>
-                </div>
+                    </div>
+                )}
 
                 {/* Main Content */}
                 <div className="settings-content-wrapper">
