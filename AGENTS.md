@@ -34,6 +34,24 @@ Follow this directory hierarchy strictly:
 - `ArtistInitial` — Renders first character of artist name as styled fallback.
 - `AlbumCard` — Album artwork card with hover play button.
 
+## Button System (`src/index.css`)
+Use the global button classes — do NOT write inline Tailwind button strings. Combine a base `.btn` with a variant and optional size:
+
+| Class | Purpose |
+|-------|---------|
+| `.btn` | Base — compact inline-flex, `8px 16px`, `0.875rem` |
+| `.btn-primary` | Filled purple action |
+| `.btn-danger` | Outlined red warning |
+| `.btn-danger-fill` | Filled red destructive |
+| `.btn-ghost` | Glass/neutral outlined |
+| `.btn-lg` | Size modifier for CTAs |
+| `.btn-sm` | Size modifier for inline actions |
+| `.btn-tab` | Sub-tab toggle (use `.active` modifier) |
+| `.btn-dashed` | Full-width dashed add/create |
+| `.btn-icon` | Icon-only (combine with `.btn-danger` for red icons) |
+
+Example: `<button className="btn btn-primary btn-sm">Rescan</button>`
+
 ## Coding Standards
 - **State:** Use **Zustand**. Keep playback state (currentTrack, progress) in the store.
 - **Audio:** Wrap `HTMLAudioElement` and `AudioContext` in a singleton or custom hook to prevent duplicate instances. `PlaybackManager` and `CastManager` handle routing.
@@ -41,7 +59,7 @@ Follow this directory hierarchy strictly:
 - **I/O:** Use Node.js `fs` streams and `music-metadata` for safe raw-byte extraction directly. Handle encoding explicitly.
 - **Types:** Interfaces for `Track`, `Metadata`, and `StoreState`. Avoid `any`.
 - **Icons:** Use `lucide-react` for all icons. Do not add new inline SVGs unless no lucide equivalent exists.
-- **Styling:** Use Tailwind CSS classes. Extract repeated class strings to CSS classes in `index.css`. Use CSS custom properties for shared design tokens (colors, gradients, shadows).
+- **Styling:** Use Tailwind CSS classes. Use global `.btn` variant classes (see Button System below). Extract repeated class strings to CSS classes in `index.css`. Use CSS custom properties for shared design tokens (colors, gradients, shadows).
 - **Custom Hooks:** Extract repeated `useState` + `useEffect` patterns into hooks under `src/hooks/`.
 - **Utility Functions:** Extract pure logic (formatting, encoding) to `src/utils/` and import rather than duplicating.
 

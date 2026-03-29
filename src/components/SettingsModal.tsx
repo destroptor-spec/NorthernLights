@@ -28,6 +28,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     const discoveryLevel = usePlayerStore(state => state.discoveryLevel);
     const genreStrictness = usePlayerStore(state => state.genreStrictness);
     const artistAmnesiaLimit = usePlayerStore(state => state.artistAmnesiaLimit);
+    const llmPlaylistDiversity = usePlayerStore(state => state.llmPlaylistDiversity);
+    const genreBlendWeight = usePlayerStore(state => state.genreBlendWeight);
+    const llmTracksPerPlaylist = usePlayerStore(state => state.llmTracksPerPlaylist);
+    const llmPlaylistCount = usePlayerStore(state => state.llmPlaylistCount);
     const audioAnalysisCpu = usePlayerStore(state => state.audioAnalysisCpu);
     const hubGenerationSchedule = usePlayerStore(state => state.hubGenerationSchedule);
     const llmBaseUrl = usePlayerStore(state => state.llmBaseUrl);
@@ -251,6 +255,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
     const [activeTab, setActiveTab] = useState('My Account');
     const [dbTab, setDbTab] = useState<'stats' | 'maintenance'>('stats');
+    const [playbackTab, setPlaybackTab] = useState<'infinity' | 'llm'>('infinity');
 
     const isAdmin = currentUser?.role === 'admin';
 
@@ -275,7 +280,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         // Also search within common setting labels for this tab
         if (tab.id === 'Appearance') return 'light dark theme'.includes(query);
         if (tab.id === 'Library') return 'folder path scan library'.includes(query);
-        if (tab.id === 'Playback') return 'infinity discovery genre artist amnesia matrix'.includes(query);
+        if (tab.id === 'Playback') return 'infinity discovery genre artist amnesia matrix llm playlist diversity blend tracks wander'.includes(query);
         if (tab.id === 'System') return 'cpu audio analysis hub schedule'.includes(query);
         if (tab.id === 'Providers') return 'llm api host model key last.fm genius'.includes(query);
         if (tab.id === 'Genre Matrix') return 'genre matrix transition hop cost mapping'.includes(query);
@@ -426,8 +431,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                     className="w-full bg-[var(--color-bg)] border border-[var(--glass-border)] rounded-xl px-4 py-3 text-sm text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/50" />
                                                 <input name="confirmPassword" type="password" placeholder="Confirm new password" required
                                                     className="w-full bg-[var(--color-bg)] border border-[var(--glass-border)] rounded-xl px-4 py-3 text-sm text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/50" />
-                                                <button type="submit"
-                                                    className="bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors">
+                                                <button type="submit" className="btn btn-primary">
                                                     Update Password
                                                 </button>
                                             </form>
@@ -470,7 +474,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                         },
                                                     });
                                                 }}
-                                                className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors"
+                                                className="btn btn-danger"
                                             >
                                                 Delete Account
                                             </button>
@@ -485,13 +489,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                         </div>
                                         <div className="flex gap-4 mb-4">
                                             <button 
-                                                className={`flex-1 py-4 rounded-xl border font-semibold tracking-wide transition-all duration-300 ${theme === 'light' ? 'border-[var(--color-primary)] bg-[var(--color-primary)] text-white shadow-lg scale-100' : 'border-[var(--glass-border)] bg-[var(--glass-bg)] text-[var(--color-text-primary)] hover:bg-[var(--glass-bg-hover)]'}`}
+                                                className={`btn flex-1 py-4 tracking-wide duration-300 ${theme === 'light' ? 'btn-primary !shadow-lg !scale-100' : 'btn-ghost'}`}
                                                 onClick={() => setTheme('light')}
                                             >
                                                 ☀️ Light
                                             </button>
                                             <button 
-                                                className={`flex-1 py-4 rounded-xl border font-semibold tracking-wide transition-all duration-300 ${theme === 'dark' ? 'border-[var(--color-primary)] bg-[var(--color-primary)] text-white shadow-lg scale-100 dark:bg-[var(--aurora-purple)] dark:border-[var(--aurora-purple)]' : 'border-[var(--glass-border)] bg-[var(--glass-bg)] text-[var(--color-text-primary)] hover:bg-[var(--glass-bg-hover)]'}`}
+                                                className={`btn flex-1 py-4 tracking-wide duration-300 ${theme === 'dark' ? 'btn-primary !shadow-lg !scale-100 dark:bg-[var(--aurora-purple)] dark:border-[var(--aurora-purple)]' : 'btn-ghost'}`}
                                                 onClick={() => setTheme('dark')}
                                             >
                                                 🌙 Dark
@@ -504,7 +508,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                     <div className="settings-section mb-8">
                                         <div className="settings-section-header flex justify-between items-center mb-4">
                                             <h3 className="text-xl font-bold text-[var(--color-text-primary)]">Mapped Folders</h3>
-                                            <button className="btn btn-small" onClick={handleAddFolder}>
+                                            <button className="btn btn-sm" onClick={handleAddFolder}>
                                                 ＋ Map Folder Path
                                             </button>
                                         </div>
@@ -521,8 +525,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                     <li key={folderPath} className="flex justify-between items-center p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] shadow-sm backdrop-blur-sm">
                                                         <span className="text-sm truncate mr-4 text-[var(--color-text-primary)] font-medium flex items-center gap-2"><Folder size={16} className="shrink-0 text-[var(--color-text-muted)]" /> {folderPath}</span>
                                                         <div className="flex gap-2 shrink-0">
-                                                            <button className="font-semibold text-xs bg-[var(--color-primary)] text-white px-3 py-1.5 rounded-lg hover:bg-[var(--color-primary-dark)] transition-colors" onClick={() => handleRescanFolder(folderPath)}>Rescan</button>
-                                                            <button className="font-semibold text-xs bg-[var(--color-error)] text-white px-3 py-1.5 rounded-lg hover:bg-red-600 transition-colors" onClick={() => removeLibraryFolder(folderPath)}>Remove</button>
+                                                            <button className="btn btn-primary btn-sm" onClick={() => handleRescanFolder(folderPath)}>Rescan</button>
+                                                            <button className="btn btn-danger-fill btn-sm" onClick={() => removeLibraryFolder(folderPath)}>Remove</button>
                                                         </div>
                                                     </li>
                                                 ))
@@ -534,40 +538,119 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                 {activeTab === 'Playback' && (
                                     <div className="settings-section mb-8">
                                         <div className="settings-section-header mb-4">
-                                            <h3 className="text-xl font-bold text-[var(--color-text-primary)]">Infinity Mode Algorithm</h3>
-                                        </div>
-                                        <p className="text-sm text-[var(--color-text-muted)] mb-6">
-                                            Tune how the engine selects the next track organically.
-                                        </p>
-                                        
-                                        <div className="mb-6">
-                                            <label className="flex justify-between text-sm font-medium text-[var(--color-text-primary)] mb-2">
-                                                <span>Discovery Level (Wander Factor)</span>
-                                                <span>{discoveryLevel}%</span>
-                                            </label>
-                                            <input type="range" min="1" max="100" value={discoveryLevel} onChange={e => setSettings({ discoveryLevel: Number(e.target.value) })} className="w-full accent-[var(--color-primary)]" />
+                                            <h3 className="text-xl font-bold text-[var(--color-text-primary)]">Playback & Discovery</h3>
                                         </div>
 
-                                        <div className="mb-6">
-                                            <label className="flex justify-between text-sm font-medium text-[var(--color-text-primary)] mb-2">
-                                                <span>Genre Strictness</span>
-                                                <span>{genreStrictness}%</span>
-                                            </label>
-                                            <input type="range" min="0" max="100" value={genreStrictness} onChange={e => setSettings({ genreStrictness: Number(e.target.value) })} className="w-full accent-[var(--color-primary)]" />
-                                        </div>
-
-                                        <div className="mb-6">
-                                            <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-2">Artist Amnesia (Anti-Repeat)</label>
-                                            <select 
-                                                value={artistAmnesiaLimit} 
-                                                onChange={e => setSettings({ artistAmnesiaLimit: Number(e.target.value) })}
-                                                className="w-full p-2 rounded-lg border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none"
+                                        {/* Sub-tabs */}
+                                        <div className="flex gap-2 mb-6">
+                                            <button
+                                                onClick={() => setPlaybackTab('infinity')}
+                                                className={`btn-tab ${playbackTab === 'infinity' ? 'active' : ''}`}
                                             >
-                                                <option value={0}>Allow Defaults</option>
-                                                <option value={10}>Standard (10 tracks)</option>
-                                                <option value={50}>Strict (50 tracks)</option>
-                                            </select>
+                                                Infinity Mode
+                                            </button>
+                                            <button
+                                                onClick={() => setPlaybackTab('llm')}
+                                                className={`btn-tab ${playbackTab === 'llm' ? 'active' : ''}`}
+                                            >
+                                                LLM Playlists
+                                            </button>
                                         </div>
+
+                                        {playbackTab === 'infinity' && (
+                                            <div>
+                                                <p className="text-sm text-[var(--color-text-muted)] mb-6">
+                                                    Tune how the engine selects the next track organically.
+                                                </p>
+                                                
+                                                <div className="mb-6">
+                                                    <label className="flex justify-between text-sm font-medium text-[var(--color-text-primary)] mb-2">
+                                                        <span>Discovery Level (Wander Factor)</span>
+                                                        <span>{discoveryLevel}%</span>
+                                                    </label>
+                                                    <input type="range" min="1" max="100" value={discoveryLevel} onChange={e => setSettings({ discoveryLevel: Number(e.target.value) })} className="w-full accent-[var(--color-primary)]" />
+                                                    <p className="text-xs text-[var(--color-text-muted)] mt-1.5">Controls how adventurous the engine is when picking the next track. Low values stay close to your current vibe; high values explore further from your listening center of gravity.</p>
+                                                </div>
+
+                                                <div className="mb-6">
+                                                    <label className="flex justify-between text-sm font-medium text-[var(--color-text-primary)] mb-2">
+                                                        <span>Genre Strictness</span>
+                                                        <span>{genreStrictness}%</span>
+                                                    </label>
+                                                    <input type="range" min="0" max="100" value={genreStrictness} onChange={e => setSettings({ genreStrictness: Number(e.target.value) })} className="w-full accent-[var(--color-primary)]" />
+                                                    <p className="text-xs text-[var(--color-text-muted)] mt-1.5">How much the engine penalizes genre jumps. 0% lets any genre play; 100% keeps you tightly within the current genre.</p>
+                                                </div>
+
+                                                <div className="mb-6">
+                                                    <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-2">Artist Amnesia (Anti-Repeat)</label>
+                                                    <select 
+                                                        value={artistAmnesiaLimit} 
+                                                        onChange={e => setSettings({ artistAmnesiaLimit: Number(e.target.value) })}
+                                                        className="w-full p-2 rounded-lg border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none"
+                                                    >
+                                                        <option value={0}>Allow Defaults</option>
+                                                        <option value={10}>Standard (10 tracks)</option>
+                                                        <option value={50}>Strict (50 tracks)</option>
+                                                    </select>
+                                                    <p className="text-xs text-[var(--color-text-muted)] mt-1.5">How many recent tracks to exclude from the next pick. Prevents the same artist or song from repeating too soon.</p>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {playbackTab === 'llm' && (
+                                            <div>
+                                                <p className="text-sm text-[var(--color-text-muted)] mb-6">
+                                                    Control how AI-generated Hub playlists are created and diversified.
+                                                </p>
+
+                                                <div className="mb-6">
+                                                    <label className="flex justify-between text-sm font-medium text-[var(--color-text-primary)] mb-2">
+                                                        <span>Playlist Diversity</span>
+                                                        <span>{llmPlaylistDiversity}%</span>
+                                                    </label>
+                                                    <input type="range" min="0" max="100" value={llmPlaylistDiversity} onChange={e => setSettings({ llmPlaylistDiversity: Number(e.target.value) })} className="w-full accent-[var(--color-primary)]" />
+                                                    <p className="text-xs text-[var(--color-text-muted)] mt-1.5">Higher values introduce more randomness into track selection, making playlists less predictable. Lower values pick the acoustically closest matches every time.</p>
+                                                </div>
+
+                                                <div className="mb-6">
+                                                    <label className="flex justify-between text-sm font-medium text-[var(--color-text-primary)] mb-2">
+                                                        <span>Genre Blend Weight</span>
+                                                        <span>{genreBlendWeight}%</span>
+                                                    </label>
+                                                    <input type="range" min="0" max="100" value={genreBlendWeight} onChange={e => setSettings({ genreBlendWeight: Number(e.target.value) })} className="w-full accent-[var(--color-primary)]" />
+                                                    <p className="text-xs text-[var(--color-text-muted)] mt-1.5">How strongly genre similarity influences playlist track selection. Higher values keep playlists genre-coherent; lower values let tracks from different genres mix freely based on acoustic similarity alone.</p>
+                                                </div>
+
+                                                <div className="mb-6">
+                                                    <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-2">Tracks per Playlist</label>
+                                                    <select 
+                                                        value={llmTracksPerPlaylist} 
+                                                        onChange={e => setSettings({ llmTracksPerPlaylist: Number(e.target.value) })}
+                                                        className="w-full p-2 rounded-lg border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none"
+                                                    >
+                                                        <option value={5}>5 tracks</option>
+                                                        <option value={10}>10 tracks</option>
+                                                        <option value={15}>15 tracks</option>
+                                                        <option value={20}>20 tracks</option>
+                                                    </select>
+                                                    <p className="text-xs text-[var(--color-text-muted)] mt-1.5">Number of tracks included in each AI-generated playlist.</p>
+                                                </div>
+
+                                                <div className="mb-6">
+                                                    <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-2">Number of Playlists</label>
+                                                    <select 
+                                                        value={llmPlaylistCount} 
+                                                        onChange={e => setSettings({ llmPlaylistCount: Number(e.target.value) })}
+                                                        className="w-full p-2 rounded-lg border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none"
+                                                    >
+                                                        <option value={2}>2 playlists</option>
+                                                        <option value={3}>3 playlists</option>
+                                                        <option value={5}>5 playlists</option>
+                                                    </select>
+                                                    <p className="text-xs text-[var(--color-text-muted)] mt-1.5">How many distinct playlist concepts the AI generates per cycle. Each playlist gets a unique mood and acoustic profile.</p>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 )}
 
@@ -607,7 +690,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                 </p>
                                                 <button 
                                                    onClick={handleManualHubRegen}
-                                                   className="btn font-semibold text-xs bg-[var(--color-error)]/10 border border-[var(--color-error)]/30 px-4 py-2 rounded-lg hover:bg-[var(--color-error)]/20 text-[var(--color-error)] transition-all shadow-sm flex items-center gap-2"
+                                                   className="btn btn-danger"
                                                 >
                                                    <span className="text-lg leading-none">↺</span> Reset Hub
                                                 </button>
@@ -720,7 +803,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                 <button 
                                                     onClick={() => runConnectionTest(llmBaseUrl, llmApiKey)}
                                                     disabled={connectionStatus === 'testing'}
-                                                    className="font-semibold text-sm px-4 py-2 bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-lg hover:bg-[var(--glass-bg-hover)] transition-colors text-[var(--color-text-primary)] disabled:opacity-50"
+                                                    className="btn btn-ghost disabled:opacity-50"
                                                 >
                                                     {connectionStatus === 'testing' ? 'Testing...' : 'Test Connection'}
                                                 </button>
@@ -762,7 +845,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                             <button
                                                 onClick={handleRunMatrix}
                                                 disabled={isRunningMatrix}
-                                                className="shrink-0 font-semibold text-sm px-4 py-2.5 bg-[var(--color-primary)] text-white rounded-xl hover:bg-[var(--color-primary-dark)] transition-colors disabled:opacity-50 shadow-sm inline-flex items-center gap-2"
+                                                className="btn btn-primary disabled:opacity-50"
                                             >
                                                 {isRunningMatrix && <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
                                                 {isRunningMatrix ? (genreMatrixProgress?.replace('Categorizing ', '') || 'Running...') : 'Incremental Run'}
@@ -770,7 +853,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                             <button
                                                 onClick={handleRemapAll}
                                                 disabled={isRunningMatrix}
-                                                className="shrink-0 font-semibold text-sm bg-red-500/10 border border-red-500/30 rounded-xl hover:bg-red-500/20 transition-colors text-red-400 disabled:opacity-50 px-4 py-2.5"
+                                                className="btn btn-danger disabled:opacity-50"
                                             >
                                                 Remap Library
                                             </button>
@@ -815,13 +898,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                         <div className="flex gap-2 mb-6">
                                             <button
                                                 onClick={() => setDbTab('stats')}
-                                                className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${dbTab === 'stats' ? 'bg-[var(--color-primary)] text-white' : 'bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`}
+                                                className={`btn-tab ${dbTab === 'stats' ? 'active' : ''}`}
                                             >
                                                 <BarChart2 size={16} className="inline mr-1 relative -top-[1px]" /> Stats
                                             </button>
                                             <button
                                                 onClick={() => setDbTab('maintenance')}
-                                                className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${dbTab === 'maintenance' ? 'bg-[var(--color-primary)] text-white' : 'bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`}
+                                                className={`btn-tab ${dbTab === 'maintenance' ? 'active' : ''}`}
                                             >
                                                 <Wrench size={16} className="inline mr-1 relative -top-[1px]" /> Maintenance
                                             </button>
@@ -847,7 +930,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                     </div>
                                                     <button 
                                                         onClick={handleCleanupPlaylists}
-                                                        className="btn font-semibold text-sm bg-red-500/10 border border-red-500/30 px-4 py-2.5 rounded-xl hover:bg-red-500/20 text-red-400 transition-all shadow-sm flex items-center gap-2"
+                                                        className="btn btn-danger"
                                                     >
                                                         <Trash2 size={16} /> Clean Orphaned Playlists
                                                     </button>
@@ -1044,13 +1127,13 @@ const AdminSettingsContent: React.FC<{
       <div className="flex gap-2 mb-6">
         <button
           onClick={() => setAdminTab('users')}
-          className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${adminTab === 'users' ? 'bg-[var(--color-primary)] text-white' : 'bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`}
+          className={`btn-tab ${adminTab === 'users' ? 'active' : ''}`}
         >
           <Users className="w-4 h-4 inline mr-1" /> Users ({users.length})
         </button>
         <button
           onClick={() => setAdminTab('invites')}
-          className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${adminTab === 'invites' ? 'bg-[var(--color-primary)] text-white' : 'bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`}
+          className={`btn-tab ${adminTab === 'invites' ? 'active' : ''}`}
         >
           <Link className="w-4 h-4 inline mr-1" /> Invites ({invites.length})
         </button>
@@ -1061,7 +1144,7 @@ const AdminSettingsContent: React.FC<{
           {!showCreateUser ? (
             <button
               onClick={() => setShowCreateUser(true)}
-              className="w-full py-3 rounded-xl border-2 border-dashed border-[var(--glass-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all flex items-center justify-center gap-2"
+              className="btn-dashed"
             >
               <Plus className="w-4 h-4" /> Add User
             </button>
@@ -1085,8 +1168,8 @@ const AdminSettingsContent: React.FC<{
               </select>
               {createError && <p className="text-red-400 text-xs">{createError}</p>}
               <div className="flex gap-2">
-                <button onClick={createUser} className="flex-1 py-2 bg-[var(--color-primary)] text-white rounded-lg text-sm font-semibold hover:bg-[var(--color-primary-dark)]">Create</button>
-                <button onClick={() => { setShowCreateUser(false); setCreateError(''); }} className="px-4 py-2 bg-[var(--glass-border)] text-[var(--color-text-secondary)] rounded-lg text-sm">Cancel</button>
+                <button onClick={createUser} className="btn btn-primary flex-1">Create</button>
+                <button onClick={() => { setShowCreateUser(false); setCreateError(''); }} className="btn btn-ghost">Cancel</button>
               </div>
             </div>
           )}
@@ -1108,7 +1191,7 @@ const AdminSettingsContent: React.FC<{
                 </p>
               </div>
               {user.id !== currentUser?.id && (
-                <button onClick={() => deleteUser(user.id)} className="p-2 text-red-400/60 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all" title="Delete">
+                <button onClick={() => deleteUser(user.id)} className="btn-icon btn-danger" title="Delete">
                   <Trash2 className="w-4 h-4" />
                 </button>
               )}
@@ -1121,7 +1204,7 @@ const AdminSettingsContent: React.FC<{
         <div className="space-y-3">
           <button
             onClick={createInvite}
-            className="w-full py-3 rounded-xl border-2 border-dashed border-[var(--glass-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all flex items-center justify-center gap-2"
+            className="btn-dashed"
           >
             <Plus className="w-4 h-4" /> Generate Invite Link
           </button>
@@ -1140,14 +1223,14 @@ const AdminSettingsContent: React.FC<{
                     {isExpired && <span className="text-[0.65rem] px-2 py-0.5 rounded-full bg-red-500/20 text-red-400">Expired</span>}
                     {isUsedUp && !isExpired && <span className="text-[0.65rem] px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400">Used</span>}
                   </div>
-                  <button onClick={() => revokeInvite(invite.token)} className="p-1.5 text-red-400/60 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all" title="Revoke">
+                  <button onClick={() => revokeInvite(invite.token)} className="btn-icon btn-danger" title="Revoke">
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
                 <div className="flex items-center gap-2">
                   <code className="flex-1 text-xs bg-[var(--color-bg)] px-3 py-2 rounded-lg text-[var(--color-text-primary)] truncate">{inviteUrl}</code>
-                  <button onClick={() => copyToClipboard(inviteUrl, invite.token)} className="p-2 bg-[var(--color-bg)] rounded-lg hover:bg-[var(--glass-border)] transition-all" title="Copy">
-                    {copiedToken === invite.token ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4 text-[var(--color-text-secondary)]" />}
+                  <button onClick={() => copyToClipboard(inviteUrl, invite.token)} className="btn-icon" title="Copy">
+                    {copiedToken === invite.token ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
                   </button>
                 </div>
                 <p className="text-xs text-[var(--color-text-muted)] mt-2">

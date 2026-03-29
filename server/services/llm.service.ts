@@ -42,7 +42,7 @@ export interface HubCollection {
 }
 
 export async function generateHubConcepts(
-  context: { timeOfDay: string, historySummary: string }
+  context: { timeOfDay: string, historySummary: string, count?: number }
 ): Promise<HubCollection[]> {
   const { apiKey, baseUrl, modelName } = await getLlmConfig();
   if (baseUrl.includes('api.openai.com') && apiKey === 'dummy-key') return [];
@@ -52,12 +52,15 @@ export async function generateHubConcepts(
     apiKey: apiKey,
   });
 
+  const conceptCount = context.count ?? 3;
+
   const prompt = `
 You are a Creative Director for a music application.
 The user's current time is ${context.timeOfDay}. 
 A brief summary of their recent listening history: ${context.historySummary}.
 
-Using this context, generate 3 Hub playlist concepts. Each concept must output optimal acoustic target values between 0.0 and 1.0.
+Using this context, generate ${conceptCount} Hub playlist concepts. Each concept must output optimal acoustic target values between 0.0 and 1.0.
+IMPORTANT: Each concept must be DIVERSE from the others. Vary the energy, mood, and acoustic profile significantly between concepts. Do not create similar-sounding playlists.
 The vector array must precisely match this order: [energy, brightness, percussiveness, chromagram, instrumentalness, acousticness, danceability].
 Only output valid JSON matching this schema:
 {

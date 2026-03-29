@@ -632,7 +632,7 @@ app.get('/api/settings', async (req, res) => {
 
     // User-specific settings (from user_settings, fall back to system_settings)
     if (userId) {
-      const userKeys = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit'];
+      const userKeys = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'llmPlaylistDiversity', 'genreBlendWeight', 'llmTracksPerPlaylist', 'llmPlaylistCount'];
       for (const k of userKeys) {
         const userVal = await getUserSetting(userId, k);
         if (userVal !== null) {
@@ -643,7 +643,7 @@ app.get('/api/settings', async (req, res) => {
       }
     } else {
       // No user context, fall back to system settings
-      const fallbackKeys = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit'];
+      const fallbackKeys = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'llmPlaylistDiversity', 'genreBlendWeight', 'llmTracksPerPlaylist', 'llmPlaylistCount'];
       for (const k of fallbackKeys) {
         settings[k] = await getSystemSetting(k);
       }
@@ -662,7 +662,7 @@ app.post('/api/settings', async (req, res) => {
     const settings = req.body;
 
     // User-specific settings keys
-    const userKeys = new Set(['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit']);
+    const userKeys = new Set(['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'llmPlaylistDiversity', 'genreBlendWeight', 'llmTracksPerPlaylist', 'llmPlaylistCount']);
     // Server-wide settings that only admins can modify
     const serverKeys = new Set(['llmBaseUrl', 'llmApiKey', 'llmModelName', 'hubGenerationSchedule', 'audioAnalysisCpu']);
 
@@ -1306,11 +1306,27 @@ async function runLlmHubRegeneration(userId: string, opts: { force?: boolean } =
   const historySummary = recentTracks.map((t: any) => `${t.title} by ${t.artist}`).join(', ');
 
   const timeOfDay = new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 18 ? 'afternoon' : 'evening';
-  const concepts: HubCollection[] = await generateHubConcepts({ timeOfDay, historySummary });
+
+  // Read user settings for playlist generation tuning
+  const llmPlaylistCountRaw = await getUserSetting(userId, 'llmPlaylistCount');
+  const llmPlaylistCount = llmPlaylistCountRaw ? Number(llmPlaylistCountRaw) : 3;
+
+  const concepts: HubCollection[] = await generateHubConcepts({ timeOfDay, historySummary, count: llmPlaylistCount });
 
   if (concepts.length > 0) {
+    // Read remaining user settings for vector search + selection
+    const genreBlendRaw = await getUserSetting(userId, 'genreBlendWeight');
+    const tracksPerRaw = await getUserSetting(userId, 'llmTracksPerPlaylist');
+    const diversityRaw = await getUserSetting(userId, 'llmPlaylistDiversity');
+
+    const hubSettings = {
+      genreBlendWeight: genreBlendRaw !== null ? Number(genreBlendRaw) : 50,
+      llmTracksPerPlaylist: tracksPerRaw !== null ? Number(tracksPerRaw) : 10,
+      llmPlaylistDiversity: diversityRaw !== null ? Number(diversityRaw) : 50,
+    };
+
     // This does the vector search and writes playlists to the database (user-scoped)
-    await getHubCollections(concepts, userId);
+    await getHubCollections(concepts, userId, hubSettings);
   }
 
   console.log(`[LLM Hub] Generated and saved ${concepts.length} playlist(s) for user ${userId} (${timeOfDay})`);
@@ -1347,7 +1363,15 @@ app.post('/api/hub/generate-custom', async (req, res) => {
       return res.status(503).json({ error: 'LLM did not return a valid playlist concept. Check your LLM configuration.' });
     }
     // Reuse the same vector search + DB write pipeline as automated playlists
-    const saved = await getHubCollections([concept], userId);
+    const genreBlendRaw = userId ? await getUserSetting(userId, 'genreBlendWeight') : null;
+    const tracksPerRaw = userId ? await getUserSetting(userId, 'llmTracksPerPlaylist') : null;
+    const diversityRaw = userId ? await getUserSetting(userId, 'llmPlaylistDiversity') : null;
+    const hubSettings = {
+      genreBlendWeight: genreBlendRaw !== null ? Number(genreBlendRaw) : 50,
+      llmTracksPerPlaylist: tracksPerRaw !== null ? Number(tracksPerRaw) : 10,
+      llmPlaylistDiversity: diversityRaw !== null ? Number(diversityRaw) : 50,
+    };
+    const saved = await getHubCollections([concept], userId, hubSettings);
     const playlist = saved.find(c => c.isLlmGenerated);
     res.json({ playlist });
   } catch (error) {

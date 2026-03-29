@@ -1,5 +1,16 @@
 # Project Memory / Changelog
 
+## [2026-03-29] LLM Deduplication Fix, Tunable Settings & Button Unification
+- **LLM Playlist Deduplication Bug Fix**: Fixed `getHubCollections()` in `recommendation.service.ts` where 5 LLM playlists could contain identical songs. Root cause: each concept queried the database independently with no shared exclusion set. Fix accumulates an exclusion set of already-assigned track IDs across the concept loop, with a `WHERE t.id NOT IN (...)` clause.
+- **New Tunable Settings**: Added 4 user-facing settings to the Playback tab (LLM Playlists sub-tab):
+  - *Playlist Diversity* (0–100%): Wander factor — weighted randomization vs deterministic top-N selection.
+  - *Genre Blend Weight* (0–100%): Hop cost multiplier replacing the hardcoded `0.5` value.
+  - *Tracks per Playlist* (5/10/15/20): Configurable playlist length.
+  - *Number of Playlists* (2/3/5): How many LLM concepts to generate per cycle.
+- **LLM Prompt Improvement**: Added diversity instruction to the LLM prompt (`generateHubConcepts`) to enforce distinct acoustic profiles between concepts.
+- **Unified Button System**: Replaced 27+ inline Tailwind button strings in SettingsModal.tsx with global CSS classes in `index.css`. New variant system: `.btn`, `.btn-primary`, `.btn-danger`, `.btn-danger-fill`, `.btn-ghost`, `.btn-lg`, `.btn-sm`, `.btn-tab`, `.btn-dashed`, `.btn-icon`. Removed old `.btn-small`, `.remove-btn`, `.icon-btn`.
+- **Nav Button Fix**: Fixed asymmetric padding on Hub/Playlists/Artists/Albums/Genres navigation buttons caused by `pb-0` on the container.
+
 ## [2026-03-23] AI Playlists, Queue Architecture & System Resilience
 - **Database Resilience**: App now boots even if PostgreSQL is unreachable, displaying a full-page graceful error UI that polls for health recovery.
 - **Robust LLM Integration**: Rewrote `llm.service` response parsing to handle unpredictable local LLM outputs (LM Studio, Ollama). SetupWizard now includes a dedicated LLM configuration step with token usage estimation and live connection testing. Added manual custom playlist generation via a prompt modal.

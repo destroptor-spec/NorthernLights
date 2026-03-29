@@ -341,58 +341,164 @@ body::after {
 /* ─── BUTTONS ─── */
 .btn {
   font-family: var(--font-display);
-  padding: 14px 32px;
-  font-size: 0.95rem;
   font-weight: 600;
-  letter-spacing: 0.02em;
+  font-size: 0.875rem;
+  padding: 8px 16px;
   cursor: pointer;
   background: var(--glass-bg);
   color: var(--color-text-primary);
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  transition: all var(--transition-normal);
+  border-radius: 0.75rem; /* rounded-xl */
+  transition: all var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  white-space: nowrap;
+  text-decoration: none;
+  line-height: 1.4;
   position: relative;
-  overflow: hidden;
-  box-shadow: var(--shadow-sm);
 }
-
 .dark .btn {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
-
-.btn::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(135deg, rgba(94, 92, 230, 0.15), rgba(10, 132, 255, 0.1));
-  opacity: 0;
-  transition: opacity var(--transition-normal);
-  z-index: -1;
-}
-
-.dark .btn::before {
-   background: linear-gradient(135deg, rgba(139, 92, 246, 0.12), rgba(96, 165, 250, 0.08));
-}
-
 .btn:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-md);
-  border-color: rgba(94, 92, 230, 0.3);
+  background: var(--glass-bg-hover);
+  border-color: var(--glass-border-hover);
 }
-
-.dark .btn:hover {
-  border-color: rgba(139, 92, 246, 0.2);
-  box-shadow: 0 4px 20px rgba(139, 92, 246, 0.1);
-}
-
-.btn:hover::before {
-  opacity: 1;
-}
-
 .btn:active {
-  transform: translate(0, 0);
-  box-shadow: none;
+  transform: scale(0.97);
+}
+
+/* Primary — filled purple action */
+.btn-primary {
+  background: var(--color-primary);
+  color: white;
+  border-color: var(--color-primary);
+}
+.btn-primary:hover {
+  background: var(--color-primary-dark);
+  border-color: var(--color-primary-dark);
+  color: white;
+}
+
+/* Danger — outlined red warning */
+.btn-danger {
+  background: rgba(255, 59, 48, 0.08);
+  color: var(--color-error);
+  border-color: rgba(255, 59, 48, 0.25);
+}
+.btn-danger:hover {
+  background: rgba(255, 59, 48, 0.16);
+  border-color: rgba(255, 59, 48, 0.4);
+  color: var(--color-error);
+}
+
+/* Danger — filled red destructive */
+.btn-danger-fill {
+  background: var(--color-error);
+  color: white;
+  border-color: var(--color-error);
+}
+.btn-danger-fill:hover {
+  background: #e0352b;
+  color: white;
+}
+
+/* Ghost — glass/neutral outlined */
+.btn-ghost {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+}
+.btn-ghost:hover {
+  background: var(--glass-bg-hover);
+}
+
+/* Size: large (CTA buttons) */
+.btn-lg {
+  padding: 12px 28px;
+  font-size: 0.95rem;
+  border-radius: var(--radius-sm);
+}
+
+/* Size: small (inline actions) */
+.btn-sm {
+  padding: 4px 12px;
+  font-size: 0.75rem;
+  border-radius: 0.5rem;
+}
+
+/* Sub-tab toggle */
+.btn-tab {
+  padding: 8px 16px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border: none;
+  border-radius: 0.75rem;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.btn-tab.active {
+  background: var(--color-primary);
+  color: white;
+}
+.btn-tab:not(.active):hover {
+  color: var(--color-text-primary);
+}
+
+/* Dashed action button */
+.btn-dashed {
+  padding: 12px;
+  width: 100%;
+  border: 2px dashed var(--glass-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  border-radius: 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  transition: all var(--transition-fast);
+}
+.btn-dashed:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* Icon-only button */
+.btn-icon {
+  padding: 8px;
+  border: none;
+  background: transparent;
+  border-radius: 0.5rem;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+}
+.btn-icon:hover {
+  color: var(--color-text-primary);
+  background: rgba(255, 255, 255, 0.05);
+}
+.btn-icon.btn-danger {
+  padding: 8px;
+  border: none;
+  background: transparent;
+}
+.btn-icon.btn-danger:hover {
+  color: var(--color-error);
+  background: rgba(255, 59, 48, 0.1);
 }
 
 /* ─── PLAYBACK FOOTER ─── */
@@ -1081,44 +1187,7 @@ body::after {
   gap: var(--spacing-sm);
 }
 
-.btn-small {
-  padding: 6px 14px;
-  font-size: 0.75rem;
-}
 
-.remove-btn {
-  background: transparent;
-  border: 1px solid rgba(248, 113, 113, 0.2);
-  color: var(--color-error);
-  padding: 4px 10px;
-  border-radius: var(--radius-pill);
-  font-size: 0.7rem;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.remove-btn:hover {
-  background: rgba(248, 113, 113, 0.1);
-  border-color: rgba(248, 113, 113, 0.4);
-}
-
-.icon-btn {
-  background: transparent;
-  border: none;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all var(--transition-fast);
-}
-
-.icon-btn:hover {
-  color: var(--color-text-primary);
-  background: rgba(255, 255, 255, 0.05);
-}
 
 @keyframes fade-in {
   from {

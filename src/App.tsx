@@ -347,7 +347,7 @@ const App: React.FC = () => {
             </button>
           </div>
 
-          <div className="flex-none p-4 pb-0 flex gap-3 overflow-x-auto hide-scrollbar z-20 w-full pt-6 px-4 md:px-8 lg:px-12">
+          <div className="flex-none flex gap-3 overflow-x-auto hide-scrollbar z-20 w-full py-3 px-4 md:px-8 lg:px-12">
             {TAB_CONFIG.map(tab => {
                 const isActive = activeTab === tab.path;
                 return (
@@ -417,7 +417,7 @@ const App: React.FC = () => {
                             await usePlayerStore.getState().addLibraryFolder(folderPathInput.trim());
                             setFolderPathInput('');
                           }}
-                          className="btn whitespace-nowrap"
+                          className="btn btn-lg whitespace-nowrap"
                           disabled={isScanningGlobal || !folderPathInput.trim()}
                         >
                           {isScanningGlobal ? '✦ Scanning...' : '✦ Map Folder'}

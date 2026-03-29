@@ -15,6 +15,7 @@ The core music player architecture has transitioned to a client-server model usi
 - [x] **V9: Multi-User System**: JWT authentication, invite-based registration, admin panel, user roles (admin/user), per-user playback telemetry (`user_playback_stats`), per-user playlists, per-user Hub/Infinity Mode recommendations, per-user settings (`user_settings`).
 - [x] **V10: PWA & Chromecast**: Progressive Web App support via vite-plugin-pwa, service worker registration, manifest generation. Google Cast (Chromecast) audio streaming via CastManager, integrated into PlaybackManager and PlayerControls.
 - [x] **V11: Playlist Pinning & Hub Improvements**: Pin/unpin LLM playlists to protect them from Hub regeneration auto-cleanup. Pinned playlists stay visible in Hub beyond 4h and survive `deleteOldLlmPlaylists`. Database maintenance tab with orphaned playlist cleanup (respects pinned status). Disc3 fallback icon for missing artwork in Discover section.
+- [x] **V12: LLM Deduplication Bug Fix & Tunable Engine Settings**: Fixed cross-playlist deduplication in `getHubCollections()` — accumulated exclusion set prevents duplicate songs across LLM playlists. Added 4 new user-tunable settings: Playlist Diversity (wander factor), Genre Blend Weight (hop cost multiplier), Tracks per Playlist, Number of LLM Playlists. Unified button styling system in `index.css` with global variant classes (`.btn-primary`, `.btn-danger`, `.btn-tab`, etc.). Fixed nav button padding asymmetry in App.tsx.
 
 ---
 

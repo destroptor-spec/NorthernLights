@@ -106,7 +106,7 @@ export const AlbumDetail: React.FC = () => {
                     <div className="mt-4 flex justify-center md:justify-start">
                         <button
                             onClick={handlePlayAll}
-                            className="btn bg-[var(--color-primary)] text-white hover:text-white border-transparent"
+                            className="btn btn-lg btn-primary"
                         >
                             PLAY ALBUM
                         </button>

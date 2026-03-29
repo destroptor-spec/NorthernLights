@@ -81,6 +81,10 @@ export interface PlayerState {
   discoveryLevel: number;
   genreStrictness: number;
   artistAmnesiaLimit: number;
+  llmPlaylistDiversity: number;
+  genreBlendWeight: number;
+  llmTracksPerPlaylist: number;
+  llmPlaylistCount: number;
   audioAnalysisCpu: string;
   hubGenerationSchedule: string;
   llmBaseUrl: string;
@@ -244,6 +248,10 @@ export const usePlayerStore = create<PlayerState>()(
         discoveryLevel: 50,
         genreStrictness: 50,
         artistAmnesiaLimit: 50,
+        llmPlaylistDiversity: 50,
+        genreBlendWeight: 50,
+        llmTracksPerPlaylist: 10,
+        llmPlaylistCount: 3,
         audioAnalysisCpu: 'Balanced',
         hubGenerationSchedule: 'Daily',
         llmBaseUrl: 'https://api.openai.com/v1',
@@ -357,6 +365,10 @@ export const usePlayerStore = create<PlayerState>()(
                 discoveryLevel: data.discoveryLevel !== undefined ? data.discoveryLevel : 50,
                 genreStrictness: data.genreStrictness !== undefined ? data.genreStrictness : 50,
                 artistAmnesiaLimit: data.artistAmnesiaLimit !== undefined ? data.artistAmnesiaLimit : 50,
+                llmPlaylistDiversity: data.llmPlaylistDiversity !== undefined ? data.llmPlaylistDiversity : 50,
+                genreBlendWeight: data.genreBlendWeight !== undefined ? data.genreBlendWeight : 50,
+                llmTracksPerPlaylist: data.llmTracksPerPlaylist !== undefined ? data.llmTracksPerPlaylist : 10,
+                llmPlaylistCount: data.llmPlaylistCount !== undefined ? data.llmPlaylistCount : 3,
                 audioAnalysisCpu: data.audioAnalysisCpu || 'Balanced',
                 hubGenerationSchedule: data.hubGenerationSchedule || 'Daily',
                 llmBaseUrl: data.llmBaseUrl || 'https://api.openai.com/v1',
@@ -380,6 +392,10 @@ export const usePlayerStore = create<PlayerState>()(
                 discoveryLevel: state.discoveryLevel,
                 genreStrictness: state.genreStrictness,
                 artistAmnesiaLimit: state.artistAmnesiaLimit,
+                llmPlaylistDiversity: state.llmPlaylistDiversity,
+                genreBlendWeight: state.genreBlendWeight,
+                llmTracksPerPlaylist: state.llmTracksPerPlaylist,
+                llmPlaylistCount: state.llmPlaylistCount,
                 audioAnalysisCpu: state.audioAnalysisCpu,
                 hubGenerationSchedule: state.hubGenerationSchedule,
                 llmBaseUrl: state.llmBaseUrl,

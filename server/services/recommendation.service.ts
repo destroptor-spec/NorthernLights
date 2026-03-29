@@ -7,41 +7,97 @@ import { genreMatrixService } from './genreMatrix.service';
 
 export async function getHubCollections(
   llmConcepts: { section: string, title?: string, description: string, target_vector: number[] }[],
-  userId: string | null = null
+  userId: string | null = null,
+  settings: { genreBlendWeight?: number, llmTracksPerPlaylist?: number, llmPlaylistDiversity?: number } = {}
 ) {
   const db = await initDB();
   const hubs: any[] = [];
 
+  const genreBlend = (settings.genreBlendWeight ?? 50) / 100; // 0.0 to 1.0
+  const tracksPerPlaylist = settings.llmTracksPerPlaylist ?? 10;
+  const diversity = (settings.llmPlaylistDiversity ?? 50) / 100; // 0.0 to 1.0
+
   // Helper: re-rank a pool of tracks by blending vector distance with genre hop cost.
-  const reRankByHopCost = (rows: any[], referenceGenre: string, limit: number) => {
+  const reRankByHopCost = (rows: any[], referenceGenre: string, limit: number, blendWeight?: number) => {
+    const weight = blendWeight ?? genreBlend;
     if (!referenceGenre) return rows.slice(0, limit);
     const scored = rows.map(row => {
       const hopCost = genreMatrixService.getHopCost(referenceGenre, row.genre || '');
-      // Blend: 70% acoustic distance, 30% genre affinity
-      const combined = (row.distance ?? 0) + hopCost * 0.5;
+      const combined = (row.distance ?? 0) + hopCost * weight;
       return { ...row, combined };
     });
     scored.sort((a, b) => a.combined - b.combined);
     return scored.slice(0, limit);
   };
 
+  // Helper: pick tracks using a weighted wander factor instead of deterministic top-N
+  const wanderSelect = (scoredRows: any[], count: number, wanderStrength: number): any[] => {
+    if (scoredRows.length <= count || wanderStrength < 0.05) {
+      return scoredRows.slice(0, count);
+    }
+    const selected: any[] = [];
+    const available = [...scoredRows];
+    for (let i = 0; i < count && available.length > 0; i++) {
+      // Weight: better scores (lower combined) get higher probability
+      // wanderStrength controls how much randomness vs deterministic picking
+      const weights = available.map((row, idx) => {
+        const rankBias = 1 / (1 + idx); // natural decay by rank
+        const randomFactor = Math.random() * wanderStrength;
+        return rankBias * (1 - wanderStrength + randomFactor * 2);
+      });
+      const totalWeight = weights.reduce((s, w) => s + w, 0);
+      let r = Math.random() * totalWeight;
+      let chosenIdx = 0;
+      for (let j = 0; j < weights.length; j++) {
+        r -= weights[j];
+        if (r <= 0) { chosenIdx = j; break; }
+      }
+      selected.push(available[chosenIdx]);
+      available.splice(chosenIdx, 1);
+    }
+    return selected;
+  };
+
+  // Track already-assigned track IDs across LLM concepts to prevent duplicate playlists
+  const assignedTrackIds = new Set<string>();
+
   // Generate tracks for each LLM concept and persist them as Playlists
   for (const concept of llmConcepts) {
     // Case B: LLM High-Concept generated concept (e.g. "Evening Acoustic Drift")
     if (concept.target_vector) {
       const vectorStr = `[${concept.target_vector.join(',')}]`;
+
+      // Build exclusion clause for cross-playlist deduplication
+      const exclusionParams: string[] = [];
+      let exclusionClause = '';
+      if (assignedTrackIds.size > 0) {
+        const ids = Array.from(assignedTrackIds);
+        const placeholders = ids.map((_, i) => `$${i + 2}`).join(',');
+        exclusionClause = `WHERE t.id NOT IN (${placeholders})`;
+        exclusionParams.push(...ids);
+      }
+
       const res = await db.query(`
         SELECT t.*, tf.acoustic_vector <-> $1 AS distance
         FROM tracks t
         JOIN track_features tf ON t.id = tf.track_id
+        ${exclusionClause}
         ORDER BY distance ASC
         LIMIT 50
-      `, [vectorStr]);
+      `, [vectorStr, ...exclusionParams]);
       
       if (res.rows.length > 0) {
         // Re-rank by macro-genre to avoid jarring transitions
         const referenceGenre = res.rows[0].genre || '';
-        const topTracks = reRankByHopCost(res.rows, referenceGenre, 10);
+        const ranked = reRankByHopCost(res.rows, referenceGenre, Math.max(tracksPerPlaylist * 2, 20));
+
+        // Apply wander factor for diversity instead of deterministic top-N
+        const topTracks = wanderSelect(ranked, tracksPerPlaylist, diversity);
+
+        // Register these track IDs to prevent overlap in subsequent playlists
+        for (const t of topTracks) {
+          assignedTrackIds.add(t.id);
+        }
 
         // Create a formal Playlist record (user-scoped)
         const playlistId = `llm_${Date.now()}_${Math.random().toString(36).substring(7)}`;
