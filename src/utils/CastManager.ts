@@ -164,6 +164,19 @@ export class CastManager {
             this.playerController.setVolumeLevel();
         }
     }
+
+    public async requestSession() {
+        if (!this.castContext) return;
+        try {
+            await this.castContext.requestSession();
+        } catch (e) {
+            console.error("Failed to request cast session", e);
+        }
+    }
+
+    public getState(): CastState {
+        return this.state;
+    }
 }
 
 export const castManager = CastManager.getInstance();

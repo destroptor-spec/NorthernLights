@@ -1,7 +1,9 @@
 import { usePlayerStore } from '../store/index';
-import { X, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1, Infinity as InfinityIcon, ListMusic } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { X, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1, Infinity as InfinityIcon, ListMusic, Cast } from 'lucide-react';
 import ProgressBar from './ProgressBar';
 import { useSwipe } from '../hooks/useSwipe';
+import { castManager } from '../utils/CastManager';
 
 interface MobileNowPlayingProps {
   onClose: () => void;
@@ -21,6 +23,11 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose }) => {
   const cycleRepeat = usePlayerStore((s) => s.cycleRepeat);
   const isInfinityMode = usePlayerStore((s) => s.isInfinityMode);
   const toggleInfinityMode = usePlayerStore((s) => s.toggleInfinityMode);
+
+  const [castConnected, setCastConnected] = useState(castManager.isConnected());
+  useEffect(() => {
+    castManager.onStateChange = (state) => setCastConnected(state === 'CONNECTED');
+  }, []);
 
   const currentTrack = currentIndex !== null ? playlist[currentIndex] : null;
   const isPlaying = playbackState === 'playing';
@@ -167,10 +174,17 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose }) => {
             Infinity
           </button>
 
-          <google-cast-launcher
-            className="w-9 h-9 flex items-center justify-center rounded-full text-[var(--color-text-muted)]"
-            style={{ cursor: 'pointer' }}
-          />
+          <button
+            onClick={() => castManager.requestSession()}
+            className="w-10 h-10 flex items-center justify-center rounded-full active:scale-90 transition-all"
+            style={{
+              color: castConnected ? 'var(--aurora-purple)' : 'var(--color-text-muted)',
+              filter: castConnected ? 'drop-shadow(0 0 4px var(--aurora-purple))' : 'none',
+            }}
+            title={castConnected ? 'Casting' : 'Cast to device'}
+          >
+            <Cast size={22} />
+          </button>
         </div>
       </div>
 

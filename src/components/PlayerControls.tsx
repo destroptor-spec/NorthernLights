@@ -1,15 +1,8 @@
 import { usePlayerStore } from '../store/index';
 import { useVolumeSync } from '../hooks/useVolumeSync';
 import React, { useEffect, useState } from 'react';
-import { Infinity } from 'lucide-react';
-
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      'google-cast-launcher': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
-    }
-  }
-}
+import { Infinity, Cast } from 'lucide-react';
+import { castManager } from '../utils/CastManager';
 
 /* ─── Inline SVG Icons ─── */
 const IconPrev = () => (
@@ -134,14 +127,21 @@ const PlayerControls = () => {
 
   useVolumeSync();
 
-  const [showCast, setShowCast] = useState(false);
+  const [castAvailable, setCastAvailable] = useState(false);
+  const [castConnected, setCastConnected] = useState(false);
   useEffect(() => {
-    const handleCastReady = () => setShowCast(true);
+    const handleCastReady = () => {
+      setCastAvailable(true);
+      setCastConnected(castManager.isConnected());
+    };
     if ((window as any).cast?.framework) {
-      setShowCast(true);
+      handleCastReady();
     } else {
       window.addEventListener('castApiAvailable', handleCastReady);
     }
+    castManager.onStateChange = (state) => {
+      setCastConnected(state === 'CONNECTED');
+    };
     return () => window.removeEventListener('castApiAvailable', handleCastReady);
   }, []);
 
@@ -151,8 +151,15 @@ const PlayerControls = () => {
     <div className="w-full flex items-center justify-between gap-6 px-2">
       {/* Left Column: Aux Controls */}
       <div className="flex-1 flex justify-start items-center pl-2">
-        {showCast && (
-          <google-cast-launcher style={{ width: '24px', height: '24px', cursor: 'pointer' }}></google-cast-launcher>
+        {castAvailable && (
+          <button
+            onClick={() => castManager.requestSession()}
+            className="cast-btn transition-colors"
+            style={{ color: castConnected ? 'var(--aurora-purple)' : 'var(--color-text-muted)', filter: castConnected ? 'drop-shadow(0 0 4px var(--aurora-purple))' : 'none' }}
+            title={castConnected ? 'Casting' : 'Cast to device'}
+          >
+            <Cast size={20} />
+          </button>
         )}
       </div>
 

@@ -1584,6 +1584,31 @@ body::after {
   padding-top: var(--safe-area-top);
 }
 
+/* ─── CAST BUTTON ─── */
+.cast-btn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.cast-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+@media (max-width: 767px) {
+  .cast-btn {
+    width: 40px;
+    height: 40px;
+  }
+}
+
 /* ─── HUB DISCOVER CARD COVERS ─── */
 .hub-discover-cover {
   width: 100px;
