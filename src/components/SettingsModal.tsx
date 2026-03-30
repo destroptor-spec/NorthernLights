@@ -33,6 +33,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     const llmTracksPerPlaylist = usePlayerStore(state => state.llmTracksPerPlaylist);
     const llmPlaylistCount = usePlayerStore(state => state.llmPlaylistCount);
     const audioAnalysisCpu = usePlayerStore(state => state.audioAnalysisCpu);
+    const scannerConcurrency = usePlayerStore(state => state.scannerConcurrency);
     const hubGenerationSchedule = usePlayerStore(state => state.hubGenerationSchedule);
     const llmBaseUrl = usePlayerStore(state => state.llmBaseUrl);
     const llmApiKey = usePlayerStore(state => state.llmApiKey);
@@ -47,10 +48,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     const fetchLibraryFromServer = usePlayerStore(state => state.fetchLibraryFromServer);
     const library = usePlayerStore(state => state.library);
     const currentUser = usePlayerStore(state => state.currentUser);
+    const isScanning = usePlayerStore(state => state.isScanning);
     
     const [isClosing, setIsClosing] = useState(false);
     const [isRunningMatrix, setIsRunningMatrix] = useState(false);
     const [mappings, setMappings] = useState<Record<string, string>>({});
+    const [dirStats, setDirStats] = useState<Record<string, { totalTracks: number; withMetadata: number; analyzed: number }>>({});
 
     // Dialog state
     const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; confirmLabel?: string; onConfirm: () => void } | null>(null);
@@ -182,6 +185,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 setPromptDialog(null);
                 const addLibraryFolder = usePlayerStore.getState().addLibraryFolder;
                 await addLibraryFolder(path);
+                fetchDirStats();
             },
         });
     };
@@ -195,9 +199,51 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 body: JSON.stringify({ path: folderPath })
             });
             await fetchLibraryFromServer();
+            fetchDirStats();
         } catch (e) {
             console.error('Failed to rescan folder', e);
         }
+    };
+
+    const handleRemoveFolder = async (folderPath: string) => {
+        await removeLibraryFolder(folderPath);
+        fetchDirStats();
+    };
+
+    const handleAnalyze = async () => {
+        try {
+            const authHeaders = getAuthHeader();
+            await fetch('/api/library/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...authHeaders },
+                body: JSON.stringify({ force: false })
+            });
+            fetchDirStats();
+        } catch (e) {
+            console.error('Failed to start analysis', e);
+        }
+    };
+
+    const handleForceAnalyze = async () => {
+        setConfirmDialog({
+            title: 'Re-analyze All Tracks',
+            message: 'This will re-run audio analysis on your entire library, replacing existing feature data. This may take several minutes.',
+            confirmLabel: 'Re-analyze All',
+            onConfirm: async () => {
+                setConfirmDialog(null);
+                try {
+                    const authHeaders = getAuthHeader();
+                    await fetch('/api/library/analyze', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', ...authHeaders },
+                        body: JSON.stringify({ force: true })
+                    });
+                    fetchDirStats();
+                } catch (e) {
+                    console.error('Failed to start re-analysis', e);
+                }
+            },
+        });
     };
 
     const handleManualHubRegen = async () => {
@@ -266,6 +312,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
     const isAdmin = currentUser?.role === 'admin';
 
+    // Fetch directory stats (reusable)
+    const fetchDirStats = useCallback(async () => {
+        try {
+            const authHeaders = getAuthHeader();
+            const res = await fetch('/api/library/stats', { headers: { ...authHeaders } });
+            if (!res.ok) return;
+            const data = await res.json();
+            const statsMap: Record<string, { totalTracks: number; withMetadata: number; analyzed: number }> = {};
+            for (const d of data.directories || []) {
+                statsMap[d.path] = { totalTracks: d.totalTracks, withMetadata: d.withMetadata, analyzed: d.analyzed };
+            }
+            setDirStats(statsMap);
+        } catch (e) {
+            console.error('Failed to fetch directory stats', e);
+        }
+    }, [getAuthHeader]);
+
+    // Fetch directory stats when Library tab becomes active
+    React.useEffect(() => {
+        if (activeTab === 'Library') {
+            fetchDirStats();
+        }
+    }, [activeTab, fetchDirStats]);
+
     const tabs = [
         { id: 'My Account', label: 'My Account', category: 'User Settings' },
         { id: 'Appearance', label: 'Appearance', category: 'App Settings' },
@@ -288,7 +358,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         if (tab.id === 'Appearance') return 'light dark theme'.includes(query);
         if (tab.id === 'Library') return 'folder path scan library'.includes(query);
         if (tab.id === 'Playback') return 'infinity discovery genre artist amnesia matrix llm playlist diversity blend tracks wander'.includes(query);
-        if (tab.id === 'System') return 'cpu audio analysis hub schedule'.includes(query);
+        if (tab.id === 'System') return 'cpu audio analysis scanner concurrency hub schedule'.includes(query);
         if (tab.id === 'Providers') return 'llm api host model key last.fm genius'.includes(query);
         if (tab.id === 'Genre Matrix') return 'genre matrix transition hop cost mapping'.includes(query);
         if (tab.id === 'Database') return 'database postgres container podman start stop status'.includes(query);
@@ -567,23 +637,93 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                         <p className="text-sm text-[var(--color-text-muted)] mb-4">
                                             Folders mapped here will be automatically scanned.
                                         </p>
-                                        <ul className="flex flex-col gap-2">
+                                        <ul className="flex flex-col gap-3">
                                             {libraryFolders.length === 0 ? (
                                                 <li className="p-4 rounded-xl border border-dashed border-[var(--glass-border)] bg-[var(--glass-bg)] text-center text-sm text-[var(--color-text-muted)] backdrop-blur-sm">
                                                     No folders mapped yet.
                                                 </li>
                                             ) : (
-                                                libraryFolders.map((folderPath) => (
-                                                    <li key={folderPath} className="flex justify-between items-center p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] shadow-sm backdrop-blur-sm">
-                                                        <span className="text-sm truncate mr-4 text-[var(--color-text-primary)] font-medium flex items-center gap-2"><Folder size={16} className="shrink-0 text-[var(--color-text-muted)]" /> {folderPath}</span>
-                                                        <div className="flex gap-2 shrink-0">
-                                                            <button className="btn btn-primary btn-sm" onClick={() => handleRescanFolder(folderPath)}>Rescan</button>
-                                                            <button className="btn btn-danger-fill btn-sm" onClick={() => removeLibraryFolder(folderPath)}>Remove</button>
-                                                        </div>
-                                                    </li>
-                                                ))
+                                                libraryFolders.map((folderPath) => {
+                                                    const stats = dirStats[folderPath];
+                                                    return (
+                                                        <li key={folderPath} className="p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] shadow-sm backdrop-blur-sm">
+                                                            <div className="flex justify-between items-center mb-2">
+                                                                <span className="text-sm truncate mr-4 text-[var(--color-text-primary)] font-medium flex items-center gap-2"><Folder size={16} className="shrink-0 text-[var(--color-text-muted)]" /> {folderPath}</span>
+                                                                <div className="flex gap-2 shrink-0">
+                                                                    <button className="btn btn-primary btn-sm" onClick={() => handleRescanFolder(folderPath)}>Rescan</button>
+                                                                    <button className="btn btn-danger-fill btn-sm" onClick={() => handleRemoveFolder(folderPath)}>Remove</button>
+                                                                </div>
+                                                            </div>
+                                                            {stats && stats.totalTracks > 0 && (
+                                                                <div className="flex gap-4 text-xs text-[var(--color-text-secondary)] pl-1">
+                                                                    <span>{stats.totalTracks} tracks</span>
+                                                                    <span>·</span>
+                                                                    <span>{stats.withMetadata} with metadata</span>
+                                                                    <span>·</span>
+                                                                    <span className={stats.analyzed === stats.totalTracks ? 'text-green-500' : 'text-amber-500'}>{stats.analyzed} analyzed</span>
+                                                                </div>
+                                                            )}
+                                                            {stats && stats.totalTracks === 0 && (
+                                                                <div className="text-xs text-[var(--color-text-muted)] pl-1">No tracks found. Click Rescan to index this folder.</div>
+                                                            )}
+                                                        </li>
+                                                    );
+                                                })
                                             )}
                                         </ul>
+
+                                        {/* Audio Analysis Section */}
+                                        <div className="mt-6 pt-4 border-t border-[var(--glass-border)]">
+                                            <div className="flex justify-between items-center mb-3">
+                                                <h4 className="text-lg font-semibold text-[var(--color-text-primary)]">Audio Analysis</h4>
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        className="btn btn-primary btn-sm"
+                                                        onClick={handleAnalyze}
+                                                        disabled={isScanning}
+                                                    >
+                                                        {isScanning ? 'Analyzing...' : 'Analyze Missing'}
+                                                    </button>
+                                                    <button
+                                                        className="btn btn-ghost btn-sm"
+                                                        onClick={handleForceAnalyze}
+                                                        disabled={isScanning}
+                                                    >
+                                                        Re-analyze All
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <p className="text-xs text-[var(--color-text-muted)]">
+                                                Runs Essentia audio feature extraction on tracks that haven't been analyzed yet.
+                                                This powers the recommendation engine (Infinity Mode, Hub playlists).
+                                            </p>
+                                            {(() => {
+                                                const totalStats = Object.values(dirStats).reduce((acc, s) => ({
+                                                    totalTracks: acc.totalTracks + s.totalTracks,
+                                                    withMetadata: acc.withMetadata + s.withMetadata,
+                                                    analyzed: acc.analyzed + s.analyzed,
+                                                }), { totalTracks: 0, withMetadata: 0, analyzed: 0 });
+                                                if (totalStats.totalTracks === 0) return null;
+                                                const pct = totalStats.totalTracks > 0 ? Math.round((totalStats.analyzed / totalStats.totalTracks) * 100) : 0;
+                                                return (
+                                                    <div className="mt-2">
+                                                        <div className="flex justify-between text-xs text-[var(--color-text-secondary)] mb-1">
+                                                            <span>Library Coverage</span>
+                                                            <span>{totalStats.analyzed} / {totalStats.totalTracks} tracks ({pct}%)</span>
+                                                        </div>
+                                                        <div className="w-full h-2 rounded-full bg-[var(--glass-border)] overflow-hidden">
+                                                            <div
+                                                                className="h-full rounded-full transition-all duration-500"
+                                                                style={{
+                                                                    width: `${pct}%`,
+                                                                    backgroundColor: pct === 100 ? '#22c55e' : pct > 50 ? '#f59e0b' : '#ef4444'
+                                                                }}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })()}
+                                        </div>
                                     </div>
                                 )}
 
@@ -718,10 +858,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                 onChange={e => setSettings({ audioAnalysisCpu: e.target.value })}
                                                 className="w-full p-2 rounded-lg border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none"
                                             >
-                                                <option value="Background">Background (Low / Async)</option>
-                                                <option value="Balanced">Balanced</option>
-                                                <option value="Maximum">Maximum (Fastest Scan)</option>
+                                                <option value="Background">Background (1 process)</option>
+                                                <option value="Balanced">Balanced (4 processes)</option>
+                                                <option value="Maximum">Maximum (6 processes)</option>
                                             </select>
+                                        </div>
+
+                                        <div className="mb-6">
+                                            <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-2">Scanner Concurrency</label>
+                                            <select 
+                                                value={scannerConcurrency} 
+                                                onChange={e => setSettings({ scannerConcurrency: e.target.value })}
+                                                className="w-full p-2 rounded-lg border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none"
+                                            >
+                                                <option value="HDD">HDD (4 processes)</option>
+                                                <option value="SSD">Standard SSD (16 processes)</option>
+                                                <option value="NVMe">Premium NVMe (32 processes)</option>
+                                            </select>
+                                            <p className="text-xs text-[var(--color-text-muted)] mt-1.5">Controls how many files are scanned simultaneously for metadata. Higher values require faster disk I/O.</p>
                                         </div>
 
                                         <div className="mb-6">

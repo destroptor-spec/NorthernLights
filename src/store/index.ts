@@ -50,7 +50,7 @@ export interface PlayerState {
 
   // Scanning State
   isScanning: boolean;
-  scanPhase: 'idle' | 'walk' | 'metadata';
+  scanPhase: 'idle' | 'walk' | 'metadata' | 'analysis';
   scannedFiles: number;
   totalFiles: number;
   activeWorkers: number;
@@ -89,6 +89,7 @@ export interface PlayerState {
   llmTracksPerPlaylist: number;
   llmPlaylistCount: number;
   audioAnalysisCpu: string;
+  scannerConcurrency: string;
   hubGenerationSchedule: string;
   llmBaseUrl: string;
   llmApiKey: string;
@@ -127,7 +128,7 @@ export interface PlayerState {
   addTracksToLibrary: (newTracks: TrackInfo[]) => void;
   setIsScanning: (
     isScanning: boolean,
-    phase?: 'idle' | 'walk' | 'metadata',
+    phase?: 'idle' | 'walk' | 'metadata' | 'analysis',
     scanned?: number,
     total?: number,
     workers?: number,
@@ -221,7 +222,7 @@ export const usePlayerStore = create<PlayerState>()(
         playlist: [] as TrackInfo[],
 
         isScanning: false as boolean,
-        scanPhase: 'idle' as 'idle' | 'walk' | 'metadata',
+        scanPhase: 'idle' as 'idle' | 'walk' | 'metadata' | 'analysis',
         scannedFiles: 0,
         totalFiles: 0,
         activeWorkers: 0,
@@ -256,6 +257,7 @@ export const usePlayerStore = create<PlayerState>()(
         llmTracksPerPlaylist: 10,
         llmPlaylistCount: 3,
         audioAnalysisCpu: 'Balanced',
+        scannerConcurrency: 'SSD',
         hubGenerationSchedule: 'Daily',
         llmBaseUrl: 'https://api.openai.com/v1',
         llmApiKey: '',
@@ -373,6 +375,7 @@ export const usePlayerStore = create<PlayerState>()(
                 llmTracksPerPlaylist: data.llmTracksPerPlaylist !== undefined ? data.llmTracksPerPlaylist : 10,
                 llmPlaylistCount: data.llmPlaylistCount !== undefined ? data.llmPlaylistCount : 3,
                 audioAnalysisCpu: data.audioAnalysisCpu || 'Balanced',
+                scannerConcurrency: data.scannerConcurrency || 'SSD',
                 hubGenerationSchedule: data.hubGenerationSchedule || 'Daily',
                 llmBaseUrl: data.llmBaseUrl || 'https://api.openai.com/v1',
                 llmApiKey: data.llmApiKey || '',
@@ -400,6 +403,7 @@ export const usePlayerStore = create<PlayerState>()(
                 llmTracksPerPlaylist: state.llmTracksPerPlaylist,
                 llmPlaylistCount: state.llmPlaylistCount,
                 audioAnalysisCpu: state.audioAnalysisCpu,
+                scannerConcurrency: state.scannerConcurrency,
                 hubGenerationSchedule: state.hubGenerationSchedule,
                 llmBaseUrl: state.llmBaseUrl,
                 llmApiKey: state.llmApiKey,

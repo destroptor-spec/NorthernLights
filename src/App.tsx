@@ -270,12 +270,14 @@ const App: React.FC = () => {
             <div className="scanning-spinner"></div>
             <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                <span style={{ fontWeight: 600 }}>Scanning Library...</span>
+                <span style={{ fontWeight: 600 }}>
+                  {usePlayerStore.getState().scanPhase === 'analysis' ? 'Analyzing Audio...' : 'Scanning Library...'}
+                </span>
                 <span style={{ 
                   fontSize: '0.7rem', 
                   padding: '2px 6px', 
                   borderRadius: '12px', 
-                  backgroundColor: 'var(--color-primary)', 
+                  backgroundColor: usePlayerStore.getState().scanPhase === 'analysis' ? '#f59e0b' : 'var(--color-primary)', 
                   color: 'white',
                   textTransform: 'uppercase',
                   letterSpacing: '0.05em'
@@ -284,9 +286,9 @@ const App: React.FC = () => {
                 </span>
               </div>
               
-              {usePlayerStore.getState().scanPhase === 'metadata' ? (
+              {(usePlayerStore.getState().scanPhase === 'metadata' || usePlayerStore.getState().scanPhase === 'analysis') ? (
                 <div style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', marginTop: '2px', display: 'flex', justifyContent: 'space-between' }}>
-                  <span>{usePlayerStore.getState().scannedFiles} / {usePlayerStore.getState().totalFiles} files</span>
+                  <span>{usePlayerStore.getState().scannedFiles} / {usePlayerStore.getState().totalFiles} {usePlayerStore.getState().scanPhase === 'analysis' ? 'tracks' : 'files'}</span>
                   <span>{usePlayerStore.getState().activeWorkers} workers</span>
                 </div>
               ) : (
@@ -305,7 +307,7 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          {usePlayerStore.getState().scanPhase === 'metadata' && usePlayerStore.getState().activeFiles.length > 0 && (
+          {(usePlayerStore.getState().scanPhase === 'metadata' || usePlayerStore.getState().scanPhase === 'analysis') && usePlayerStore.getState().activeFiles.length > 0 && (
             <div style={{ 
               width: '100%', 
               marginTop: '8px', 
@@ -316,7 +318,9 @@ const App: React.FC = () => {
               maxHeight: '120px',
               overflowY: 'auto'
             }}>
-              <div style={{ marginBottom: '4px', fontWeight: 600, color: 'var(--color-text-primary)' }}>Currently Processing:</div>
+              <div style={{ marginBottom: '4px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                {usePlayerStore.getState().scanPhase === 'analysis' ? 'Currently Analyzing:' : 'Currently Processing:'}
+              </div>
               <ul style={{ listStyleType: 'disc', paddingLeft: '16px', margin: 0, display: 'flex', flexDirection: 'column', gap: '2px' }}>
                 {usePlayerStore.getState().activeFiles.slice(0, 10).map((file, i) => (
                   <li key={i} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>

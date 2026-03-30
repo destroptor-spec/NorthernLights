@@ -384,6 +384,48 @@ export async function clearTracks() {
   await db.query('DELETE FROM tracks');
 }
 
+export async function addTrackFeatures(trackId: string, audioFeatures: { bpm: number; acoustic_vector: number[] }) {
+  const db = await initDB();
+  const vectorStr = `[${audioFeatures.acoustic_vector.join(',')}]`;
+  await db.query(`
+    INSERT INTO track_features (track_id, bpm, acoustic_vector)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (track_id) DO UPDATE SET
+      bpm = EXCLUDED.bpm,
+      acoustic_vector = EXCLUDED.acoustic_vector
+  `, [trackId, audioFeatures.bpm, vectorStr]);
+}
+
+export async function getTracksWithoutFeatures(): Promise<{ id: string; filePath: Buffer; title: string; artist: string | null }[]> {
+  const db = await initDB();
+  const res = await db.query(`
+    SELECT t.id, t.path, t.title, t.artist
+    FROM tracks t
+    LEFT JOIN track_features tf ON t.id = tf.track_id
+    WHERE tf.track_id IS NULL
+    ORDER BY t.title
+  `);
+  return res.rows.map((r: any) => ({
+    id: r.id,
+    filePath: Buffer.from(r.path, 'base64'),
+    title: r.title,
+    artist: r.artist || null,
+  }));
+}
+
+export async function getTrackCountWithFeatures(): Promise<{ withFeatures: number; total: number }> {
+  const db = await initDB();
+  const res = await db.query(`
+    SELECT
+      COUNT(*) as total,
+      COUNT(tf.track_id) as with_features
+    FROM tracks t
+    LEFT JOIN track_features tf ON t.id = tf.track_id
+  `);
+  const row = res.rows[0];
+  return { withFeatures: parseInt(row.with_features), total: parseInt(row.total) };
+}
+
 export async function addDirectory(dirPath: string) {
   const db = await initDB();
   const id = Buffer.from(dirPath).toString('base64');
