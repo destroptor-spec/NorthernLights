@@ -773,7 +773,13 @@ app.get('/api/stream', async (req, res) => {
 
     ffmpeg.on('error', (err) => {
       console.error('FFmpeg spawn error:', err);
-      if (!res.headersSent) res.status(500).send('Transcoding error');
+      if (!res.headersSent) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          res.status(501).send('FFmpeg not installed — WMA playback unavailable');
+        } else {
+          res.status(500).send('Transcoding error');
+        }
+      }
     });
 
     ffmpeg.on('exit', (code, signal) => {
@@ -1593,7 +1599,23 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', dbConnected, message: 'Aurora Media Server is running!' });
 });
 
+// Pre-flight check: warn at startup if FFmpeg is missing (needed for WMA transcoding)
+function checkFfmpegAvailability() {
+  const test = spawn('ffmpeg', ['-version'], { stdio: 'ignore' });
+  test.on('error', (err) => {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      console.warn('[Startup] FFmpeg not found in PATH. WMA files will not play. Install FFmpeg to enable transcoding.');
+    }
+  });
+  test.on('exit', (code) => {
+    if (code !== 0) {
+      console.warn('[Startup] FFmpeg exited abnormally. WMA transcoding may not work.');
+    }
+  });
+}
+
 // Start server always, even if DB is unavailable.
+checkFfmpegAvailability();
 app.listen(port, () => {
   console.log(`Aurora Media Server listening at http://localhost:${port}`);
 });

@@ -93,7 +93,7 @@ class PlaybackManager {
 
     // --- Core Playback Controls ---
 
-    public async playUrl(url: string, title?: string, artist?: string, artUrl?: string): Promise<void> {
+    public async playUrl(url: string, title?: string, artist?: string, artUrl?: string, album?: string, format?: string): Promise<void> {
         this.currentUrl = url;
         this.currentTitle = title || 'Unknown Title';
         this.currentArtist = artist || 'Unknown Artist';
@@ -102,7 +102,7 @@ class PlaybackManager {
         try {
             if (castManager.isConnected()) {
                 this.audio.pause();
-                await castManager.castMedia(this.currentUrl, this.currentTitle, this.currentArtist, this.currentArtUrl || undefined);
+                await castManager.castMedia(this.currentUrl, this.currentTitle, this.currentArtist, this.currentArtUrl || undefined, album, format);
                 return;
             }
 
@@ -121,6 +121,8 @@ class PlaybackManager {
                 await this.audioContext.resume();
             }
         } catch (error) {
+            // AbortError: play() was interrupted by a new source loading — not a real error
+            if (error instanceof DOMException && error.name === 'AbortError') return;
             console.error('PlaybackManager playUrl error:', error);
             throw error;
         }
@@ -149,6 +151,7 @@ class PlaybackManager {
             }
 
         } catch (error) {
+            if (error instanceof DOMException && error.name === 'AbortError') return;
             console.error('PlaybackManager playFile error:', error);
             throw error;
         }

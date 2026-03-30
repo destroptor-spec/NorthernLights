@@ -5,6 +5,9 @@ import { extractMetadata } from '../utils/fileSystem';
 import { playbackManager, PlaybackState } from '../utils/PlaybackManager';
 import { safeBtoa } from '../utils/safeBtoa';
 
+// Re-entrancy guard: incremented on each playAtIndex call to discard stale callbacks
+let playGeneration = 0;
+
 const buildTrackUrls = (path: string, token: string) => {
   const base = `${window.location.protocol}//${window.location.host}`;
   const tokenParam = token ? `&token=${token}` : '';
@@ -831,16 +834,20 @@ export const usePlayerStore = create<PlayerState>()(
           const track = playlist[index];
           if (!track) return;
 
+          const generation = ++playGeneration;
+
           try {
             // Set volume before playing
             playbackManager.setVolume(volume);
             // Play using the HTTP stream URL
             if (track.url) {
-              await playbackManager.playUrl(track.url, track.title, track.artist || ((track.artists as string[])?.join(', ')), track.artUrl);
+              await playbackManager.playUrl(track.url, track.title, track.artist || ((track.artists as string[])?.join(', ')), track.artUrl, track.album, track.format);
             } else if (track.fileHandle) {
                // Fallback
                await playbackManager.playFile(track.fileHandle);
             }
+            // A newer playAtIndex call has taken over — discard this result
+            if (generation !== playGeneration) return;
             set({ currentIndex: index });
 
             // Telemetry: record successful playback and push to session history
@@ -849,8 +856,10 @@ export const usePlayerStore = create<PlayerState>()(
             // Pre-fetch infinite track if bounds are reached
             get().ensureInfinityQueue();
           } catch (e) {
+            // A newer playAtIndex call has taken over — don't chain into nextTrack
+            if (generation !== playGeneration) return;
             console.error("Error playing track", e);
-            get().nextTrack(); // try skipping to next
+            get().nextTrack();
           }
         },
 

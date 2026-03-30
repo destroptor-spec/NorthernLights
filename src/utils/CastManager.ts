@@ -3,6 +3,33 @@ declare const cast: any;
 
 export type CastState = 'NO_DEVICES_AVAILABLE' | 'NOT_CONNECTED' | 'CONNECTING' | 'CONNECTED';
 
+// Client-side format/extension to MIME type mapping (mirrors server MIME_TYPES)
+const FORMAT_TO_MIME: Record<string, string> = {
+    mp3: 'audio/mpeg',
+    mpeg: 'audio/mpeg',
+    flac: 'audio/flac',
+    ogg: 'audio/ogg',
+    m4a: 'audio/mp4',
+    mp4: 'audio/mp4',
+    aac: 'audio/aac',
+    wav: 'audio/wav',
+    wma: 'audio/x-ms-wma',
+};
+
+function inferContentType(url: string, format?: string): string {
+    if (format) {
+        const key = format.toLowerCase().replace('mpeg', 'mp3');
+        if (FORMAT_TO_MIME[key]) return FORMAT_TO_MIME[key];
+    }
+    // Try extracting extension from the URL path (before query params)
+    try {
+        const pathname = new URL(url).pathname;
+        const ext = pathname.split('.').pop()?.toLowerCase();
+        if (ext && FORMAT_TO_MIME[ext]) return FORMAT_TO_MIME[ext];
+    } catch { /* ignore */ }
+    return 'audio/mpeg';
+}
+
 export class CastManager {
     private static instance: CastManager;
     private castContext: any = null;
@@ -22,7 +49,7 @@ export class CastManager {
         // The Cast API is loaded asynchronously via the script tag in index.html
         // It dispatches 'castApiAvailable' when ready.
         window.addEventListener('castApiAvailable', this.initializeCastApi.bind(this));
-        
+
         // If it's already available
         if (typeof cast !== 'undefined' && cast.framework) {
             this.initializeCastApi();
@@ -38,7 +65,7 @@ export class CastManager {
 
     private initializeCastApi() {
         if (this.castContext) return;
-        
+
         try {
             cast.framework.CastContext.getInstance().setOptions({
                 receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
@@ -102,17 +129,29 @@ export class CastManager {
         return this.state === 'CONNECTED';
     }
 
-    public async castMedia(url: string, title: string, artist: string, artUrl?: string) {
+    public async castMedia(url: string, title: string, artist: string, artUrl?: string, album?: string, format?: string) {
         if (!this.isConnected()) return;
 
         const castSession = this.castContext.getCurrentSession();
         if (!castSession) return;
 
-        const mediaInfo = new chrome.cast.media.MediaInfo(url, 'audio/mpeg');
+        // Warn if the Chromecast can't reach the server (localhost / 127.0.0.1)
+        try {
+            const host = new URL(url).hostname;
+            if (host === 'localhost' || host === '127.0.0.1') {
+                console.warn('[Cast] Server URL is localhost — the Chromecast device cannot reach it. Access the app via your LAN IP (e.g. http://192.168.x.x) to cast.');
+            }
+        } catch { /* ignore */ }
+
+        const contentType = inferContentType(url, format);
+        const mediaInfo = new chrome.cast.media.MediaInfo(url, contentType);
         mediaInfo.metadata = new chrome.cast.media.MusicTrackMediaMetadata();
         mediaInfo.metadata.title = title;
         mediaInfo.metadata.artist = artist;
-        
+        if (album) {
+            mediaInfo.metadata.albumName = album;
+        }
+
         if (artUrl) {
             mediaInfo.metadata.images = [new chrome.cast.Image(artUrl)];
         }
@@ -120,11 +159,7 @@ export class CastManager {
         const request = new chrome.cast.media.LoadRequest(mediaInfo);
         request.autoplay = true;
 
-        try {
-            await castSession.loadMedia(request);
-        } catch (e) {
-            console.error("Failed to load media on Chromecast", e);
-        }
+        await castSession.loadMedia(request);
     }
 
     public playOrPause() {
