@@ -20,7 +20,13 @@ The UI must expose human-readable tuning parameters that map directly to the bac
 - **Artist Amnesia:** Dropdown ("Allow Repeats", "Standard", "Strict"). Maps to the length of the `recently_played_artist_ids` array passed to the Postgres `NOT IN (...)` query.
 
 **1.2 The "System & Processing" Tab**
-- **Audio Analysis CPU Usage:** Dropdown ("Background", "Balanced", "Maximum"). Controls the async worker queue `concurrency` limit (e.g., 1 core vs. `os.cpus().length - 1`).
+- **Audio Analysis CPU Usage:** Dropdown ("Background", "Balanced", "Maximum"). Controls the worker thread pool concurrency for audio feature extraction:
+  - *Background:* 1 worker thread — minimal CPU impact, slowest analysis
+  - *Balanced:* 4 worker threads — default setting
+  - *Maximum:* 6 worker threads — fastest analysis, higher CPU usage
+  
+  Workers run in separate Node.js processes via `tsx` child processes, keeping the main event loop responsive for HTTP requests.
+  
 - **Hub Generation Schedule:** Dropdown ("Manual Only", "Daily", "Weekly"). Adjusts the cron job frequency for the LLM pipeline. Also create a button on the hub to generate or regenerate.
 
 **1.3 State Management Implementation**
@@ -36,7 +42,36 @@ interface PlaybackRequestPayload {
   }
 }
 ```
-## 2. External Providers & API Configuration (CRITICAL)
+
+## 2. Three-Phase Scanner Architecture
+
+The library scanner operates in three distinct phases for transparency and reliability:
+
+### Phase 1: Directory Walk
+- Recursive traversal of mapped folders
+- Collects audio file paths (MP3, FLAC, OGG, M4A, AAC, WMA)
+- No database writes during this phase
+
+### Phase 2: Metadata Extraction
+- Parallel ID3/Vorbis/ASF tag parsing via `music-metadata`
+- Stores track metadata (title, artist, album, genre, duration, etc.)
+- Creates artist/album/genre entity records
+- Tracks visible in library immediately after this phase
+
+### Phase 3: Audio Analysis (Worker Threads)
+- CPU-intensive feature extraction offloaded from main thread
+- Each worker spawns a persistent `tsx` child process
+- Smart seeking: ffmpeg seeks to ~35% into track (past intro)
+- Decodes 15 seconds for Essentia.js WASM analysis
+- 7-dimensional acoustic vectors stored in `track_features` table
+- Powers Infinity Mode and Hub similarity search
+
+**API Endpoints:**
+- `POST /api/library/scan` — Full three-phase scan (walk → metadata → analysis)
+- `POST /api/library/analyze` — Analysis phase only (tracks without features)
+- `GET /api/library/stats` — Per-directory coverage statistics
+
+## 3. External Providers & API Configuration (CRITICAL)
 
 Antigravity, do NOT use .env files for the user's LLM credentials. The user must be able to configure this dynamically via the UI to support local providers like Ollama or LM Studio.
 
@@ -44,7 +79,7 @@ Antigravity, do NOT use .env files for the user's LLM credentials. The user must
 - The Storage: Store these values securely in a local Postgres settings table.
 - The Execution: The Node.js backend must dynamically read these values from the database when instantiating the LLM client (e.g., the OpenAI Node SDK).
 
-## 3. The Hub Generation Lifecycle (Bug Prevention)
+## 4. The Hub Generation Lifecycle (Bug Prevention)
 
 Antigravity, you must separate the LLM generation trigger from the data fetching. The Hub MUST NOT trigger the LLM every time the user clicks the "Hub" tab.
 
@@ -53,4 +88,3 @@ Antigravity, you must separate the LLM generation trigger from the data fetching
 
 - **Route B (The Generator):** POST /api/hub/generate
   This route triggers the heavy LLM Prompt-to-Query pipeline, runs the Postgres Euclidean distance queries, overwrites the hub_cache table with the new playlists, and returns a success status. This is ONLY triggered by the background cron job (configured in 1.2) or a manual "Refresh Hub" button in the UI.
----

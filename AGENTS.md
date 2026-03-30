@@ -23,9 +23,12 @@ Follow this directory hierarchy strictly:
 - `src/store/`: Zustand state definitions + persistence middleware.
 - `src/utils/`: Pure utility functions (formatTime, safeBtoa, fileSystem, artistUtils, PlaybackManager, externalImagery, metadataCache).
 - `src/App.tsx`: Layout orchestration. `main.tsx`: Entry point.
-- `server/`: Express backend (index.ts, database/, services/, middleware/).
+- `server/`: Express backend (index.ts, database/, services/, middleware/, routes/, workers/).
+- `server/routes/`: Express route modules (auth.routes.ts, admin.routes.ts, library.routes.ts, playback.routes.ts, settings.routes.ts, hub.routes.ts, playlists.routes.ts, artists.routes.ts, albums.routes.ts, genres.routes.ts, media.routes.ts).
+- `server/workers/`: Worker threads for CPU-intensive tasks (audioAnalysis.worker.ts, analyzeTrack.ts).
 - `server/middleware/`: Auth middleware (auth.ts — JWT requireAuth + requireAdmin).
-- `server/services/`: Business logic (auth.service.ts, llm.service.ts, recommendation.service.ts, etc.).
+- `server/services/`: Business logic (auth.service.ts, llm.service.ts, recommendation.service.ts, audioExtraction.service.ts, genreMatrix.service.ts, etc.).
+- `server/state.ts`: Shared mutable state (dbConnected, scanStatus, session history, path utilities).
 - `docs/`: Detailed feature specs and plans.
 
 ### Shared Components (src/components/library/)
@@ -33,6 +36,23 @@ Follow this directory hierarchy strictly:
 - `FadedHeroImage` — Hero background with mask fade, used in GenreDetail and ArtistDetail.
 - `ArtistInitial` — Renders first character of artist name as styled fallback.
 - `AlbumCard` — Album artwork card with hover play button.
+
+### Worker Threads (server/workers/)
+- `audioAnalysis.worker.ts` — Worker thread manager that spawns persistent `tsx` child processes for CPU-intensive audio analysis. Communicates via newline-delimited JSON over stdin/stdout.
+- `analyzeTrack.ts` — Child process script that receives file paths via stdin, runs ffmpeg + Essentia, outputs JSON features to stdout.
+
+**Worker Architecture:**
+```
+Main Thread (Express Server)
+  ├── Worker 1 → spawn("tsx analyzeTrack.ts") → stdin/stdout JSON
+  ├── Worker 2 → spawn("tsx analyzeTrack.ts") → stdin/stdout JSON
+  ├── Worker 3 → spawn("tsx analyzeTrack.ts") → stdin/stdout JSON
+  └── Worker 4 → spawn("tsx analyzeTrack.ts") → stdin/stdout JSON
+```
+
+- Concurrency controlled by `audioAnalysisCpu` setting (Background=1, Balanced=4, Maximum=6)
+- Keeps main event loop responsive during batch analysis of thousands of tracks
+- Handles non-ASCII filenames via temp symlinks in `/tmp/am-*/`
 
 ## Button System (`src/index.css`)
 Use the global button classes — do NOT write inline Tailwind button strings. Combine a base `.btn` with a variant and optional size:
@@ -74,6 +94,27 @@ Mobile-specific rules (in `@media (max-width: 767px)` block):
 - **Styling:** Use Tailwind CSS classes. Use global `.btn` variant classes (see Button System below). Extract repeated class strings to CSS classes in `index.css`. Use CSS custom properties for shared design tokens (colors, gradients, shadows).
 - **Custom Hooks:** Extract repeated `useState` + `useEffect` patterns into hooks under `src/hooks/`.
 - **Utility Functions:** Extract pure logic (formatting, encoding) to `src/utils/` and import rather than duplicating.
+- **Worker Threads:** CPU-intensive tasks (audio analysis) must run in worker threads to prevent blocking the main event loop. Use `server/workers/` pattern with child processes.
+
+## Three-Phase Scanner Architecture
+Library scanning operates in three distinct phases:
+
+1. **Walk Phase**: Recursive directory traversal collecting audio file paths (MP3, FLAC, OGG, M4A, AAC, WMA). No database writes.
+
+2. **Metadata Phase**: Parallel ID3/Vorbis/ASF tag extraction via `music-metadata`. Stores track metadata (title, artist, album, genre, duration) in PostgreSQL. Creates artist/album/genre entity records. Tracks visible immediately after this phase.
+
+3. **Analysis Phase**: Audio feature extraction via worker threads:
+   - **Smart Seeking**: ffmpeg seeks to ~35% into track (past intro) for representative chorus/verse analysis
+   - **15-Second Decode**: Captures enough audio for accurate features while minimizing memory
+   - **Symlink Workaround**: Non-ASCII filenames handled via temp symlinks in `/tmp/am-*/`
+   - **Safe Essentia**: Individual algorithm error handling with graceful fallbacks
+   - **Results**: 7-dimensional acoustic vectors stored in `track_features` table
+
+**API Endpoints:**
+- `POST /api/library/scan` — Full three-phase scan
+- `POST /api/library/analyze` — Analysis phase only (tracks without features)
+- `GET /api/library/stats` — Per-directory coverage statistics
+- `GET /api/library/scan/status` — SSE stream for real-time scan progress
 
 ## Shared Utilities (src/utils/)
 - `formatTime(seconds, fallback?)` — Formats seconds as `M:SS`. Returns fallback for invalid input (default `'0:00'`).
@@ -82,6 +123,12 @@ Mobile-specific rules (in `@media (max-width: 767px)` block):
 - `fetchGenreImage(genre)`, `fetchArtistData(artist)`, `fetchAlbumImage(album, artist)` — External image lookup from `externalImagery.ts`.
 - `CastManager` — Singleton Google Cast (Chromecast) manager. Handles cast context init, media loading, play/pause/seek/volume routing. Used by `PlaybackManager` to delegate controls when cast-connected.
 - `PlaybackManager` — Singleton audio playback manager. Routes play/pause/seek to local `HTMLAudioElement` or `CastManager` depending on connection state.
+
+## Server Services (server/services/)
+- `audioExtraction.service.ts` — ffmpeg subprocess decoding + Essentia.js WASM analysis. Smart seeking (35% into track), 15-second decode, non-ASCII filename symlink workaround, safe Essentia with individual algorithm error handling.
+- `recommendation.service.ts` — Infinity Mode and Hub playlist generation using pgvector HNSW similarity search + genre hop cost adjacency matrices.
+- `llm.service.ts` — LLM integration for natural language playlist generation. Supports local providers (LM Studio, Ollama) and cloud (OpenAI).
+- `genreMatrix.service.ts` — LLM-assisted 39-genre ontology classification with diff-based updates.
 
 ## Shared Hooks (src/hooks/)
 - `useDominantColor(tracks)` — Extracts art URLs and dominant color from a track list. Returns `{ artUrls, primaryArt, bgColor }`.
@@ -96,8 +143,11 @@ Mobile-specific rules (in `@media (max-width: 767px)` block):
 - Use `npx vite build` to build.
 - Use `npx tsc --noEmit` to typecheck.
 - Run typecheck after every code change.
+- For worker threads: Test with various filename encodings (Danish, em-dashes, apostrophes).
+- Monitor memory usage during batch analysis (target < 600MB RSS).
 
 ## Key Dependencies
 - **Frontend:** React, Zustand, lucide-react, idb-keyval
 - **Backend:** Express, pg (PostgreSQL), music-metadata, jsonwebtoken, bcrypt
-- **Build:** Vite, TypeScript, Tailwind CSS
+- **Audio Analysis:** essentia.js (WASM), ffmpeg (system binary), ffprobe
+- **Build:** Vite, TypeScript, Tailwind CSS, tsx (TypeScript execution)

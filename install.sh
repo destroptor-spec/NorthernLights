@@ -84,11 +84,11 @@ else
   $SUDO apt-get install -y git
 fi
 
-# FFmpeg
-if has ffmpeg; then
-  ok "FFmpeg already installed"
+# FFmpeg (includes ffprobe for audio analysis)
+if has ffmpeg && has ffprobe; then
+  ok "FFmpeg and ffprobe already installed"
 else
-  info "Installing ffmpeg..."
+  info "Installing ffmpeg (includes ffprobe for audio analysis)..."
   $SUDO apt-get install -y ffmpeg
 fi
 
@@ -201,9 +201,10 @@ fi
 # ─── Done ─────────────────────────────────────────────────────────────
 
 echo ""
-echo -e "${GREEN}╔══════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║      NorthernLights installed successfully!     ║${NC}"
-echo -e "${GREEN}╚══════════════════════════════════════════════════╝${NC}"
+echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║        NorthernLights (V15) installed successfully!         ║${NC}"
+echo -e "${GREEN}║  Features: AI playlists • Smart audio analysis • Worker threads ║${NC}"
+echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
 # Try to get the LAN IP for the access URL
@@ -216,6 +217,8 @@ echo -e "  ${YELLOW}First-time setup:${NC}"
 echo -e "  1. Open the URL above in your browser"
 echo -e "  2. Click ${CYAN}Create Database${NC} to start PostgreSQL"
 echo -e "  3. Follow the Setup Wizard to create your admin account"
+echo -e "  4. Map your music folders in Settings → Library"
+echo -e "  5. The three-phase scanner will: walk → metadata → audio analysis"
 echo ""
 echo -e "  ${YELLOW}To update later:${NC}"
 echo -e "  ${CYAN}cd ~/NorthernLights && git pull && npm install && npm run build && pm2 restart northernlights${NC}"

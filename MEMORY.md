@@ -1,5 +1,19 @@
 # Project Memory / Changelog
 
+## [2026-03-31] V15: Antigravity Context — Three-Phase Scanner & Worker Thread Analysis
+- **Server Modularization (Phase 0)**: Split monolithic `server/index.ts` (1625 lines) into 12 route modules under `server/routes/`. Created `server/state.ts` for shared mutable state. New structure: auth, admin, library, playback, settings, hub, playlists, artists, albums, genres, media routes.
+- **Real Audio Decoding (Phase 1)**: Replaced simulated Essentia data with actual ffmpeg subprocess decoding. Implemented smart seeking: ffmpeg seeks to ~35% into track (past intro) and decodes 15 seconds for representative chorus/verse analysis. Added `ffprobe` duration detection with fallback to file start.
+- **Three-Phase Scanner Architecture**: Separated library scan into distinct phases:
+  - *Phase 1 (Walk)*: Recursive directory traversal collecting audio paths
+  - *Phase 2 (Metadata)*: Parallel ID3/Vorbis tag extraction and DB storage
+  - *Phase 3 (Analysis)*: ffmpeg + Essentia audio feature extraction via worker threads
+- **Worker Thread Implementation**: Created `server/workers/audioAnalysis.worker.ts` and `server/workers/analyzeTrack.ts` to offload CPU-intensive Essentia WASM processing from main thread. Workers spawn persistent `tsx` child processes communicating via newline-delimited JSON over stdin/stdout. Prevents server unresponsiveness during batch analysis.
+- **Non-ASCII Filename Support**: Implemented temp symlink workaround for files with special characters (Danish `øæ`, em-dashes, curly quotes). Raw Buffer paths create symlinks in `/tmp/am-*/`, passed to ffmpeg, cleaned up after processing. Solves Node.js spawn UTF-8 encoding limitations.
+- **Safe Essentia Processing**: Wrapped each Essentia algorithm (Energy, Spectrum, DynamicComplexity, PitchSalience, Flux, ZeroCrossingRate, Danceability) in individual try-catch blocks with graceful fallback to 0. Prevents single algorithm crash from killing entire track analysis.
+- **Per-Directory Library Stats**: Added `GET /api/library/stats` endpoint returning `{ totalTracks, withMetadata, analyzed }` per mapped folder. Updated SettingsModal Library tab with coverage progress bars and real-time stats refresh after folder operations.
+- **Concurrency Control**: Connected `audioAnalysisCpu` setting (Background=1, Balanced=4, Maximum=6 workers) to analysis worker pool size. Added per-file 90-second timeout to prevent hung files from blocking batch.
+- **Scan Status Improvements**: Metadata and analysis phases now show `"Artist - Title"` format in scanning indicator instead of just filename. Added new "Audio Analysis" section in Settings → Library with "Analyze Missing" and "Re-analyze All" buttons plus library-wide coverage progress bar.
+
 ## [2026-03-29] LLM Deduplication Fix, Tunable Settings & Button Unification
 - **LLM Playlist Deduplication Bug Fix**: Fixed `getHubCollections()` in `recommendation.service.ts` where 5 LLM playlists could contain identical songs. Root cause: each concept queried the database independently with no shared exclusion set. Fix accumulates an exclusion set of already-assigned track IDs across the concept loop, with a `WHERE t.id NOT IN (...)` clause.
 - **New Tunable Settings**: Added 4 user-facing settings to the Playback tab (LLM Playlists sub-tab):
