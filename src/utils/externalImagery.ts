@@ -88,21 +88,23 @@ export const fetchArtistData = async (artistName: string): Promise<ArtistData> =
     if (cached) return { imageUrl: cached.imageUrl ?? undefined, bio: cached.bio };
 
     const state = usePlayerStore.getState();
-    const { lastFmApiKey, geniusApiKey, preferredProvider } = state;
+    const { lastFmApiKey, geniusApiKey, providerArtistImage, providerArtistBio } = state;
 
     let data: ArtistData = {};
 
-    const apisToTry = [];
-    if (preferredProvider === 'genius' && geniusApiKey) {
-        apisToTry.push('genius');
-        if (lastFmApiKey) apisToTry.push('lastfm');
-    } else if (preferredProvider === 'lastfm' && lastFmApiKey) {
-        apisToTry.push('lastfm');
-        if (geniusApiKey) apisToTry.push('genius');
-    } else {
-        if (geniusApiKey) apisToTry.push('genius');
-        if (lastFmApiKey) apisToTry.push('lastfm');
-    }
+    // Build API order: prioritize image provider, then bio provider, then fallbacks
+    const seen = new Set<string>();
+    const apisToTry: string[] = [];
+    const pushApi = (api: string) => {
+        if (!seen.has(api)) { seen.add(api); apisToTry.push(api); }
+    };
+    if (providerArtistImage === 'genius' && geniusApiKey) pushApi('genius');
+    if (providerArtistBio === 'genius' && geniusApiKey) pushApi('genius');
+    if (providerArtistImage === 'lastfm' && lastFmApiKey) pushApi('lastfm');
+    if (providerArtistBio === 'lastfm' && lastFmApiKey) pushApi('lastfm');
+    // Fallbacks
+    if (geniusApiKey) pushApi('genius');
+    if (lastFmApiKey) pushApi('lastfm');
 
     for (const api of apisToTry) {
         try {
@@ -174,10 +176,10 @@ export const fetchAlbumImage = async (albumName: string, artistName: string): Pr
     if (cached) return cached.imageUrl || undefined;
 
     const state = usePlayerStore.getState();
-    const { lastFmApiKey, geniusApiKey, preferredProvider } = state;
+    const { lastFmApiKey, geniusApiKey, providerAlbumArt } = state;
 
     const apisToTry: string[] = [];
-    if (preferredProvider === 'genius' && geniusApiKey) {
+    if (providerAlbumArt === 'genius' && geniusApiKey) {
         apisToTry.push('genius');
         if (lastFmApiKey) apisToTry.push('lastfm');
     } else {

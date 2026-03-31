@@ -23,8 +23,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     const setLastFmApiKey = usePlayerStore(state => state.setLastFmApiKey);
     const geniusApiKey = usePlayerStore(state => state.geniusApiKey);
     const setGeniusApiKey = usePlayerStore(state => state.setGeniusApiKey);
-    const preferredProvider = usePlayerStore(state => state.preferredProvider);
-    const setPreferredProvider = usePlayerStore(state => state.setPreferredProvider);
+    const providerArtistImage = usePlayerStore(state => state.providerArtistImage);
+    const setProviderArtistImage = usePlayerStore(state => state.setProviderArtistImage);
+    const providerArtistBio = usePlayerStore(state => state.providerArtistBio);
+    const setProviderArtistBio = usePlayerStore(state => state.setProviderArtistBio);
+    const providerAlbumArt = usePlayerStore(state => state.providerAlbumArt);
+    const setProviderAlbumArt = usePlayerStore(state => state.setProviderAlbumArt);
 
     const discoveryLevel = usePlayerStore(state => state.discoveryLevel);
     const genreStrictness = usePlayerStore(state => state.genreStrictness);
@@ -1085,11 +1089,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                 {geniusStatus === 'error' && <span className="text-red-500 font-semibold text-sm mt-1 block">✗ {geniusMessage}</span>}
                                             </div>
                                             <div>
-                                                <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">Preferred Provider</label>
-                                                <select value={preferredProvider} onChange={e => setPreferredProvider(e.target.value as 'lastfm' | 'genius')} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none">
-                                                    <option value="lastfm">Last.fm</option>
-                                                    <option value="genius">Genius</option>
-                                                </select>
+                                                <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-3 uppercase tracking-wider text-xs">Default Provider per Service</label>
+                                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                                    <div>
+                                                        <label className="block text-xs text-[var(--color-text-muted)] mb-1">Artist Images</label>
+                                                        <select value={providerArtistImage} onChange={e => setProviderArtistImage(e.target.value as 'lastfm' | 'genius')} className="w-full p-2.5 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] text-sm focus:outline-none">
+                                                            <option value="lastfm">Last.fm</option>
+                                                            <option value="genius">Genius</option>
+                                                        </select>
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-xs text-[var(--color-text-muted)] mb-1">Artist Bios</label>
+                                                        <select value={providerArtistBio} onChange={e => setProviderArtistBio(e.target.value as 'lastfm' | 'genius')} className="w-full p-2.5 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] text-sm focus:outline-none">
+                                                            <option value="lastfm">Last.fm</option>
+                                                            <option value="genius">Genius</option>
+                                                        </select>
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-xs text-[var(--color-text-muted)] mb-1">Album Art</label>
+                                                        <select value={providerAlbumArt} onChange={e => setProviderAlbumArt(e.target.value as 'lastfm' | 'genius')} className="w-full p-2.5 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] text-sm focus:outline-none">
+                                                            <option value="lastfm">Last.fm</option>
+                                                            <option value="genius">Genius</option>
+                                                        </select>
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
