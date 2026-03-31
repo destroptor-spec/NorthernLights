@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { usePlayerStore } from '../store';
 
 type ConnectionStatus = 'idle' | 'testing' | 'success' | 'error';
 
@@ -44,18 +45,20 @@ export const useProviderConnectionTest = () => {
     setGeniusStatus('testing');
     setGeniusMessage('');
     try {
-      const res = await fetch(`https://api.genius.com/search?q=test`, {
-        headers: { 'Authorization': `Bearer ${apiKey}` }
+      const state = usePlayerStore.getState();
+      const authHeaders = (state as any).getAuthHeader?.() || {};
+      const res = await fetch('/api/providers/genius/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({ apiKey })
       });
-      if (res.ok) {
+      const data = await res.json();
+      if (data.status === 'ok') {
         setGeniusStatus('success');
         setGeniusMessage('Connection OK');
-      } else if (res.status === 401) {
-        setGeniusStatus('error');
-        setGeniusMessage('Invalid token');
       } else {
         setGeniusStatus('error');
-        setGeniusMessage(`HTTP ${res.status}`);
+        setGeniusMessage(data.error || 'Connection failed');
       }
     } catch (err: any) {
       setGeniusStatus('error');

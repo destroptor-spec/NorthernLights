@@ -20,6 +20,7 @@ import artistsRoutes from './routes/artists.routes';
 import albumsRoutes from './routes/albums.routes';
 import genresRoutes from './routes/genres.routes';
 import mediaRoutes from './routes/media.routes';
+import providersRoutes from './routes/providers.routes';
 
 dotenv.config();
 
@@ -95,6 +96,9 @@ app.use('/api/genres', genresRoutes);
 
 // Media (stream, art)
 app.use('/api', mediaRoutes);
+
+// Providers (Genius proxy)
+app.use('/api', providersRoutes);
 
 // Recommend (Infinity Mode next track)
 app.post('/api/recommend', async (req, res) => {

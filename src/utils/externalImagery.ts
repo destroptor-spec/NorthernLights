@@ -55,6 +55,31 @@ const fetchWithRetry = async (url: string, options?: RequestInit, retries = 1): 
     return res;
 }
 
+// Helper: call Genius via backend proxy (avoids CORS)
+const geniusSearch = async (query: string): Promise<any> => {
+    const state = usePlayerStore.getState();
+    const authHeaders = (state as any).getAuthHeader?.() || {};
+    const res = await fetchWithRetry('/api/providers/genius/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({ query, apiKey: state.geniusApiKey })
+    });
+    if (!res.ok) return null;
+    return res.json();
+}
+
+const geniusArtist = async (artistId: number): Promise<any> => {
+    const state = usePlayerStore.getState();
+    const authHeaders = (state as any).getAuthHeader?.() || {};
+    const res = await fetchWithRetry(`/api/providers/genius/artist/${artistId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({ apiKey: state.geniusApiKey })
+    });
+    if (!res.ok) return null;
+    return res.json();
+}
+
 export const fetchArtistData = async (artistName: string): Promise<ArtistData> => {
     if (!artistName) return {};
     
@@ -82,11 +107,8 @@ export const fetchArtistData = async (artistName: string): Promise<ArtistData> =
     for (const api of apisToTry) {
         try {
             if (api === 'genius' && geniusApiKey) {
-                const res = await fetchWithRetry(`https://api.genius.com/search?q=${encodeURIComponent(artistName)}`, {
-                    headers: { 'Authorization': `Bearer ${geniusApiKey}` }
-                });
-                if (res.ok) {
-                    const json = await res.json();
+                const json = await geniusSearch(artistName);
+                if (json) {
                     const hits = json.response?.hits;
                     if (hits && hits.length > 0) {
                         const hit = hits.find((h: any) => h.type === 'song' && h.result.primary_artist.name.toLowerCase() === artistName.toLowerCase());
@@ -98,11 +120,8 @@ export const fetchArtistData = async (artistName: string): Promise<ArtistData> =
                         }
 
                         if (artistId && !data.bio) {
-                            const artistRes = await fetchWithRetry(`https://api.genius.com/artists/${artistId}`, {
-                                headers: { 'Authorization': `Bearer ${geniusApiKey}` }
-                            });
-                            if (artistRes.ok) {
-                                const artistJson = await artistRes.json();
+                            const artistJson = await geniusArtist(artistId);
+                            if (artistJson) {
                                 const bioPlain = artistJson.response?.artist?.description?.plain;
                                 if (typeof bioPlain === 'string' && bioPlain.trim().length > 0 && bioPlain !== '?') {
                                     data.bio = bioPlain;
@@ -157,7 +176,6 @@ export const fetchAlbumImage = async (albumName: string, artistName: string): Pr
     const state = usePlayerStore.getState();
     const { lastFmApiKey, geniusApiKey, preferredProvider } = state;
 
-    // Try preferred provider first, then fallback
     const apisToTry: string[] = [];
     if (preferredProvider === 'genius' && geniusApiKey) {
         apisToTry.push('genius');
@@ -189,11 +207,8 @@ export const fetchAlbumImage = async (albumName: string, artistName: string): Pr
                 }
             } else if (api === 'genius' && geniusApiKey) {
                 const query = `${artistName} ${albumName}`;
-                const res = await fetchWithRetry(`https://api.genius.com/search?q=${encodeURIComponent(query)}`, {
-                    headers: { 'Authorization': `Bearer ${geniusApiKey}` }
-                });
-                if (res.ok) {
-                    const json = await res.json();
+                const json = await geniusSearch(query);
+                if (json) {
                     const hits = json.response?.hits;
                     if (hits && hits.length > 0) {
                         const songHit = hits.find((h: any) => h.type === 'song');
@@ -308,15 +323,12 @@ export const fetchLyrics = async (trackName: string, artistName: string): Promis
 
     try {
         const query = `${artistName} ${trackName}`;
-        const res = await fetchWithRetry(`https://api.genius.com/search?q=${encodeURIComponent(query)}`, {
-            headers: { 'Authorization': `Bearer ${geniusApiKey}` }
-        });
-        if (!res.ok) {
+        const json = await geniusSearch(query);
+        if (!json) {
             setCache(cacheKey, { imageUrl: null, bio: '', _miss: true });
             return undefined;
         }
 
-        const json = await res.json();
         const hits = json.response?.hits;
         if (!hits || hits.length === 0) {
             setCache(cacheKey, { imageUrl: null, bio: '', _miss: true });
