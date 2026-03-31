@@ -67,7 +67,8 @@ app.use(jwtAuthMiddleware);
 // ─── Mount Route Modules ──────────────────────────────────────────────
 
 // Auth & Setup (auth routes at /api/auth/*, setup routes at /api/setup/*)
-app.use('/api', authRoutes); // mounts /api/auth/* and /api/setup/* from the same router
+app.use('/api/auth', authRoutes); // mounts /api/auth/login, /api/auth/register, etc.
+app.use('/api', authRoutes);      // mounts /api/setup/status, /api/setup/complete
 
 // Admin (users, invites, db control)
 app.use('/api/admin', adminRoutes);
