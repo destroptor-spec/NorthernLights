@@ -145,3 +145,18 @@ app.listen(port, () => {
 
 // Initial DB connection attempt
 initDatabaseConnection();
+
+// Background check for MFCC transition or missing features
+setTimeout(async () => {
+  try {
+    const { getTracksWithoutFeatures } = await import('./database');
+    const tracks = await getTracksWithoutFeatures();
+    if (tracks.length > 0) {
+      console.log(`[Startup] Found ${tracks.length} tracks missing audio features (or entering 13D MFCC transition). Auto-starting background analysis...`);
+      const { runBackgroundAnalysis } = await import('./routes/library.routes');
+      runBackgroundAnalysis(false).catch(console.error);
+    }
+  } catch(e) {
+    console.error('[Startup] Failed to check for missing audio features:', e);
+  }
+}, 5000);
