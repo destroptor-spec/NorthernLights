@@ -9,7 +9,7 @@ import { useExternalImage } from '../../hooks/useExternalImage';
 import { fetchArtistData, fetchGenreImage } from '../../utils/externalImagery';
 
 const GenreCard: React.FC<{ genre: string }> = ({ genre }) => {
-    const imageUrl = useExternalImage(() => fetchGenreImage(genre), [genre]);
+    const { imageUrl } = useExternalImage(() => fetchGenreImage(genre), [genre]);
 
     return (
         <div
@@ -29,7 +29,7 @@ const GenreCard: React.FC<{ genre: string }> = ({ genre }) => {
 };
 
 const ArtistCard: React.FC<{ artist: string }> = ({ artist }) => {
-    const imageUrl = useExternalImage(() => fetchArtistData(artist).then(d => d.imageUrl), [artist]);
+    const { imageUrl } = useExternalImage(() => fetchArtistData(artist).then(d => d.imageUrl), [artist]);
 
     return (
         <div

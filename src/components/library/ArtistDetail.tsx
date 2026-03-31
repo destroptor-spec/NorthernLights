@@ -20,11 +20,16 @@ export const ArtistDetail: React.FC = () => {
     const artistName = artistInfo?.name || '';
 
     const [artistData, setArtistData] = useState<{imageUrl?: string, bio?: string}>({});
+    const [artistLoading, setArtistLoading] = useState(false);
 
     useEffect(() => {
         if (artistName) {
             setArtistData({});
-            fetchArtistData(artistName).then(data => setArtistData(data));
+            setArtistLoading(true);
+            fetchArtistData(artistName)
+                .then(data => setArtistData(data))
+                .catch(() => {})
+                .finally(() => setArtistLoading(false));
         }
     }, [artistName]);
 
@@ -102,7 +107,7 @@ export const ArtistDetail: React.FC = () => {
                             <img src={artistData.imageUrl} alt={artistName} className="w-full h-full object-cover" />
                         </div>
                     ) : (
-                        <div className="w-48 h-48 md:w-64 md:h-64 rounded-full overflow-hidden shrink-0 shadow-[var(--shadow-md)] border-4 border-[var(--glass-border)] bg-[var(--glass-bg)] flex items-center justify-center">
+                        <div className={`w-48 h-48 md:w-64 md:h-64 rounded-full overflow-hidden shrink-0 shadow-[var(--shadow-md)] border-4 border-[var(--glass-border)] bg-[var(--glass-bg)] flex items-center justify-center ${artistLoading ? 'animate-pulse' : ''}`}>
                             <ArtistInitial name={artistName} />
                         </div>
                     )}

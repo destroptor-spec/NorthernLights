@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { usePlayerStore } from '../../store/index';
 import { TrackInfo } from '../../utils/fileSystem';
@@ -6,7 +6,7 @@ import { AlbumCard } from './AlbumCard';
 import { BackButton } from './BackButton';
 import { FadedHeroImage } from './FadedHeroImage';
 import { useExternalImage } from '../../hooks/useExternalImage';
-import { fetchGenreImage } from '../../utils/externalImagery';
+import { fetchGenreImage, fetchGenreInfo } from '../../utils/externalImagery';
 
 export const GenreDetail: React.FC = () => {
     const { genreId } = useParams<{ genreId: string }>();
@@ -17,7 +17,18 @@ export const GenreDetail: React.FC = () => {
     const genreInfo = useMemo(() => genres.find(g => g.id === genreId), [genres, genreId]);
     const genreName = genreInfo?.name || '';
 
-    const imageUrl = useExternalImage(() => genreName ? fetchGenreImage(genreName) : Promise.resolve(undefined), [genreName]);
+    const { imageUrl } = useExternalImage(() => genreName ? fetchGenreImage(genreName) : Promise.resolve(undefined), [genreName]);
+
+    const [genreSummary, setGenreSummary] = useState<string | undefined>();
+
+    useEffect(() => {
+        if (genreName) {
+            setGenreSummary(undefined);
+            fetchGenreInfo(genreName)
+                .then(data => { if (data?.summary) setGenreSummary(data.summary); })
+                .catch(() => {});
+        }
+    }, [genreName]);
 
     const genreTracks = useMemo(() => {
         if (!genreId) return [];
@@ -55,9 +66,14 @@ export const GenreDetail: React.FC = () => {
             <div className="relative z-10">
                 <BackButton onClick={() => navigate(-1)} />
 
-                <h1 className="font-bold text-4xl md:text-5xl lg:text-7xl tracking-tight mb-8 md:mb-12 text-[var(--color-primary)] shadow-black drop-shadow-md">
+                <h1 className="font-bold text-4xl md:text-5xl lg:text-7xl tracking-tight mb-4 md:mb-6 text-[var(--color-primary)] shadow-black drop-shadow-md">
                     {genreName}
                 </h1>
+                {genreSummary && (
+                    <p className="text-sm md:text-base text-[var(--color-text-secondary)] leading-relaxed max-w-3xl mb-6 md:mb-8 line-clamp-4 hover:line-clamp-none transition-all duration-300">
+                        {genreSummary}
+                    </p>
+                )}
 
                 <h3 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2">Albums in this Genre</h3>
                 <div className="album-grid">

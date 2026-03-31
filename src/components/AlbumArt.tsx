@@ -20,16 +20,18 @@ const AlbumArt: React.FC<AlbumArtProps> = ({ artUrl, artist, album, size = 300, 
     setFetchedArtUrl(undefined);
   }, [artUrl]);
 
-  useEffect(() => {
+    useEffect(() => {
     // If local artUrl is missing or errored, try fetching from external
     if ((!artUrl || imageError) && album && artist) {
         let mounted = true;
-        fetchAlbumImage(album, artist).then(url => {
-            if (mounted && url) {
-                setFetchedArtUrl(url);
-                setImageError(false); // Reset error if we got a fetched URL
-            }
-        });
+        fetchAlbumImage(album, artist)
+            .then(url => {
+                if (mounted && url) {
+                    setFetchedArtUrl(url);
+                    setImageError(false); // Reset error if we got a fetched URL
+                }
+            })
+            .catch(() => {});
         return () => { mounted = false; };
     }
   }, [artUrl, imageError, album, artist]);
