@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { usePlayerStore } from '../store/index';
 import { Settings, FolderPlus, Key, Database, ChevronRight, CheckCircle2, Cpu } from 'lucide-react';
 import { useLlmConnectionTest } from '../hooks/useLlmConnectionTest';
+import { useProviderConnectionTest } from '../hooks/useProviderConnectionTest';
 
 export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
     const { addLibraryFolder, setLastFmApiKey, setGeniusApiKey, setSettings, getAuthHeader } = usePlayerStore();
@@ -37,6 +38,15 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
     // Step 4 State
     const [lastFmKey, setLastFmKeyState] = useState('');
     const [geniusKey, setGeniusKeyState] = useState('');
+
+    const {
+        lastFmStatus,
+        lastFmMessage,
+        geniusStatus,
+        geniusMessage,
+        testLastFm,
+        testGenius,
+    } = useProviderConnectionTest();
 
     // Token estimate
     const [trackCount, setTrackCount] = useState(1000);
@@ -105,6 +115,20 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
     const handleFinish = async () => {
         if (lastFmKey) setLastFmApiKey(lastFmKey);
         if (geniusKey) setGeniusApiKey(geniusKey);
+        // Persist provider keys to backend DB
+        if (lastFmKey || geniusKey) {
+            try {
+                const authHeaders = getAuthHeader();
+                await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...authHeaders },
+                    body: JSON.stringify({
+                        ...(lastFmKey ? { lastFmApiKey: lastFmKey } : {}),
+                        ...(geniusKey ? { geniusApiKey: geniusKey } : {}),
+                    })
+                });
+            } catch (e) { console.warn('Failed to persist provider keys to DB:', e); }
+        }
         onComplete();
     };
 
@@ -341,11 +365,25 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
                         <div className="space-y-4">
                             <div>
                                 <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">Last.fm API Key</label>
-                                <input type="password" value={lastFmKey} onChange={e => setLastFmKeyState(e.target.value)} placeholder="32-character API key" className="w-full bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/50 transition-all font-mono text-[var(--color-text-primary)]" />
+                                <div className="flex gap-2">
+                                    <input type="password" value={lastFmKey} onChange={e => setLastFmKeyState(e.target.value)} placeholder="32-character API key" className="flex-1 bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/50 transition-all font-mono text-[var(--color-text-primary)]" />
+                                    <button onClick={() => testLastFm(lastFmKey)} disabled={lastFmStatus === 'testing' || !lastFmKey} className="px-4 py-2 bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-lg font-semibold text-sm hover:bg-[var(--glass-bg-hover)] transition-colors text-[var(--color-text-primary)] disabled:opacity-50 shadow-sm whitespace-nowrap">
+                                        {lastFmStatus === 'testing' ? 'Testing...' : 'Test'}
+                                    </button>
+                                </div>
+                                {lastFmStatus === 'success' && <span className="text-green-500 font-semibold text-sm mt-1 block">✓ {lastFmMessage}</span>}
+                                {lastFmStatus === 'error' && <span className="text-red-500 font-semibold text-sm mt-1 block">✗ {lastFmMessage}</span>}
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">Genius Access Token</label>
-                                <input type="password" value={geniusKey} onChange={e => setGeniusKeyState(e.target.value)} placeholder="64-character Bearer Token" className="w-full bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/50 transition-all font-mono text-[var(--color-text-primary)]" />
+                                <div className="flex gap-2">
+                                    <input type="password" value={geniusKey} onChange={e => setGeniusKeyState(e.target.value)} placeholder="64-character Bearer Token" className="flex-1 bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/50 transition-all font-mono text-[var(--color-text-primary)]" />
+                                    <button onClick={() => testGenius(geniusKey)} disabled={geniusStatus === 'testing' || !geniusKey} className="px-4 py-2 bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-lg font-semibold text-sm hover:bg-[var(--glass-bg-hover)] transition-colors text-[var(--color-text-primary)] disabled:opacity-50 shadow-sm whitespace-nowrap">
+                                        {geniusStatus === 'testing' ? 'Testing...' : 'Test'}
+                                    </button>
+                                </div>
+                                {geniusStatus === 'success' && <span className="text-green-500 font-semibold text-sm mt-1 block">✓ {geniusMessage}</span>}
+                                {geniusStatus === 'error' && <span className="text-red-500 font-semibold text-sm mt-1 block">✗ {geniusMessage}</span>}
                             </div>
                         </div>
 

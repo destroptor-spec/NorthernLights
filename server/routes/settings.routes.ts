@@ -11,7 +11,7 @@ router.get('/settings', async (req, res) => {
   try {
     const userId = req.user?.userId;
 
-    const serverKeys = ['audioAnalysisCpu', 'scannerConcurrency', 'hubGenerationSchedule', 'llmBaseUrl', 'llmApiKey', 'llmModelName', 'genreMatrixLastRun', 'genreMatrixLastResult', 'genreMatrixProgress'];
+    const serverKeys = ['audioAnalysisCpu', 'scannerConcurrency', 'hubGenerationSchedule', 'llmBaseUrl', 'llmApiKey', 'llmModelName', 'genreMatrixLastRun', 'genreMatrixLastResult', 'genreMatrixProgress', 'lastFmApiKey', 'geniusApiKey', 'preferredProvider'];
     const settings: Record<string, any> = {};
     for (const k of serverKeys) {
       settings[k] = await getSystemSetting(k);
@@ -47,7 +47,7 @@ router.post('/settings', async (req, res) => {
     const settings = req.body;
 
     const userKeys = new Set(['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'llmPlaylistDiversity', 'genreBlendWeight', 'llmTracksPerPlaylist', 'llmPlaylistCount']);
-    const serverKeys = new Set(['llmBaseUrl', 'llmApiKey', 'llmModelName', 'hubGenerationSchedule', 'audioAnalysisCpu', 'scannerConcurrency']);
+    const serverKeys = new Set(['llmBaseUrl', 'llmApiKey', 'llmModelName', 'hubGenerationSchedule', 'audioAnalysisCpu', 'scannerConcurrency', 'lastFmApiKey', 'geniusApiKey', 'preferredProvider']);
 
     for (const [k, v] of Object.entries(settings)) {
       if (userKeys.has(k) && userId) {
@@ -60,6 +60,11 @@ router.post('/settings', async (req, res) => {
         await setSystemSetting(k, v);
       }
     }
+
+    if (settings.audioAnalysisCpu !== undefined || settings.scannerConcurrency !== undefined) {
+      import('../state').then(m => m.settingsEmitter.emit('concurrencyChanged'));
+    }
+
     res.json({ status: 'updated' });
   } catch (error) {
     res.status(500).json({ error: 'Failed to update settings' });

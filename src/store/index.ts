@@ -382,7 +382,10 @@ export const usePlayerStore = create<PlayerState>()(
                 llmModelName: data.llmModelName || 'gpt-4',
                 genreMatrixLastRun: data.genreMatrixLastRun || null,
                 genreMatrixLastResult: data.genreMatrixLastResult || null,
-                genreMatrixProgress: data.genreMatrixProgress || null
+                genreMatrixProgress: data.genreMatrixProgress || null,
+                lastFmApiKey: data.lastFmApiKey || '',
+                geniusApiKey: data.geniusApiKey || '',
+                preferredProvider: data.preferredProvider || 'lastfm'
               });
             }
           } catch (e) {
@@ -407,7 +410,10 @@ export const usePlayerStore = create<PlayerState>()(
                 hubGenerationSchedule: state.hubGenerationSchedule,
                 llmBaseUrl: state.llmBaseUrl,
                 llmApiKey: state.llmApiKey,
-                llmModelName: state.llmModelName
+                llmModelName: state.llmModelName,
+                lastFmApiKey: state.lastFmApiKey,
+                geniusApiKey: state.geniusApiKey,
+                preferredProvider: state.preferredProvider
               };
               await fetch('/api/settings', {
                  method: 'POST',
@@ -977,8 +983,9 @@ export const usePlayerStore = create<PlayerState>()(
         authToken: state.authToken,
         currentUser: state.currentUser,
 
-        // We do *not* persist DB settings (API keys) in localStorage, we ONLY load them from DB on mount
-        // by calling loadSettings() from an effect in the app root
+        // We do *not* persist DB settings in localStorage, we ONLY load them from DB on mount
+        // by calling loadSettings() from an effect in the app root.
+        // Provider keys are persisted in both localStorage (fast boot) and DB (cross-device sync).
       }),
     }
   )

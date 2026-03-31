@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { usePlayerStore } from '../store/index';
 import { useLlmConnectionTest } from '../hooks/useLlmConnectionTest';
+import { useProviderConnectionTest } from '../hooks/useProviderConnectionTest';
 import { ConfirmModal } from './ConfirmModal';
 import { PromptModal } from './PromptModal';
 import { Toast, type ToastType } from './Toast';
@@ -54,6 +55,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     const [isRunningMatrix, setIsRunningMatrix] = useState(false);
     const [mappings, setMappings] = useState<Record<string, string>>({});
     const [dirStats, setDirStats] = useState<Record<string, { totalTracks: number; withMetadata: number; analyzed: number }>>({});
+    const [dirStatsLoading, setDirStatsLoading] = useState(false);
 
     // Dialog state
     const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; confirmLabel?: string; onConfirm: () => void } | null>(null);
@@ -106,6 +108,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             if (!llmModelName) setSettings({ llmModelName: models[0] });
         },
     });
+
+    const {
+        lastFmStatus,
+        lastFmMessage,
+        geniusStatus,
+        geniusMessage,
+        testLastFm,
+        testGenius,
+    } = useProviderConnectionTest();
 
     const fetchMappings = async () => {
         try {
@@ -315,6 +326,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     // Fetch directory stats (reusable)
     const fetchDirStats = useCallback(async () => {
         try {
+            setDirStatsLoading(true);
             const authHeaders = getAuthHeader();
             const res = await fetch('/api/library/stats', { headers: { ...authHeaders } });
             if (!res.ok) return;
@@ -326,6 +338,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             setDirStats(statsMap);
         } catch (e) {
             console.error('Failed to fetch directory stats', e);
+        } finally {
+            setDirStatsLoading(false);
         }
     }, [getAuthHeader]);
 
@@ -335,6 +349,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             fetchDirStats();
         }
     }, [activeTab, fetchDirStats]);
+
+    // Auto-refresh dir stats when a scan completes while Library tab is visible
+    const prevIsScanning = React.useRef(isScanning);
+    React.useEffect(() => {
+        if (prevIsScanning.current && !isScanning && activeTab === 'Library') {
+            fetchDirStats();
+        }
+        prevIsScanning.current = isScanning;
+    }, [isScanning, activeTab, fetchDirStats]);
 
     const tabs = [
         { id: 'My Account', label: 'My Account', category: 'User Settings' },
@@ -703,8 +726,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                     withMetadata: acc.withMetadata + s.withMetadata,
                                                     analyzed: acc.analyzed + s.analyzed,
                                                 }), { totalTracks: 0, withMetadata: 0, analyzed: 0 });
+                                                if (dirStatsLoading) {
+                                                    return (
+                                                        <div className="mt-2">
+                                                            <div className="flex justify-between text-xs text-[var(--color-text-secondary)] mb-1">
+                                                                <span>Library Coverage</span>
+                                                                <span className="animate-pulse">Loading...</span>
+                                                            </div>
+                                                            <div className="w-full h-2 rounded-full bg-[var(--glass-border)] overflow-hidden" />
+                                                        </div>
+                                                    );
+                                                }
                                                 if (totalStats.totalTracks === 0) return null;
-                                                const pct = totalStats.totalTracks > 0 ? Math.round((totalStats.analyzed / totalStats.totalTracks) * 100) : 0;
+                                                const pct = Math.round((totalStats.analyzed / totalStats.totalTracks) * 100);
                                                 return (
                                                     <div className="mt-2">
                                                         <div className="flex justify-between text-xs text-[var(--color-text-secondary)] mb-1">
@@ -1028,11 +1062,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                         <div className="flex flex-col gap-4">
                                             <div>
                                                 <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">Last.fm API Key</label>
-                                                <input type="text" value={lastFmApiKey} onChange={e => setLastFmApiKey(e.target.value)} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none" />
+                                                <div className="flex gap-2">
+                                                    <input type="text" value={lastFmApiKey} onChange={e => setLastFmApiKey(e.target.value)} className="flex-1 p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none" />
+                                                    <button onClick={() => testLastFm(lastFmApiKey)} disabled={lastFmStatus === 'testing' || !lastFmApiKey} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">
+                                                        {lastFmStatus === 'testing' ? 'Testing...' : 'Test'}
+                                                    </button>
+                                                </div>
+                                                {lastFmStatus === 'success' && <span className="text-green-500 font-semibold text-sm mt-1 block">✓ {lastFmMessage}</span>}
+                                                {lastFmStatus === 'error' && <span className="text-red-500 font-semibold text-sm mt-1 block">✗ {lastFmMessage}</span>}
                                             </div>
                                             <div>
                                                 <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">Genius Access Token</label>
-                                                <input type="text" value={geniusApiKey} onChange={e => setGeniusApiKey(e.target.value)} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none" />
+                                                <div className="flex gap-2">
+                                                    <input type="text" value={geniusApiKey} onChange={e => setGeniusApiKey(e.target.value)} className="flex-1 p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none" />
+                                                    <button onClick={() => testGenius(geniusApiKey)} disabled={geniusStatus === 'testing' || !geniusApiKey} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">
+                                                        {geniusStatus === 'testing' ? 'Testing...' : 'Test'}
+                                                    </button>
+                                                </div>
+                                                {geniusStatus === 'success' && <span className="text-green-500 font-semibold text-sm mt-1 block">✓ {geniusMessage}</span>}
+                                                {geniusStatus === 'error' && <span className="text-red-500 font-semibold text-sm mt-1 block">✗ {geniusMessage}</span>}
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">Preferred Provider</label>
+                                                <select value={preferredProvider} onChange={e => setPreferredProvider(e.target.value as 'lastfm' | 'genius')} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none">
+                                                    <option value="lastfm">Last.fm</option>
+                                                    <option value="genius">Genius</option>
+                                                </select>
                                             </div>
                                         </div>
                                     </div>
