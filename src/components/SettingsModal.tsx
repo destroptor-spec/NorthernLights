@@ -894,7 +894,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                             >
                                                 <option value="Background">Background (1 process)</option>
                                                 <option value="Balanced">Balanced (4 processes)</option>
-                                                <option value="Maximum">Maximum (6 processes)</option>
+                                                <option value="Performance">Performance (8 processes)</option>
+                                                <option value="Intensive">Intensive (16 processes)</option>
+                                                <option value="Maximum">Maximum (all CPU cores)</option>
                                             </select>
                                         </div>
 

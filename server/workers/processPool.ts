@@ -24,6 +24,11 @@ export class ChildProcessPool {
     return this.activeCount;
   }
 
+  // Total spawned worker processes (idle + busy). Use this for UI display.
+  public getWorkerCount() {
+    return this.workers.length;
+  }
+
   public async init() {
     for (let i = 0; i < this.poolSize; i++) {
        this.spawnWorker();

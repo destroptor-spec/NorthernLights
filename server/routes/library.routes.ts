@@ -248,8 +248,15 @@ async function getAnalysisConcurrency(): Promise<number> {
     const { getSystemSetting } = await import('../database');
     const setting = await getSystemSetting('audioAnalysisCpu');
     switch (setting) {
-      case 'Background': return 1;
-      case 'Maximum': return 6;
+      case 'Background':   return 1;
+      case 'Balanced':     return 4;
+      case 'Performance':  return 8;
+      case 'Intensive':    return 16;
+      case 'Maximum': {
+        // Use all logical CPU cores reported by the OS
+        const { cpus } = await import('os');
+        return Math.max(1, cpus().length);
+      }
       default: return 4; // Balanced
     }
   } catch {
@@ -294,7 +301,7 @@ async function processAnalysisBatch(tracks: { id: string; filePath: Buffer; titl
             }
           });
 
-          scanStatus.activeWorkers = pool.getActiveCount();
+          scanStatus.activeWorkers = pool.getWorkerCount();
           broadcastScanStatus();
 
           const result = await jobPromise;
@@ -313,7 +320,7 @@ async function processAnalysisBatch(tracks: { id: string; filePath: Buffer; titl
         } finally {
           activeSet.delete(displayName);
           scanStatus.activeFiles = Array.from(activeSet);
-          scanStatus.activeWorkers = pool.getActiveCount();
+          scanStatus.activeWorkers = pool.getWorkerCount();
           broadcastScanStatus();
         }
       }
