@@ -1,9 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { usePlayerStore } from '../store/index';
-import { User, LogOut, ChevronDown } from 'lucide-react';
+import { User, LogOut, ChevronDown, Settings } from 'lucide-react';
 
-export const UserMenu: React.FC = () => {
+interface UserMenuProps {
+  onOpenSettings?: () => void;
+}
+
+export const UserMenu: React.FC<UserMenuProps> = ({ onOpenSettings }) => {
   const currentUser = usePlayerStore(state => state.currentUser);
   const clearAuthToken = usePlayerStore(state => state.clearAuthToken);
   const [isOpen, setIsOpen] = useState(false);
@@ -36,7 +40,7 @@ export const UserMenu: React.FC = () => {
       <button
         ref={buttonRef}
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 px-3 py-2 rounded-full bg-[var(--color-surface)] border border-[var(--glass-border)] hover:bg-[var(--color-surface-hover)] transition-all text-sm"
+        className="flex items-center gap-2 px-3 h-9 rounded-full bg-[var(--color-surface)] border border-[var(--glass-border)] hover:bg-[var(--color-surface-hover)] transition-all text-sm"
       >
         <div className="w-6 h-6 rounded-full bg-[var(--color-primary)]/20 text-[var(--color-primary)] flex items-center justify-center">
           <User className="w-3.5 h-3.5" />
@@ -55,6 +59,15 @@ export const UserMenu: React.FC = () => {
             <p className="font-semibold text-[var(--color-text-primary)] text-sm">{currentUser.username}</p>
             <p className="text-xs text-[var(--color-text-muted)] capitalize">{currentUser.role}</p>
           </div>
+
+          {onOpenSettings && (
+            <button
+              onClick={() => { onOpenSettings(); setIsOpen(false); }}
+              className="md:hidden w-full px-4 py-2.5 text-left text-sm text-[var(--color-text-secondary)] hover:bg-white/[0.06] transition-colors flex items-center gap-2"
+            >
+              <Settings className="w-4 h-4" /> Settings
+            </button>
+          )}
 
           <button
             onClick={() => { clearAuthToken(); setIsOpen(false); }}

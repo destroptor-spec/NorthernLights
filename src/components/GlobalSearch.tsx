@@ -161,7 +161,7 @@ export const GlobalSearch: React.FC = () => {
     };
 
     return (
-        <div ref={containerRef} className="relative z-[60] flex items-center ml-auto">
+        <div ref={containerRef} className="relative z-[60] flex items-center ml-auto h-9">
             <div className={`
                 flex items-center rounded-full border backdrop-blur-md transition-all duration-300 overflow-hidden
                 ${isExpanded 

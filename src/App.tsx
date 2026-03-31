@@ -20,7 +20,7 @@ import { GlobalSearch } from './components/GlobalSearch';
 import { SettingsModal } from './components/SettingsModal';
 import { InviteRegister } from './components/InviteRegister';
 import { UserMenu } from './components/UserMenu';
-import { Settings as SettingsIcon, AudioWaveform } from 'lucide-react';
+import { Settings as SettingsIcon, AudioWaveform, X } from 'lucide-react';
 import { TrackContextMenu } from './components/library/TrackContextMenu';
 import { DatabaseControl } from './components/DatabaseControl';
 
@@ -51,10 +51,18 @@ const App: React.FC = () => {
   const libraryFolders = usePlayerStore(state => state.libraryFolders);
   const rescanLibrary = usePlayerStore(state => state.rescanLibrary);
 
+  const [scannerVisible, setScannerVisible] = React.useState(false);
   const isScanningGlobal = usePlayerStore(state => state.isScanning);
   const scanningFileGlobal = usePlayerStore(state => state.scanningFile);
   const isSidebarCollapsed = usePlayerStore(state => state.isSidebarCollapsed);
   const playlist = usePlayerStore(state => state.playlist);
+  const currentUser = usePlayerStore(state => state.currentUser);
+  const isAdmin = currentUser?.role === 'admin';
+
+  // Auto-show scanner toast when a scan starts
+  React.useEffect(() => {
+    if (isScanningGlobal) setScannerVisible(true);
+  }, [isScanningGlobal]);
 
   const location = useLocation();
 
@@ -263,80 +271,64 @@ const App: React.FC = () => {
   return (
     <>
       <TrackContextMenu />
-      {/* Global Scanning Indicator */}
-      {isScanningGlobal && (
-        <div className="global-scanning-indicator" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', padding: '16px', gap: '8px', width: '320px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', width: '100%' }}>
-            <div className="scanning-spinner"></div>
-            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                <span style={{ fontWeight: 600 }}>
-                  {usePlayerStore.getState().scanPhase === 'analysis' ? 'Analyzing Audio...' : 'Scanning Library...'}
-                </span>
-                <span style={{ 
-                  fontSize: '0.7rem', 
-                  padding: '2px 6px', 
-                  borderRadius: '12px', 
-                  backgroundColor: usePlayerStore.getState().scanPhase === 'analysis' ? '#f59e0b' : 'var(--color-primary)', 
-                  color: 'white',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em'
-                }}>
-                  {usePlayerStore.getState().scanPhase}
-                </span>
-              </div>
-              
-              {(usePlayerStore.getState().scanPhase === 'metadata' || usePlayerStore.getState().scanPhase === 'analysis') ? (
-                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', marginTop: '2px', display: 'flex', justifyContent: 'space-between' }}>
-                  <span>{usePlayerStore.getState().scannedFiles} / {usePlayerStore.getState().totalFiles} {usePlayerStore.getState().scanPhase === 'analysis' ? 'tracks' : 'files'}</span>
-                  <span>{usePlayerStore.getState().activeWorkers} workers</span>
-                </div>
-              ) : (
-                <div style={{ 
-                  fontSize: '0.8rem', 
-                  color: 'var(--color-text-secondary)', 
-                  marginTop: '2px',
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  width: '100%'
-                }}>
-                  {scanningFileGlobal || 'Discovering files...'}
-                </div>
-              )}
-            </div>
-          </div>
+      {/* Global Scanning Indicator (admin only) */}
+      {isAdmin && isScanningGlobal && scannerVisible && (() => {
+        const scanPhase = usePlayerStore.getState().scanPhase;
+        const isAnalysis = scanPhase === 'analysis';
+        const isMetaOrAnalysis = scanPhase === 'metadata' || scanPhase === 'analysis';
+        const activeFiles = usePlayerStore.getState().activeFiles;
 
-          {(usePlayerStore.getState().scanPhase === 'metadata' || usePlayerStore.getState().scanPhase === 'analysis') && usePlayerStore.getState().activeFiles.length > 0 && (
-            <div style={{ 
-              width: '100%', 
-              marginTop: '8px', 
-              paddingTop: '8px', 
-              borderTop: '1px solid var(--glass-border)',
-              fontSize: '0.75rem',
-              color: 'var(--color-text-secondary)',
-              maxHeight: '120px',
-              overflowY: 'auto'
-            }}>
-              <div style={{ marginBottom: '4px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
-                {usePlayerStore.getState().scanPhase === 'analysis' ? 'Currently Analyzing:' : 'Currently Processing:'}
-              </div>
-              <ul style={{ listStyleType: 'disc', paddingLeft: '16px', margin: 0, display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                {usePlayerStore.getState().activeFiles.slice(0, 10).map((file, i) => (
-                  <li key={i} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {file}
-                  </li>
-                ))}
-                {usePlayerStore.getState().activeFiles.length > 10 && (
-                  <li style={{ fontStyle: 'italic', listStyleType: 'none', marginLeft: '-16px' }}>
-                    ...and {usePlayerStore.getState().activeFiles.length - 10} more
-                  </li>
+        return (
+          <div className="global-scanning-indicator">
+            <button className="scanner-hide-btn" onClick={() => setScannerVisible(false)} title="Hide">
+              <X size={14} />
+            </button>
+
+            <div className="scan-header-row">
+              <div className="scanning-spinner" />
+              <div className="scan-info-col">
+                <div className="scan-title-row">
+                  <span className="scan-title">
+                    {isAnalysis ? 'Analyzing Audio...' : 'Scanning Library...'}
+                  </span>
+                  <span className={`scan-phase-badge ${isAnalysis ? 'scan-phase-badge--analysis' : 'scan-phase-badge--other'}`}>
+                    {scanPhase}
+                  </span>
+                </div>
+
+                {isMetaOrAnalysis ? (
+                  <div className="scan-progress-row">
+                    <span>{usePlayerStore.getState().scannedFiles} / {usePlayerStore.getState().totalFiles} {isAnalysis ? 'tracks' : 'files'}</span>
+                    <span>{usePlayerStore.getState().activeWorkers} workers</span>
+                  </div>
+                ) : (
+                  <div className="scan-walk-status">
+                    {scanningFileGlobal || 'Discovering files...'}
+                  </div>
                 )}
-              </ul>
+              </div>
             </div>
-          )}
-        </div>
-      )}
+
+            {isMetaOrAnalysis && activeFiles.length > 0 && (
+              <div className="scan-active-files">
+                <div className="scan-active-files-heading">
+                  {isAnalysis ? 'Currently Analyzing:' : 'Currently Processing:'}
+                </div>
+                <ul className="scan-active-files-list">
+                  {activeFiles.slice(0, 10).map((file, i) => (
+                    <li key={i}>{file}</li>
+                  ))}
+                  {activeFiles.length > 10 && (
+                    <li className="scan-active-files-more">
+                      ...and {activeFiles.length - 10} more
+                    </li>
+                  )}
+                </ul>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       <div className="flex h-screen relative z-10 overflow-hidden text-[var(--color-text-primary)]">
 
@@ -347,12 +339,21 @@ const App: React.FC = () => {
           <div className="md:hidden px-4 pt-[max(0.75rem,var(--safe-area-top))] pb-3 flex items-center justify-between border-b border-[var(--glass-border)] bg-[var(--glass-bg)] backdrop-blur-md">
             <AudioWaveform size={22} className="text-[var(--color-primary)]" />
             <div className="flex items-center gap-1">
+              {isAdmin && isScanningGlobal && (
+                <button
+                  onClick={() => setScannerVisible(v => !v)}
+                  className="scan-indicator-btn scan-indicator-btn--dot-only"
+                  title={scannerVisible ? 'Hide scan progress' : 'Show scan progress'}
+                >
+                  <div className="scan-indicator-dot" />
+                </button>
+              )}
               <GlobalSearch />
-              <UserMenu />
+              <UserMenu onOpenSettings={() => setIsSettingsOpen(true)} />
             </div>
           </div>
 
-          <div className="hidden md:flex flex-none gap-3 overflow-x-auto hide-scrollbar z-20 w-full py-3 px-4 md:px-8 lg:px-12">
+          <div className="hidden md:flex items-center flex-none gap-3 overflow-x-auto hide-scrollbar z-20 w-full py-3 px-4 md:px-8 lg:px-12">
             {TAB_CONFIG.map(tab => {
                 const isActive = activeTab === tab.path;
                 return (
@@ -382,7 +383,17 @@ const App: React.FC = () => {
             })}
             <div className="flex items-center gap-2 ml-auto">
               <GlobalSearch />
-              <UserMenu />
+              <UserMenu onOpenSettings={() => setIsSettingsOpen(true)} />
+              {isAdmin && isScanningGlobal && (
+                <button
+                  onClick={() => setScannerVisible(v => !v)}
+                  className="scan-indicator-btn"
+                  title={scannerVisible ? 'Hide scan progress' : 'Show scan progress'}
+                >
+                  <div className="scan-indicator-dot" />
+                  <span>Scanning</span>
+                </button>
+              )}
               <button
                 onClick={() => setIsSettingsOpen(true)}
                 className="p-2 rounded-full text-[var(--color-text-secondary)] bg-black/5 dark:bg-white/[0.06] hover:text-[var(--color-text-primary)] hover:bg-black/10 dark:hover:bg-white/[0.12] transition-all duration-300 border border-[var(--color-border)] hover:border-[var(--glass-border-hover)] flex-shrink-0"
@@ -463,10 +474,7 @@ const App: React.FC = () => {
           {playlist.length > 0 && <MobileMiniPlayer />}
 
           {/* Mobile Bottom Tabs */}
-          <MobileBottomTabs
-            onOpenQueue={() => setIsSidebarOpen(true)}
-            onOpenSettings={() => setIsSettingsOpen(true)}
-          />
+          <MobileBottomTabs />
 
           {/* Keyboard Hint Overlay */}
           <KeyboardHint />

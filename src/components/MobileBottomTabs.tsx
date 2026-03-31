@@ -1,10 +1,5 @@
 import { NavLink, useLocation } from 'react-router-dom';
-import { Home, ListMusic, Mic2, Disc3, Palette, ListPlus, Settings } from 'lucide-react';
-
-interface MobileBottomTabsProps {
-  onOpenQueue: () => void;
-  onOpenSettings: () => void;
-}
+import { Home, ListMusic, Mic2, Disc3, Palette } from 'lucide-react';
 
 const TAB_CONFIG = [
   { path: '/library', label: 'Hub', icon: Home, end: true },
@@ -23,7 +18,7 @@ const getActiveTab = (path: string): string => {
   return '/library';
 };
 
-const MobileBottomTabs: React.FC<MobileBottomTabsProps> = ({ onOpenQueue, onOpenSettings }) => {
+const MobileBottomTabs: React.FC = () => {
   const location = useLocation();
   const activeTab = getActiveTab(location.pathname);
 
@@ -49,27 +44,6 @@ const MobileBottomTabs: React.FC<MobileBottomTabsProps> = ({ onOpenQueue, onOpen
             </NavLink>
           );
         })}
-
-        {/* Divider */}
-        <div className="w-px h-6 bg-[var(--glass-border)] mx-0.5" />
-
-        {/* Queue */}
-        <button
-          onClick={onOpenQueue}
-          className="flex flex-col items-center gap-0.5 px-2 py-1 rounded-lg text-[var(--color-text-muted)] transition-colors duration-150 active:text-[var(--color-text-primary)] min-w-[40px]"
-        >
-          <ListPlus size={20} strokeWidth={1.8} />
-          <span className="text-[10px] font-medium leading-none">Queue</span>
-        </button>
-
-        {/* Settings */}
-        <button
-          onClick={onOpenSettings}
-          className="flex flex-col items-center gap-0.5 px-2 py-1 rounded-lg text-[var(--color-text-muted)] transition-colors duration-150 active:text-[var(--color-text-primary)] min-w-[40px]"
-        >
-          <Settings size={20} strokeWidth={1.8} />
-          <span className="text-[10px] font-medium leading-none">Settings</span>
-        </button>
       </div>
     </nav>
   );
