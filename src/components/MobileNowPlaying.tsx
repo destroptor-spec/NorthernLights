@@ -1,9 +1,10 @@
 import { usePlayerStore } from '../store/index';
 import { useState, useEffect } from 'react';
-import { X, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1, Infinity as InfinityIcon, ListMusic, Cast } from 'lucide-react';
+import { X, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1, Infinity as InfinityIcon, ListMusic, Cast, FileText } from 'lucide-react';
 import ProgressBar from './ProgressBar';
 import { useSwipe } from '../hooks/useSwipe';
 import { castManager } from '../utils/CastManager';
+import { LyricsPanel } from './LyricsPanel';
 
 interface MobileNowPlayingProps {
   onClose: () => void;
@@ -25,9 +26,12 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose }) => {
   const toggleInfinityMode = usePlayerStore((s) => s.toggleInfinityMode);
 
   const [castConnected, setCastConnected] = useState(castManager.isConnected());
+  const [showLyrics, setShowLyrics] = useState(false);
   useEffect(() => {
     castManager.onStateChange = (state) => setCastConnected(state === 'CONNECTED');
   }, []);
+
+  const setIsSidebarCollapsed = usePlayerStore((s) => s.setIsSidebarCollapsed);
 
   const currentTrack = currentIndex !== null ? playlist[currentIndex] : null;
   const isPlaying = playbackState === 'playing';
@@ -65,20 +69,31 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose }) => {
 
       {/* Scrollable content */}
       <div ref={swipeRef} className="flex-1 flex flex-col items-center justify-center px-8 overflow-hidden">
-        {/* Album Art */}
-        <div className="w-56 h-56 sm:w-64 sm:h-64 rounded-2xl overflow-hidden bg-[var(--color-surface)] border border-[var(--glass-border)] shadow-2xl flex-shrink-0">
-          {currentTrack.artUrl ? (
-            <img
-              src={currentTrack.artUrl}
-              alt=""
-              className="w-full h-full object-cover"
+        {/* Album Art or Lyrics */}
+        {showLyrics ? (
+          <div className="w-full max-w-sm flex-shrink-0 bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-2xl p-5">
+            <LyricsPanel
+              trackName={currentTrack.title || currentTrack.path.split(/[\\/]/).pop() || ''}
+              artistName={currentTrack.artist || ''}
+              isVisible={showLyrics}
+              onClose={() => setShowLyrics(false)}
             />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-[var(--color-text-muted)]">
-              <Play size={48} />
-            </div>
-          )}
-        </div>
+          </div>
+        ) : (
+          <div className="w-56 h-56 sm:w-64 sm:h-64 rounded-2xl overflow-hidden bg-[var(--color-surface)] border border-[var(--glass-border)] shadow-2xl flex-shrink-0">
+            {currentTrack.artUrl ? (
+              <img
+                src={currentTrack.artUrl}
+                alt=""
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-[var(--color-text-muted)]">
+                <Play size={48} />
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Track Info */}
         <div className="mt-8 text-center w-full max-w-sm">
@@ -153,11 +168,24 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose }) => {
         {/* Secondary controls row */}
         <div className="flex items-center justify-center gap-8 mt-6">
           <button
-            onClick={onClose}
-            aria-label="Open queue"
+            onClick={() => { setIsSidebarCollapsed(false); onClose(); }}
+            aria-label="Open play queue"
             className="w-9 h-9 flex items-center justify-center rounded-full text-[var(--color-text-muted)] active:scale-90 transition-transform"
           >
             <ListMusic size={20} />
+          </button>
+
+          <button
+            onClick={() => setShowLyrics(!showLyrics)}
+            aria-label="Toggle lyrics"
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border border-[var(--glass-border)] transition-all"
+            style={{
+              opacity: showLyrics ? 1 : 0.4,
+              color: showLyrics ? 'var(--color-primary)' : 'var(--color-text-muted)',
+            }}
+          >
+            <FileText size={16} />
+            Lyrics
           </button>
 
           <button

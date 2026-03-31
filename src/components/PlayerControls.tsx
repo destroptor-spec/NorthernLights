@@ -1,8 +1,9 @@
 import { usePlayerStore } from '../store/index';
 import { useVolumeSync } from '../hooks/useVolumeSync';
 import React, { useEffect, useState } from 'react';
-import { Infinity, Cast } from 'lucide-react';
+import { Infinity, Cast, FileText } from 'lucide-react';
 import { castManager } from '../utils/CastManager';
+import { LyricsPanel } from './LyricsPanel';
 
 /* ─── Inline SVG Icons ─── */
 const IconPrev = () => (
@@ -129,6 +130,7 @@ const PlayerControls = () => {
 
   const [castAvailable, setCastAvailable] = useState(false);
   const [castConnected, setCastConnected] = useState(false);
+  const [showLyrics, setShowLyrics] = useState(false);
   useEffect(() => {
     const handleCastReady = () => {
       setCastAvailable(true);
@@ -150,7 +152,7 @@ const PlayerControls = () => {
   return (
     <div className="w-full flex items-center justify-between gap-6 px-2">
       {/* Left Column: Aux Controls */}
-      <div className="flex-1 flex justify-start items-center pl-2">
+      <div className="flex-1 flex justify-start items-center pl-2 gap-2 relative">
         {castAvailable && (
           <button
             onClick={() => castManager.requestSession()}
@@ -160,6 +162,26 @@ const PlayerControls = () => {
           >
             <Cast size={20} />
           </button>
+        )}
+        {currentTrack && (
+          <button
+            onClick={() => setShowLyrics(!showLyrics)}
+            className="transition-colors"
+            style={{ color: showLyrics ? 'var(--color-primary)' : 'var(--color-text-muted)' }}
+            title="Lyrics"
+          >
+            <FileText size={18} />
+          </button>
+        )}
+        {showLyrics && currentTrack && (
+          <div className="absolute bottom-full left-0 mb-3 w-64 bg-[var(--glass-bg)] backdrop-blur-2xl border border-[var(--glass-border)] rounded-2xl p-4 shadow-2xl z-50">
+            <LyricsPanel
+              trackName={currentTrack.title || currentTrack.path.split(/[\\/]/).pop() || ''}
+              artistName={currentTrack.artist || ''}
+              isVisible={showLyrics}
+              onClose={() => setShowLyrics(false)}
+            />
+          </div>
         )}
       </div>
 
