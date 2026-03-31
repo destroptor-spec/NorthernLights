@@ -2,6 +2,10 @@ import { Response } from 'express';
 import { migrateEntityIds } from './database';
 import { genreMatrixService } from './services/genreMatrix.service';
 
+import { EventEmitter } from 'events';
+
+export const settingsEmitter = new EventEmitter();
+
 // Global DB connectivity flag
 export let dbConnected = false;
 

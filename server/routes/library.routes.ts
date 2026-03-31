@@ -79,116 +79,165 @@ async function getScannerConcurrency(): Promise<number> {
 }
 
 async function processMetadataBatch(fileBufs: Buffer[], concurrency: number): Promise<void> {
+  const { settingsEmitter } = await import('../state');
   let index = 0;
   const activeSet = new Set<string>();
+  const total = fileBufs.length;
 
-  const workerCount = Math.min(concurrency, fileBufs.length);
-  const pool = new ChildProcessPool(path.resolve(__dirname, '../workers/scanTrack.ts'), workerCount);
+  let currentConcurrency = Math.min(concurrency, total);
+  const pool = new ChildProcessPool(path.resolve(__dirname, '../workers/scanTrack.ts'), currentConcurrency);
   await pool.init();
 
-  async function worker() {
-    while (true) {
-      const i = index++;
-      if (i >= fileBufs.length) return;
+  let activeLoops = 0;
+  let orchestrationActive = true;
+  const activePromises = new Set<Promise<void>>();
 
-      const fullBuf = fileBufs[i];
-      const dbPath = fullBuf.toString('base64');
-      const utf8StringPath = fullBuf.toString('utf8');
-      const nameStr = path.basename(utf8StringPath);
-      let activeLabel = nameStr; 
+  const runWorkerLoop = async () => {
+    activeLoops++;
+    try {
+      while (orchestrationActive && activeLoops <= currentConcurrency && index < total) {
+        const i = index++;
+        if (i >= total) break;
 
-      activeSet.add(activeLabel);
-      scanStatus.activeFiles = Array.from(activeSet);
-      scanStatus.currentFile = activeLabel;
-      scanStatus.scannedFiles++;
-      scanStatus.activeWorkers = pool.getActiveCount();
-      broadcastScanStatus();
+        const fullBuf = fileBufs[i];
+        const dbPath = fullBuf.toString('base64');
+        const utf8StringPath = fullBuf.toString('utf8');
+        const nameStr = path.basename(utf8StringPath);
+        let activeLabel = nameStr; 
 
-      try {
-        const result = await pool.runJob({
-          id: dbPath,
-          payload: {
+        activeSet.add(activeLabel);
+        scanStatus.activeFiles = Array.from(activeSet);
+        scanStatus.currentFile = activeLabel;
+        scanStatus.scannedFiles++;
+        try {
+          const jobPromise = pool.runJob({
             id: dbPath,
-            filePathBase64: dbPath,
-            nameStr: nameStr
-          }
-        });
-
-        if (result.metadata) {
-          const metadata = result.metadata;
-          const displayArtist = metadata.artist || metadata.albumartist;
-          const displayTitle = metadata.title || nameStr;
-          activeLabel = displayArtist ? `${displayArtist} - ${displayTitle}` : nameStr;
-          
-          activeSet.delete(nameStr);
-          activeSet.add(activeLabel);
-          scanStatus.activeFiles = Array.from(activeSet);
-          scanStatus.currentFile = activeLabel;
-          broadcastScanStatus();
-
-          let artists = metadata.artists;
-          if (!artists && metadata.artist) {
-            const splitRegex = /\s+(?:feat\.?|ft\.?|featuring|&)\s+(?!$)/i;
-            const parts = metadata.artist.split(splitRegex).map((s: string) => s.trim()).filter(Boolean);
-            if (parts.length > 0) artists = parts;
-          }
-
-          const albumArtistName = metadata.albumartist || metadata.artist || null;
-          const albumTitle = metadata.album || null;
-          const genreName = metadata.genre ? metadata.genre[0] : null;
-
-          let artistId = null;
-          let albumId = null;
-          let genreId = null;
-          try { if (albumArtistName) artistId = await getOrCreateArtist(albumArtistName); } catch (e) { /* skip */ }
-          if (artists) {
-            for (const a of artists) {
-              try { await getOrCreateArtist(a); } catch (e) { /* skip */ }
+            payload: {
+              id: dbPath,
+              filePathBase64: dbPath,
+              nameStr: nameStr
             }
-          }
-          try { if (albumTitle) albumId = await getOrCreateAlbum(albumTitle, albumArtistName); } catch (e) { /* skip */ }
-          try { if (genreName) genreId = await getOrCreateGenre(genreName); } catch (e) { /* skip */ }
-
-          await addTrack({
-            path: dbPath,
-            title: metadata.title || nameStr,
-            artist: metadata.artist || metadata.albumartist || null,
-            albumArtist: metadata.albumartist || null,
-            artists: artists || null,
-            album: albumTitle,
-            genre: genreName,
-            duration: metadata.duration || 0,
-            trackNumber: metadata.trackNumber || null,
-            year: metadata.year || null,
-            releaseType: metadata.releaseType || null,
-            isCompilation: metadata.isCompilation || false,
-            bitrate: metadata.bitrate || null,
-            format: metadata.format || null,
-            artistId,
-            albumId,
-            genreId
           });
 
-          if (!metadata.genre || metadata.genre.length === 0) {
-            console.warn(`[Scanner] No genre found for "${nameStr}". Hop-cost logic will be restricted.`);
+          scanStatus.activeWorkers = pool.getActiveCount();
+          broadcastScanStatus();
+
+          const result = await jobPromise;
+
+          if (result.metadata) {
+            const metadata = result.metadata;
+            const displayArtist = metadata.artist || metadata.albumartist;
+            const displayTitle = metadata.title || nameStr;
+            activeLabel = displayArtist ? `${displayArtist} - ${displayTitle}` : nameStr;
+            
+            activeSet.delete(nameStr);
+            activeSet.add(activeLabel);
+            scanStatus.activeFiles = Array.from(activeSet);
+            scanStatus.currentFile = activeLabel;
+            broadcastScanStatus();
+
+            let artists = metadata.artists;
+            if (!artists && metadata.artist) {
+              const splitRegex = /\s+(?:feat\.?|ft\.?|featuring|&)\s+(?!$)/i;
+              const parts = metadata.artist.split(splitRegex).map((s: string) => s.trim()).filter(Boolean);
+              if (parts.length > 0) artists = parts;
+            }
+
+            const albumArtistName = metadata.albumartist || metadata.artist || null;
+            const albumTitle = metadata.album || null;
+            // Split dirty genre tags like "folk, country, blues" into individual genres
+            let genreName: string | null = null;
+            if (metadata.genre && metadata.genre.length > 0) {
+                const raw = metadata.genre[0];
+                const parts = raw.split(/[,;/&]/).map((s: string) => s.trim()).filter(Boolean);
+                genreName = parts.length > 0 ? parts[0] : null;
+            }
+
+            let artistId = null;
+            let albumId = null;
+            let genreId = null;
+            try { if (albumArtistName) artistId = await getOrCreateArtist(albumArtistName); } catch (e) { /* skip */ }
+            if (artists) {
+              for (const a of artists) {
+                try { await getOrCreateArtist(a); } catch (e) { /* skip */ }
+              }
+            }
+            try { if (albumTitle) albumId = await getOrCreateAlbum(albumTitle, albumArtistName); } catch (e) { /* skip */ }
+            try { if (genreName) genreId = await getOrCreateGenre(genreName); } catch (e) { /* skip */ }
+
+            await addTrack({
+              path: dbPath,
+              title: metadata.title || nameStr,
+              artist: metadata.artist || metadata.albumartist || null,
+              albumArtist: metadata.albumartist || null,
+              artists: artists || null,
+              album: albumTitle,
+              genre: genreName,
+              duration: metadata.duration || 0,
+              trackNumber: metadata.trackNumber || null,
+              year: metadata.year || null,
+              releaseType: metadata.releaseType || null,
+              isCompilation: metadata.isCompilation || false,
+              bitrate: metadata.bitrate || null,
+              format: metadata.format || null,
+              artistId,
+              albumId,
+              genreId
+            });
+
+            if (!metadata.genre || metadata.genre.length === 0) {
+              console.warn(`[Scanner] No genre found for "${nameStr}". Hop-cost logic will be restricted.`);
+            }
+          } else {
+            console.warn(`Failed to parse metadata for ${nameStr}: ${result.error}`);
+            await addTrack({ path: dbPath, title: nameStr, bitrate: null, format: null });
           }
-        } else {
-          console.warn(`Failed to parse metadata for ${nameStr}: ${result.error}`);
+        } catch (err) {
+          console.warn(`Failed metadata processing for ${nameStr}`, err);
           await addTrack({ path: dbPath, title: nameStr, bitrate: null, format: null });
+        } finally {
+          activeSet.delete(activeLabel);
+          scanStatus.activeFiles = Array.from(activeSet);
+          scanStatus.activeWorkers = pool.getActiveCount();
+          broadcastScanStatus();
         }
-      } catch (err) {
-        console.warn(`Failed metadata processing for ${nameStr}`, err);
-        await addTrack({ path: dbPath, title: nameStr, bitrate: null, format: null });
-      } finally {
-        activeSet.delete(activeLabel);
-        scanStatus.activeFiles = Array.from(activeSet);
-        scanStatus.activeWorkers = pool.getActiveCount();
-        broadcastScanStatus();
       }
+    } finally {
+      activeLoops--;
     }
+  };
+
+  const updateConcurrency = (newLimit: number) => {
+    currentConcurrency = newLimit;
+    pool.resize(newLimit);
+    while (activeLoops < currentConcurrency && index < total) {
+      const p = runWorkerLoop();
+      activePromises.add(p);
+      p.finally(() => activePromises.delete(p));
+    }
+  };
+
+  const onSettingsChanged = async () => {
+    if (!orchestrationActive) return;
+    try {
+      const newLimitConf = await getScannerConcurrency();
+      const newLimit = Math.min(newLimitConf, total);
+      if (newLimit !== currentConcurrency) {
+        console.log(`[Scanner] Dynamically scaling metadata concurrency ${currentConcurrency} -> ${newLimit}`);
+        updateConcurrency(newLimit);
+      }
+    } catch { /* ignore */ }
+  };
+
+  settingsEmitter.on('concurrencyChanged', onSettingsChanged);
+  updateConcurrency(currentConcurrency);
+
+  while (index < total || activePromises.size > 0) {
+    await new Promise(r => setTimeout(r, 100));
   }
 
-  await Promise.all(Array.from({ length: workerCount }, worker));
+  orchestrationActive = false;
+  settingsEmitter.off('concurrencyChanged', onSettingsChanged);
   pool.terminate();
 }
 
@@ -209,59 +258,101 @@ async function getAnalysisConcurrency(): Promise<number> {
 }
 
 async function processAnalysisBatch(tracks: { id: string; filePath: Buffer; title: string; artist?: string | null }[], concurrency: number): Promise<void> {
+  const { settingsEmitter } = await import('../state');
   let index = 0;
   const total = tracks.length;
   const activeSet = new Set<string>();
 
-  const poolSize = Math.min(concurrency, total);
-  const pool = new ChildProcessPool(path.resolve(__dirname, '../workers/analyzeTrack.ts'), poolSize);
+  let currentConcurrency = Math.min(concurrency, total);
+  const pool = new ChildProcessPool(path.resolve(__dirname, '../workers/analyzeTrack.ts'), currentConcurrency);
   await pool.init();
 
-  async function worker() {
-    while (true) {
-      const i = index++;
-      if (i >= total) return;
+  let activeLoops = 0;
+  let orchestrationActive = true;
+  const activePromises = new Set<Promise<void>>();
 
-      const track = tracks[i];
-      const displayName = track.artist ? `${track.artist} - ${track.title}` : track.title;
-      
-      activeSet.add(displayName);
-      scanStatus.activeFiles = Array.from(activeSet);
-      scanStatus.currentFile = displayName;
-      scanStatus.scannedFiles++;
-      scanStatus.activeWorkers = pool.getActiveCount();
-      broadcastScanStatus();
+  const runWorkerLoop = async () => {
+    activeLoops++;
+    try {
+      while (orchestrationActive && activeLoops <= currentConcurrency && index < total) {
+        const i = index++;
+        if (i >= total) break;
 
-      try {
-        const result = await pool.runJob({
-          id: track.id,
-          payload: {
-            id: track.id,
-            filePathBase64: track.filePath.toString('base64')
-          }
-        });
-
-        if (result.audioFeatures) {
-          try {
-            await addTrackFeatures(result.id, result.audioFeatures);
-          } catch (err) {
-            console.warn(`[Analysis] DB write failed for track ${result.id}:`, err);
-          }
-        } else if (result.error) {
-          console.warn(`[Analysis] Failed for "${track.title || result.id}": ${result.error}`);
-        }
-      } catch (err) {
-        console.error(`[Analysis] Job failed for "${track.title}":`, err);
-      } finally {
-        activeSet.delete(displayName);
+        const track = tracks[i];
+        const displayName = track.artist ? `${track.artist} - ${track.title}` : track.title;
+        
+        activeSet.add(displayName);
         scanStatus.activeFiles = Array.from(activeSet);
-        scanStatus.activeWorkers = pool.getActiveCount();
-        broadcastScanStatus();
+        scanStatus.currentFile = displayName;
+        scanStatus.scannedFiles++;
+        try {
+          const jobPromise = pool.runJob({
+            id: track.id,
+            payload: {
+              id: track.id,
+              filePathBase64: track.filePath.toString('base64')
+            }
+          });
+
+          scanStatus.activeWorkers = pool.getActiveCount();
+          broadcastScanStatus();
+
+          const result = await jobPromise;
+
+          if (result.audioFeatures) {
+            try {
+              await addTrackFeatures(result.id, result.audioFeatures);
+            } catch (err) {
+              console.warn(`[Analysis] DB write failed for track ${result.id}:`, err);
+            }
+          } else if (result.error) {
+            console.warn(`[Analysis] Failed for "${track.title || result.id}": ${result.error}`);
+          }
+        } catch (err) {
+          console.error(`[Analysis] Job failed for "${track.title}":`, err);
+        } finally {
+          activeSet.delete(displayName);
+          scanStatus.activeFiles = Array.from(activeSet);
+          scanStatus.activeWorkers = pool.getActiveCount();
+          broadcastScanStatus();
+        }
       }
+    } finally {
+      activeLoops--;
     }
+  };
+
+  const updateConcurrency = (newLimit: number) => {
+    currentConcurrency = newLimit;
+    pool.resize(newLimit);
+    while (activeLoops < currentConcurrency && index < total) {
+      const p = runWorkerLoop();
+      activePromises.add(p);
+      p.finally(() => activePromises.delete(p));
+    }
+  };
+
+  const onSettingsChanged = async () => {
+    if (!orchestrationActive) return;
+    try {
+      const newLimitConf = await getAnalysisConcurrency();
+      const newLimit = Math.min(newLimitConf, total);
+      if (newLimit !== currentConcurrency) {
+        console.log(`[Analysis] Dynamically scaling worker concurrency ${currentConcurrency} -> ${newLimit}`);
+        updateConcurrency(newLimit);
+      }
+    } catch { /* ignore */ }
+  };
+
+  settingsEmitter.on('concurrencyChanged', onSettingsChanged);
+  updateConcurrency(currentConcurrency);
+
+  while (index < total || activePromises.size > 0) {
+    await new Promise(r => setTimeout(r, 100));
   }
 
-  await Promise.all(Array.from({ length: poolSize }, worker));
+  orchestrationActive = false;
+  settingsEmitter.off('concurrencyChanged', onSettingsChanged);
   pool.terminate();
 }
 
@@ -480,7 +571,7 @@ router.get('/', async (req, res) => {
 // Get per-directory stats (total tracks, with metadata, analyzed)
 router.get('/stats', async (req, res) => {
   try {
-    const { getDirectories, getTrackCountWithFeatures } = await import('../database');
+    const { getDirectories } = await import('../database');
     const db = await (await import('../database')).initDB();
 
     const dirs = await getDirectories();
@@ -488,45 +579,47 @@ router.get('/stats', async (req, res) => {
       return res.json({ directories: [] });
     }
 
-    // Load all tracks with just path and key metadata fields, plus feature existence
-    const tracksRes = await db.query(`
-      SELECT t.path,
-             t.artist IS NOT NULL AND t.artist != '' AS has_artist,
-             t.album IS NOT NULL AND t.album != '' AS has_album,
-             tf.track_id IS NOT NULL AS has_features
-      FROM tracks t
-      LEFT JOIN track_features tf ON t.id = tf.track_id
-    `);
+    // Base64-encode the directory path and escape SQL LIKE special chars (% and _)
+    const toLikePrefix = (dirPath: string) =>
+      Buffer.from(dirPath, 'utf8').toString('base64')
+        .replace(/%/g, '\\%')
+        .replace(/_/g, '\\_');
 
-    // Build per-directory stats
-    const dirStats: Record<string, { total: number; withMetadata: number; analyzed: number }> = {};
-    for (const d of dirs) {
-      dirStats[d] = { total: 0, withMetadata: 0, analyzed: 0 };
-    }
+    const result = [];
 
-    for (const row of tracksRes.rows) {
-      const fileBuf = Buffer.from(row.path, 'base64');
-      for (const dir of dirs) {
-        const dirBuf = Buffer.from(dir, 'utf8');
-        if (fileBuf.length >= dirBuf.length && fileBuf.slice(0, dirBuf.length).equals(dirBuf)) {
-          dirStats[dir].total++;
-          if (row.has_artist || row.has_album) {
-            dirStats[dir].withMetadata++;
-          }
-          if (row.has_features) {
-            dirStats[dir].analyzed++;
-          }
-          break;
+    for (const dir of dirs) {
+      const dirBuf = Buffer.from(dir, 'utf8');
+      const likePrefix = toLikePrefix(dir);
+
+      // SQL pre-filter: only rows whose base64 path starts with this directory's base64
+      const tracksRes = await db.query(`
+        SELECT t.path,
+               t.artist IS NOT NULL AND t.artist != '' AS has_artist,
+               t.album IS NOT NULL AND t.album != '' AS has_album,
+               tf.track_id IS NOT NULL AS has_features
+        FROM tracks t
+        LEFT JOIN track_features tf ON t.id = tf.track_id
+        WHERE t.path LIKE $1 || '%'
+      `, [likePrefix]);
+
+      let total = 0;
+      let withMetadata = 0;
+      let analyzed = 0;
+
+      for (const row of tracksRes.rows) {
+        const fileBuf = Buffer.from(row.path, 'base64');
+        // Precise byte-level check: prefix must match and fall on a path separator boundary
+        const prefixMatches = fileBuf.length >= dirBuf.length && fileBuf.slice(0, dirBuf.length).equals(dirBuf);
+        const atBoundary = fileBuf.length === dirBuf.length || fileBuf[dirBuf.length] === 0x2F; // '/'
+        if (prefixMatches && atBoundary) {
+          total++;
+          if (row.has_artist || row.has_album) withMetadata++;
+          if (row.has_features) analyzed++;
         }
       }
-    }
 
-    const result = dirs.map(d => ({
-      path: d,
-      totalTracks: dirStats[d].total,
-      withMetadata: dirStats[d].withMetadata,
-      analyzed: dirStats[d].analyzed,
-    }));
+      result.push({ path: dir, totalTracks: total, withMetadata, analyzed });
+    }
 
     res.json({ directories: result });
   } catch (error) {

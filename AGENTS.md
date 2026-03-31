@@ -108,7 +108,7 @@ Library scanning operates in three distinct phases:
    - **15-Second Decode**: Captures enough audio for accurate features while minimizing memory
    - **Symlink Workaround**: Non-ASCII filenames handled via temp symlinks in `/tmp/am-*/`
    - **Safe Essentia**: Individual algorithm error handling with graceful fallbacks
-   - **Results**: 7-dimensional acoustic vectors stored in `track_features` table
+   - **Results**: 20-dimensional feature vectors (7D acoustic semantic + 13D MFCC) stored in `track_features` table
 
 **API Endpoints:**
 - `POST /api/library/scan` — Full three-phase scan
@@ -126,7 +126,7 @@ Library scanning operates in three distinct phases:
 
 ## Server Services (server/services/)
 - `audioExtraction.service.ts` — ffmpeg subprocess decoding + Essentia.js WASM analysis. Smart seeking (35% into track), 15-second decode, non-ASCII filename symlink workaround, safe Essentia with individual algorithm error handling.
-- `recommendation.service.ts` — Infinity Mode and Hub playlist generation using pgvector HNSW similarity search + genre hop cost adjacency matrices.
+- `recommendation.service.ts` — Infinity Mode and Hub playlist generation using 20-dimensional pgvector HNSW similarity search (acoustic + MFCC) and genre hop cost adjacency matrices. Timbre Imputation bridging for LLM playlists.
 - `llm.service.ts` — LLM integration for natural language playlist generation. Supports local providers (LM Studio, Ollama) and cloud (OpenAI).
 - `genreMatrix.service.ts` — LLM-assisted 39-genre ontology classification with diff-based updates.
 

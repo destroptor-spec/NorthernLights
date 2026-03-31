@@ -1,5 +1,14 @@
 # Project Memory / Changelog
 
+## [2026-03-31] V16: 20-Dimensional Dual-Vector Audio Recommendation Architecture
+- **Dual-Vector Schema**: `track_features` table extended with `mfcc_vector VECTOR(13)` (nullable). Additive schema migration — existing data is preserved. Independent HNSW index (`track_features_mfcc_idx`) added for fast 13D ANN search.
+- **MFCC Extraction (Essentia.js)**: `audioExtraction.service.ts` now runs `ess.MFCC(spectrum)` inside the existing `safeCall` wrapper after the 7-feature block. Each of the 13 coefficients is sigmoid-normalized to `[0,1]` (scale 20 for k=0, scale 8 for k>0). Falls back to `0.5` per coefficient if spectrum is unavailable. `AudioFeatures` interface extended with `mfcc_vector: [13 floats]`.
+- **Boot-time MFCC Migrator**: `server/index.ts` fires a non-blocking IIFE 8 seconds after startup that calls `getTracksWithoutMfcc()` and runs `runBackgroundAnalysis()` at concurrency=1 to silently backfill MFCC data for previously-analyzed tracks.
+- **Timbre Imputation Bridge**: LLM concepts still send 7D target vectors (token-efficient). `getHubCollections` synthesizes a `timbreCentroid` by querying the 20 nearest acoustic neighbours that have `mfcc_vector IS NOT NULL`, averaging their MFCC values. This centroid is then used as `$2` in the combined 20D query.
+- **Dual-Vector Distance Math**: All 5 query sites in `recommendation.service.ts` now use `(tf.acoustic_vector <-> $1) + (tf.mfcc_vector <-> $2) AS distance` — Hub LLM playlists, Up Next (user + global fallback), The Vault (user + global fallback), and Infinity Mode relaxation loop.
+- **Graceful Degradation**: Every 20D query guards with `WHERE tf.mfcc_vector IS NOT NULL`. If zero MFCC-enriched tracks exist (fresh install, pre-migration), all engines transparently fall back to 7D-only queries so recommendations continue to work immediately.
+- **Weighted Decay MFCC Centroid (Infinity Mode)**: Infinity Mode computes a parallel 13D weighted-decay centroid (lambda=0.8) matching the existing 7D centroid logic, so timbre drift tracking follows the same momentum model as the acoustic vector.
+
 ## [2026-03-31] V15: Antigravity Context — Three-Phase Scanner & Worker Thread Analysis
 - **Server Modularization (Phase 0)**: Split monolithic `server/index.ts` (1625 lines) into 12 route modules under `server/routes/`. Created `server/state.ts` for shared mutable state. New structure: auth, admin, library, playback, settings, hub, playlists, artists, albums, genres, media routes.
 - **Real Audio Decoding (Phase 1)**: Replaced simulated Essentia data with actual ffmpeg subprocess decoding. Implemented smart seeking: ffmpeg seeks to ~35% into track (past intro) and decodes 15 seconds for representative chorus/verse analysis. Added `ffprobe` duration detection with fallback to file start.

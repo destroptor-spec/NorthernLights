@@ -202,8 +202,8 @@ fi
 
 echo ""
 echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║        NorthernLights (V15) installed successfully!         ║${NC}"
-echo -e "${GREEN}║  Features: AI playlists • Smart audio analysis • Worker threads ║${NC}"
+echo -e "${GREEN}║        NorthernLights (V16) installed successfully!            ║${NC}"
+echo -e "${GREEN}║  Features: AI playlists • 20D audio analysis • Worker threads  ║${NC}"
 echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 

@@ -87,6 +87,16 @@ export async function initDB(): Promise<Pool> {
         -- Ensure index exists for fast vector search
         CREATE INDEX IF NOT EXISTS track_features_vector_idx ON track_features USING hnsw (acoustic_vector vector_l2_ops);
 
+        -- Add MFCC timbre vector column (nullable — backfilled by background migrator)
+        DO $$
+        BEGIN
+          ALTER TABLE track_features ADD COLUMN IF NOT EXISTS mfcc_vector VECTOR(13);
+        EXCEPTION WHEN OTHERS THEN null;
+        END $$;
+
+        -- HNSW index for 13D timbre similarity search
+        CREATE INDEX IF NOT EXISTS track_features_mfcc_idx ON track_features USING hnsw (mfcc_vector vector_l2_ops);
+
         CREATE TABLE IF NOT EXISTS playlists (
           id TEXT PRIMARY KEY,
           title TEXT NOT NULL,
@@ -384,16 +394,28 @@ export async function clearTracks() {
   await db.query('DELETE FROM tracks');
 }
 
-export async function addTrackFeatures(trackId: string, audioFeatures: { bpm: number; acoustic_vector: number[] }) {
+export async function addTrackFeatures(trackId: string, audioFeatures: { bpm: number; acoustic_vector: number[]; mfcc_vector?: number[] }) {
   const db = await initDB();
   const vectorStr = `[${audioFeatures.acoustic_vector.join(',')}]`;
-  await db.query(`
-    INSERT INTO track_features (track_id, bpm, acoustic_vector)
-    VALUES ($1, $2, $3)
-    ON CONFLICT (track_id) DO UPDATE SET
-      bpm = EXCLUDED.bpm,
-      acoustic_vector = EXCLUDED.acoustic_vector
-  `, [trackId, audioFeatures.bpm, vectorStr]);
+  if (audioFeatures.mfcc_vector && audioFeatures.mfcc_vector.length === 13) {
+    const mfccStr = `[${audioFeatures.mfcc_vector.join(',')}]`;
+    await db.query(`
+      INSERT INTO track_features (track_id, bpm, acoustic_vector, mfcc_vector)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (track_id) DO UPDATE SET
+        bpm = EXCLUDED.bpm,
+        acoustic_vector = EXCLUDED.acoustic_vector,
+        mfcc_vector = EXCLUDED.mfcc_vector
+    `, [trackId, audioFeatures.bpm, vectorStr, mfccStr]);
+  } else {
+    await db.query(`
+      INSERT INTO track_features (track_id, bpm, acoustic_vector)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (track_id) DO UPDATE SET
+        bpm = EXCLUDED.bpm,
+        acoustic_vector = EXCLUDED.acoustic_vector
+    `, [trackId, audioFeatures.bpm, vectorStr]);
+  }
 }
 
 export async function getTracksWithoutFeatures(): Promise<{ id: string; filePath: Buffer; title: string; artist: string | null }[]> {
@@ -403,6 +425,25 @@ export async function getTracksWithoutFeatures(): Promise<{ id: string; filePath
     FROM tracks t
     LEFT JOIN track_features tf ON t.id = tf.track_id
     WHERE tf.track_id IS NULL
+    ORDER BY t.title
+  `);
+  return res.rows.map((r: any) => ({
+    id: r.id,
+    filePath: Buffer.from(r.path, 'base64'),
+    title: r.title,
+    artist: r.artist || null,
+  }));
+}
+
+// Tracks that have acoustic_vector but are missing mfcc_vector (for background MFCC migration)
+export async function getTracksWithoutMfcc(): Promise<{ id: string; filePath: Buffer; title: string; artist: string | null }[]> {
+  const db = await initDB();
+  const res = await db.query(`
+    SELECT t.id, t.path, t.title, t.artist
+    FROM tracks t
+    JOIN track_features tf ON t.id = tf.track_id
+    WHERE tf.acoustic_vector IS NOT NULL
+      AND tf.mfcc_vector IS NULL
     ORDER BY t.title
   `);
   return res.rows.map((r: any) => ({
@@ -456,7 +497,9 @@ export async function removeTracksByDirectory(dirPath: string) {
   
   for (const row of res.rows) {
     const fileBuf = Buffer.from(row.path, 'base64');
-    if (fileBuf.length >= dirBuf.length && fileBuf.slice(0, dirBuf.length).equals(dirBuf)) {
+    const prefixMatches = fileBuf.length >= dirBuf.length && fileBuf.slice(0, dirBuf.length).equals(dirBuf);
+    const atBoundary = fileBuf.length === dirBuf.length || fileBuf[dirBuf.length] === 0x2F; // '/'
+    if (prefixMatches && atBoundary) {
       idsToDelete.push(row.id);
     }
   }
@@ -623,7 +666,13 @@ export async function migrateEntityIds() {
     const trackId = (row as any).id;
     const albumArtistName = (row as any).albumartist || (row as any).artist;
     const albumTitle = (row as any).album;
-    const genreName = (row as any).genre;
+    const genreNameRaw = (row as any).genre;
+    // Split dirty genre tags like "folk, country, blues" into primary genre
+    let genreName: string | null = null;
+    if (genreNameRaw) {
+        const parts = genreNameRaw.split(/[,;/&]/).map((s: string) => s.trim()).filter(Boolean);
+        genreName = parts.length > 0 ? parts[0] : null;
+    }
     const rawArtists = (row as any).artists;
 
     let artistId: string | null = null;
@@ -662,8 +711,8 @@ export async function migrateEntityIds() {
     } catch {}
 
     await db.query(
-      'UPDATE tracks SET artist_id = COALESCE($1, artist_id), album_id = COALESCE($2, album_id), genre_id = COALESCE($3, genre_id) WHERE id = $4',
-      [artistId, albumId, genreId, trackId]
+      'UPDATE tracks SET artist_id = COALESCE($1, artist_id), album_id = COALESCE($2, album_id), genre_id = COALESCE($3, genre_id), genre = COALESCE($4, genre) WHERE id = $5',
+      [artistId, albumId, genreId, genreName, trackId]
     );
     count++;
   }

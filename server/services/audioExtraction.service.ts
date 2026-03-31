@@ -42,6 +42,8 @@ export interface AudioFeatures {
   bpm: number;
   acoustic_vector: [number, number, number, number, number, number, number];
   // [energy, brightness, percussiveness, chromagram, instrumentalness, acousticness, danceability]
+  mfcc_vector: [number, number, number, number, number, number, number, number, number, number, number, number, number];
+  // 13 Mel-Frequency Cepstral Coefficients providing timbre fingerprint
 }
 
 /**
@@ -297,6 +299,60 @@ export async function extractAudioFeatures(filePath: Buffer | string): Promise<A
     // BPM estimation
     const bpm = 120.0 + (zcr * 10) + (fileSize % 40);
 
+    // ── MFCC Timbre Extraction — Option C: frame-averaged (13 coefficients) ─
+    // Split the 15s PCM into overlapping 2048-sample Hanning-windowed frames
+    // (50% hop ≈ 644 frames). Compute Spectrum + MFCC per frame, accumulate,
+    // average across all valid frames, then sigmoid-normalize to [0,1].
+    // This gives a stable timbre fingerprint vs a single full-buffer snapshot.
+    const FRAME_SIZE = 2048;
+    const HOP_SIZE = 1024;
+    const NUM_MFCC = 13;
+    const sigmoid = (x: number, scale: number) => 1 / (1 + Math.exp(-x / scale));
+
+    const mfccAccum = new Array(NUM_MFCC).fill(0);
+    let validFrames = 0;
+    const numFrames = Math.max(0, Math.floor((pcmData.length - FRAME_SIZE) / HOP_SIZE) + 1);
+
+    for (let fi = 0; fi < numFrames; fi++) {
+      const start = fi * HOP_SIZE;
+      // Apply Hanning window in JavaScript (avoids an extra WASM round-trip)
+      const windowed = new Float32Array(FRAME_SIZE);
+      for (let i = 0; i < FRAME_SIZE; i++) {
+        const sample = pcmData[start + i] ?? 0;
+        windowed[i] = sample * 0.5 * (1 - Math.cos((2 * Math.PI * i) / (FRAME_SIZE - 1)));
+      }
+
+      let frameVec: any = null;
+      let frameSpec: any = null;
+      try {
+        frameVec = ess.arrayToVector(windowed);
+        const specResult = ess.Spectrum(frameVec);
+        frameSpec = specResult.spectrum;
+
+        const mfccResult = ess.MFCC(frameSpec);
+        if (mfccResult?.mfcc) {
+          for (let k = 0; k < NUM_MFCC; k++) {
+            mfccAccum[k] += mfccResult.mfcc.get(k);
+          }
+          validFrames++;
+          try { mfccResult.mfcc.delete(); } catch {}
+          try { mfccResult.bands?.delete(); } catch {}
+        }
+      } catch {
+        // skip bad frames silently
+      } finally {
+        try { frameSpec?.delete(); } catch {}
+        try { frameVec?.delete(); } catch {}
+      }
+    }
+
+    // Average raw values across frames then sigmoid-normalize.
+    // MFCC[0] (log energy) sits ~30–60; coefficients 1-12 oscillate ~±20.
+    const mfcc_vector = mfccAccum.map((sum, k) => {
+      const avg = validFrames > 0 ? sum / validFrames : 0;
+      return sigmoid(avg, k === 0 ? 20 : 8);
+    }) as AudioFeatures['mfcc_vector'];
+
     // Fetch rolling library statistics for true Z-Score normalization
     const { getVectorStats } = await import('../database');
     const stats = await getVectorStats();
@@ -322,10 +378,11 @@ export async function extractAudioFeatures(filePath: Buffer | string): Promise<A
         zScoreNormalize(flux || 0, 4, 50),
         zScoreNormalize(zcr || 0, 5, 0.5),
         zScoreNormalize(danceability || 0, 6, 3)
-      ]
+      ],
+      mfcc_vector
     };
   } finally {
-    // Cleanup C++ allocated memory
+    // Cleanup C++ allocated memory (frame-level vectors are deleted inside the loop)
     if (audioVector) audioVector.delete();
     if (spectrum) spectrum.delete();
   }

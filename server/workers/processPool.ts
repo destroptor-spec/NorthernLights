@@ -12,6 +12,7 @@ export class ChildProcessPool {
   private jobQueue: { job: PoolJob; resolve: (val: any) => void }[] = [];
   private workerTasks = new Map<ChildProcess, { id: string; resolve: (val: any) => void }>();
   private activeCount = 0;
+  private pendingKills = 0;
 
   constructor(
     private scriptPath: string,
@@ -24,44 +25,69 @@ export class ChildProcessPool {
   }
 
   public async init() {
-    const tsxBin = path.resolve(__dirname, '../../node_modules/.bin/tsx');
-    
     for (let i = 0; i < this.poolSize; i++) {
-       const child = spawn(tsxBin, [this.scriptPath], {
-         stdio: ['pipe', 'pipe', 'pipe'],
-         cwd: this.cwd
-       });
+       this.spawnWorker();
+    }
+  }
 
-       let stdoutBuffer = '';
-       child.stdout?.setEncoding('utf8');
-       child.stdout?.on('data', (chunk) => {
-         stdoutBuffer += chunk;
-         const lines = stdoutBuffer.split('\n');
-         stdoutBuffer = lines.pop() || '';
-         
-         for (const line of lines) {
-           if (!line.trim()) continue;
-           try {
-             // Expecting child process to emit at least { id: string, ...rest }
-             const result = JSON.parse(line);
-             this.handleResult(child, result);
-           } catch {
-             // ignore parse errors
-           }
-         }
-       });
+  private spawnWorker() {
+    const tsxBin = path.resolve(__dirname, '../../node_modules/.bin/tsx');
+    const child = spawn(tsxBin, [this.scriptPath], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: this.cwd
+    });
 
-       child.stderr?.on('data', (data) => {
-          process.stderr.write(`[Worker ${path.basename(this.scriptPath)}] ${data.toString()}`);
-       });
+    let stdoutBuffer = '';
+    child.stdout?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk) => {
+      stdoutBuffer += chunk;
+      const lines = stdoutBuffer.split('\n');
+      stdoutBuffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const result = JSON.parse(line);
+          this.handleResult(child, result);
+        } catch {
+          // ignore parse errors
+        }
+      }
+    });
 
-       child.on('exit', () => {
-         this.workers = this.workers.filter(w => w !== child);
-         this.freeWorkers = this.freeWorkers.filter(w => w !== child);
-       });
+    child.stderr?.on('data', (data) => {
+       process.stderr.write(`[Worker ${path.basename(this.scriptPath)}] ${data.toString()}`);
+    });
 
-       this.workers.push(child);
-       this.freeWorkers.push(child);
+    child.on('exit', () => {
+      this.workers = this.workers.filter(w => w !== child);
+      this.freeWorkers = this.freeWorkers.filter(w => w !== child);
+    });
+
+    this.workers.push(child);
+    this.freeWorkers.push(child);
+  }
+
+  public resize(newSize: number) {
+    if (newSize === this.poolSize) return;
+    
+    if (newSize > this.poolSize) {
+      const diff = newSize - this.poolSize;
+      for (let i = 0; i < diff; i++) {
+        this.spawnWorker();
+      }
+      this.poolSize = newSize;
+      this.pump();
+    } else {
+      const diff = this.poolSize - newSize;
+      this.poolSize = newSize;
+      this.pendingKills += diff;
+      
+      // Kill free workers immediately if possible
+      while (this.pendingKills > 0 && this.freeWorkers.length > 0) {
+        const worker = this.freeWorkers.pop()!;
+        worker.kill();
+        this.pendingKills--;
+      }
     }
   }
 
@@ -71,8 +97,14 @@ export class ChildProcessPool {
        task.resolve(result);
        this.workerTasks.delete(child);
        this.activeCount--;
-       this.freeWorkers.push(child);
-       this.pump(); // Process next job
+       
+       if (this.pendingKills > 0) {
+         child.kill();
+         this.pendingKills--;
+       } else {
+         this.freeWorkers.push(child);
+         this.pump(); // Process next job
+       }
     }
   }
 
