@@ -67,51 +67,24 @@ export async function getHubCollections(
     if (concept.target_vector) {
       const vectorStr = `[${concept.target_vector.join(',')}]`;
 
-      // Timbre Imputation: Seed Query to obtain Timbre Centroid based on LLM's 7D vector
-      const seedRes = await db.query(`
-        SELECT tf.mfcc_vector 
-        FROM track_features tf
-        JOIN tracks t ON t.id = tf.track_id
-        WHERE tf.mfcc_vector IS NOT NULL
-        ORDER BY tf.acoustic_vector <-> $1 ASC
-        LIMIT $2
-      `, [vectorStr, tracksPerPlaylist]);
-
-      let timbreCentroid = new Array(13).fill(0);
-      let validSeeds = 0;
-      for (const row of seedRes.rows) {
-        let m = row.mfcc_vector;
-        if (typeof m === 'string') m = JSON.parse(m);
-        if (Array.isArray(m) && m.length === 13) {
-          for (let i = 0; i < 13; i++) timbreCentroid[i] += m[i];
-          validSeeds++;
-        }
-      }
-      if (validSeeds > 0) {
-        timbreCentroid = timbreCentroid.map(v => v / validSeeds);
-      }
-      const mfccStr = `[${timbreCentroid.join(',')}]`;
-
       // Build exclusion clause for cross-playlist deduplication
       const exclusionParams: string[] = [];
       let exclusionClause = '';
       if (assignedTrackIds.size > 0) {
         const ids = Array.from(assignedTrackIds);
-        const placeholders = ids.map((_, i) => `$${i + 3}`).join(',');
-        exclusionClause = `AND t.id NOT IN (${placeholders})`;
+        const placeholders = ids.map((_, i) => `$${i + 2}`).join(',');
+        exclusionClause = `WHERE t.id NOT IN (${placeholders})`;
         exclusionParams.push(...ids);
       }
 
-      // Final 20D Query
       const res = await db.query(`
-        SELECT t.*, (tf.acoustic_vector <-> $1) + (tf.mfcc_vector <-> $2) AS distance
+        SELECT t.*, tf.acoustic_vector <-> $1 AS distance
         FROM tracks t
         JOIN track_features tf ON t.id = tf.track_id
-        WHERE tf.mfcc_vector IS NOT NULL
         ${exclusionClause}
         ORDER BY distance ASC
         LIMIT 50
-      `, [vectorStr, mfccStr, ...exclusionParams]);
+      `, [vectorStr, ...exclusionParams]);
       
       if (res.rows.length > 0) {
         // Re-rank by macro-genre to avoid jarring transitions
@@ -186,35 +159,28 @@ export async function getHubCollections(
       const recentIds = userRecentTracks.map((t: any) => t.id);
       const placeholders = recentIds.map((_, i) => `$${i + 1}`).join(',');
       const vecRes = await db.query(`
-        SELECT t.id, t.genre, tf.acoustic_vector, tf.mfcc_vector
+        SELECT t.id, t.genre, tf.acoustic_vector
         FROM tracks t JOIN track_features tf ON t.id = tf.track_id
-        WHERE t.id IN (${placeholders}) AND tf.mfcc_vector IS NOT NULL
+        WHERE t.id IN (${placeholders})
       `, recentIds);
 
       if (vecRes.rows.length >= 3) {
         let centroid = [0,0,0,0,0,0,0];
-        let mfccCentroid = new Array(13).fill(0);
         for (const r of vecRes.rows as any[]) {
           const vec = JSON.parse(r.acoustic_vector);
           for(let i=0; i<7; i++) centroid[i] += vec[i];
-          const m = typeof r.mfcc_vector === 'string' ? JSON.parse(r.mfcc_vector) : r.mfcc_vector;
-          for(let i=0; i<13; i++) mfccCentroid[i] += m[i];
         }
         centroid = centroid.map(v => v / vecRes.rows.length);
-        mfccCentroid = mfccCentroid.map(v => v / vecRes.rows.length);
-        
         const vecStr = `[${centroid.join(',')}]`;
-        const mfccStr = `[${mfccCentroid.join(',')}]`;
         const referenceGenre = (vecRes.rows[0] as any).genre || '';
 
         const upNextRes = await db.query(`
-          SELECT t.*, (tf.acoustic_vector <-> $1) + (tf.mfcc_vector <-> $2) AS distance
+          SELECT t.*, tf.acoustic_vector <-> $1 AS distance
           FROM tracks t
           JOIN track_features tf ON t.id = tf.track_id
-          WHERE t.id NOT IN (${recentIds.map((_,i) => `$${i+3}`).join(',')})
-            AND tf.mfcc_vector IS NOT NULL
-          ORDER BY distance ASC LIMIT $${recentIds.length + 3}
-        `, [vecStr, mfccStr, ...recentIds, constraints.nearestNeighborLimit]);
+          WHERE t.id NOT IN (${recentIds.map((_,i) => `$${i+2}`).join(',')})
+          ORDER BY distance ASC LIMIT $${recentIds.length + 2}
+        `, [vecStr, ...recentIds, constraints.nearestNeighborLimit]);
 
         if (upNextRes.rows.length > 0) {
           const ranked = reRankByHopCost(upNextRes.rows, referenceGenre, 30);
@@ -229,33 +195,26 @@ export async function getHubCollections(
   } else {
     // Fallback: use global tracks table (backward compat)
     const recentTracksRes = await db.query(
-      'SELECT t.id, t.genre, tf.acoustic_vector, tf.mfcc_vector FROM tracks t JOIN track_features tf ON t.id = tf.track_id WHERE tf.mfcc_vector IS NOT NULL ORDER BY t.lastPlayedAt DESC LIMIT 5'
+      'SELECT t.id, t.genre, tf.acoustic_vector FROM tracks t JOIN track_features tf ON t.id = tf.track_id ORDER BY t.lastPlayedAt DESC LIMIT 5'
     );
     if (recentTracksRes.rows.length >= 3) {
        let centroid = [0,0,0,0,0,0,0];
-       let mfccCentroid = new Array(13).fill(0);
        for (const r of recentTracksRes.rows as any[]) {
           const vec = JSON.parse(r.acoustic_vector);
           for(let i=0; i<7; i++) centroid[i] += vec[i];
-          const m = typeof r.mfcc_vector === 'string' ? JSON.parse(r.mfcc_vector) : r.mfcc_vector;
-          for(let i=0; i<13; i++) mfccCentroid[i] += m[i];
        }
        centroid = centroid.map(v => v / recentTracksRes.rows.length);
-       mfccCentroid = mfccCentroid.map(v => v / recentTracksRes.rows.length);
-       
        const vecStr = `[${centroid.join(',')}]`;
-       const mfccStr = `[${mfccCentroid.join(',')}]`;
        const recentIds = recentTracksRes.rows.map((r:any) => r.id);
        const referenceGenre = (recentTracksRes.rows[0] as any).genre || '';
 
        const upNextRes = await db.query(`
-         SELECT t.*, (tf.acoustic_vector <-> $1) + (tf.mfcc_vector <-> $2) AS distance
+         SELECT t.*, tf.acoustic_vector <-> $1 AS distance
          FROM tracks t
          JOIN track_features tf ON t.id = tf.track_id
-         WHERE t.id NOT IN (${recentIds.map((_,i) => `$${i+3}`).join(',')})
-           AND tf.mfcc_vector IS NOT NULL
-         ORDER BY distance ASC LIMIT $${recentIds.length + 3}
-       `, [vecStr, mfccStr, ...recentIds, constraints.nearestNeighborLimit]);
+         WHERE t.id NOT IN (${recentIds.map((_,i) => `$${i+2}`).join(',')})
+         ORDER BY distance ASC LIMIT $${recentIds.length + 2}
+       `, [vecStr, ...recentIds, constraints.nearestNeighborLimit]);
 
        if (upNextRes.rows.length > 0) {
          const ranked = reRankByHopCost(upNextRes.rows, referenceGenre, 30);
@@ -323,37 +282,31 @@ export async function getHubCollections(
       const topIds = userTopTracks.map((t: any) => t.id);
       const topPlaceholders = topIds.map((_, i) => `$${i + 1}`).join(',');
       const topVecRes = await db.query(`
-        SELECT t.id, t.genre, tf.acoustic_vector, tf.mfcc_vector
+        SELECT t.id, t.genre, tf.acoustic_vector
         FROM tracks t JOIN track_features tf ON t.id = tf.track_id
-        WHERE t.id IN (${topPlaceholders}) AND tf.mfcc_vector IS NOT NULL
+        WHERE t.id IN (${topPlaceholders})
       `, topIds);
 
       if (topVecRes.rows.length > 0) {
         let centroid = [0,0,0,0,0,0,0];
-        let mfccCentroid = new Array(13).fill(0);
         for (const r of topVecRes.rows as any[]) {
           const vec = JSON.parse(r.acoustic_vector);
           for(let i=0; i<7; i++) centroid[i] += vec[i];
-          const m = typeof r.mfcc_vector === 'string' ? JSON.parse(r.mfcc_vector) : r.mfcc_vector;
-          for(let i=0; i<13; i++) mfccCentroid[i] += m[i];
         }
         centroid = centroid.map(v => v / topVecRes.rows.length);
-        mfccCentroid = mfccCentroid.map(v => v / topVecRes.rows.length);
-        
         const vecStr = `[${centroid.join(',')}]`;
-        const mfccStr = `[${mfccCentroid.join(',')}]`;
         const referenceGenre = (topVecRes.rows[0] as any).genre || '';
 
         // Find tracks with 0 plays by THIS user
         const vaultRes = await db.query(`
-          SELECT t.*, (tf.acoustic_vector <-> $1) + (tf.mfcc_vector <-> $2) AS distance
+          SELECT t.*, tf.acoustic_vector <-> $1 AS distance
           FROM tracks t
           JOIN track_features tf ON t.id = tf.track_id
           WHERE t.id NOT IN (
-            SELECT track_id FROM user_playback_stats WHERE user_id = $4 AND play_count > 0
-          ) AND tf.mfcc_vector IS NOT NULL
-          ORDER BY distance ASC LIMIT $3
-        `, [vecStr, mfccStr, constraints.nearestNeighborLimit, userId]);
+            SELECT track_id FROM user_playback_stats WHERE user_id = $3 AND play_count > 0
+          )
+          ORDER BY distance ASC LIMIT $2
+        `, [vecStr, constraints.nearestNeighborLimit, userId]);
 
         if (vaultRes.rows.length > 0) {
           const ranked = reRankByHopCost(vaultRes.rows, referenceGenre, 30);
@@ -368,31 +321,25 @@ export async function getHubCollections(
   } else {
     // Fallback: global (backward compat)
     const topTracksRes = await db.query(
-      'SELECT t.id, t.genre, tf.acoustic_vector, tf.mfcc_vector FROM tracks t JOIN track_features tf ON t.id = tf.track_id WHERE t.playCount > 0 AND tf.mfcc_vector IS NOT NULL ORDER BY t.playCount DESC LIMIT 10'
+      'SELECT t.id, t.genre, tf.acoustic_vector FROM tracks t JOIN track_features tf ON t.id = tf.track_id WHERE t.playCount > 0 ORDER BY t.playCount DESC LIMIT 10'
     );
     if (topTracksRes.rows.length > 0) {
        let centroid = [0,0,0,0,0,0,0];
-       let mfccCentroid = new Array(13).fill(0);
        for (const r of topTracksRes.rows as any[]) {
           const vec = JSON.parse(r.acoustic_vector);
           for(let i=0; i<7; i++) centroid[i] += vec[i];
-          const m = typeof r.mfcc_vector === 'string' ? JSON.parse(r.mfcc_vector) : r.mfcc_vector;
-          for(let i=0; i<13; i++) mfccCentroid[i] += m[i];
        }
        centroid = centroid.map(v => v / topTracksRes.rows.length);
-       mfccCentroid = mfccCentroid.map(v => v / topTracksRes.rows.length);
-       
        const vecStr = `[${centroid.join(',')}]`;
-       const mfccStr = `[${mfccCentroid.join(',')}]`;
        const referenceGenre = (topTracksRes.rows[0] as any).genre || '';
 
        const vaultRes = await db.query(`
-         SELECT t.*, (tf.acoustic_vector <-> $1) + (tf.mfcc_vector <-> $2) AS distance
+         SELECT t.*, tf.acoustic_vector <-> $1 AS distance
          FROM tracks t
          JOIN track_features tf ON t.id = tf.track_id
-         WHERE t.playCount = 0 AND tf.mfcc_vector IS NOT NULL
-         ORDER BY distance ASC LIMIT $3
-       `, [vecStr, mfccStr, constraints.nearestNeighborLimit]);
+         WHERE t.playCount = 0
+         ORDER BY distance ASC LIMIT $2
+       `, [vecStr, constraints.nearestNeighborLimit]);
 
        if (vaultRes.rows.length > 0) {
          const ranked = reRankByHopCost(vaultRes.rows, referenceGenre, 30);
@@ -446,26 +393,23 @@ export async function calculateNextInfinityTrack(
   
   // 1. Fetch vectors for the last 10 tracks to compute the Weighted Decay Centroid
   let targetVector = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]; // safe fallback
-  let targetMfccVector = new Array(13).fill(0); // safe fallback
   let recentVectors: number[][] = [];
-  let recentMfccVectors: number[][] = [];
   
   if (sessionHistoryTrackIds.length > 0) {
     const last10Ids = sessionHistoryTrackIds.slice(-10);
     // Maintain strict order
     const placeholders = last10Ids.map((_, i) => `$${i + 1}`).join(',');
     const vecRes = await db.query(`
-      SELECT t.id, tf.acoustic_vector, tf.mfcc_vector
+      SELECT t.id, tf.acoustic_vector 
       FROM tracks t JOIN track_features tf ON t.id = tf.track_id 
-      WHERE t.id IN (${placeholders}) AND tf.mfcc_vector IS NOT NULL
+      WHERE t.id IN (${placeholders})
     `, last10Ids);
 
     // Map rows back to the ordered last10 array
     for (const id of last10Ids) {
       const row = vecRes.rows.find((r: any) => r.id === id) as any;
-      if (row && row.acoustic_vector && row.mfcc_vector) {
+      if (row && row.acoustic_vector) {
         recentVectors.push(JSON.parse(row.acoustic_vector as string));
-        recentMfccVectors.push(typeof row.mfcc_vector === 'string' ? JSON.parse(row.mfcc_vector) : row.mfcc_vector);
       }
     }
 
@@ -473,7 +417,6 @@ export async function calculateNextInfinityTrack(
       // 9.1: The Weighted Decay Centroid (lambda = 0.8)
       const lambda = 0.8;
       targetVector = [0,0,0,0,0,0,0];
-      targetMfccVector = new Array(13).fill(0);
       let weightSum = 0;
       
       // Iterate from oldest to newest in the recent active window
@@ -483,16 +426,10 @@ export async function calculateNextInfinityTrack(
         for (let j = 0; j < 7; j++) {
            targetVector[j] += recentVectors[i][j] * weight;
         }
-        for (let j = 0; j < 13; j++) {
-           targetMfccVector[j] += recentMfccVectors[i][j] * weight;
-        }
       }
       
       for (let j = 0; j < 7; j++) {
         targetVector[j] /= weightSum;
-      }
-      for (let j = 0; j < 13; j++) {
-        targetMfccVector[j] /= weightSum;
       }
       
       // 9.2: Momentum & Trajectory Tracking (last 3 tracks)
@@ -515,7 +452,6 @@ export async function calculateNextInfinityTrack(
   }
 
   const vectorStr = `[${targetVector.join(',')}]`;
-  const mfccStr = `[${targetMfccVector.join(',')}]`;
 
   // Apply Frontend Settings for Engine Tuning
   let discoveryLevel = settings.discoveryLevel ?? 50; // 1-100
@@ -547,16 +483,15 @@ export async function calculateNextInfinityTrack(
 
     // Step 4.1: Over-fetch
     const overFetchLimit = poolSize * 3 + 50; 
-    let finalQueryClause = historyClause ? `${historyClause} AND tf.mfcc_vector IS NOT NULL` : `WHERE tf.mfcc_vector IS NOT NULL`;
     
     const res = await db.query(`
-      SELECT t.*, (tf.acoustic_vector <-> $1) + (tf.mfcc_vector <-> $2) AS distance
+      SELECT t.*, tf.acoustic_vector <-> $1 AS distance
       FROM tracks t
       JOIN track_features tf ON t.id = tf.track_id
-      ${finalQueryClause}
+      ${historyClause}
       ORDER BY distance ASC
-      LIMIT $${penaltyIds.length + 3}
-    `, [vectorStr, mfccStr, ...penaltyIds, overFetchLimit]);
+      LIMIT $${penaltyIds.length + 2}
+    `, [vectorStr, ...penaltyIds, overFetchLimit]);
 
     if (res.rows.length > 0) {
       // Step 4.2: Apply Hop Cost

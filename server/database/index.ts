@@ -66,16 +66,8 @@ export async function initDB(): Promise<Pool> {
         CREATE TABLE IF NOT EXISTS track_features (
           track_id TEXT REFERENCES tracks(id) ON DELETE CASCADE PRIMARY KEY,
           bpm NUMERIC,
-          acoustic_vector VECTOR(7),
-          mfcc_vector VECTOR(13)
+          acoustic_vector VECTOR(7)
         );
-
-        DO $$ 
-        BEGIN 
-          ALTER TABLE track_features ADD COLUMN IF NOT EXISTS mfcc_vector VECTOR(13);
-        EXCEPTION 
-          WHEN OTHERS THEN null; 
-        END $$;
 
         CREATE TABLE IF NOT EXISTS directories (
           id TEXT PRIMARY KEY,
@@ -94,7 +86,6 @@ export async function initDB(): Promise<Pool> {
 
         -- Ensure index exists for fast vector search
         CREATE INDEX IF NOT EXISTS track_features_vector_idx ON track_features USING hnsw (acoustic_vector vector_l2_ops);
-        CREATE INDEX IF NOT EXISTS track_features_mfcc_idx ON track_features USING hnsw (mfcc_vector vector_l2_ops);
 
         CREATE TABLE IF NOT EXISTS playlists (
           id TEXT PRIMARY KEY,
@@ -378,15 +369,13 @@ export async function addTrack(track: any) {
 
   if (track.audioFeatures) {
     const vectorStr = `[${track.audioFeatures.acoustic_vector.join(',')}]`;
-    const mfccStr = track.audioFeatures.mfcc_vector ? `[${track.audioFeatures.mfcc_vector.join(',')}]` : null;
     await db.query(`
-      INSERT INTO track_features (track_id, bpm, acoustic_vector, mfcc_vector)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO track_features (track_id, bpm, acoustic_vector)
+      VALUES ($1, $2, $3)
       ON CONFLICT (track_id) DO UPDATE SET
         bpm = EXCLUDED.bpm,
-        acoustic_vector = EXCLUDED.acoustic_vector,
-        mfcc_vector = EXCLUDED.mfcc_vector
-    `, [id, track.audioFeatures.bpm, vectorStr, mfccStr]);
+        acoustic_vector = EXCLUDED.acoustic_vector
+    `, [id, track.audioFeatures.bpm, vectorStr]);
   }
 }
 
@@ -395,18 +384,16 @@ export async function clearTracks() {
   await db.query('DELETE FROM tracks');
 }
 
-export async function addTrackFeatures(trackId: string, audioFeatures: { bpm: number; acoustic_vector: number[]; mfcc_vector?: number[] }) {
+export async function addTrackFeatures(trackId: string, audioFeatures: { bpm: number; acoustic_vector: number[] }) {
   const db = await initDB();
   const vectorStr = `[${audioFeatures.acoustic_vector.join(',')}]`;
-  const mfccStr = audioFeatures.mfcc_vector ? `[${audioFeatures.mfcc_vector.join(',')}]` : null;
   await db.query(`
-    INSERT INTO track_features (track_id, bpm, acoustic_vector, mfcc_vector)
-    VALUES ($1, $2, $3, $4)
+    INSERT INTO track_features (track_id, bpm, acoustic_vector)
+    VALUES ($1, $2, $3)
     ON CONFLICT (track_id) DO UPDATE SET
       bpm = EXCLUDED.bpm,
-      acoustic_vector = EXCLUDED.acoustic_vector,
-      mfcc_vector = EXCLUDED.mfcc_vector
-  `, [trackId, audioFeatures.bpm, vectorStr, mfccStr]);
+      acoustic_vector = EXCLUDED.acoustic_vector
+  `, [trackId, audioFeatures.bpm, vectorStr]);
 }
 
 export async function getTracksWithoutFeatures(): Promise<{ id: string; filePath: Buffer; title: string; artist: string | null }[]> {
@@ -415,7 +402,7 @@ export async function getTracksWithoutFeatures(): Promise<{ id: string; filePath
     SELECT t.id, t.path, t.title, t.artist
     FROM tracks t
     LEFT JOIN track_features tf ON t.id = tf.track_id
-    WHERE tf.track_id IS NULL OR tf.mfcc_vector IS NULL
+    WHERE tf.track_id IS NULL
     ORDER BY t.title
   `);
   return res.rows.map((r: any) => ({
@@ -431,7 +418,7 @@ export async function getTrackCountWithFeatures(): Promise<{ withFeatures: numbe
   const res = await db.query(`
     SELECT
       COUNT(*) as total,
-      COUNT(tf.mfcc_vector) as with_features
+      COUNT(tf.track_id) as with_features
     FROM tracks t
     LEFT JOIN track_features tf ON t.id = tf.track_id
   `);
@@ -811,24 +798,19 @@ export async function togglePlaylistPin(playlistId: string, userId: string, pinn
 
 export async function getVectorStats() {
   const db = await initDB();
-  const res = await db.query('SELECT acoustic_vector, mfcc_vector FROM track_features WHERE mfcc_vector IS NOT NULL');
+  const res = await db.query('SELECT acoustic_vector FROM track_features');
   
   if (res.rows.length === 0) {
     return null;
   }
 
-  const sums = new Array(20).fill(0);
-  const sqSums = new Array(20).fill(0);
+  const sums = [0,0,0,0,0,0,0];
+  const sqSums = [0,0,0,0,0,0,0];
   const count = res.rows.length;
 
   for (const row of res.rows as any[]) {
-    const acoustic = typeof row.acoustic_vector === 'string' ? JSON.parse(row.acoustic_vector) : row.acoustic_vector;
-    const mfcc = typeof row.mfcc_vector === 'string' ? JSON.parse(row.mfcc_vector) : row.mfcc_vector;
-    
-    if (!acoustic || !mfcc || acoustic.length !== 7 || mfcc.length !== 13) continue;
-
-    const vec = [...acoustic, ...mfcc];
-    for (let i = 0; i < 20; i++) {
+    const vec = JSON.parse(row.acoustic_vector);
+    for (let i = 0; i < 7; i++) {
        sums[i] += vec[i];
        sqSums[i] += vec[i] * vec[i];
     }

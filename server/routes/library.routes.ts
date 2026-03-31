@@ -377,13 +377,18 @@ router.post('/scan', async (req, res) => {
 });
 
 // Trigger standalone analysis (no scan — analyzes tracks missing features)
-export async function runBackgroundAnalysis(force: boolean = false) {
-  if (scanStatus.isScanning) return { error: 'A scan or analysis is already in progress' };
+router.post('/analyze', async (req, res) => {
+  if (scanStatus.isScanning) {
+    return res.status(400).json({ error: 'A scan or analysis is already in progress' });
+  }
+
+  const force = req.body?.force === true;
 
   try {
     let tracksToAnalyze: { id: string; filePath: Buffer; title: string }[];
 
     if (force) {
+      // Re-analyze ALL tracks (e.g., after Essentia upgrade)
       const { initDB } = await import('../database');
       const db = await initDB();
       const dbRes = await db.query('SELECT t.id, t.path, t.title, t.artist FROM tracks t ORDER BY t.title');
@@ -398,7 +403,7 @@ export async function runBackgroundAnalysis(force: boolean = false) {
     }
 
     if (tracksToAnalyze.length === 0) {
-      return { status: 'completed', message: 'All tracks already have audio features', count: 0 };
+      return res.json({ status: 'completed', message: 'All tracks already have audio features', count: 0 });
     }
 
     scanStatus.isScanning = true;
@@ -414,28 +419,19 @@ export async function runBackgroundAnalysis(force: boolean = false) {
     await processAnalysisBatch(tracksToAnalyze, concurrency);
     console.log(`[Analysis] Standalone analysis complete: ${tracksToAnalyze.length} tracks`);
 
+    // Trigger Genre Matrix regeneration after analysis
     setImmediate(() => {
       genreMatrixService.runDiffAndGenerate()
         .catch(e => console.error('[Genre Matrix] Post-analysis categorization failed:', e));
     });
 
-    return { status: 'completed', message: `Analyzed ${tracksToAnalyze.length} tracks`, count: tracksToAnalyze.length };
+    res.json({ status: 'completed', message: `Analyzed ${tracksToAnalyze.length} tracks`, count: tracksToAnalyze.length });
   } catch (error) {
     console.error('Analysis error:', error);
-    scanStatus.isScanning = false;
-    broadcastScanStatus(true);
-    return { error: 'Analysis failed' };
+    res.status(500).json({ error: 'Failed to complete analysis' });
   } finally {
     resetScanStatus();
   }
-}
-
-// Trigger standalone analysis (no scan — analyzes tracks missing features)
-router.post('/analyze', async (req, res) => {
-  const force = req.body?.force === true;
-  const result = await runBackgroundAnalysis(force);
-  if (result.error) return res.status(500).json(result);
-  res.json(result);
 });
 
 // Get analysis status (how many tracks have features vs total)

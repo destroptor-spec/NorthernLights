@@ -42,7 +42,6 @@ export interface AudioFeatures {
   bpm: number;
   acoustic_vector: [number, number, number, number, number, number, number];
   // [energy, brightness, percussiveness, chromagram, instrumentalness, acousticness, danceability]
-  mfcc_vector: number[]; // 13 MFCC coefficients for Timbre Imputation
 }
 
 /**
@@ -74,7 +73,7 @@ function getDuration(inputPath: string): Promise<number> {
  * Seeks to ~35% into the track (past intro) and decodes 15 seconds.
  * This captures the "full energy" section (chorus/verse) for better feature accuracy.
  */
-function decodeToPCM(filePath: Buffer | string, decodeSeconds = 15, useSeek = true, forceSeekPercent?: number): Promise<Float32Array> {
+function decodeToPCM(filePath: Buffer | string, decodeSeconds = 15, useSeek = true): Promise<Float32Array> {
   return new Promise(async (resolve, reject) => {
     // Create temp symlink for non-ASCII filenames
     let tmpDir: string | null = null;
@@ -105,9 +104,9 @@ function decodeToPCM(filePath: Buffer | string, decodeSeconds = 15, useSeek = tr
     if (useSeek) {
       try {
         const duration = await getDuration(inputForFfmpeg);
-        // Seek to given percentage into the file, but leave enough room for decodeSeconds
+        // Seek to 35% into the file, but leave enough room for decodeSeconds
         const maxSeek = Math.max(0, duration - decodeSeconds);
-        seekTime = Math.min(duration * (forceSeekPercent ?? 0.35), maxSeek);
+        seekTime = Math.min(duration * 0.35, maxSeek);
       } catch {
         // If ffprobe fails, decode from the start
         seekTime = 0;
@@ -153,9 +152,6 @@ function decodeToPCM(filePath: Buffer | string, decodeSeconds = 15, useSeek = tr
 
       const totalBytes = chunks.reduce((sum, c) => sum + c.length, 0);
       if (totalBytes === 0) {
-        if (useSeek && seekTime > 0) {
-          return reject(new Error('FFMPEG_SEEK_FAILED: no output bytes after input seek'));
-        }
         return reject(new Error('ffmpeg produced no output'));
       }
 
@@ -223,25 +219,12 @@ export async function extractAudioFeatures(filePath: Buffer | string): Promise<A
     } catch (err: any) {
       if (err.message.includes('FFMPEG_SEEK_FAILED')) {
         try {
-          // Retry at 10% seek
-          console.warn(`[AudioExtract] Seek failed for "${pathForLog}", retrying at 10%...`);
-          pcmData = await decodeToPCM(pathArg, 15, true, 0.10);
+          console.warn(`[AudioExtract] Seek failed for "${pathForLog}", retrying from the start...`);
+          pcmData = await decodeToPCM(pathArg, 15, false);
           usingRealAudio = true;
         } catch (retryErr: any) {
-          if (retryErr.message.includes('FFMPEG_SEEK_FAILED')) {
-            try {
-              // Final retry: no seek (from start)
-              console.warn(`[AudioExtract] 10% seek also failed for "${pathForLog}", decoding from start...`);
-              pcmData = await decodeToPCM(pathArg, 15, false);
-              usingRealAudio = true;
-            } catch (finalErr: any) {
-              console.warn(`[AudioExtract] ffmpeg no-seek decode failed for "${pathForLog}":`, finalErr.message);
-              pcmData = generateSimulatedPCM(fileSize);
-            }
-          } else {
-            console.warn(`[AudioExtract] ffmpeg 10% retry failed for "${pathForLog}":`, retryErr.message);
-            pcmData = generateSimulatedPCM(fileSize);
-          }
+          console.warn(`[AudioExtract] ffmpeg retry decode failed for "${pathForLog}":`, retryErr.message);
+          pcmData = generateSimulatedPCM(fileSize);
         }
       } else {
         console.warn(`[AudioExtract] ffmpeg decode failed for "${pathForLog}", falling back to simulated data:`, err.message);
@@ -311,21 +294,6 @@ export async function extractAudioFeatures(filePath: Buffer | string): Promise<A
     // 7. Danceability
     const danceability = safeCall(() => ess.Danceability(audioVector).danceability, 0, 'Danceability');
 
-    // 8. MFCC (Timbre Vectors)
-    let mfccArray: number[] = new Array(13).fill(0);
-    if (spectrum) {
-      safeCall(() => {
-        const r = ess.MFCC(spectrum);
-        if (r && r.mfcc) {
-          const arr = Array.from(r.mfcc) as number[];
-          mfccArray = arr.slice(0, 13);
-          // Zero-pad if Essentia returned fewer for some reason
-          while (mfccArray.length < 13) mfccArray.push(0);
-        }
-        return 1;
-      }, 0, 'MFCC');
-    }
-
     // BPM estimation
     const bpm = 120.0 + (zcr * 10) + (fileSize % 40);
 
@@ -354,8 +322,7 @@ export async function extractAudioFeatures(filePath: Buffer | string): Promise<A
         zScoreNormalize(flux || 0, 4, 50),
         zScoreNormalize(zcr || 0, 5, 0.5),
         zScoreNormalize(danceability || 0, 6, 3)
-      ],
-      mfcc_vector: mfccArray.map((val, i) => zScoreNormalize(val, 7 + i, 100))
+      ]
     };
   } finally {
     // Cleanup C++ allocated memory
