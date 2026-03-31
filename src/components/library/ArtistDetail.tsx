@@ -1,9 +1,9 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { usePlayerStore } from '../../store/index';
 import { TrackInfo } from '../../utils/fileSystem';
 import { trackMatchesArtist } from '../../utils/artistUtils';
-import { fetchArtistData } from '../../utils/externalImagery';
+import { useArtistData } from '../../hooks/useArtistData';
 import { AlbumArt } from '../AlbumArt';
 import { AlbumCard } from './AlbumCard';
 import { BackButton } from './BackButton';
@@ -19,19 +19,7 @@ export const ArtistDetail: React.FC = () => {
     const artistInfo = useMemo(() => artists.find(a => a.id === artistId), [artists, artistId]);
     const artistName = artistInfo?.name || '';
 
-    const [artistData, setArtistData] = useState<{imageUrl?: string, bio?: string}>({});
-    const [artistLoading, setArtistLoading] = useState(false);
-
-    useEffect(() => {
-        if (artistName) {
-            setArtistData({});
-            setArtistLoading(true);
-            fetchArtistData(artistName)
-                .then(data => setArtistData(data))
-                .catch(() => {})
-                .finally(() => setArtistLoading(false));
-        }
-    }, [artistName]);
+    const { imageUrl, bio, isLoading: artistLoading } = useArtistData(artistName);
 
     // Tracks where this artist is the PRIMARY / album artist
     const primaryTracks = useMemo(() => {
@@ -97,14 +85,14 @@ export const ArtistDetail: React.FC = () => {
 
     return (
         <div className="artist-detail page-container relative">
-            {artistData.imageUrl && <FadedHeroImage src={artistData.imageUrl} />}
+            {imageUrl && <FadedHeroImage src={imageUrl} />}
             <div className="relative z-10">
                 <BackButton onClick={() => navigate(-1)} />
 
                 <div className="flex flex-col md:flex-row gap-8 items-start mb-8 md:mb-12">
-                    {artistData.imageUrl ? (
+                    {imageUrl ? (
                         <div className="w-48 h-48 md:w-64 md:h-64 rounded-full overflow-hidden shrink-0 shadow-[var(--shadow-md)] border-4 border-[var(--glass-border)] bg-[var(--glass-bg)]">
-                            <img src={artistData.imageUrl} alt={artistName} className="w-full h-full object-cover" />
+                            <img src={imageUrl} alt={artistName} className="w-full h-full object-cover" />
                         </div>
                     ) : (
                         <div className={`w-48 h-48 md:w-64 md:h-64 rounded-full overflow-hidden shrink-0 shadow-[var(--shadow-md)] border-4 border-[var(--glass-border)] bg-[var(--glass-bg)] flex items-center justify-center ${artistLoading ? 'animate-pulse' : ''}`}>
@@ -116,9 +104,9 @@ export const ArtistDetail: React.FC = () => {
                         <h1 className="font-bold text-4xl md:text-6xl lg:text-7xl tracking-tight mb-4 text-[var(--color-text-primary)]">
                             {artistName}
                         </h1>
-                        {artistData.bio && (
+                        {bio && (
                             <p className="text-sm md:text-base text-[var(--color-text-secondary)] leading-relaxed max-w-3xl line-clamp-4 hover:line-clamp-none transition-all duration-300">
-                                {artistData.bio}
+                                {bio}
                             </p>
                         )}
                     </div>
