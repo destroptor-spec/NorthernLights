@@ -1488,6 +1488,8 @@ body::after {
     border-bottom: 1px solid var(--glass-border);
     background: var(--color-surface);
     flex-shrink: 0;
+    padding-left: 48px;
+    padding-top: env(safe-area-inset-top, 0px);
   }
 
   .settings-content-wrapper {
@@ -1501,7 +1503,7 @@ body::after {
   }
 
   .settings-close-container {
-    top: 8px;
+    top: calc(8px + env(safe-area-inset-top, 0px));
     left: 8px;
     right: auto;
   }
@@ -1514,10 +1516,6 @@ body::after {
     width: 32px;
     height: 32px;
     background: var(--color-surface);
-  }
-
-  .settings-mobile-tabs {
-    padding-left: 48px;
   }
 }
 
