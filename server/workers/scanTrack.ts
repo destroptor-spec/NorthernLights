@@ -48,7 +48,15 @@ process.stdin.on('data', async (chunk: string) => {
             releaseType: metadata.common.releasetype ? metadata.common.releasetype[0] : null,
             isCompilation: metadata.common.compilation || false,
             bitrate: metadata.format.bitrate ? Math.round(metadata.format.bitrate) : null,
-            format: metadata.format.container || metadata.format.codec || null
+            format: metadata.format.container || metadata.format.codec || null,
+            isrc: metadata.common.isrc?.[0] || null,
+            mbRecordingId: metadata.common.musicbrainz_recordingid || null,
+            mbTrackId: metadata.common.musicbrainz_trackid || null,
+            mbAlbumId: metadata.common.musicbrainz_albumid || null,
+            mbArtistId: Array.isArray(metadata.common.musicbrainz_artistid) ? metadata.common.musicbrainz_artistid[0] : (metadata.common.musicbrainz_artistid || null),
+            mbAlbumArtistId: Array.isArray(metadata.common.musicbrainz_albumartistid) ? metadata.common.musicbrainz_albumartistid[0] : (metadata.common.musicbrainz_albumartistid || null),
+            mbReleaseGroupId: metadata.common.musicbrainz_releasegroupid || null,
+            mbWorkId: metadata.common.musicbrainz_workid || null
         }
       }) + '\n');
     } catch (err: any) {

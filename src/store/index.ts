@@ -4,6 +4,7 @@ import type { TrackInfo } from '../utils/fileSystem';
 import { extractMetadata } from '../utils/fileSystem';
 import { playbackManager, PlaybackState } from '../utils/PlaybackManager';
 import { safeBtoa } from '../utils/safeBtoa';
+import { clearExternalCache } from '../utils/externalImagery';
 
 // Re-entrancy guard: incremented on each playAtIndex call to discard stale callbacks
 let playGeneration = 0;
@@ -74,10 +75,11 @@ export interface PlayerState {
   theme: 'light' | 'dark';
   lastFmApiKey: string;
   geniusApiKey: string;
+  musicBrainzEnabled: boolean;
   preferredProvider: 'lastfm' | 'genius'; // legacy, kept for backward compat
-  providerArtistImage: 'lastfm' | 'genius';
+  providerArtistImage: 'lastfm' | 'genius' | 'musicbrainz';
   providerArtistBio: 'lastfm' | 'genius';
-  providerAlbumArt: 'lastfm' | 'genius';
+  providerAlbumArt: 'lastfm' | 'genius' | 'musicbrainz';
   authToken: string | null; // JWT token
 
   // Current User State
@@ -167,10 +169,11 @@ export interface PlayerState {
   setTheme: (theme: 'light' | 'dark') => void;
   setLastFmApiKey: (key: string) => void;
   setGeniusApiKey: (key: string) => void;
+  setMusicBrainzEnabled: (enabled: boolean) => void;
   setPreferredProvider: (provider: 'lastfm' | 'genius') => void;
-  setProviderArtistImage: (provider: 'lastfm' | 'genius') => void;
+  setProviderArtistImage: (provider: 'lastfm' | 'genius' | 'musicbrainz') => void;
   setProviderArtistBio: (provider: 'lastfm' | 'genius') => void;
-  setProviderAlbumArt: (provider: 'lastfm' | 'genius') => void;
+  setProviderAlbumArt: (provider: 'lastfm' | 'genius' | 'musicbrainz') => void;
 
   // Manager sync callbacks
   syncTimeUpdate: (time: number) => void;
@@ -247,10 +250,11 @@ export const usePlayerStore = create<PlayerState>()(
         theme: 'light' as 'light' | 'dark',
         lastFmApiKey: '',
         geniusApiKey: '',
+        musicBrainzEnabled: false as boolean,
         preferredProvider: 'lastfm' as 'lastfm' | 'genius',
-        providerArtistImage: 'lastfm' as 'lastfm' | 'genius',
+        providerArtistImage: 'lastfm' as 'lastfm' | 'genius' | 'musicbrainz',
         providerArtistBio: 'lastfm' as 'lastfm' | 'genius',
-        providerAlbumArt: 'lastfm' as 'lastfm' | 'genius',
+        providerAlbumArt: 'lastfm' as 'lastfm' | 'genius' | 'musicbrainz',
         authToken: null as string | null,
         currentUser: null as { id: string; username: string; role: string } | null,
 
@@ -394,6 +398,7 @@ export const usePlayerStore = create<PlayerState>()(
                 genreMatrixProgress: data.genreMatrixProgress || null,
                 lastFmApiKey: data.lastFmApiKey || '',
                 geniusApiKey: data.geniusApiKey || '',
+                musicBrainzEnabled: data.musicBrainzEnabled ?? false,
                 preferredProvider: data.preferredProvider || 'lastfm',
                 providerArtistImage: data.providerArtistImage || 'lastfm',
                 providerArtistBio: data.providerArtistBio || 'lastfm',
@@ -425,6 +430,7 @@ export const usePlayerStore = create<PlayerState>()(
                 llmModelName: state.llmModelName,
                 lastFmApiKey: state.lastFmApiKey,
                 geniusApiKey: state.geniusApiKey,
+                musicBrainzEnabled: state.musicBrainzEnabled,
                 preferredProvider: state.preferredProvider,
                 providerArtistImage: state.providerArtistImage,
                 providerArtistBio: state.providerArtistBio,
@@ -435,6 +441,8 @@ export const usePlayerStore = create<PlayerState>()(
                  headers: { 'Content-Type': 'application/json', ...authHeaders },
                  body: JSON.stringify(payload)
               });
+              // Clear cached external imagery when provider settings change
+              clearExternalCache();
            } catch(e) {
               console.error('Failed to save settings', e);
            }
@@ -955,10 +963,11 @@ export const usePlayerStore = create<PlayerState>()(
         
         setLastFmApiKey: (key: string) => set({ lastFmApiKey: key }),
         setGeniusApiKey: (key: string) => set({ geniusApiKey: key }),
+        setMusicBrainzEnabled: (enabled: boolean) => set({ musicBrainzEnabled: enabled }),
         setPreferredProvider: (provider: 'lastfm' | 'genius') => set({ preferredProvider: provider }),
-        setProviderArtistImage: (provider: 'lastfm' | 'genius') => set({ providerArtistImage: provider }),
+        setProviderArtistImage: (provider: 'lastfm' | 'genius' | 'musicbrainz') => set({ providerArtistImage: provider }),
         setProviderArtistBio: (provider: 'lastfm' | 'genius') => set({ providerArtistBio: provider }),
-        setProviderAlbumArt: (provider: 'lastfm' | 'genius') => set({ providerAlbumArt: provider }),
+        setProviderAlbumArt: (provider: 'lastfm' | 'genius' | 'musicbrainz') => set({ providerAlbumArt: provider }),
 
         recordPlay: (trackId: string) => {
           // Push trackId to the 50-item rolling session history
@@ -997,6 +1006,7 @@ export const usePlayerStore = create<PlayerState>()(
         theme: state.theme,
         lastFmApiKey: state.lastFmApiKey,
         geniusApiKey: state.geniusApiKey,
+        musicBrainzEnabled: state.musicBrainzEnabled,
         preferredProvider: state.preferredProvider,
         providerArtistImage: state.providerArtistImage,
         providerArtistBio: state.providerArtistBio,

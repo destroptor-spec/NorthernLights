@@ -182,7 +182,15 @@ async function processMetadataBatch(fileBufs: Buffer[], concurrency: number): Pr
               format: metadata.format || null,
               artistId,
               albumId,
-              genreId
+              genreId,
+              isrc: metadata.isrc || null,
+              mbRecordingId: metadata.mbRecordingId || null,
+              mbTrackId: metadata.mbTrackId || null,
+              mbAlbumId: metadata.mbAlbumId || null,
+              mbArtistId: metadata.mbArtistId || null,
+              mbAlbumArtistId: metadata.mbAlbumArtistId || null,
+              mbReleaseGroupId: metadata.mbReleaseGroupId || null,
+              mbWorkId: metadata.mbWorkId || null
             });
 
             if (!metadata.genre || metadata.genre.length === 0) {
@@ -266,9 +274,19 @@ async function getAnalysisConcurrency(): Promise<number> {
 
 async function processAnalysisBatch(tracks: { id: string; filePath: Buffer; title: string; artist?: string | null }[], concurrency: number): Promise<void> {
   const { settingsEmitter } = await import('../state');
+  const { getVectorStats } = await import('../database');
   let index = 0;
   const total = tracks.length;
   const activeSet = new Set<string>();
+
+  // Fetch vector stats once for the entire batch instead of per-track
+  let vectorStats: any = null;
+  try {
+    vectorStats = await getVectorStats();
+    console.log(`[Analysis] Loaded vector stats for ${total} tracks (cached for batch)`);
+  } catch (err) {
+    console.warn('[Analysis] Failed to fetch vector stats, will use per-track fallback');
+  }
 
   let currentConcurrency = Math.min(concurrency, total);
   const pool = new ChildProcessPool(path.resolve(__dirname, '../workers/analyzeTrack.ts'), currentConcurrency);
@@ -297,7 +315,8 @@ async function processAnalysisBatch(tracks: { id: string; filePath: Buffer; titl
             id: track.id,
             payload: {
               id: track.id,
-              filePathBase64: track.filePath.toString('base64')
+              filePathBase64: track.filePath.toString('base64'),
+              vectorStats
             }
           });
 

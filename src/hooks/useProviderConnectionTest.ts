@@ -8,6 +8,8 @@ export const useProviderConnectionTest = () => {
   const [lastFmMessage, setLastFmMessage] = useState('');
   const [geniusStatus, setGeniusStatus] = useState<ConnectionStatus>('idle');
   const [geniusMessage, setGeniusMessage] = useState('');
+  const [musicBrainzStatus, setMusicBrainzStatus] = useState<ConnectionStatus>('idle');
+  const [musicBrainzMessage, setMusicBrainzMessage] = useState('');
 
   const testLastFm = useCallback(async (apiKey: string) => {
     if (!apiKey) {
@@ -66,12 +68,34 @@ export const useProviderConnectionTest = () => {
     }
   }, []);
 
+  const testMusicBrainz = useCallback(async () => {
+    setMusicBrainzStatus('testing');
+    setMusicBrainzMessage('');
+    try {
+      const res = await fetch('/api/providers/musicbrainz/test');
+      const data = await res.json();
+      if (data.status === 'ok') {
+        setMusicBrainzStatus('success');
+        setMusicBrainzMessage('Connection OK');
+      } else {
+        setMusicBrainzStatus('error');
+        setMusicBrainzMessage(data.error || 'Connection failed');
+      }
+    } catch (err: any) {
+      setMusicBrainzStatus('error');
+      setMusicBrainzMessage(err.message || 'Network error');
+    }
+  }, []);
+
   return {
     lastFmStatus,
     lastFmMessage,
     geniusStatus,
     geniusMessage,
+    musicBrainzStatus,
+    musicBrainzMessage,
     testLastFm,
     testGenius,
+    testMusicBrainz,
   };
 };

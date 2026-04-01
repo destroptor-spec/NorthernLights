@@ -5,17 +5,23 @@ import { execSync } from 'child_process';
 
 // Detect available container runtime (prefer podman, fallback to docker)
 let containerRuntime: 'podman' | 'docker' | null = null;
-try {
-  execSync('podman --version', { stdio: 'ignore' });
-  containerRuntime = 'podman';
-} catch {
+
+function detectRuntime(): 'podman' | 'docker' | null {
   try {
-    execSync('docker --version', { stdio: 'ignore' });
-    containerRuntime = 'docker';
+    execSync('podman --version', { stdio: 'ignore' });
+    return 'podman';
   } catch {
-    containerRuntime = null;
+    try {
+      execSync('docker --version', { stdio: 'ignore' });
+      return 'docker';
+    } catch {
+      return null;
+    }
   }
 }
+
+// Initial detection at import time
+containerRuntime = detectRuntime();
 
 export interface ContainerConfig {
   name: string;
@@ -65,6 +71,9 @@ function getDefaultPort(): string {
 }
 
 async function runContainer(args: string[], timeout = 60000): Promise<string> {
+  if (!containerRuntime) {
+    containerRuntime = detectRuntime();
+  }
   if (!containerRuntime) {
     throw new Error('No container runtime found. Install Podman or Docker.');
   }

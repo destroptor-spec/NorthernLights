@@ -63,6 +63,20 @@ export async function initDB(): Promise<Pool> {
           WHEN OTHERS THEN null; 
         END $$;
 
+        DO $$ 
+        BEGIN 
+          ALTER TABLE tracks ADD COLUMN IF NOT EXISTS isrc TEXT;
+          ALTER TABLE tracks ADD COLUMN IF NOT EXISTS mb_recording_id TEXT;
+          ALTER TABLE tracks ADD COLUMN IF NOT EXISTS mb_track_id TEXT;
+          ALTER TABLE tracks ADD COLUMN IF NOT EXISTS mb_album_id TEXT;
+          ALTER TABLE tracks ADD COLUMN IF NOT EXISTS mb_artist_id TEXT;
+          ALTER TABLE tracks ADD COLUMN IF NOT EXISTS mb_album_artist_id TEXT;
+          ALTER TABLE tracks ADD COLUMN IF NOT EXISTS mb_release_group_id TEXT;
+          ALTER TABLE tracks ADD COLUMN IF NOT EXISTS mb_work_id TEXT;
+        EXCEPTION 
+          WHEN OTHERS THEN null; 
+        END $$;
+
         CREATE TABLE IF NOT EXISTS track_features (
           track_id TEXT REFERENCES tracks(id) ON DELETE CASCADE PRIMARY KEY,
           bpm NUMERIC,
@@ -336,8 +350,8 @@ export async function addTrack(track: any) {
   const sanitizeArray = (arr: any) => Array.isArray(arr) ? arr.map(sanitize) : arr;
 
   await db.query(`
-    INSERT INTO tracks (id, title, artist, albumArtist, artists, album, genre, duration, trackNumber, year, releaseType, isCompilation, path, bitrate, format, artist_id, album_id, genre_id)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+    INSERT INTO tracks (id, title, artist, albumArtist, artists, album, genre, duration, trackNumber, year, releaseType, isCompilation, path, bitrate, format, artist_id, album_id, genre_id, isrc, mb_recording_id, mb_track_id, mb_album_id, mb_artist_id, mb_album_artist_id, mb_release_group_id, mb_work_id)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
     ON CONFLICT (id) DO UPDATE SET
       title = EXCLUDED.title,
       artist = EXCLUDED.artist,
@@ -355,7 +369,15 @@ export async function addTrack(track: any) {
       format = EXCLUDED.format,
       artist_id = EXCLUDED.artist_id,
       album_id = EXCLUDED.album_id,
-      genre_id = EXCLUDED.genre_id
+      genre_id = EXCLUDED.genre_id,
+      isrc = EXCLUDED.isrc,
+      mb_recording_id = EXCLUDED.mb_recording_id,
+      mb_track_id = EXCLUDED.mb_track_id,
+      mb_album_id = EXCLUDED.mb_album_id,
+      mb_artist_id = EXCLUDED.mb_artist_id,
+      mb_album_artist_id = EXCLUDED.mb_album_artist_id,
+      mb_release_group_id = EXCLUDED.mb_release_group_id,
+      mb_work_id = EXCLUDED.mb_work_id
   `, [
     id,
     sanitize(track.title) || path.basename(track.path),
@@ -374,7 +396,15 @@ export async function addTrack(track: any) {
     track.format || null,
     track.artistId || null,
     track.albumId || null,
-    track.genreId || null
+    track.genreId || null,
+    track.isrc || null,
+    track.mbRecordingId || null,
+    track.mbTrackId || null,
+    track.mbAlbumId || null,
+    track.mbArtistId || null,
+    track.mbAlbumArtistId || null,
+    track.mbReleaseGroupId || null,
+    track.mbWorkId || null
   ]);
 
   if (track.audioFeatures) {

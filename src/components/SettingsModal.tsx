@@ -23,6 +23,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     const setLastFmApiKey = usePlayerStore(state => state.setLastFmApiKey);
     const geniusApiKey = usePlayerStore(state => state.geniusApiKey);
     const setGeniusApiKey = usePlayerStore(state => state.setGeniusApiKey);
+    const musicBrainzEnabled = usePlayerStore(state => state.musicBrainzEnabled);
+    const setMusicBrainzEnabled = usePlayerStore(state => state.setMusicBrainzEnabled);
     const providerArtistImage = usePlayerStore(state => state.providerArtistImage);
     const setProviderArtistImage = usePlayerStore(state => state.setProviderArtistImage);
     const providerArtistBio = usePlayerStore(state => state.providerArtistBio);
@@ -118,8 +120,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         lastFmMessage,
         geniusStatus,
         geniusMessage,
+        musicBrainzStatus,
+        musicBrainzMessage,
         testLastFm,
         testGenius,
+        testMusicBrainz,
     } = useProviderConnectionTest();
 
     const fetchMappings = async () => {
@@ -1089,13 +1094,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                 {geniusStatus === 'error' && <span className="text-red-500 font-semibold text-sm mt-1 block">✗ {geniusMessage}</span>}
                                             </div>
                                             <div>
+                                                <div className="flex items-center justify-between mb-1">
+                                                    <label className="block text-sm font-medium text-[var(--color-text-primary)]">MusicBrainz</label>
+                                                    <button
+                                                        onClick={() => setMusicBrainzEnabled(!musicBrainzEnabled)}
+                                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${musicBrainzEnabled ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-bg-tertiary)]'}`}
+                                                    >
+                                                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${musicBrainzEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                                                    </button>
+                                                </div>
+                                                <p className="text-xs text-[var(--color-text-muted)] mb-2">Free structured metadata — no API key required</p>
+                                                {musicBrainzEnabled && (
+                                                    <div className="flex gap-2 items-center">
+                                                        <button onClick={() => testMusicBrainz()} disabled={musicBrainzStatus === 'testing'} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">
+                                                            {musicBrainzStatus === 'testing' ? 'Testing...' : 'Test'}
+                                                        </button>
+                                                        {musicBrainzStatus === 'success' && <span className="text-green-500 font-semibold text-xs">✓ {musicBrainzMessage}</span>}
+                                                        {musicBrainzStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {musicBrainzMessage}</span>}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <div>
                                                 <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-3 uppercase tracking-wider text-xs">Default Provider per Service</label>
                                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                                     <div>
                                                         <label className="block text-xs text-[var(--color-text-muted)] mb-1">Artist Images</label>
-                                                        <select value={providerArtistImage} onChange={e => setProviderArtistImage(e.target.value as 'lastfm' | 'genius')} className="w-full p-2.5 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] text-sm focus:outline-none">
+                                                        <select value={providerArtistImage} onChange={e => setProviderArtistImage(e.target.value as 'lastfm' | 'genius' | 'musicbrainz')} className="w-full p-2.5 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] text-sm focus:outline-none">
                                                             <option value="lastfm">Last.fm</option>
                                                             <option value="genius">Genius</option>
+                                                            {musicBrainzEnabled && <option value="musicbrainz">MusicBrainz</option>}
                                                         </select>
                                                     </div>
                                                     <div>
@@ -1107,9 +1134,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                     </div>
                                                     <div>
                                                         <label className="block text-xs text-[var(--color-text-muted)] mb-1">Album Art</label>
-                                                        <select value={providerAlbumArt} onChange={e => setProviderAlbumArt(e.target.value as 'lastfm' | 'genius')} className="w-full p-2.5 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] text-sm focus:outline-none">
+                                                        <select value={providerAlbumArt} onChange={e => setProviderAlbumArt(e.target.value as 'lastfm' | 'genius' | 'musicbrainz')} className="w-full p-2.5 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] text-sm focus:outline-none">
                                                             <option value="lastfm">Last.fm</option>
                                                             <option value="genius">Genius</option>
+                                                            {musicBrainzEnabled && <option value="musicbrainz">MusicBrainz</option>}
                                                         </select>
                                                     </div>
                                                 </div>

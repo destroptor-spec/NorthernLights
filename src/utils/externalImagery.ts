@@ -3,6 +3,12 @@ import { usePlayerStore } from '../store';
 interface ArtistData {
     imageUrl?: string;
     bio?: string;
+    disambiguation?: string;
+    area?: string;
+    type?: string;
+    lifeSpan?: { begin?: string; end?: string };
+    links?: { url: string; type: string }[];
+    genres?: string[];
 }
 
 interface CacheEntry {
@@ -36,6 +42,20 @@ const setCache = (key: string, value: Omit<CacheEntry, '_ts'> & { _ts?: number }
     try {
         const entry: CacheEntry = { ...value, _ts: Date.now() };
         localStorage.setItem(key, JSON.stringify(entry));
+    } catch (e) { }
+}
+
+/** Clear all external imagery caches (call when API keys change) */
+export const clearExternalCache = () => {
+    try {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && (key.startsWith('ext_') || key.startsWith('ext_artist_') || key.startsWith('ext_album_') || key.startsWith('ext_genre_') || key.startsWith('ext_lyrics_'))) {
+                keysToRemove.push(key);
+            }
+        }
+        keysToRemove.forEach(k => localStorage.removeItem(k));
     } catch (e) { }
 }
 
@@ -80,7 +100,42 @@ const geniusArtist = async (artistId: number): Promise<any> => {
     return res.json();
 }
 
-export const fetchArtistData = async (artistName: string): Promise<ArtistData> => {
+// Helper: call MusicBrainz via backend proxy (rate-limited, no auth needed)
+const musicBrainzSearchArtist = async (query: string): Promise<any> => {
+    try {
+        const res = await fetchWithRetry(`/api/providers/musicbrainz/search/artist?q=${encodeURIComponent(query)}&limit=5`);
+        if (!res.ok) return null;
+        return res.json();
+    } catch { return null; }
+}
+
+const musicBrainzGetArtist = async (mbid: string): Promise<any> => {
+    try {
+        const res = await fetchWithRetry(`/api/providers/musicbrainz/artist/${mbid}?inc=url-rels+tags+genres+ratings`);
+        if (!res.ok) return null;
+        return res.json();
+    } catch { return null; }
+}
+
+const musicBrainzSearchReleaseGroup = async (query: string): Promise<any> => {
+    try {
+        const res = await fetchWithRetry(`/api/providers/musicbrainz/search/release-group?q=${encodeURIComponent(query)}&limit=5`);
+        if (!res.ok) return null;
+        return res.json();
+    } catch { return null; }
+}
+
+const extractMbLinks = (relations: any[]): { url: string; type: string }[] => {
+    if (!Array.isArray(relations)) return [];
+    return relations
+        .filter((r: any) => r.target_type === 'url' && r.url?.resource)
+        .map((r: any) => ({
+            url: r.url.resource,
+            type: r.type || 'other'
+        }));
+}
+
+export const fetchArtistData = async (artistName: string, mbArtistId?: string | null): Promise<ArtistData> => {
     if (!artistName) return {};
     
     const cacheKey = `ext_artist_${artistName}`;
@@ -88,11 +143,35 @@ export const fetchArtistData = async (artistName: string): Promise<ArtistData> =
     if (cached) return { imageUrl: cached.imageUrl ?? undefined, bio: cached.bio };
 
     const state = usePlayerStore.getState();
-    const { lastFmApiKey, geniusApiKey, providerArtistImage, providerArtistBio } = state;
+    const { lastFmApiKey, geniusApiKey, musicBrainzEnabled, providerArtistImage, providerArtistBio } = state;
 
     let data: ArtistData = {};
 
-    // Build API order: prioritize image provider, then bio provider, then fallbacks
+    // If we have a MusicBrainz artist ID, do structured lookup first (exact match)
+    if (musicBrainzEnabled && mbArtistId) {
+        try {
+            const mbArtist = await musicBrainzGetArtist(mbArtistId);
+            if (mbArtist) {
+                data.disambiguation = mbArtist.disambiguation || undefined;
+                data.area = mbArtist.area?.name || undefined;
+                data.type = mbArtist.type || undefined;
+                if (mbArtist['life-span']) {
+                    data.lifeSpan = {
+                        begin: mbArtist['life-span'].begin || undefined,
+                        end: mbArtist['life-span'].ended ? mbArtist['life-span'].end || undefined : undefined
+                    };
+                }
+                data.links = extractMbLinks(mbArtist.relations);
+                if (Array.isArray(mbArtist.genres) && mbArtist.genres.length > 0) {
+                    data.genres = mbArtist.genres.map((g: any) => g.name);
+                }
+            }
+        } catch (e) {
+            console.warn('MusicBrainz artist lookup failed:', e);
+        }
+    }
+
+    // Build API order for image + bio: prioritize configured providers, then fallbacks
     const seen = new Set<string>();
     const apisToTry: string[] = [];
     const pushApi = (api: string) => {
@@ -163,12 +242,15 @@ export const fetchArtistData = async (artistName: string): Promise<ArtistData> =
         }
     }
 
-    const isMiss = !data.imageUrl && !data.bio;
-    setCache(cacheKey, { imageUrl: data.imageUrl || null, bio: data.bio, _miss: isMiss });
+    // Cache successful results only (30 days). Don't cache misses to avoid
+    // poisoning the cache when API keys are missing or APIs are temporarily down.
+    if (data.imageUrl || data.bio) {
+      setCache(cacheKey, { imageUrl: data.imageUrl || null, bio: data.bio });
+    }
     return data;
 };
 
-export const fetchAlbumImage = async (albumName: string, artistName: string): Promise<string | undefined> => {
+export const fetchAlbumImage = async (albumName: string, artistName: string, mbAlbumId?: string | null): Promise<string | undefined> => {
     if (!albumName || !artistName) return undefined;
 
     const cacheKey = `ext_album_${albumName}_${artistName}`;
@@ -176,7 +258,53 @@ export const fetchAlbumImage = async (albumName: string, artistName: string): Pr
     if (cached) return cached.imageUrl || undefined;
 
     const state = usePlayerStore.getState();
-    const { lastFmApiKey, geniusApiKey, providerAlbumArt } = state;
+    const { lastFmApiKey, geniusApiKey, musicBrainzEnabled, providerAlbumArt } = state;
+
+    // Try Cover Art Archive via MusicBrainz if we have an MBID
+    if (musicBrainzEnabled && mbAlbumId) {
+        try {
+            const coverUrl = `https://coverartarchive.org/release/${mbAlbumId}/front-500`;
+            const coverRes = await fetchWithRetry(coverUrl, { method: 'HEAD' });
+            if (coverRes.ok) {
+                setCache(cacheKey, { imageUrl: coverUrl });
+                return coverUrl;
+            }
+        } catch { /* no cover art, fall through */ }
+    }
+
+    // Try Cover Art Archive via text search if MusicBrainz is the configured provider
+    if (musicBrainzEnabled && providerAlbumArt === 'musicbrainz' && !mbAlbumId) {
+        try {
+            const searchQuery = `${artistName} ${albumName}`;
+            const mbResult = await musicBrainzSearchReleaseGroup(searchQuery);
+            const hits = mbResult?.['release-groups'];
+            if (hits && hits.length > 0) {
+                // Find the best match
+                const match = hits.find((h: any) =>
+                    h.title?.toLowerCase() === albumName.toLowerCase() &&
+                    h['artist-credit']?.some((ac: any) => ac.name?.toLowerCase() === artistName.toLowerCase())
+                ) || hits[0];
+                if (match?.id) {
+                    // Get releases for this release-group to find one with cover art
+                    const rgRes = await fetchWithRetry(`/api/providers/musicbrainz/release-group/${match.id}?inc=releases`);
+                    if (rgRes.ok) {
+                        const rgJson = await rgRes.json();
+                        const releases = rgJson.releases || [];
+                        for (const release of releases.slice(0, 3)) {
+                            try {
+                                const coverUrl = `https://coverartarchive.org/release/${release.id}/front-500`;
+                                const headRes = await fetchWithRetry(coverUrl, { method: 'HEAD' });
+                                if (headRes.ok) {
+                                    setCache(cacheKey, { imageUrl: coverUrl });
+                                    return coverUrl;
+                                }
+                            } catch { /* continue to next release */ }
+                        }
+                    }
+                }
+            }
+        } catch { /* fall through to other providers */ }
+    }
 
     const apisToTry: string[] = [];
     if (providerAlbumArt === 'genius' && geniusApiKey) {

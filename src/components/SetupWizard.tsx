@@ -5,7 +5,7 @@ import { useLlmConnectionTest } from '../hooks/useLlmConnectionTest';
 import { useProviderConnectionTest } from '../hooks/useProviderConnectionTest';
 
 export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
-    const { addLibraryFolder, setLastFmApiKey, setGeniusApiKey, setSettings, getAuthHeader } = usePlayerStore();
+    const { addLibraryFolder, setLastFmApiKey, setGeniusApiKey, setMusicBrainzEnabled, setSettings, getAuthHeader } = usePlayerStore();
     const [step, setStep] = useState(1);
     
     // Step 1 State
@@ -38,14 +38,18 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
     // Step 4 State
     const [lastFmKey, setLastFmKeyState] = useState('');
     const [geniusKey, setGeniusKeyState] = useState('');
+    const [musicBrainzEnabledLocal, setMusicBrainzEnabledLocal] = useState(false);
 
     const {
         lastFmStatus,
         lastFmMessage,
         geniusStatus,
         geniusMessage,
+        musicBrainzStatus,
+        musicBrainzMessage,
         testLastFm,
         testGenius,
+        testMusicBrainz,
     } = useProviderConnectionTest();
 
     // Token estimate
@@ -115,20 +119,20 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
     const handleFinish = async () => {
         if (lastFmKey) setLastFmApiKey(lastFmKey);
         if (geniusKey) setGeniusApiKey(geniusKey);
+        setMusicBrainzEnabled(musicBrainzEnabledLocal);
         // Persist provider keys to backend DB
-        if (lastFmKey || geniusKey) {
-            try {
-                const authHeaders = getAuthHeader();
-                await fetch('/api/settings', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', ...authHeaders },
-                    body: JSON.stringify({
-                        ...(lastFmKey ? { lastFmApiKey: lastFmKey } : {}),
-                        ...(geniusKey ? { geniusApiKey: geniusKey } : {}),
-                    })
-                });
-            } catch (e) { console.warn('Failed to persist provider keys to DB:', e); }
-        }
+        try {
+            const authHeaders = getAuthHeader();
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...authHeaders },
+                body: JSON.stringify({
+                    ...(lastFmKey ? { lastFmApiKey: lastFmKey } : {}),
+                    ...(geniusKey ? { geniusApiKey: geniusKey } : {}),
+                    musicBrainzEnabled: musicBrainzEnabledLocal,
+                })
+            });
+        } catch (e) { console.warn('Failed to persist provider settings to DB:', e); }
         onComplete();
     };
 
@@ -384,6 +388,27 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
                                 </div>
                                 {geniusStatus === 'success' && <span className="text-green-500 font-semibold text-sm mt-1 block">✓ {geniusMessage}</span>}
                                 {geniusStatus === 'error' && <span className="text-red-500 font-semibold text-sm mt-1 block">✗ {geniusMessage}</span>}
+                            </div>
+                            <div>
+                                <div className="flex items-center justify-between mb-1">
+                                    <label className="block text-sm font-medium text-[var(--color-text-secondary)]">MusicBrainz</label>
+                                    <button
+                                        onClick={() => setMusicBrainzEnabledLocal(!musicBrainzEnabledLocal)}
+                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${musicBrainzEnabledLocal ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-bg-tertiary)]'}`}
+                                    >
+                                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${musicBrainzEnabledLocal ? 'translate-x-6' : 'translate-x-1'}`} />
+                                    </button>
+                                </div>
+                                <p className="text-xs text-[var(--color-text-muted)] mb-2">Free structured metadata — no API key required. Provides artist disambiguation, official links, genre tags, and album art from Cover Art Archive.</p>
+                                {musicBrainzEnabledLocal && (
+                                    <div className="flex gap-2 items-center">
+                                        <button onClick={() => testMusicBrainz()} disabled={musicBrainzStatus === 'testing'} className="px-4 py-2 bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-lg font-semibold text-sm hover:bg-[var(--glass-bg-hover)] transition-colors text-[var(--color-text-primary)] disabled:opacity-50 shadow-sm whitespace-nowrap">
+                                            {musicBrainzStatus === 'testing' ? 'Testing...' : 'Test'}
+                                        </button>
+                                        {musicBrainzStatus === 'success' && <span className="text-green-500 font-semibold text-xs">✓ {musicBrainzMessage}</span>}
+                                        {musicBrainzStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {musicBrainzMessage}</span>}
+                                    </div>
+                                )}
                             </div>
                         </div>
 

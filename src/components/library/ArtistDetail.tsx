@@ -9,6 +9,7 @@ import { AlbumCard } from './AlbumCard';
 import { BackButton } from './BackButton';
 import { FadedHeroImage } from './FadedHeroImage';
 import { ArtistInitial } from './ArtistInitial';
+import { ExternalLink, Globe, Users, Mic2, Calendar } from 'lucide-react';
 
 export const ArtistDetail: React.FC = () => {
     const { artistId } = useParams<{ artistId: string }>();
@@ -19,7 +20,14 @@ export const ArtistDetail: React.FC = () => {
     const artistInfo = useMemo(() => artists.find(a => a.id === artistId), [artists, artistId]);
     const artistName = artistInfo?.name || '';
 
-    const { imageUrl, bio, isLoading: artistLoading } = useArtistData(artistName);
+    // Get MusicBrainz artist ID from the first track that has one
+    const mbArtistId = useMemo(() => {
+        if (!artistId) return null;
+        const track = library.find(t => t.artistId === artistId && t.mbArtistId);
+        return track?.mbArtistId || null;
+    }, [library, artistId]);
+
+    const { imageUrl, bio, disambiguation, area, type, lifeSpan, links, genres, isLoading: artistLoading } = useArtistData(artistName, mbArtistId);
 
     // Tracks where this artist is the PRIMARY / album artist
     const primaryTracks = useMemo(() => {
@@ -101,13 +109,76 @@ export const ArtistDetail: React.FC = () => {
                     )}
                     
                     <div className="flex-1">
-                        <h1 className="font-bold text-4xl md:text-6xl lg:text-7xl tracking-tight mb-4 text-[var(--color-text-primary)]">
+                        <h1 className="font-bold text-4xl md:text-6xl lg:text-7xl tracking-tight mb-2 text-[var(--color-text-primary)]">
                             {artistName}
                         </h1>
+                        {/* MusicBrainz metadata badges */}
+                        {(disambiguation || type || area || lifeSpan?.begin) && (
+                            <div className="flex flex-wrap items-center gap-2 mb-3">
+                                {disambiguation && (
+                                    <span className="text-sm text-[var(--color-text-muted)] italic">{disambiguation}</span>
+                                )}
+                                {type && (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/20">
+                                        {type === 'Group' ? <Users className="w-3 h-3" /> : type === 'Person' ? <Mic2 className="w-3 h-3" /> : <Globe className="w-3 h-3" />}
+                                        {type}
+                                    </span>
+                                )}
+                                {area && (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
+                                        <Globe className="w-3 h-3" />
+                                        {area}
+                                    </span>
+                                )}
+                                {lifeSpan?.begin && (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
+                                        <Calendar className="w-3 h-3" />
+                                        {lifeSpan.begin}{lifeSpan.end ? ` – ${lifeSpan.end}` : ' – present'}
+                                    </span>
+                                )}
+                            </div>
+                        )}
+                        {/* Genre tags */}
+                        {genres && genres.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 mb-3">
+                                {genres.slice(0, 8).map(g => (
+                                    <span key={g} className="px-2 py-0.5 rounded-full text-xs font-medium bg-[var(--color-bg-tertiary)]/80 text-[var(--color-text-muted)] border border-[var(--color-border)]/50">
+                                        {g}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
                         {bio && (
                             <p className="text-sm md:text-base text-[var(--color-text-secondary)] leading-relaxed max-w-3xl line-clamp-4 hover:line-clamp-none transition-all duration-300">
                                 {bio}
                             </p>
+                        )}
+                        {/* Official links */}
+                        {links && links.length > 0 && (
+                            <div className="flex flex-wrap gap-2 mt-3">
+                                {links
+                                    .filter(l => !l.url.includes('wikipedia') && !l.url.includes('wikidata'))
+                                    .slice(0, 6)
+                                    .map((link, i) => (
+                                        <a
+                                            key={i}
+                                            href={link.url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-[var(--color-text-muted)] hover:text-[var(--color-primary)] bg-[var(--color-bg-tertiary)]/50 hover:bg-[var(--color-primary)]/10 border border-[var(--color-border)]/50 transition-colors"
+                                        >
+                                            <ExternalLink className="w-3 h-3" />
+                                            {link.type === 'official homepage' ? 'Official Site' :
+                                             link.type === 'social network' ? 'Social' :
+                                             link.type === 'streaming' ? 'Stream' :
+                                             link.type === 'youtube' ? 'YouTube' :
+                                             link.type === 'spotify' ? 'Spotify' :
+                                             link.type === 'discogs' ? 'Discogs' :
+                                             link.type === 'allmusic' ? 'AllMusic' :
+                                             link.type}
+                                        </a>
+                                    ))}
+                            </div>
                         )}
                     </div>
                 </div>

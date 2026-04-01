@@ -53,6 +53,7 @@ function getDuration(inputPath: string): Promise<number> {
   return new Promise((resolve, reject) => {
     const proc = spawn('ffprobe', [
       '-v', 'error',
+      '-select_streams', 'a:0',  // Only probe the first audio stream
       '-show_entries', 'format=duration',
       '-of', 'default=noprint_wrappers=1:nokey=1',
       inputPath,
@@ -67,6 +68,13 @@ function getDuration(inputPath: string): Promise<number> {
       resolve(dur);
     });
     proc.on('error', reject);
+
+    // Timeout for ffprobe — large artwork can stall initial parsing
+    const timer = setTimeout(() => {
+      proc.kill('SIGKILL');
+      reject(new Error('ffprobe timed out after 15 seconds'));
+    }, 15000);
+    proc.on('close', () => clearTimeout(timer));
   });
 }
 
@@ -85,7 +93,7 @@ function decodeToPCM(filePath: Buffer | string, decodeSeconds = 15, useSeek = tr
     if (Buffer.isBuffer(filePath)) {
       try {
         tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'am-'));
-        symlinkPath = path.join(tmpDir, 'input.flac');
+        symlinkPath = path.join(tmpDir, 'input');
         fs.symlinkSync(filePath, symlinkPath);
         inputForFfmpeg = symlinkPath;
       } catch (linkErr: any) {
@@ -122,6 +130,7 @@ function decodeToPCM(filePath: Buffer | string, decodeSeconds = 15, useSeek = tr
     }
     args.push(
       '-i', inputForFfmpeg,
+      '-map', '0:a',  // Only map audio stream — skip embedded artwork/video
       '-t', String(decodeSeconds),
       '-f', 'f32le',
       '-ac', '1',
@@ -148,6 +157,10 @@ function decodeToPCM(filePath: Buffer | string, decodeSeconds = 15, useSeek = tr
       if (code !== 0) {
         if (useSeek && seekTime > 0) {
           return reject(new Error(`FFMPEG_SEEK_FAILED: exited with code ${code}`));
+        }
+        // Code 183 = format detection failure — worth retrying without seek
+        if (code === 183) {
+          return reject(new Error(`FFMPEG_SEEK_FAILED: exited with code ${code} (format detection)`));
         }
         return reject(new Error(`ffmpeg exited with code ${code}: ${stderrOutput}`));
       }
@@ -200,7 +213,12 @@ function generateSimulatedPCM(fileSize: number): Float32Array {
   return pcmData;
 }
 
-export async function extractAudioFeatures(filePath: Buffer | string): Promise<AudioFeatures> {
+export interface VectorStats {
+  means: number[];
+  stddevs: number[];
+}
+
+export async function extractAudioFeatures(filePath: Buffer | string, vectorStats?: VectorStats | null): Promise<AudioFeatures> {
   const ess = await initEssentia();
 
   // Keep as Buffer on Linux for raw-byte filesystem paths; convert to string only if already a string
@@ -353,9 +371,11 @@ export async function extractAudioFeatures(filePath: Buffer | string): Promise<A
       return sigmoid(avg, k === 0 ? 20 : 8);
     }) as AudioFeatures['mfcc_vector'];
 
-    // Fetch rolling library statistics for true Z-Score normalization
-    const { getVectorStats } = await import('../database');
-    const stats = await getVectorStats();
+    // Use pre-fetched stats if provided, otherwise fetch from DB (fallback for single-track usage)
+    const stats = vectorStats !== undefined ? vectorStats : await (async () => {
+      const { getVectorStats } = await import('../database');
+      return getVectorStats();
+    })();
 
     const zScoreNormalize = (val: number, idx: number, fallbackDivisor: number) => {
       if (!stats) {

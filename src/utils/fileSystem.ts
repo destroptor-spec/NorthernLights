@@ -42,6 +42,16 @@ export interface TrackInfo {
   albumId?: string;
   genreId?: string;
   
+  // MusicBrainz IDs
+  isrc?: string;
+  mbRecordingId?: string;
+  mbTrackId?: string;
+  mbAlbumId?: string;
+  mbArtistId?: string;
+  mbAlbumArtistId?: string;
+  mbReleaseGroupId?: string;
+  mbWorkId?: string;
+  
   // Legacy / UI fields
   fileHandle?: FileSystemFileHandle;
   url?: string;
