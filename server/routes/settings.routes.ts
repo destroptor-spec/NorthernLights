@@ -11,19 +11,22 @@ router.get('/settings', async (req, res) => {
   try {
     const userId = req.user?.userId;
 
-    const serverKeys = ['audioAnalysisCpu', 'scannerConcurrency', 'hubGenerationSchedule', 'llmBaseUrl', 'llmApiKey', 'llmModelName', 'genreMatrixLastRun', 'genreMatrixLastResult', 'genreMatrixProgress', 'lastFmApiKey', 'geniusApiKey', 'musicBrainzEnabled', 'preferredProvider', 'providerArtistImage', 'providerArtistBio', 'providerAlbumArt'];
+    // System-level (server-wide) settings
+    const serverKeys = ['audioAnalysisCpu', 'scannerConcurrency', 'hubGenerationSchedule', 'llmBaseUrl', 'llmApiKey', 'llmModelName', 'genreMatrixLastRun', 'genreMatrixLastResult', 'genreMatrixProgress', 'geniusApiKey', 'musicBrainzEnabled', 'musicBrainzClientId', 'musicBrainzClientSecret', 'musicBrainzConnected', 'preferredProvider', 'providerArtistImage', 'providerArtistBio', 'providerAlbumArt'];
     const settings: Record<string, any> = {};
     for (const k of serverKeys) {
       settings[k] = await getSystemSetting(k);
     }
 
+    // User-level settings (includes Last.fm which is per-user)
+    const allUserKeys = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'llmPlaylistDiversity', 'genreBlendWeight', 'llmTracksPerPlaylist', 'llmPlaylistCount', 'lastFmApiKey', 'lastFmScrobbleEnabled', 'lastFmConnected', 'lastFmUsername'];
     if (userId) {
-      const userKeys = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'llmPlaylistDiversity', 'genreBlendWeight', 'llmTracksPerPlaylist', 'llmPlaylistCount'];
-      for (const k of userKeys) {
+      for (const k of allUserKeys) {
         const userVal = await getUserSetting(userId, k);
         if (userVal !== null) {
           settings[k] = userVal;
-        } else {
+        } else if (!['lastFmConnected', 'lastFmUsername', 'lastFmScrobbleEnabled'].includes(k)) {
+          // Fallback to system setting for non-Last.fm keys
           settings[k] = await getSystemSetting(k);
         }
       }
@@ -46,11 +49,16 @@ router.post('/settings', async (req, res) => {
     const userId = req.user?.userId;
     const settings = req.body;
 
-    const userKeys = new Set(['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'llmPlaylistDiversity', 'genreBlendWeight', 'llmTracksPerPlaylist', 'llmPlaylistCount']);
-    const serverKeys = new Set(['llmBaseUrl', 'llmApiKey', 'llmModelName', 'hubGenerationSchedule', 'audioAnalysisCpu', 'scannerConcurrency', 'lastFmApiKey', 'geniusApiKey', 'musicBrainzEnabled', 'preferredProvider', 'providerArtistImage', 'providerArtistBio', 'providerAlbumArt']);
+    const userKeys = new Set(['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'llmPlaylistDiversity', 'genreBlendWeight', 'llmTracksPerPlaylist', 'llmPlaylistCount', 'lastFmApiKey', 'lastFmScrobbleEnabled']);
+    const serverKeys = new Set(['llmBaseUrl', 'llmApiKey', 'llmModelName', 'hubGenerationSchedule', 'audioAnalysisCpu', 'scannerConcurrency', 'geniusApiKey', 'musicBrainzEnabled', 'musicBrainzClientId', 'musicBrainzClientSecret', 'preferredProvider', 'providerArtistImage', 'providerArtistBio', 'providerAlbumArt']);
+    // Keys that are written by OAuth2 flows server-side, not exposed to frontend
+    const protectedKeys = new Set(['musicBrainzAccessToken', 'musicBrainzRefreshToken', 'musicBrainzTokenExpiresAt', 'musicBrainzConnected', 'musicBrainzUsername', 'lastFmSessionKey', 'lastFmSharedSecret', 'lastFmUsername', 'lastFmConnected']);
 
     for (const [k, v] of Object.entries(settings)) {
-      if (userKeys.has(k) && userId) {
+      if (protectedKeys.has(k)) {
+        // Protected keys can only be set by server-side OAuth2 flows, ignore from client
+        continue;
+      } else if (userKeys.has(k) && userId) {
         await setUserSetting(userId, k, v);
       } else if (serverKeys.has(k)) {
         if (req.user?.role === 'admin') {

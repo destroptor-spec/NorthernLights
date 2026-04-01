@@ -21,10 +21,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     const setTheme = usePlayerStore(state => state.setTheme);
     const lastFmApiKey = usePlayerStore(state => state.lastFmApiKey);
     const setLastFmApiKey = usePlayerStore(state => state.setLastFmApiKey);
+    const lastFmScrobbleEnabled = usePlayerStore(state => state.lastFmScrobbleEnabled);
+    const setLastFmScrobbleEnabled = usePlayerStore(state => state.setLastFmScrobbleEnabled);
+    const lastFmConnected = usePlayerStore(state => state.lastFmConnected);
+    const setLastFmConnected = usePlayerStore(state => state.setLastFmConnected);
+    const lastFmUsername = usePlayerStore(state => state.lastFmUsername);
+    const setLastFmUsername = usePlayerStore(state => state.setLastFmUsername);
     const geniusApiKey = usePlayerStore(state => state.geniusApiKey);
     const setGeniusApiKey = usePlayerStore(state => state.setGeniusApiKey);
     const musicBrainzEnabled = usePlayerStore(state => state.musicBrainzEnabled);
     const setMusicBrainzEnabled = usePlayerStore(state => state.setMusicBrainzEnabled);
+    const musicBrainzClientId = usePlayerStore(state => state.musicBrainzClientId);
+    const setMusicBrainzClientId = usePlayerStore(state => state.setMusicBrainzClientId);
+    const musicBrainzClientSecret = usePlayerStore(state => state.musicBrainzClientSecret);
+    const setMusicBrainzClientSecret = usePlayerStore(state => state.setMusicBrainzClientSecret);
+    const musicBrainzConnected = usePlayerStore(state => state.musicBrainzConnected);
+    const setMusicBrainzConnected = usePlayerStore(state => state.setMusicBrainzConnected);
     const providerArtistImage = usePlayerStore(state => state.providerArtistImage);
     const setProviderArtistImage = usePlayerStore(state => state.setProviderArtistImage);
     const providerArtistBio = usePlayerStore(state => state.providerArtistBio);
@@ -1073,15 +1085,51 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                         <div className="flex flex-col gap-4">
                                             <div>
                                                 <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">Last.fm API Key</label>
-                                                <div className="flex gap-2">
-                                                    <input type="text" value={lastFmApiKey} onChange={e => setLastFmApiKey(e.target.value)} className="flex-1 p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none" />
-                                                    <button onClick={() => testLastFm(lastFmApiKey)} disabled={lastFmStatus === 'testing' || !lastFmApiKey} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">
-                                                        {lastFmStatus === 'testing' ? 'Testing...' : 'Test'}
+                                                <input type="text" value={lastFmApiKey} onChange={e => setLastFmApiKey(e.target.value)} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none" />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">Last.fm Shared Secret</label>
+                                                <input type="password" value={''} onChange={() => {}} placeholder="Stored on server" className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none" />
+                                                <p className="text-xs text-[var(--color-text-muted)] mt-1">Required for scrobbling. Enter via Setup or API.</p>
+                                            </div>
+                                            <div className="flex flex-wrap gap-2 items-center">
+                                                {lastFmConnected ? (
+                                                    <>
+                                                        <span className="text-green-500 font-semibold text-sm">Connected as {lastFmUsername || 'Last.fm'}</span>
+                                                        <button onClick={async () => {
+                                                            const authHeaders = (usePlayerStore.getState() as any).getAuthHeader?.() || {};
+                                                            await fetch('/api/providers/lastfm/disconnect', { method: 'POST', headers: { ...authHeaders } });
+                                                            setLastFmConnected(false);
+                                                            setLastFmUsername('');
+                                                        }} className="btn btn-danger btn-sm">Disconnect</button>
+                                                    </>
+                                                ) : (
+                                                    <button onClick={async () => {
+                                                        try {
+                                                            const authHeaders = (usePlayerStore.getState() as any).getAuthHeader?.() || {};
+                                                            const res = await fetch('/api/providers/lastfm/authorize', { headers: { ...authHeaders } });
+                                                            const data = await res.json();
+                                                            if (data.url) window.open(data.url, '_blank');
+                                                        } catch {}
+                                                    }} disabled={!lastFmApiKey} className="btn btn-primary btn-sm disabled:opacity-50">Connect to Last.fm</button>
+                                                )}
+                                                <button onClick={() => testLastFm(lastFmApiKey)} disabled={lastFmStatus === 'testing' || !lastFmApiKey} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">
+                                                    {lastFmStatus === 'testing' ? 'Testing...' : 'Test'}
+                                                </button>
+                                                {lastFmStatus === 'success' && <span className="text-green-500 font-semibold text-xs">✓ {lastFmMessage}</span>}
+                                                {lastFmStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {lastFmMessage}</span>}
+                                            </div>
+                                            {lastFmConnected && (
+                                                <div className="flex items-center justify-between">
+                                                    <label className="text-sm text-[var(--color-text-primary)]">Auto-scrobble played tracks</label>
+                                                    <button
+                                                        onClick={() => setLastFmScrobbleEnabled(!lastFmScrobbleEnabled)}
+                                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${lastFmScrobbleEnabled ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-bg-tertiary)]'}`}
+                                                    >
+                                                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${lastFmScrobbleEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
                                                     </button>
                                                 </div>
-                                                {lastFmStatus === 'success' && <span className="text-green-500 font-semibold text-sm mt-1 block">✓ {lastFmMessage}</span>}
-                                                {lastFmStatus === 'error' && <span className="text-red-500 font-semibold text-sm mt-1 block">✗ {lastFmMessage}</span>}
-                                            </div>
+                                            )}
                                             <div>
                                                 <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">Genius Access Token</label>
                                                 <div className="flex gap-2">
@@ -1103,14 +1151,39 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                         <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${musicBrainzEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
                                                     </button>
                                                 </div>
-                                                <p className="text-xs text-[var(--color-text-muted)] mb-2">Free structured metadata — no API key required</p>
+                                                <p className="text-xs text-[var(--color-text-muted)] mb-2">Structured metadata — add your OAuth2 credentials for authenticated access</p>
                                                 {musicBrainzEnabled && (
-                                                    <div className="flex gap-2 items-center">
-                                                        <button onClick={() => testMusicBrainz()} disabled={musicBrainzStatus === 'testing'} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">
-                                                            {musicBrainzStatus === 'testing' ? 'Testing...' : 'Test'}
-                                                        </button>
-                                                        {musicBrainzStatus === 'success' && <span className="text-green-500 font-semibold text-xs">✓ {musicBrainzMessage}</span>}
-                                                        {musicBrainzStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {musicBrainzMessage}</span>}
+                                                    <div className="flex flex-col gap-2">
+                                                        <div className="flex gap-2 items-center">
+                                                            <button onClick={() => testMusicBrainz()} disabled={musicBrainzStatus === 'testing'} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">
+                                                                {musicBrainzStatus === 'testing' ? 'Testing...' : 'Test'}
+                                                            </button>
+                                                            {musicBrainzStatus === 'success' && <span className="text-green-500 font-semibold text-xs">✓ {musicBrainzMessage}</span>}
+                                                            {musicBrainzStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {musicBrainzMessage}</span>}
+                                                        </div>
+                                                        <label className="block text-xs font-medium text-[var(--color-text-primary)]">Client ID</label>
+                                                        <input type="text" value={musicBrainzClientId} onChange={e => setMusicBrainzClientId(e.target.value)} placeholder="From musicbrainz.org/account/applications" className="w-full p-2.5 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] text-sm focus:outline-none" />
+                                                        <label className="block text-xs font-medium text-[var(--color-text-primary)]">Client Secret</label>
+                                                        <input type="password" value={musicBrainzClientSecret} onChange={e => setMusicBrainzClientSecret(e.target.value)} placeholder="From musicbrainz.org/account/applications" className="w-full p-2.5 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] text-sm focus:outline-none" />
+                                                        <div className="flex gap-2 items-center mt-1">
+                                                            {musicBrainzConnected ? (
+                                                                <>
+                                                                    <span className="text-green-500 font-semibold text-xs">Connected</span>
+                                                                    <button onClick={async () => {
+                                                                        await fetch('/api/providers/musicbrainz/disconnect', { method: 'POST' });
+                                                                        setMusicBrainzConnected(false);
+                                                                    }} className="btn btn-danger btn-sm">Disconnect</button>
+                                                                </>
+                                                            ) : (
+                                                                <button onClick={async () => {
+                                                                    try {
+                                                                        const res = await fetch('/api/providers/musicbrainz/authorize');
+                                                                        const data = await res.json();
+                                                                        if (data.url) window.open(data.url, '_blank');
+                                                                    } catch {}
+                                                                }} disabled={!musicBrainzClientId || !musicBrainzClientSecret} className="btn btn-primary btn-sm disabled:opacity-50">Connect to MusicBrainz</button>
+                                                            )}
+                                                        </div>
                                                     </div>
                                                 )}
                                             </div>

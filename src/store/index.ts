@@ -74,8 +74,14 @@ export interface PlayerState {
   repeat: "none" | "one" | "all";
   theme: 'light' | 'dark';
   lastFmApiKey: string;
+  lastFmScrobbleEnabled: boolean;
+  lastFmConnected: boolean;
+  lastFmUsername: string;
   geniusApiKey: string;
   musicBrainzEnabled: boolean;
+  musicBrainzClientId: string;
+  musicBrainzClientSecret: string;
+  musicBrainzConnected: boolean;
   preferredProvider: 'lastfm' | 'genius'; // legacy, kept for backward compat
   providerArtistImage: 'lastfm' | 'genius' | 'musicbrainz';
   providerArtistBio: 'lastfm' | 'genius';
@@ -84,6 +90,10 @@ export interface PlayerState {
 
   // Current User State
   currentUser: { id: string; username: string; role: string } | null;
+
+  // Last.fm scrobble tracking (internal, not persisted)
+  _scrobbleStartAt: number | null;
+  _scrobbleEligible: boolean;
 
   // Global Engine Settings
   discoveryLevel: number;
@@ -168,8 +178,14 @@ export interface PlayerState {
   cycleRepeat: () => void;
   setTheme: (theme: 'light' | 'dark') => void;
   setLastFmApiKey: (key: string) => void;
+  setLastFmScrobbleEnabled: (enabled: boolean) => void;
+  setLastFmConnected: (connected: boolean) => void;
+  setLastFmUsername: (username: string) => void;
   setGeniusApiKey: (key: string) => void;
   setMusicBrainzEnabled: (enabled: boolean) => void;
+  setMusicBrainzClientId: (id: string) => void;
+  setMusicBrainzClientSecret: (secret: string) => void;
+  setMusicBrainzConnected: (connected: boolean) => void;
   setPreferredProvider: (provider: 'lastfm' | 'genius') => void;
   setProviderArtistImage: (provider: 'lastfm' | 'genius' | 'musicbrainz') => void;
   setProviderArtistBio: (provider: 'lastfm' | 'genius') => void;
@@ -193,10 +209,47 @@ export const usePlayerStore = create<PlayerState>()(
     (set: any, get: any) => {
       // Setup PlaybackManager callbacks to update store state
       playbackManager.setCallbacks({
-        onTimeUpdate: (time) => set({ currentTime: time }),
+        onTimeUpdate: (time) => {
+          set({ currentTime: time });
+          // Check scrobble eligibility (>50% duration or 4 minutes, whichever is earlier, and track >30s)
+          const state = get();
+          if (!state._scrobbleEligible && state._scrobbleStartAt && state.duration > 30) {
+            const halfDuration = state.duration / 2;
+            const threshold = Math.min(halfDuration, 240); // 4 minutes = 240s
+            if (time >= threshold) {
+              set({ _scrobbleEligible: true });
+            }
+          }
+        },
         onDuration: (duration) => set({ duration }),
         onPlayStateChange: (state) => set({ playbackState: state }),
         onEnded: () => {
+          // Scrobble the completed track if eligible
+          const state = get();
+          const { lastFmConnected, lastFmScrobbleEnabled, _scrobbleEligible, _scrobbleStartAt } = state;
+          if (lastFmConnected && lastFmScrobbleEnabled && _scrobbleEligible && _scrobbleStartAt) {
+            const currentTrack = state.currentIndex !== null ? state.playlist[state.currentIndex] : null;
+            if (currentTrack?.artist && currentTrack?.title) {
+              const authHeaders = (get() as any).getAuthHeader();
+              fetch('/api/providers/lastfm/scrobble', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...authHeaders },
+                body: JSON.stringify({
+                  tracks: [{
+                    artist: currentTrack.artist,
+                    track: currentTrack.title,
+                    album: currentTrack.album || '',
+                    albumArtist: currentTrack.albumArtist || '',
+                    duration: Math.round(state.duration),
+                    timestamp: Math.floor(_scrobbleStartAt / 1000),
+                    mbid: currentTrack.mbTrackId || '',
+                  }]
+                })
+              }).catch(() => {});
+            }
+          }
+          set({ _scrobbleStartAt: null, _scrobbleEligible: false });
+
           // Auto-play next track based on repeat and shuffle rules
           const { repeat, nextTrack, stop, fetchNextInfinityTrack } = get();
           if (repeat === 'one') {
@@ -249,14 +302,24 @@ export const usePlayerStore = create<PlayerState>()(
         repeat: "none" as "none" | "one" | "all",
         theme: 'light' as 'light' | 'dark',
         lastFmApiKey: '',
+        lastFmScrobbleEnabled: false as boolean,
+        lastFmConnected: false as boolean,
+        lastFmUsername: '',
         geniusApiKey: '',
         musicBrainzEnabled: false as boolean,
+        musicBrainzClientId: '',
+        musicBrainzClientSecret: '',
+        musicBrainzConnected: false as boolean,
         preferredProvider: 'lastfm' as 'lastfm' | 'genius',
         providerArtistImage: 'lastfm' as 'lastfm' | 'genius' | 'musicbrainz',
         providerArtistBio: 'lastfm' as 'lastfm' | 'genius',
         providerAlbumArt: 'lastfm' as 'lastfm' | 'genius' | 'musicbrainz',
         authToken: null as string | null,
         currentUser: null as { id: string; username: string; role: string } | null,
+
+        // Last.fm scrobble state
+        _scrobbleStartAt: null as number | null,
+        _scrobbleEligible: false as boolean,
 
         isInfinityMode: true as boolean,
         isFetchingInfinity: false as boolean,
@@ -397,8 +460,14 @@ export const usePlayerStore = create<PlayerState>()(
                 genreMatrixLastResult: data.genreMatrixLastResult || null,
                 genreMatrixProgress: data.genreMatrixProgress || null,
                 lastFmApiKey: data.lastFmApiKey || '',
+                lastFmScrobbleEnabled: data.lastFmScrobbleEnabled ?? false,
+                lastFmConnected: data.lastFmConnected ?? false,
+                lastFmUsername: data.lastFmUsername || '',
                 geniusApiKey: data.geniusApiKey || '',
                 musicBrainzEnabled: data.musicBrainzEnabled ?? false,
+                musicBrainzClientId: data.musicBrainzClientId || '',
+                musicBrainzClientSecret: data.musicBrainzClientSecret || '',
+                musicBrainzConnected: data.musicBrainzConnected ?? false,
                 preferredProvider: data.preferredProvider || 'lastfm',
                 providerArtistImage: data.providerArtistImage || 'lastfm',
                 providerArtistBio: data.providerArtistBio || 'lastfm',
@@ -429,8 +498,11 @@ export const usePlayerStore = create<PlayerState>()(
                 llmApiKey: state.llmApiKey,
                 llmModelName: state.llmModelName,
                 lastFmApiKey: state.lastFmApiKey,
+                lastFmScrobbleEnabled: state.lastFmScrobbleEnabled,
                 geniusApiKey: state.geniusApiKey,
                 musicBrainzEnabled: state.musicBrainzEnabled,
+                musicBrainzClientId: state.musicBrainzClientId,
+                musicBrainzClientSecret: state.musicBrainzClientSecret,
                 preferredProvider: state.preferredProvider,
                 providerArtistImage: state.providerArtistImage,
                 providerArtistBio: state.providerArtistBio,
@@ -881,10 +953,28 @@ export const usePlayerStore = create<PlayerState>()(
             }
             // A newer playAtIndex call has taken over — discard this result
             if (generation !== playGeneration) return;
-            set({ currentIndex: index });
+            set({ currentIndex: index, _scrobbleStartAt: Date.now(), _scrobbleEligible: false });
 
             // Telemetry: record successful playback and push to session history
             get().recordPlay(track.id);
+
+            // Send "now playing" to Last.fm if connected
+            const state = get();
+            if (state.lastFmConnected && state.lastFmScrobbleEnabled && track.artist && track.title) {
+              const authHeaders = (get() as any).getAuthHeader();
+              fetch('/api/providers/lastfm/now-playing', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...authHeaders },
+                body: JSON.stringify({
+                  artist: track.artist,
+                  track: track.title,
+                  album: track.album || '',
+                  albumArtist: track.albumArtist || '',
+                  duration: track.duration ? Math.round(track.duration) : undefined,
+                  mbid: track.mbTrackId || '',
+                })
+              }).catch(() => {});
+            }
 
             // Pre-fetch infinite track if bounds are reached
             get().ensureInfinityQueue();
@@ -962,8 +1052,14 @@ export const usePlayerStore = create<PlayerState>()(
         syncPlaybackState: (state: PlaybackState) => set({ playbackState: state }),
         
         setLastFmApiKey: (key: string) => set({ lastFmApiKey: key }),
+        setLastFmScrobbleEnabled: (enabled: boolean) => set({ lastFmScrobbleEnabled: enabled }),
+        setLastFmConnected: (connected: boolean) => set({ lastFmConnected: connected }),
+        setLastFmUsername: (username: string) => set({ lastFmUsername: username }),
         setGeniusApiKey: (key: string) => set({ geniusApiKey: key }),
         setMusicBrainzEnabled: (enabled: boolean) => set({ musicBrainzEnabled: enabled }),
+        setMusicBrainzClientId: (id: string) => set({ musicBrainzClientId: id }),
+        setMusicBrainzClientSecret: (secret: string) => set({ musicBrainzClientSecret: secret }),
+        setMusicBrainzConnected: (connected: boolean) => set({ musicBrainzConnected: connected }),
         setPreferredProvider: (provider: 'lastfm' | 'genius') => set({ preferredProvider: provider }),
         setProviderArtistImage: (provider: 'lastfm' | 'genius' | 'musicbrainz') => set({ providerArtistImage: provider }),
         setProviderArtistBio: (provider: 'lastfm' | 'genius') => set({ providerArtistBio: provider }),
@@ -1005,8 +1101,14 @@ export const usePlayerStore = create<PlayerState>()(
         repeat: state.repeat,
         theme: state.theme,
         lastFmApiKey: state.lastFmApiKey,
+        lastFmScrobbleEnabled: state.lastFmScrobbleEnabled,
+        lastFmConnected: state.lastFmConnected,
+        lastFmUsername: state.lastFmUsername,
         geniusApiKey: state.geniusApiKey,
         musicBrainzEnabled: state.musicBrainzEnabled,
+        musicBrainzClientId: state.musicBrainzClientId,
+        musicBrainzClientSecret: state.musicBrainzClientSecret,
+        musicBrainzConnected: state.musicBrainzConnected,
         preferredProvider: state.preferredProvider,
         providerArtistImage: state.providerArtistImage,
         providerArtistBio: state.providerArtistBio,
