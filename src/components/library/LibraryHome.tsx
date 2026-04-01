@@ -8,12 +8,15 @@ import { ArtistInitial } from './ArtistInitial';
 import { useExternalImage } from '../../hooks/useExternalImage';
 import { useArtistData } from '../../hooks/useArtistData';
 import { fetchGenreImage } from '../../utils/externalImagery';
+import { useInView } from '../../hooks/useInView';
 
 const GenreCard: React.FC<{ genre: string }> = ({ genre }) => {
-    const { imageUrl } = useExternalImage(() => fetchGenreImage(genre), [genre]);
+    const [ref, inView] = useInView();
+    const { imageUrl } = useExternalImage(() => fetchGenreImage(genre), [genre], { enabled: inView });
 
     return (
         <div
+            ref={ref}
             className="genre-card group flex flex-col items-center justify-center cursor-pointer transition-transform duration-300 hover:scale-105 relative overflow-hidden rounded-2xl aspect-video md:aspect-square bg-[var(--glass-bg)] border border-[var(--glass-border)] shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
         >
             {imageUrl && (
@@ -30,10 +33,12 @@ const GenreCard: React.FC<{ genre: string }> = ({ genre }) => {
 };
 
 const ArtistCard: React.FC<{ artist: string }> = ({ artist }) => {
-    const { imageUrl, isLoading } = useArtistData(artist);
+    const [ref, inView] = useInView();
+    const { imageUrl } = useArtistData(artist, undefined, { enabled: inView });
 
     return (
         <div
+            ref={ref}
             className="artist-card group flex flex-col items-center cursor-pointer transition-transform duration-300 hover:scale-105"
         >
             <div className="w-full aspect-square rounded-full overflow-hidden shadow-[var(--shadow-sm)] border-4 border-[var(--glass-border)] bg-[var(--glass-bg)] mb-4 flex items-center justify-center transition-all duration-300 group-hover:border-[var(--color-primary)] group-hover:shadow-[var(--shadow-md)]">

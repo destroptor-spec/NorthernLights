@@ -8,13 +8,19 @@ interface ExternalImageState {
 
 export const useExternalImage = (
   fetcher: () => Promise<string | undefined | null>,
-  deps: unknown[]
+  deps: unknown[],
+  options?: { enabled?: boolean }
 ): ExternalImageState => {
+  const enabled = options?.enabled !== false;
   const [imageUrl, setImageUrl] = useState<string | undefined>();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
   useEffect(() => {
+    if (!enabled) {
+      setIsLoading(false);
+      return;
+    }
     let mounted = true;
     setImageUrl(undefined);
     setError(undefined);
@@ -31,7 +37,7 @@ export const useExternalImage = (
       });
     return () => { mounted = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  }, [...deps, enabled]);
 
   return { imageUrl, isLoading, error };
 };

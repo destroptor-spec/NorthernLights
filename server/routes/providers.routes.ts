@@ -154,6 +154,9 @@ router.post('/providers/genius/search', async (req, res) => {
       headers: { 'Authorization': `Bearer ${apiKey}` }
     });
 
+    if (!geniusRes.ok) {
+      return res.status(geniusRes.status).json({ error: `Genius API returned ${geniusRes.status}` });
+    }
     const json = await geniusRes.json();
     res.status(geniusRes.status).json(json);
   } catch (err: any) {
@@ -172,6 +175,9 @@ router.post('/providers/genius/artist/:id', async (req, res) => {
       headers: { 'Authorization': `Bearer ${apiKey}` }
     });
 
+    if (!geniusRes.ok) {
+      return res.status(geniusRes.status).json({ error: `Genius API returned ${geniusRes.status}` });
+    }
     const json = await geniusRes.json();
     res.status(geniusRes.status).json(json);
   } catch (err: any) {

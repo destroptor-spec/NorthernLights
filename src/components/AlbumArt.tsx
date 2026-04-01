@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { fetchAlbumImage } from '../utils/externalImagery';
 import { Disc3 } from 'lucide-react';
+import { useInView } from '../hooks/useInView';
 
 interface AlbumArtProps {
   artUrl?: string;
@@ -13,6 +14,7 @@ interface AlbumArtProps {
 const AlbumArt: React.FC<AlbumArtProps> = ({ artUrl, artist, album, size = 300, className = '' }) => {
   const [imageError, setImageError] = useState(false);
   const [fetchedArtUrl, setFetchedArtUrl] = useState<string | undefined>();
+  const [ref, inView] = useInView();
 
   // Reset error state when artUrl changes so new art is attempted
   useEffect(() => {
@@ -20,7 +22,8 @@ const AlbumArt: React.FC<AlbumArtProps> = ({ artUrl, artist, album, size = 300, 
     setFetchedArtUrl(undefined);
   }, [artUrl]);
 
-    useEffect(() => {
+  useEffect(() => {
+    if (!inView) return;
     // If local artUrl is missing or errored, try fetching from external
     if ((!artUrl || imageError) && album && artist) {
         let mounted = true;
@@ -34,13 +37,14 @@ const AlbumArt: React.FC<AlbumArtProps> = ({ artUrl, artist, album, size = 300, 
             .catch(() => {});
         return () => { mounted = false; };
     }
-  }, [artUrl, imageError, album, artist]);
+  }, [inView, artUrl, imageError, album, artist]);
 
   const activeUrl = fetchedArtUrl || artUrl;
   const showImage = activeUrl && !imageError;
 
   return (
     <div
+      ref={ref}
       className={`relative overflow-hidden bg-[var(--glass-bg)] w-full h-full ${className}`}
     >
       {showImage ? (

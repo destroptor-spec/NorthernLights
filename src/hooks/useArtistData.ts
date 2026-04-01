@@ -14,7 +14,8 @@ interface ArtistDataState {
   error: string | undefined;
 }
 
-export const useArtistData = (artistName: string, mbArtistId?: string | null): ArtistDataState => {
+export const useArtistData = (artistName: string, mbArtistId?: string | null, options?: { enabled?: boolean }): ArtistDataState => {
+  const enabled = options?.enabled !== false;
   const [imageUrl, setImageUrl] = useState<string | undefined>();
   const [bio, setBio] = useState<string | undefined>();
   const [disambiguation, setDisambiguation] = useState<string | undefined>();
@@ -27,7 +28,10 @@ export const useArtistData = (artistName: string, mbArtistId?: string | null): A
   const [error, setError] = useState<string | undefined>();
 
   useEffect(() => {
-    if (!artistName) return;
+    if (!artistName || !enabled) {
+      setIsLoading(false);
+      return;
+    }
     let mounted = true;
     setImageUrl(undefined);
     setBio(undefined);
@@ -59,7 +63,7 @@ export const useArtistData = (artistName: string, mbArtistId?: string | null): A
         if (mounted) setIsLoading(false);
       });
     return () => { mounted = false; };
-  }, [artistName, mbArtistId]);
+  }, [artistName, mbArtistId, enabled]);
 
   return { imageUrl, bio, disambiguation, area, type, lifeSpan, links, genres, isLoading, error };
 };

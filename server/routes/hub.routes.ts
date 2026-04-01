@@ -13,7 +13,8 @@ async function runLlmHubRegeneration(userId: string, opts: { force?: boolean } =
     return { skipped: true, reason: 'No LLM base URL configured' };
   }
 
-  const maxAgeMs = opts.force ? 0 : 24 * 60 * 60 * 1000;
+  const fourHoursMs = 4 * 60 * 60 * 1000;
+  const maxAgeMs = opts.force ? 0 : fourHoursMs;
   const deletedCount = await deleteOldLlmPlaylists(maxAgeMs, userId);
   if (deletedCount && deletedCount > 0) {
     console.log(`[LLM Hub] ${opts.force ? 'Reset' : 'Cleaned up'} ${deletedCount} LLM playlist(s) for user ${userId}`);
@@ -21,7 +22,6 @@ async function runLlmHubRegeneration(userId: string, opts: { force?: boolean } =
 
   const existingPlaylists = await getPlaylists(userId);
 
-  const fourHoursMs = 4 * 60 * 60 * 1000;
   const hasRecentLlm = existingPlaylists.some((pl: any) =>
     pl.isLlmGenerated && (Date.now() - pl.createdAt) < fourHoursMs
   );

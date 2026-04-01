@@ -13,6 +13,7 @@ export class ChildProcessPool {
   private workerTasks = new Map<ChildProcess, { id: string; resolve: (val: any) => void }>();
   private activeCount = 0;
   private pendingKills = 0;
+  private terminated = false;
 
   constructor(
     private scriptPath: string,
@@ -66,6 +67,13 @@ export class ChildProcessPool {
     child.on('exit', () => {
       this.workers = this.workers.filter(w => w !== child);
       this.freeWorkers = this.freeWorkers.filter(w => w !== child);
+
+      // Auto-respawn to keep the pool at its target size.
+      // Skip if the pool is shutting down or if a deliberate shrink is pending.
+      if (!this.terminated && this.pendingKills === 0 && this.workers.length < this.poolSize) {
+        this.spawnWorker();
+        this.pump();
+      }
     });
 
     this.workers.push(child);
@@ -164,6 +172,7 @@ export class ChildProcessPool {
   }
 
   public terminate() {
+    this.terminated = true;
     for (const worker of this.workers) {
       worker.kill();
     }

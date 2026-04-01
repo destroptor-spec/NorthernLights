@@ -5,8 +5,6 @@ import { AlbumArt } from '../AlbumArt';
 import { parseArtists } from '../../utils/artistUtils';
 import { formatTime } from '../../utils/formatTime';
 import { BackButton } from './BackButton';
-import { useArtistData } from '../../hooks/useArtistData';
-import { ArtistInitial } from './ArtistInitial';
 
 import { MoreHorizontal } from 'lucide-react';
 
@@ -48,8 +46,6 @@ export const AlbumDetail: React.FC = () => {
     const albumYear = albumTracks.find(t => t.year)?.year;
     const headerArtists = parseArtists(albumArtist);
 
-    const { imageUrl: artistImageUrl } = useArtistData(albumArtist);
-
     // Build artist name -> ID lookup from entity list, with fallback to track data
     const getArtistLink = (artistName: string): string | null => {
         // First try entity list (case-insensitive)
@@ -84,11 +80,6 @@ export const AlbumDetail: React.FC = () => {
                     <div className="font-semibold text-sm tracking-wider uppercase text-[var(--color-primary)]">Album</div>
                     <h1 className="font-bold text-4xl md:text-5xl lg:text-6xl tracking-tight my-2 leading-tight text-[var(--color-text-primary)]">{albumTitle}</h1>
                     <h2 className="text-xl text-[var(--color-text-secondary)] mb-1 flex items-center gap-2">
-                        {artistImageUrl && (
-                            <div className="w-7 h-7 rounded-full overflow-hidden shrink-0 border border-[var(--glass-border)] bg-[var(--glass-bg)]">
-                                <img src={artistImageUrl} alt={albumArtist} className="w-full h-full object-cover" />
-                            </div>
-                        )}
                         <span>
                         {headerArtists.map((a, i) => {
                             const link = getArtistLink(a);

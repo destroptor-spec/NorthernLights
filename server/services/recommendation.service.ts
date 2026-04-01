@@ -120,22 +120,24 @@ export async function getHubCollections(
         `, [vectorStr, mfccCentroidStr, ...exclusionParams]);
         // Fallback: if 20D yields too few results, supplement with 7D query
         if (res.rows.length < 10) {
+          const renumberedExclusion = exclusionClause.replace(/\$(\d+)/g, (_, n) => `$${Number(n) - 1}`);
           res = await db.query(`
             SELECT t.*, tf.acoustic_vector <-> $1 AS distance
             FROM tracks t
             JOIN track_features tf ON t.id = tf.track_id
-            ${exclusionClause.replace(/\$3/g, '$2')}
+            ${renumberedExclusion}
             ORDER BY distance ASC
             LIMIT 50
           `, [vectorStr, ...exclusionParams]);
         }
       } else {
         // Graceful degradation: no MFCC data yet, use 7D only
+        const renumberedExclusion = exclusionClause.replace(/\$(\d+)/g, (_, n) => `$${Number(n) - 1}`);
         res = await db.query(`
           SELECT t.*, tf.acoustic_vector <-> $1 AS distance
           FROM tracks t
           JOIN track_features tf ON t.id = tf.track_id
-          ${exclusionClause.replace(/\$3/g, '$2')}
+          ${renumberedExclusion}
           ORDER BY distance ASC
           LIMIT 50
         `, [vectorStr, ...exclusionParams]);
@@ -669,12 +671,15 @@ export async function calculateNextInfinityTrack(
 
     let res;
     if (mfccVectorStr) {
+      const renumberedHistory = historyClause
+        ? `AND ${historyClause.replace(/^WHERE /, '').replace(/\$(\d+)/g, (_, n) => `$${Number(n) + 1}`)}`
+        : '';
       res = await db.query(`
         SELECT t.*, (tf.acoustic_vector <-> $1) + (tf.mfcc_vector <-> $2) AS distance
         FROM tracks t
         JOIN track_features tf ON t.id = tf.track_id
         WHERE tf.mfcc_vector IS NOT NULL
-        ${historyClause.replace(/\$2/g, '$3')}
+        ${renumberedHistory}
         ORDER BY distance ASC
         LIMIT $${penaltyIds.length + 3}
       `, [vectorStr, mfccVectorStr, ...penaltyIds, overFetchLimit]);
