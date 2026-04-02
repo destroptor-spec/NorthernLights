@@ -1347,6 +1347,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                         </div>
                                                     </div>
                                                 </div>
+
+                                                <div className="border-t border-[var(--glass-border)] pt-4">
+                                                    <button onClick={async () => {
+                                                        try {
+                                                            const authHeaders = (usePlayerStore.getState() as any).getAuthHeader?.() || {};
+                                                            const res = await fetch('/api/providers/external/refresh', { method: 'POST', headers: authHeaders });
+                                                            const data = await res.json();
+                                                            if (!res.ok || data.error) {
+                                                                showToast(data.error || 'Failed to clear cache', 'error');
+                                                            } else {
+                                                                showToast('Provider image & bio cache cleared — will re-fetch on next view', 'success');
+                                                            }
+                                                        } catch (e: any) {
+                                                            showToast(e?.message || 'Network error', 'error');
+                                                        }
+                                                    }} className="btn btn-ghost btn-sm gap-2">
+                                                        <Trash2 size={14} />
+                                                        Clear cached images &amp; bios
+                                                    </button>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>

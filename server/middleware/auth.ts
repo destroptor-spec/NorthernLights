@@ -35,7 +35,8 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     path === '/api/admin/db/create' ||
     path === '/api/admin/db/recreate' ||
     path === '/api/providers/lastfm/callback' ||
-    path === '/api/providers/musicbrainz/callback'
+    path === '/api/providers/musicbrainz/callback' ||
+    path === '/api/providers/external/proxy-image'
   ) {
     return next();
   }
