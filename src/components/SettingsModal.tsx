@@ -699,10 +699,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                         <span className="text-green-500 font-semibold text-sm">Connected as {lastFmUsername || 'Last.fm'}</span>
                                                         <button onClick={async () => {
                                                             try {
-                                                                await fetch('/api/providers/lastfm/disconnect', { method: 'POST' });
-                                                                setLastFmConnected(false);
-                                                                setLastFmUsername('');
-                                                            } catch {}
+                                                                const res = await fetch('/api/providers/lastfm/disconnect', { method: 'POST' });
+                                                                const data = await res.json();
+                                                                if (!res.ok || data.error) {
+                                                                    showToast(data.error || 'Failed to disconnect', 'error');
+                                                                } else {
+                                                                    setLastFmConnected(false);
+                                                                    setLastFmUsername('');
+                                                                }
+                                                            } catch (e: any) {
+                                                                showToast(e?.message || 'Network error', 'error');
+                                                            }
                                                         }} className="btn btn-danger btn-sm">Disconnect</button>
                                                     </div>
                                                     <div className="border-t border-[var(--glass-border)] pt-4 flex items-center justify-between">
@@ -725,8 +732,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                             const authHeaders = (usePlayerStore.getState() as any).getAuthHeader?.() || {};
                                                             const res = await fetch('/api/providers/lastfm/authorize', { headers: { ...authHeaders } });
                                                             const data = await res.json();
-                                                            if (data.url) window.open(data.url, '_blank');
-                                                        } catch {}
+                                                            if (!res.ok || data.error) {
+                                                                showToast(data.error || `Server error: ${res.status}`, 'error');
+                                                            } else if (data.url) {
+                                                                window.open(data.url, '_blank');
+                                                            }
+                                                        } catch (e: any) {
+                                                            showToast(e?.message || 'Network error', 'error');
+                                                        }
                                                     }} className="btn btn-primary">Connect to Last.fm</button>
                                                 </div>
                                             )}
@@ -1288,8 +1301,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                                         try {
                                                                             const res = await fetch('/api/providers/musicbrainz/authorize');
                                                                             const data = await res.json();
-                                                                            if (data.url) window.open(data.url, '_blank');
-                                                                        } catch {}
+                                                                            if (!res.ok || data.error) {
+                                                                                showToast(data.error || `Server error: ${res.status}`, 'error');
+                                                                            } else if (data.url) {
+                                                                                window.open(data.url, '_blank');
+                                                                            }
+                                                                        } catch (e: any) {
+                                                                            showToast(e?.message || 'Network error', 'error');
+                                                                        }
                                                                     }} disabled={!musicBrainzClientId || !musicBrainzClientSecret} className="btn btn-primary btn-sm disabled:opacity-50 ml-auto">Connect</button>
                                                                 )}
                                                             </div>
