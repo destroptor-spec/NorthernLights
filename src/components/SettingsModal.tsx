@@ -1294,7 +1294,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                                         <button onClick={async () => {
                                                                             await fetch('/api/providers/musicbrainz/disconnect', { method: 'POST' });
                                                                             setMusicBrainzConnected(false);
-                                                                        }} className="btn btn-danger btn-sm">Disconnect</button>
+                                                        }} className="btn btn-danger btn-sm">Remove access</button>
                                                                     </>
                                                                 ) : (
                                                                     <button onClick={async () => {
