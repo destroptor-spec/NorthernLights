@@ -184,6 +184,22 @@ export async function initDB(): Promise<Pool> {
         CREATE INDEX IF NOT EXISTS tracks_album_id_idx ON tracks(album_id);
         CREATE INDEX IF NOT EXISTS tracks_genre_id_idx ON tracks(genre_id);
 
+        -- External metadata cache columns
+        DO $$
+        BEGIN
+          ALTER TABLE artists ADD COLUMN IF NOT EXISTS image_url TEXT;
+          ALTER TABLE artists ADD COLUMN IF NOT EXISTS bio TEXT;
+          ALTER TABLE artists ADD COLUMN IF NOT EXISTS mbid TEXT;
+          ALTER TABLE artists ADD COLUMN IF NOT EXISTS last_updated BIGINT DEFAULT 0;
+          ALTER TABLE albums ADD COLUMN IF NOT EXISTS image_url TEXT;
+          ALTER TABLE albums ADD COLUMN IF NOT EXISTS mbid TEXT;
+          ALTER TABLE albums ADD COLUMN IF NOT EXISTS last_updated BIGINT DEFAULT 0;
+          ALTER TABLE genres ADD COLUMN IF NOT EXISTS image_url TEXT;
+          ALTER TABLE genres ADD COLUMN IF NOT EXISTS description TEXT;
+          ALTER TABLE genres ADD COLUMN IF NOT EXISTS last_updated BIGINT DEFAULT 0;
+        EXCEPTION WHEN OTHERS THEN null;
+        END $$;
+
         -- ==========================================
         -- MULTI-USER TABLES
         -- ==========================================

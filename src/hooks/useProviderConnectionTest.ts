@@ -11,26 +11,20 @@ export const useProviderConnectionTest = () => {
   const [musicBrainzStatus, setMusicBrainzStatus] = useState<ConnectionStatus>('idle');
   const [musicBrainzMessage, setMusicBrainzMessage] = useState('');
 
-  const testLastFm = useCallback(async (apiKey: string) => {
-    if (!apiKey) {
-      setLastFmStatus('idle');
-      setLastFmMessage('');
-      return;
-    }
+  const testLastFm = useCallback(async (_apiKey?: string) => {
     setLastFmStatus('testing');
     setLastFmMessage('');
     try {
-      const res = await fetch(`https://ws.audioscrobbler.com/2.0/?method=artist.getinfo&artist=Radiohead&api_key=${apiKey}&format=json`);
-      const json = await res.json();
-      if (json.error) {
-        setLastFmStatus('error');
-        setLastFmMessage(json.message || `API error ${json.error}`);
-      } else if (json.artist) {
+      const state = usePlayerStore.getState();
+      const authHeaders = (state as any).getAuthHeader?.() || {};
+      const res = await fetch('/api/providers/lastfm/test', { headers: authHeaders });
+      const data = await res.json();
+      if (data.status === 'ok') {
         setLastFmStatus('success');
         setLastFmMessage('Connection OK');
       } else {
         setLastFmStatus('error');
-        setLastFmMessage('Unexpected response');
+        setLastFmMessage(data.error || 'Connection failed');
       }
     } catch (err: any) {
       setLastFmStatus('error');

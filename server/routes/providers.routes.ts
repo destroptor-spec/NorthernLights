@@ -1,117 +1,23 @@
 import { Router } from 'express';
 import { getSystemSetting, setSystemSetting, getUserSetting, setUserSetting } from '../database';
 import { lfmFetch, scrobbleTracks, updateNowPlaying, loveTrack, unloveTrack } from '../services/lastfm.service';
+import { requireAuth, requireAdmin } from '../middleware/auth';
+import { mbFetch, checkMbEnabled, refreshMbToken } from '../services/musicbrainz.service';
+import {
+  getArtistData,
+  getAlbumImage,
+  getGenreImage,
+  getGenreInfo,
+  getLyrics,
+  testLastFm,
+  clearExternalCache,
+} from '../services/externalMetadata.service';
 
 const router = Router();
 
 const SERVER_URL = process.env.SERVER_URL || 'http://localhost:3001';
 
-// ─── MusicBrainz Rate Limiter (1 req/s) ──────────────────────────────
-const MB_USER_AGENT = 'AuroraMediaServer/1.0 (https://github.com/aurora-music)';
-let mbLastRequest = 0;
-const mbQueue: { fn: () => Promise<any>; resolve: (val: any) => void; reject: (err: any) => void }[] = [];
-let mbQueueRunning = false;
-
-/**
- * Get a valid MusicBrainz access token, auto-refreshing if expired.
- */
-async function getMbAccessToken(): Promise<string | null> {
-  const token = await getSystemSetting('musicBrainzAccessToken');
-  if (!token) return null;
-
-  const expiresAt = await getSystemSetting('musicBrainzTokenExpiresAt');
-  if (expiresAt && Date.now() / 1000 > Number(expiresAt) - 60) {
-    // Token expired or about to expire, try to refresh
-    return refreshMbToken();
-  }
-
-  return token;
-}
-
-async function refreshMbToken(): Promise<string | null> {
-  const refreshToken = await getSystemSetting('musicBrainzRefreshToken');
-  const clientId = await getSystemSetting('musicBrainzClientId');
-  const clientSecret = await getSystemSetting('musicBrainzClientSecret');
-
-  if (!refreshToken || !clientId || !clientSecret) return null;
-
-  try {
-    const res = await fetch('https://musicbrainz.org/oauth2/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'refresh_token',
-        refresh_token: refreshToken,
-        client_id: clientId,
-        client_secret: clientSecret,
-      }),
-    });
-
-    if (!res.ok) {
-      console.error('[MusicBrainz OAuth] Token refresh failed:', res.status);
-      await setSystemSetting('musicBrainzConnected', false);
-      return null;
-    }
-
-    const data = await res.json();
-    await setSystemSetting('musicBrainzAccessToken', data.access_token);
-    if (data.refresh_token) {
-      await setSystemSetting('musicBrainzRefreshToken', data.refresh_token);
-    }
-    await setSystemSetting('musicBrainzTokenExpiresAt', Math.floor(Date.now() / 1000) + data.expires_in);
-    await setSystemSetting('musicBrainzConnected', true);
-
-    return data.access_token;
-  } catch (err: any) {
-    console.error('[MusicBrainz OAuth] Token refresh error:', err.message);
-    return null;
-  }
-}
-
-async function mbFetch(url: string): Promise<any> {
-  return new Promise((resolve, reject) => {
-    mbQueue.push({ fn: async () => {
-      const headers: Record<string, string> = {
-        'User-Agent': MB_USER_AGENT,
-        'Accept': 'application/json'
-      };
-
-      // Inject Bearer token if available
-      const token = await getMbAccessToken();
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-
-      const res = await fetch(url, { headers });
-      if (!res.ok) throw new Error(`MusicBrainz HTTP ${res.status}`);
-      return res.json();
-    }, resolve, reject });
-    processMbQueue();
-  });
-}
-
-async function processMbQueue() {
-  if (mbQueueRunning) return;
-  mbQueueRunning = true;
-  while (mbQueue.length > 0) {
-    const now = Date.now();
-    const wait = Math.max(0, 1000 - (now - mbLastRequest));
-    if (wait > 0) await new Promise(r => setTimeout(r, wait));
-    const item = mbQueue.shift()!;
-    mbLastRequest = Date.now();
-    try {
-      item.resolve(await item.fn());
-    } catch (err) {
-      item.reject(err);
-    }
-  }
-  mbQueueRunning = false;
-}
-
-async function checkMbEnabled(): Promise<boolean> {
-  const enabled = await getSystemSetting('musicBrainzEnabled');
-  return enabled === true || enabled === 'true';
-}
+// ─── MusicBrainz OAuth2 Helpers ─────────────────────────────────────
 
 // ─── MusicBrainz Proxy Routes ────────────────────────────────────────
 
@@ -635,6 +541,151 @@ router.post('/providers/lastfm/unlove', async (req, res) => {
   } catch (err: any) {
     console.error('[Last.fm] unlove error:', err.message);
     res.status(502).json({ error: err.message });
+  }
+});
+
+// ─── Last.fm Test (server-side, consistent with Genius/MusicBrainz) ──
+router.get('/providers/lastfm/test', async (req, res) => {
+  try {
+    const result = await testLastFm();
+    if (result.status === 'ok') {
+      res.json(result);
+    } else {
+      res.status(result.error === 'No API key configured' ? 400 : 502).json(result);
+    }
+  } catch (err: any) {
+    res.status(502).json({ status: 'error', error: err.message || 'Network error' });
+  }
+});
+
+// ─── External Metadata Routes (cached, server-side fetching) ────────
+
+router.get('/providers/external/artist', requireAuth, async (req, res) => {
+  try {
+    const name = req.query.name as string;
+    if (!name) return res.status(400).json({ error: 'Missing name parameter' });
+    const mbid = (req.query.mbid as string) || undefined;
+    const data = await getArtistData(name, mbid);
+    res.json(data);
+  } catch (err: any) {
+    console.error('[ExternalMeta] artist error:', err.message);
+    res.status(502).json({ error: 'Failed to fetch artist data' });
+  }
+});
+
+router.get('/providers/external/album-art', requireAuth, async (req, res) => {
+  try {
+    const album = req.query.album as string;
+    const artist = req.query.artist as string;
+    if (!album || !artist) return res.status(400).json({ error: 'Missing album or artist parameter' });
+    const mbid = (req.query.mbid as string) || undefined;
+    const imageUrl = await getAlbumImage(album, artist, mbid);
+    res.json({ imageUrl: imageUrl || null });
+  } catch (err: any) {
+    console.error('[ExternalMeta] album-art error:', err.message);
+    res.status(502).json({ error: 'Failed to fetch album art' });
+  }
+});
+
+router.get('/providers/external/genre-image', requireAuth, async (req, res) => {
+  try {
+    const genre = req.query.genre as string;
+    if (!genre) return res.status(400).json({ error: 'Missing genre parameter' });
+    const imageUrl = await getGenreImage(genre);
+    res.json({ imageUrl: imageUrl || null });
+  } catch (err: any) {
+    console.error('[ExternalMeta] genre-image error:', err.message);
+    res.status(502).json({ error: 'Failed to fetch genre image' });
+  }
+});
+
+router.get('/providers/external/genre-info', requireAuth, async (req, res) => {
+  try {
+    const genre = req.query.genre as string;
+    if (!genre) return res.status(400).json({ error: 'Missing genre parameter' });
+    const info = await getGenreInfo(genre);
+    res.json(info || {});
+  } catch (err: any) {
+    console.error('[ExternalMeta] genre-info error:', err.message);
+    res.status(502).json({ error: 'Failed to fetch genre info' });
+  }
+});
+
+router.get('/providers/external/lyrics', requireAuth, async (req, res) => {
+  try {
+    const track = req.query.track as string;
+    const artist = req.query.artist as string;
+    if (!track || !artist) return res.status(400).json({ error: 'Missing track or artist parameter' });
+    const lyrics = await getLyrics(track, artist);
+    res.json(lyrics || null);
+  } catch (err: any) {
+    console.error('[ExternalMeta] lyrics error:', err.message);
+    res.status(502).json({ error: 'Failed to fetch lyrics' });
+  }
+});
+
+// Image proxy — fetches external images server-side, streams back to avoid CORS
+router.get('/providers/external/proxy-image', requireAuth, async (req, res) => {
+  try {
+    const url = req.query.url as string;
+    if (!url) return res.status(400).json({ error: 'Missing url parameter' });
+
+    // Only allow known external image domains
+    const allowed = ['lastfm.freetls.fastly.net', 'images.genius.com', 'coverartarchive.org',
+      'e.snmc.io', 'is1-ssl.mzstatic.com', 'is2-ssl.mzstatic.com', 'is3-ssl.mzstatic.com',
+      'is4-ssl.mzstatic.com', 'is5-ssl.mzstatic.com'];
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return res.status(400).json({ error: 'Invalid URL' });
+    }
+    if (!allowed.some(d => parsed.hostname.endsWith(d) || parsed.hostname === d)) {
+      return res.status(403).json({ error: 'Domain not allowed' });
+    }
+
+    const imageRes = await fetch(url, {
+      headers: { 'User-Agent': 'AuroraMediaServer/1.0' },
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!imageRes.ok) {
+      return res.status(imageRes.status).send('Image not found');
+    }
+
+    const contentType = imageRes.headers.get('content-type') || 'image/jpeg';
+    const cacheControl = 'public, max-age=2592000'; // 30 days
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', cacheControl);
+
+    if (imageRes.body) {
+      const reader = imageRes.body.getReader();
+      const pump = async () => {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) { res.end(); break; }
+          res.write(value);
+        }
+      };
+      await pump();
+    } else {
+      const buf = Buffer.from(await imageRes.arrayBuffer());
+      res.send(buf);
+    }
+  } catch (err: any) {
+    console.error('[ExternalMeta] proxy-image error:', err.message);
+    res.status(502).json({ error: 'Failed to proxy image' });
+  }
+});
+
+// Cache management (admin only)
+router.post('/providers/external/refresh', requireAdmin, async (req, res) => {
+  try {
+    await clearExternalCache();
+    res.json({ status: 'ok', message: 'External metadata cache cleared' });
+  } catch (err: any) {
+    console.error('[ExternalMeta] refresh error:', err.message);
+    res.status(500).json({ error: 'Failed to clear cache' });
   }
 });
 

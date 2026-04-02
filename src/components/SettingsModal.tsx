@@ -573,7 +573,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 <div className="settings-content-wrapper">
                     <div className="settings-content-container">
                         <div className="settings-content">
-                            <div className="settings-content-scroll overflow-y-auto p-8">
+                            <div className="settings-content-scroll p-8">
                                 {activeTab === 'My Account' && (
                                     <div className="settings-section">
                                         <div className="settings-section-header mb-6">

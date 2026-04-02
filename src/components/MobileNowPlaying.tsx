@@ -24,14 +24,13 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose }) => {
   const cycleRepeat = usePlayerStore((s) => s.cycleRepeat);
   const isInfinityMode = usePlayerStore((s) => s.isInfinityMode);
   const toggleInfinityMode = usePlayerStore((s) => s.toggleInfinityMode);
+  const setIsSidebarOpen = usePlayerStore((s) => s.setIsSidebarOpen);
 
   const [castConnected, setCastConnected] = useState(castManager.isConnected());
   const [showLyrics, setShowLyrics] = useState(false);
   useEffect(() => {
     castManager.onStateChange = (state) => setCastConnected(state === 'CONNECTED');
   }, []);
-
-  const setIsSidebarCollapsed = usePlayerStore((s) => s.setIsSidebarCollapsed);
 
   const currentTrack = currentIndex !== null ? playlist[currentIndex] : null;
   const isPlaying = playbackState === 'playing';
@@ -168,7 +167,7 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose }) => {
         {/* Secondary controls row */}
         <div className="flex items-center justify-center gap-8 mt-6">
           <button
-            onClick={() => { setIsSidebarCollapsed(false); onClose(); }}
+            onClick={() => { setIsSidebarOpen(true); }}
             aria-label="Open play queue"
             className="w-9 h-9 flex items-center justify-center rounded-full text-[var(--color-text-muted)] active:scale-90 transition-transform"
           >

@@ -63,16 +63,14 @@ export const PlaylistSidebar: React.FC = () => {
 
   return (
     <>
-      <div className={`${isSidebarCollapsed ? 'w-24' : 'w-96'} border-r border-[var(--glass-border)] bg-[var(--glass-bg)] backdrop-blur-3xl flex flex-col h-full bg-opacity-80 transition-all duration-300 ease-in-out relative group/sidebar`}>
-        <div className="flex-1 overflow-y-auto overflow-x-hidden hide-scrollbar">
-          <div className={`${isSidebarCollapsed ? 'px-2' : 'pl-4 pr-8'} py-2 mt-4 space-y-1`}>
-            <div className={`flex items-center mb-4 ${isSidebarCollapsed ? 'justify-center' : 'justify-between px-2'}`}>
+      <div className="w-full border-r border-[var(--glass-border)] flex flex-col h-full relative group/sidebar">
+            <div className={`flex items-center py-3 mt-4 ${isSidebarCollapsed ? 'justify-center px-2' : 'justify-between pl-4 pr-8'}`}>
               {!isSidebarCollapsed ? (
                 <>
                   <h3 className="text-xs font-bold text-[var(--color-text-secondary)] uppercase tracking-wider">Play Queue ({playlist.length})</h3>
                   <button 
                     onClick={() => setIsSidebarCollapsed(true)}
-                    className="p-1.5 rounded-lg hover:bg-[var(--glass-bg-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-all"
+                    className="hidden md:flex p-1.5 rounded-lg hover:bg-[var(--glass-bg-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-all"
                     title="Collapse Queue"
                   >
                     <ChevronRight size={16} />
@@ -88,7 +86,8 @@ export const PlaylistSidebar: React.FC = () => {
                 </button>
               )}
             </div>
-
+            <div className="flex-1 overflow-y-auto overflow-x-hidden hide-scrollbar">
+              <div className={`${isSidebarCollapsed ? 'px-2' : 'pl-4 pr-8'} py-2 space-y-1`}>
             <ul className="playlist-list">
               {playlist.map((t, idx) => (
                 <li

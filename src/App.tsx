@@ -159,7 +159,57 @@ const App: React.FC = () => {
   }, [authToken, needsSetup]);
 
   const [folderPathInput, setFolderPathInput] = React.useState('');
-  const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
+
+  const isSidebarOpen = usePlayerStore((s) => s.isSidebarOpen);
+  const setIsSidebarOpen = usePlayerStore((s) => s.setIsSidebarOpen);
+
+  // Mobile bottom sheet touch handling
+  const sidebarRef = React.useRef<HTMLDivElement>(null);
+  const touchStartY = React.useRef<number>(0);
+  const currentTranslateY = React.useRef<number>(0);
+  const isDragging = React.useRef<boolean>(false);
+
+  const handleTouchStart = React.useCallback((e: React.TouchEvent) => {
+    touchStartY.current = e.touches[0].clientY;
+    isDragging.current = true;
+  }, []);
+
+  const handleTouchMove = React.useCallback((e: React.TouchEvent) => {
+    if (!isDragging.current || !sidebarRef.current) return;
+    const touchY = e.touches[0].clientY;
+    const deltaY = touchY - touchStartY.current;
+    
+    // Only allow dragging downward
+    if (deltaY > 0) {
+      currentTranslateY.current = deltaY;
+      sidebarRef.current.style.transform = `translateY(${deltaY}px)`;
+      sidebarRef.current.style.transition = 'none';
+    }
+  }, []);
+
+  const handleTouchEnd = React.useCallback(() => {
+    if (!sidebarRef.current) return;
+    isDragging.current = false;
+    
+    const threshold = window.innerHeight * 0.3; // 30% of screen height
+    if (currentTranslateY.current > threshold) {
+      // Close the sidebar
+      setIsSidebarOpen(false);
+    } else {
+      // Snap back to open
+      sidebarRef.current.style.transform = '';
+      sidebarRef.current.style.transition = '';
+    }
+    currentTranslateY.current = 0;
+  }, [setIsSidebarOpen]);
+
+  // Reset sidebar transform when opening/closing
+  React.useEffect(() => {
+    if (sidebarRef.current) {
+      sidebarRef.current.style.transform = '';
+      sidebarRef.current.style.transition = '';
+    }
+  }, [isSidebarOpen]);
 
   const handleDatabaseReady = React.useCallback(() => {
     setIsDatabaseStarting(true);
@@ -492,9 +542,23 @@ const App: React.FC = () => {
             />
         )}
         
-        {/* Sidebar Container (Right Side) */}
-        <div className={`fixed inset-y-0 right-0 z-50 ${isSidebarCollapsed ? 'w-24' : 'w-96'} transform transition-all duration-300 ease-in-out md:relative md:translate-x-0 border-l border-[var(--glass-border)] ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full'}`}>
-          <PlaylistSidebar />
+        {/* Sidebar Container - Mobile Bottom Sheet / Desktop Right Panel */}
+        <div 
+          ref={sidebarRef}
+          className={`sidebar-bottom-sheet fixed z-50 w-full ${isSidebarCollapsed ? 'md:w-24' : 'md:w-96'} transform transition-all duration-300 ease-in-out md:relative md:translate-x-0 border-l border-[var(--glass-border)] ${isSidebarOpen ? 'translate-y-0' : 'translate-y-full md:translate-y-0'}`}
+        >
+          {/* Drag Handle - Mobile Only */}
+          <div 
+            className="sidebar-handle md:hidden"
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+          >
+            <div className="w-10 h-1 rounded-full bg-[var(--color-text-muted)] opacity-40" />
+          </div>
+          <div className="h-full overflow-hidden">
+            <PlaylistSidebar />
+          </div>
         </div>
       </div>
     </>
