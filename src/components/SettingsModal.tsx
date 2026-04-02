@@ -6,7 +6,7 @@ import { useProviderConnectionTest } from '../hooks/useProviderConnectionTest';
 import { ConfirmModal } from './ConfirmModal';
 import { PromptModal } from './PromptModal';
 import { Toast, type ToastType } from './Toast';
-import { Folder, User, Palette, Play, Cpu, Globe, LogOut, Search, X, Shield, Users, Link, Trash2, Plus, Copy, Check, Database, BarChart2, Wrench, Radio } from 'lucide-react';
+import { Folder, User, Palette, Play, Cpu, Globe, LogOut, Search, X, Shield, Users, Link, Trash2, Plus, Copy, Check, Database, BarChart2, Wrench, Radio, Brain } from 'lucide-react';
 import { DatabaseControl } from './DatabaseControl';
 
 interface SettingsModalProps {
@@ -421,7 +421,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         { id: 'Playback', label: 'Playback', category: 'App Settings' },
         ...(isAdmin ? [
             { id: 'System', label: 'System', category: 'Server Settings' },
-            { id: 'Providers', label: 'Providers', category: 'Server Settings' },
+            { id: 'GenAI', label: 'GenAI', category: 'Server Settings' },
             { id: 'Genre Matrix', label: 'Genre Matrix', category: 'Server Settings' },
             { id: 'Database', label: 'Database', category: 'Server Settings' },
             { id: 'Users', label: 'Users', category: 'Admin' },
@@ -438,7 +438,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         if (tab.id === 'Library') return 'folder path scan library'.includes(query);
         if (tab.id === 'Playback') return 'infinity discovery genre artist amnesia matrix llm playlist diversity blend tracks wander'.includes(query);
         if (tab.id === 'System') return 'cpu audio analysis scanner concurrency hub schedule'.includes(query);
-        if (tab.id === 'Providers') return 'llm api host model key last.fm genius'.includes(query);
+        if (tab.id === 'GenAI') return 'llm api host model key last.fm genius'.includes(query);
         if (tab.id === 'Genre Matrix') return 'genre matrix transition hop cost mapping'.includes(query);
         if (tab.id === 'Database') return 'database postgres container podman start stop status'.includes(query);
         if (tab.id === 'Users') return 'admin users invites manage'.includes(query);
@@ -473,7 +473,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                              tab.id === 'System' ? Cpu :
                                              tab.id === 'Users' ? Users :
                                              tab.id === 'Database' ? Database :
-                                             tab.id === 'Genre Matrix' ? Globe : Globe;
+                                             tab.id === 'GenAI' ? Brain : Globe;
+
                                 return (
                                     <button
                                         key={tab.id}
@@ -534,7 +535,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                  tab.id === 'System' ? Cpu :
                                                  tab.id === 'Users' ? Users :
                                                  tab.id === 'Database' ? Database :
-                                                 tab.id === 'Genre Matrix' ? Globe : Globe;
+                                                 tab.id === 'Genre Matrix' ? Globe :
+                                                 tab.id === 'GenAI' ? Brain : Globe;
                                     
                                     return (
                                         <div 
@@ -1106,7 +1108,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                     </div>
                                 )}
 
-                                {activeTab === 'Providers' && (
+                                {activeTab === 'GenAI' && (
                                     <div className="settings-section mb-8">
                                         <div className="settings-section-header mb-4">
                                             <h3>LLM / Engine Configurations</h3>
