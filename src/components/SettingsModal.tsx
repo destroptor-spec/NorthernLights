@@ -842,7 +842,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                 <div><h3 className="text-lg font-bold text-[var(--color-text-primary)] mb-1">MusicBrainz</h3><p className="text-sm text-[var(--color-text-muted)]">Structured metadata with optional OAuth2. Provides artist disambiguation, official links, genre tags, and album art from Cover Art Archive.</p></div>
                                                 <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 flex flex-col gap-3">
                                                     <div className="flex items-center justify-between">
-                                                        <label className="text-sm font-medium text-[var(--color-text-primary)]">Enabled</label>
+                                                        <label className="text-sm font-medium text-[var(--color-text-primary)]">{musicBrainzEnabled ? 'Enabled' : 'Disabled'}</label>
                                                         <button onClick={() => setMusicBrainzEnabled(!musicBrainzEnabled)} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${musicBrainzEnabled ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-bg-tertiary)]'}`}><span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${musicBrainzEnabled ? 'translate-x-6' : 'translate-x-1'}`} /></button>
                                                     </div>
                                                     {musicBrainzEnabled && (
