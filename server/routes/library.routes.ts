@@ -493,7 +493,7 @@ export async function runSyncWalk(dirPath: string): Promise<{ removed: number; a
 
     // If this path is no longer on disk, mark for removal
     if (!diskPaths.has(existingPath)) {
-      staleIds.push(existingPath); // these are the base64 path values which are also the IDs
+      staleIds.push(existingPath); // these are the base64 path values
     }
   }
 
@@ -626,7 +626,7 @@ router.post('/remove', async (req, res) => {
   try {
     await removeDirectory(dirPath);
     await removeTracksByDirectory(dirPath);
-    console.log(`Removed directory and tracks for ${dirPath}`);
+    console.log(`[Scanner] Removed directory and tracks for ${dirPath}`);
     res.json({ status: 'removed' });
   } catch (error) {
     console.error('Remove error:', error);

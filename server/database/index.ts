@@ -519,19 +519,20 @@ export async function getDirectories() {
 
 export async function removeDirectory(dirPath: string) {
   const db = await initDB();
-  const id = Buffer.from(dirPath).toString('base64');
+  const id = Buffer.from(dirPath, 'utf8').toString('base64');  // Fixed: explicit 'utf8' encoding
   await db.query('DELETE FROM directories WHERE id = $1', [id]);
 }
 
 export async function removeTracksByDirectory(dirPath: string) {
   const db = await initDB();
-  
+
   // Since tracks are stored natively as Base64 Buffers to avoid UTF-8 mangling,
   // we must decode and match the directory recursively at the byte level.
   const res = await db.query('SELECT id, path FROM tracks');
+
   const dirBuf = Buffer.from(dirPath, 'utf8');
   const idsToDelete: string[] = [];
-  
+
   for (const row of res.rows) {
     const fileBuf = Buffer.from(row.path, 'base64');
     const prefixMatches = fileBuf.length >= dirBuf.length && fileBuf.slice(0, dirBuf.length).equals(dirBuf);
