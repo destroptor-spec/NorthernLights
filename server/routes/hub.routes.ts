@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getSystemSetting, getUserSetting, getPlaylists, deleteOldLlmPlaylists, getUserRecentTracks, listUsers } from '../database';
 import { generateHubConcepts, generateCustomPlaylist, HubCollection } from '../services/llm.service';
 import { getHubCollections } from '../services/recommendation.service';
+import { dbConnected } from '../state';
 
 const router = Router();
 
@@ -121,21 +122,26 @@ router.post('/generate-custom', async (req, res) => {
 // Schedule: Re-run LLM hub regeneration periodically (per-user)
 const LLM_HUB_INTERVAL_MS = 60 * 60 * 1000;
 setInterval(async () => {
-  const schedule = await getSystemSetting('hubGenerationSchedule') || 'Daily';
-  if (schedule === 'Manual Only') return;
-
-  console.log('[LLM Hub] Scheduled refresh check...');
   try {
-    const users = await listUsers();
-    for (const user of users) {
-      try {
-        await runLlmHubRegeneration(user.id);
-      } catch (e) {
-        console.error(`[LLM Hub] Scheduled refresh failed for user ${user.username}:`, e);
+    if (!dbConnected) return;
+    const schedule = await getSystemSetting('hubGenerationSchedule') || 'Daily';
+    if (schedule === 'Manual Only') return;
+
+    console.log('[LLM Hub] Scheduled refresh check...');
+    try {
+      const users = await listUsers();
+      for (const user of users) {
+        try {
+          await runLlmHubRegeneration(user.id);
+        } catch (e) {
+          console.error(`[LLM Hub] Scheduled refresh failed for user ${user.username}:`, e);
+        }
       }
+    } catch (e) {
+      console.error('[LLM Hub] Scheduled refresh failed:', e);
     }
   } catch (e) {
-    console.error('[LLM Hub] Scheduled refresh failed:', e);
+    console.error('[LLM Hub] Scheduled interval error:', e);
   }
 }, LLM_HUB_INTERVAL_MS);
 

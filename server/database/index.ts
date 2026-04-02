@@ -17,6 +17,9 @@ export async function initDB(): Promise<Pool> {
         host: process.env.DB_HOST || 'localhost',
         port: parseInt(process.env.DB_PORT || '5432', 10),
         database: process.env.DB_NAME || 'musicdb',
+        max: 20,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 5000,
       });
 
       // Test connection and initialize schema
@@ -59,6 +62,7 @@ export async function initDB(): Promise<Pool> {
         BEGIN 
           ALTER TABLE tracks ADD COLUMN IF NOT EXISTS bitrate INTEGER;
           ALTER TABLE tracks ADD COLUMN IF NOT EXISTS format TEXT;
+          ALTER TABLE tracks ADD COLUMN IF NOT EXISTS genres TEXT;
         EXCEPTION 
           WHEN OTHERS THEN null; 
         END $$;
@@ -324,7 +328,8 @@ function mapTrackRow(row: any) {
     format: row.format,
     artistId: row.artist_id,
     albumId: row.album_id,
-    genreId: row.genre_id
+    genreId: row.genre_id,
+    genres: row.genres ? JSON.parse(row.genres) : []
   };
 }
 
@@ -350,8 +355,8 @@ export async function addTrack(track: any) {
   const sanitizeArray = (arr: any) => Array.isArray(arr) ? arr.map(sanitize) : arr;
 
   await db.query(`
-    INSERT INTO tracks (id, title, artist, albumArtist, artists, album, genre, duration, trackNumber, year, releaseType, isCompilation, path, bitrate, format, artist_id, album_id, genre_id, isrc, mb_recording_id, mb_track_id, mb_album_id, mb_artist_id, mb_album_artist_id, mb_release_group_id, mb_work_id)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
+    INSERT INTO tracks (id, title, artist, albumArtist, artists, album, genre, duration, trackNumber, year, releaseType, isCompilation, path, bitrate, format, artist_id, album_id, genre_id, genres, isrc, mb_recording_id, mb_track_id, mb_album_id, mb_artist_id, mb_album_artist_id, mb_release_group_id, mb_work_id)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
     ON CONFLICT (id) DO UPDATE SET
       title = EXCLUDED.title,
       artist = EXCLUDED.artist,
@@ -370,6 +375,7 @@ export async function addTrack(track: any) {
       artist_id = EXCLUDED.artist_id,
       album_id = EXCLUDED.album_id,
       genre_id = EXCLUDED.genre_id,
+    genres = EXCLUDED.genres,
       isrc = EXCLUDED.isrc,
       mb_recording_id = EXCLUDED.mb_recording_id,
       mb_track_id = EXCLUDED.mb_track_id,
@@ -397,6 +403,7 @@ export async function addTrack(track: any) {
     track.artistId || null,
     track.albumId || null,
     track.genreId || null,
+    track.genres ? JSON.stringify(sanitizeArray(track.genres)) : null,
     track.isrc || null,
     track.mbRecordingId || null,
     track.mbTrackId || null,
@@ -569,6 +576,25 @@ export async function recordSkip(trackId: string) {
 // ENTITY HELPERS (Artists, Albums, Genres)
 // ==========================================
 
+// Constants for missing metadata
+const UNKNOWN_ARTIST = 'Unknown Artist';
+const UNKNOWN_ALBUM = 'Unknown Album';
+const UNKNOWN_GENRE = 'Unknown Genre';
+
+// Utility for splitting multiple artists (e.g., "A feat. B", "A & B")
+export function splitArtistNames(artistStr: string | null | undefined): string[] {
+  if (!artistStr) return [];
+  const parts = artistStr.split(/\s+(?:feat\.?|ft\.?|featuring|&)\s+(?!$)/i).map(s => s.trim()).filter(Boolean);
+  return parts.length > 0 ? parts : [];
+}
+
+// Utility for splitting multiple genres (e.g., "Folk, Country, Rock")
+export function splitGenreNames(genreStr: string | null | undefined): string[] {
+  if (!genreStr) return [];
+  const parts = genreStr.split(/[,;/&]/).map(s => s.trim()).filter(Boolean);
+  return parts.length > 0 ? parts : [];
+}
+
 // In-memory caches to reduce DB round-trips during scanning
 const artistCache = new Map<string, string>();   // name -> UUID
 const albumCache = new Map<string, string>();     // "title::::artist" -> UUID
@@ -580,48 +606,78 @@ function clearEntityCaches() {
   genreCache.clear();
 }
 
-export async function getOrCreateArtist(name: string): Promise<string> {
-  if (!name) throw new Error('Artist name required');
-  const cached = artistCache.get(name);
+export async function getOrCreateArtist(name?: string | null): Promise<string> {
+  const safeName = name?.trim() || UNKNOWN_ARTIST;
+  const lowerName = safeName.toLowerCase();
+  
+  const cached = artistCache.get(lowerName);
   if (cached) return cached;
 
   const db = await initDB();
+  
+  const existing = await db.query('SELECT id FROM artists WHERE LOWER(name) = $1', [lowerName]);
+  if (existing.rows.length > 0) {
+    artistCache.set(lowerName, existing.rows[0].id);
+    return existing.rows[0].id;
+  }
+
   const res = await db.query(
     `INSERT INTO artists (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-    [name]
+    [safeName]
   );
   const id = (res.rows[0] as any).id as string;
-  artistCache.set(name, id);
+  artistCache.set(lowerName, id);
   return id;
 }
 
-export async function getOrCreateAlbum(title: string, artistName: string | null): Promise<string> {
-  const key = `${title}::::${artistName || ''}`;
+export async function getOrCreateAlbum(title?: string | null, artistName?: string | null): Promise<string> {
+  const safeTitle = title?.trim() || UNKNOWN_ALBUM;
+  const safeArtist = artistName?.trim() || UNKNOWN_ARTIST;
+  const lowerTitle = safeTitle.toLowerCase();
+  const lowerArtist = safeArtist.toLowerCase();
+  const key = `${lowerTitle}::::${lowerArtist}`;
+  
   const cached = albumCache.get(key);
   if (cached) return cached;
 
   const db = await initDB();
+
+  const existing = await db.query('SELECT id FROM albums WHERE LOWER(title) = $1 AND LOWER(artist_name) = $2', [lowerTitle, lowerArtist]);
+  if (existing.rows.length > 0) {
+    albumCache.set(key, existing.rows[0].id);
+    return existing.rows[0].id;
+  }
+
   const res = await db.query(
     `INSERT INTO albums (title, artist_name) VALUES ($1, $2) ON CONFLICT (title, artist_name) DO UPDATE SET title = EXCLUDED.title RETURNING id`,
-    [title, artistName || null]
+    [safeTitle, safeArtist]
   );
   const id = (res.rows[0] as any).id as string;
   albumCache.set(key, id);
   return id;
 }
 
-export async function getOrCreateGenre(name: string): Promise<string> {
-  if (!name) throw new Error('Genre name required');
-  const cached = genreCache.get(name);
+export async function getOrCreateGenre(name?: string | null): Promise<string> {
+  const safeName = name?.trim() || UNKNOWN_GENRE;
+  const lowerName = safeName.toLowerCase();
+
+  const cached = genreCache.get(lowerName);
   if (cached) return cached;
 
   const db = await initDB();
+  
+  const existing = await db.query('SELECT id FROM genres WHERE LOWER(name) = $1', [lowerName]);
+  if (existing.rows.length > 0) {
+    genreCache.set(lowerName, existing.rows[0].id);
+    return existing.rows[0].id;
+  }
+
   const res = await db.query(
     `INSERT INTO genres (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-    [name]
+    [safeName]
   );
   const id = (res.rows[0] as any).id as string;
-  genreCache.set(name, id);
+  genreCache.set(lowerName, id);
   return id;
 }
 
@@ -683,8 +739,58 @@ export async function getTracksByGenre(genreId: string) {
 // Runs on startup; processes only tracks with NULL artist_id.
 export async function migrateEntityIds() {
   const db = await initDB();
+
+  // 1. One-time deduplication to fix case-sensitive duplicates
+  try {
+    const artistsRes = await db.query('SELECT * FROM artists ORDER BY created_at ASC');
+    const seenArtists = new Map<string, string>(); // lowerName -> canonicalId
+    for (const row of artistsRes.rows) {
+      const lowerName = row.name.toLowerCase();
+      if (seenArtists.has(lowerName)) {
+        const canonicalId = seenArtists.get(lowerName)!;
+        await db.query('UPDATE tracks SET artist_id = $1 WHERE artist_id = $2', [canonicalId, row.id]);
+        await db.query('DELETE FROM artists WHERE id = $1', [row.id]);
+      } else {
+        seenArtists.set(lowerName, row.id);
+      }
+    }
+
+    const albumsRes = await db.query('SELECT * FROM albums ORDER BY created_at ASC');
+    const seenAlbums = new Map<string, string>();
+    for (const row of albumsRes.rows) {
+      const lowerTitle = row.title.toLowerCase();
+      const lowerArtist = (row.artist_name || UNKNOWN_ARTIST).toLowerCase();
+      const key = `${lowerTitle}::::${lowerArtist}`;
+      if (seenAlbums.has(key)) {
+        const canonicalId = seenAlbums.get(key)!;
+        await db.query('UPDATE tracks SET album_id = $1 WHERE album_id = $2', [canonicalId, row.id]);
+        await db.query('DELETE FROM albums WHERE id = $1', [row.id]);
+      } else {
+        seenAlbums.set(key, row.id);
+      }
+    }
+
+    const genresRes = await db.query('SELECT * FROM genres ORDER BY created_at ASC');
+    const seenGenres = new Map<string, string>();
+    for (const row of genresRes.rows) {
+      const lowerName = row.name.toLowerCase();
+      if (seenGenres.has(lowerName)) {
+        const canonicalId = seenGenres.get(lowerName)!;
+        await db.query('UPDATE tracks SET genre_id = $1 WHERE genre_id = $2', [canonicalId, row.id]);
+        await db.query('DELETE FROM genres WHERE id = $1', [row.id]);
+      } else {
+        seenGenres.set(lowerName, row.id);
+      }
+    }
+    
+    // Clear caches after deduplication
+    clearEntityCaches();
+  } catch(e) {
+    console.error('[DB Migration] Deduplication failed:', e);
+  }
+
   const res = await db.query(
-    'SELECT id, artist, albumartist, artists, album, genre FROM tracks WHERE artist_id IS NULL OR album_id IS NULL OR genre_id IS NULL'
+    'SELECT id, artist, albumartist, artists, album, genre, genres FROM tracks WHERE artist_id IS NULL OR album_id IS NULL OR genre_id IS NULL OR genres IS NULL'
   );
 
   if (res.rows.length === 0) return;
@@ -694,55 +800,49 @@ export async function migrateEntityIds() {
 
   for (const row of res.rows) {
     const trackId = (row as any).id;
-    const albumArtistName = (row as any).albumartist || (row as any).artist;
+    const rawArtist = (row as any).artist;
+    const rawAlbumArtist = (row as any).albumartist;
+    const albumArtistName = rawAlbumArtist || rawArtist;
     const albumTitle = (row as any).album;
-    const genreNameRaw = (row as any).genre;
-    // Split dirty genre tags like "folk, country, blues" into primary genre
-    let genreName: string | null = null;
-    if (genreNameRaw) {
-        const parts = genreNameRaw.split(/[,;/&]/).map((s: string) => s.trim()).filter(Boolean);
-        genreName = parts.length > 0 ? parts[0] : null;
+    const rawGenre = (row as any).genre;
+    
+    const individualGenres = splitGenreNames(rawGenre);
+    const primaryGenreName = individualGenres.length > 0 ? individualGenres[0] : null;
+    
+    let rawArtistsArray: string[] = [];
+    const rawArtistsField = (row as any).artists;
+    if (rawArtistsField) {
+      if (typeof rawArtistsField === 'string') {
+        try { rawArtistsArray = JSON.parse(rawArtistsField); } catch {}
+      } else if (Array.isArray(rawArtistsField)) {
+        rawArtistsArray = rawArtistsField;
+      }
+    } else if (rawArtist) {
+      rawArtistsArray = splitArtistNames(rawArtist);
     }
-    const rawArtists = (row as any).artists;
-
-    let artistId: string | null = null;
-    let albumId: string | null = null;
-    let genreId: string | null = null;
-
-    try {
-      if (albumArtistName) artistId = await getOrCreateArtist(albumArtistName);
-    } catch {}
-
-    // Also create entities for all individual artists (including featured)
-    try {
-      let individualArtists: string[] = [];
-      if (rawArtists) {
-        if (typeof rawArtists === 'string') {
-          try { individualArtists = JSON.parse(rawArtists); } catch {}
-        } else if (Array.isArray(rawArtists)) {
-          individualArtists = rawArtists;
-        }
-      } else if ((row as any).artist) {
-        // Fallback: split on feat./ft./etc.
-        const parts = (row as any).artist.split(/\s+(?:feat\.?|ft\.?|featuring|&)\s+(?!$)/i).map((s: string) => s.trim()).filter(Boolean);
-        if (parts.length > 0) individualArtists = parts;
+    if (rawArtistsArray.length === 0 && rawArtist) {
+      rawArtistsArray = [rawArtist];
+    }
+    
+    // 2. Fetch or create canonical entities, ensuring valid strings
+    const artistId = await getOrCreateArtist(albumArtistName);
+    const albumId = await getOrCreateAlbum(albumTitle, albumArtistName);
+    const genreId = await getOrCreateGenre(primaryGenreName);
+    
+    // Create/update entities for all individual artists to ensure they exist for 'Also appears on'
+    for (const a of rawArtistsArray) {
+      if (a && a.trim() !== '') {
+         await getOrCreateArtist(a);
       }
-      for (const a of individualArtists) {
-        try { await getOrCreateArtist(a); } catch {}
-      }
-    } catch {}
+    }
 
-    try {
-      if (albumTitle) albumId = await getOrCreateAlbum(albumTitle, albumArtistName || null);
-    } catch {}
-
-    try {
-      if (genreName) genreId = await getOrCreateGenre(genreName);
-    } catch {}
+    // Prepare JSON arrays
+    const tracksGenresJson = JSON.stringify(individualGenres);
+    const tracksArtistsJson = JSON.stringify(rawArtistsArray);
 
     await db.query(
-      'UPDATE tracks SET artist_id = COALESCE($1, artist_id), album_id = COALESCE($2, album_id), genre_id = COALESCE($3, genre_id), genre = COALESCE($4, genre) WHERE id = $5',
-      [artistId, albumId, genreId, genreName, trackId]
+      'UPDATE tracks SET artist_id = $1, album_id = $2, genre_id = $3, genres = $4, artists = $5 WHERE id = $6',
+      [artistId, albumId, genreId, tracksGenresJson, tracksArtistsJson, trackId]
     );
     count++;
   }

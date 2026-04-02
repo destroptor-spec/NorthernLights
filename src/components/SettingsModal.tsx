@@ -225,11 +225,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     const handleRescanFolder = async (folderPath: string) => {
         try {
             const authHeaders = getAuthHeader();
-            await fetch('/api/library/scan', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...authHeaders },
-                body: JSON.stringify({ path: folderPath })
-            });
+            let scanStarted = false;
+            while (!scanStarted) {
+                const res = await fetch('/api/library/scan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...authHeaders },
+                    body: JSON.stringify({ path: folderPath })
+                });
+                if (res.status === 400) {
+                    const errorData = await res.json().catch(() => ({}));
+                    if (errorData.error === 'Scan already in progress') {
+                        await new Promise(r => setTimeout(r, 1000));
+                    } else {
+                        console.error('Rescan error:', errorData.error);
+                        scanStarted = true;
+                    }
+                } else {
+                    scanStarted = true;
+                }
+            }
             await fetchLibraryFromServer();
             fetchDirStats();
         } catch (e) {

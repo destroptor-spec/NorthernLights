@@ -64,6 +64,23 @@ export class ChildProcessPool {
        process.stderr.write(`[Worker ${path.basename(this.scriptPath)}] ${data.toString()}`);
     });
 
+    child.on('error', (err) => {
+      console.error(`[Worker] Spawn error for ${this.scriptPath}: ${err.message}`);
+      this.workers = this.workers.filter(w => w !== child);
+      this.freeWorkers = this.freeWorkers.filter(w => w !== child);
+      const task = this.workerTasks.get(child);
+      if (task) {
+        task.resolve({ id: task.id, error: `Worker crashed: ${err.message}` });
+        this.workerTasks.delete(child);
+        this.activeCount--;
+      }
+      // Auto-respawn to keep pool at target size
+      if (!this.terminated && this.workers.length < this.poolSize) {
+        this.spawnWorker();
+        this.pump();
+      }
+    });
+
     child.on('exit', () => {
       this.workers = this.workers.filter(w => w !== child);
       this.freeWorkers = this.freeWorkers.filter(w => w !== child);
@@ -121,7 +138,7 @@ export class ChildProcessPool {
     }
   }
 
-  public runJob(job: PoolJob, timeoutMs = 120000): Promise<any> {
+  public runJob(job: PoolJob, timeoutMs = 180000): Promise<any> {
     return new Promise((resolve) => {
       let settled = false;
       const timer = setTimeout(() => {
@@ -142,6 +159,8 @@ export class ChildProcessPool {
           }
         }
         resolve({ id: job.id, error: `Job timed out after ${timeoutMs}ms` });
+        // Pump to dispatch queued jobs to respawned workers
+        this.pump();
       }, timeoutMs);
 
       const wrappedResolve = (val: any) => {

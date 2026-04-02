@@ -69,12 +69,12 @@ async function getScannerConcurrency(): Promise<number> {
     const setting = await getSystemSetting('scannerConcurrency');
     switch (setting) {
       case 'HDD': return 4;
-      case 'NVMe': return 32;
+      case 'NVMe': return 12;
       case 'SSD':
-      default: return 16;
+      default: return 10;
     }
   } catch {
-    return 16;
+    return 10;
   }
 }
 
@@ -136,43 +136,55 @@ async function processMetadataBatch(fileBufs: Buffer[], concurrency: number): Pr
             scanStatus.currentFile = activeLabel;
             broadcastScanStatus();
 
-            let artists = metadata.artists;
-            if (!artists && metadata.artist) {
-              const splitRegex = /\s+(?:feat\.?|ft\.?|featuring|&)\s+(?!$)/i;
-              const parts = metadata.artist.split(splitRegex).map((s: string) => s.trim()).filter(Boolean);
-              if (parts.length > 0) artists = parts;
+            // Split artists
+            const rawArtistsField = metadata.artists;
+            const rawArtist = metadata.artist;
+            let finalArtists: string[] = [];
+            
+            if (rawArtistsField) {
+              if (Array.isArray(rawArtistsField)) {
+                finalArtists = rawArtistsField;
+              } else {
+                finalArtists = [rawArtistsField];
+              }
+            } else if (rawArtist) {
+              const { splitArtistNames } = await import('../database');
+              finalArtists = splitArtistNames(rawArtist);
+            }
+            if (finalArtists.length === 0 && rawArtist) {
+              finalArtists = [rawArtist];
             }
 
             const albumArtistName = metadata.albumartist || metadata.artist || null;
             const albumTitle = metadata.album || null;
-            // Split dirty genre tags like "folk, country, blues" into individual genres
-            let genreName: string | null = null;
-            if (metadata.genre && metadata.genre.length > 0) {
-                const raw = metadata.genre[0];
-                const parts = raw.split(/[,;/&]/).map((s: string) => s.trim()).filter(Boolean);
-                genreName = parts.length > 0 ? parts[0] : null;
+
+            // Split genres
+            let finalGenres: string[] = [];
+            const rawGenreLine = metadata.genre && metadata.genre.length > 0 ? metadata.genre[0] : null;
+            if (rawGenreLine) {
+              const { splitGenreNames } = await import('../database');
+              finalGenres = splitGenreNames(rawGenreLine);
             }
+            const primaryGenreName = finalGenres.length > 0 ? finalGenres[0] : null;
 
             let artistId = null;
             let albumId = null;
             let genreId = null;
-            try { if (albumArtistName) artistId = await getOrCreateArtist(albumArtistName); } catch (e) { /* skip */ }
-            if (artists) {
-              for (const a of artists) {
-                try { await getOrCreateArtist(a); } catch (e) { /* skip */ }
-              }
+            try { artistId = await getOrCreateArtist(albumArtistName); } catch (e) { /* skip */ }
+            for (const a of finalArtists) {
+              try { await getOrCreateArtist(a); } catch (e) { /* skip */ }
             }
-            try { if (albumTitle) albumId = await getOrCreateAlbum(albumTitle, albumArtistName); } catch (e) { /* skip */ }
-            try { if (genreName) genreId = await getOrCreateGenre(genreName); } catch (e) { /* skip */ }
+            try { albumId = await getOrCreateAlbum(albumTitle, albumArtistName); } catch (e) { /* skip */ }
+            try { genreId = await getOrCreateGenre(primaryGenreName); } catch (e) { /* skip */ }
 
             await addTrack({
               path: dbPath,
               title: metadata.title || nameStr,
               artist: metadata.artist || metadata.albumartist || null,
               albumArtist: metadata.albumartist || null,
-              artists: artists || null,
+              artists: finalArtists.length > 0 ? finalArtists : null,
               album: albumTitle,
-              genre: genreName,
+              genre: primaryGenreName,
               duration: metadata.duration || 0,
               trackNumber: metadata.trackNumber || null,
               year: metadata.year || null,
@@ -183,6 +195,7 @@ async function processMetadataBatch(fileBufs: Buffer[], concurrency: number): Pr
               artistId,
               albumId,
               genreId,
+              genres: finalGenres.length > 0 ? finalGenres : null,
               isrc: metadata.isrc || null,
               mbRecordingId: metadata.mbRecordingId || null,
               mbTrackId: metadata.mbTrackId || null,
