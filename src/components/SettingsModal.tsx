@@ -373,6 +373,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     const [activeTab, setActiveTab] = useState('My Account');
     const [dbTab, setDbTab] = useState<'stats' | 'maintenance'>('stats');
     const [playbackTab, setPlaybackTab] = useState<'infinity' | 'llm'>('infinity');
+    const [libTab, setLibTab] = useState<'folders' | 'lastfm' | 'genius' | 'musicbrainz'>('folders');
     const [lastFmConfigured, setLastFmConfigured] = useState(false);
 
     const isAdmin = currentUser?.role === 'admin';
@@ -415,7 +416,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
     const tabs = [
         { id: 'My Account', label: 'My Account', category: 'User Settings' },
-        ...(lastFmConfigured ? [{ id: 'Scrobble', label: 'Scrobble', category: 'User Settings' }] : []),
         { id: 'Appearance', label: 'Appearance', category: 'App Settings' },
         { id: 'Library', label: 'Library', category: 'App Settings' },
         { id: 'Playback', label: 'Playback', category: 'App Settings' },
@@ -466,11 +466,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     <div className="settings-mobile-tabs">
                         <div className="flex items-center gap-1 overflow-x-auto hide-scrollbar px-2 pt-3 pb-2">
                             {filteredTabs.map(tab => {
-                                 const Icon = tab.id === 'My Account' ? User : 
+                                         const Icon = tab.id === 'My Account' ? User : 
                                              tab.id === 'Appearance' ? Palette :
                                              tab.id === 'Library' ? Folder :
                                              tab.id === 'Playback' ? Play :
-                                             tab.id === 'Scrobble' ? Radio :
                                              tab.id === 'System' ? Cpu :
                                              tab.id === 'Users' ? Users :
                                              tab.id === 'Database' ? Database :
@@ -684,69 +683,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                     </div>
                                 )}
 
-                                {activeTab === 'Scrobble' && lastFmConfigured && (
-                                    <div className="settings-section mb-8">
-                                        <div className="settings-section-header mb-4">
-                                            <h3>Last.fm Scrobbling</h3>
-                                        </div>
-                                        <p className="settings-description">
-                                            Connect your Last.fm account to automatically scrobble tracks as you listen.
-                                        </p>
-                                        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5">
-                                            {lastFmConnected ? (
-                                                <div className="flex flex-col gap-4">
-                                                    <div className="flex items-center justify-between">
-                                                        <span className="text-green-500 font-semibold text-sm">Connected as {lastFmUsername || 'Last.fm'}</span>
-                                                        <button onClick={async () => {
-                                                            try {
-                                                                const res = await fetch('/api/providers/lastfm/disconnect', { method: 'POST' });
-                                                                const data = await res.json();
-                                                                if (!res.ok || data.error) {
-                                                                    showToast(data.error || 'Failed to disconnect', 'error');
-                                                                } else {
-                                                                    setLastFmConnected(false);
-                                                                    setLastFmUsername('');
-                                                                }
-                                                            } catch (e: any) {
-                                                                showToast(e?.message || 'Network error', 'error');
-                                                            }
-                                                        }} className="btn btn-danger btn-sm">Disconnect</button>
-                                                    </div>
-                                                    <div className="border-t border-[var(--glass-border)] pt-4 flex items-center justify-between">
-                                                        <label className="text-sm text-[var(--color-text-primary)]">Auto-scrobble played tracks</label>
-                                                        <button
-                                                            onClick={() => setLastFmScrobbleEnabled(!lastFmScrobbleEnabled)}
-                                                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${lastFmScrobbleEnabled ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-bg-tertiary)]'}`}
-                                                        >
-                                                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${lastFmScrobbleEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            ) : (
-                                                <div className="flex flex-col gap-3">
-                                                    <p className="text-sm text-[var(--color-text-muted)]">
-                                                        Link your Last.fm account to start scrobbling your played tracks.
-                                                    </p>
-                                                    <button onClick={async () => {
-                                                        try {
-                                                            const authHeaders = (usePlayerStore.getState() as any).getAuthHeader?.() || {};
-                                                            const res = await fetch('/api/providers/lastfm/authorize', { headers: { ...authHeaders } });
-                                                            const data = await res.json();
-                                                            if (!res.ok || data.error) {
-                                                                showToast(data.error || `Server error: ${res.status}`, 'error');
-                                                            } else if (data.url) {
-                                                                window.open(data.url, '_blank');
-                                                            }
-                                                        } catch (e: any) {
-                                                            showToast(e?.message || 'Network error', 'error');
-                                                        }
-                                                    }} className="btn btn-primary">Connect to Last.fm</button>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                )}
-
                                 {activeTab === 'Appearance' && (
                                     <div className="settings-section mb-8">
                                         <div className="settings-section-header mb-4">
@@ -771,137 +707,184 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                             
                                 {activeTab === 'Library' && (
                                     <div className="settings-section mb-8">
-                                        <div className="settings-section-header flex justify-between items-center mb-4">
-                                            <h3 className="text-xl font-bold text-[var(--color-text-primary)]">Mapped Folders</h3>
-                                            <button className="btn btn-sm" onClick={handleAddFolder}>
-                                                ＋ Map Folder Path
+                                        {/* Sub-tabs */}
+                                        <div className="flex gap-2 mb-6">
+                                            <button onClick={() => setLibTab('folders')} className={`btn-tab ${libTab === 'folders' ? 'active' : ''}`}>
+                                                <Folder size={16} className="inline mr-1 relative -top-[1px]" /> Folders
                                             </button>
-                                        </div>
-                                        <p className="text-sm text-[var(--color-text-muted)] mb-4">
-                                            Folders mapped here will be automatically scanned.
-                                        </p>
-                                        <ul className="flex flex-col gap-3">
-                                            {libraryFolders.length === 0 ? (
-                                                <li className="p-4 rounded-xl border border-dashed border-[var(--glass-border)] bg-[var(--glass-bg)] text-center text-sm text-[var(--color-text-muted)] backdrop-blur-sm">
-                                                    No folders mapped yet.
-                                                </li>
-                                            ) : (
-                                                libraryFolders.map((folderPath) => {
-                                                    const stats = dirStats[folderPath];
-                                                    return (
-                                                        <li key={folderPath} className="p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] shadow-sm backdrop-blur-sm">
-                                                            <div className="flex justify-between items-center mb-2">
-                                                                <span className="text-sm truncate mr-4 text-[var(--color-text-primary)] font-medium flex items-center gap-2"><Folder size={16} className="shrink-0 text-[var(--color-text-muted)]" /> {folderPath}</span>
-                                                                <div className="flex gap-2 shrink-0">
-                                                                    <button className="btn btn-primary btn-sm" onClick={() => handleRescanFolder(folderPath)}>Rescan</button>
-                                                                    <button className="btn btn-danger-fill btn-sm" onClick={() => handleRemoveFolder(folderPath)}>Remove</button>
-                                                                </div>
-                                                            </div>
-                                                            {stats && stats.totalTracks > 0 && (
-                                                                <div className="flex gap-4 text-xs text-[var(--color-text-secondary)] pl-1">
-                                                                    <span>{stats.totalTracks} tracks</span>
-                                                                    <span>·</span>
-                                                                    <span>{stats.withMetadata} with metadata</span>
-                                                                    <span>·</span>
-                                                                    <span className={stats.analyzed === stats.totalTracks ? 'text-green-500' : 'text-amber-500'}>{stats.analyzed} analyzed</span>
-                                                                </div>
-                                                            )}
-                                                            {stats && stats.totalTracks === 0 && (
-                                                                <div className="text-xs text-[var(--color-text-muted)] pl-1">No tracks found. Click Rescan to index this folder.</div>
-                                                            )}
-                                                        </li>
-                                                    );
-                                                })
-                                            )}
-                                        </ul>
-
-                                        {/* Auto Folder Walk Toggle */}
-                                        <div className="mt-4 flex items-center justify-between p-4 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)]">
-                                            <div>
-                                                <p className="text-sm font-medium text-[var(--color-text-primary)]">Automatic Folder Walk</p>
-                                                <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Re-walk all folders every 30 minutes to detect renamed or deleted files.</p>
-                                            </div>
-                                            <button
-                                                id="autoFolderWalk-toggle"
-                                                onClick={() => setSettings({ autoFolderWalk: !autoFolderWalk })}
-                                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ml-4 ${
-                                                    autoFolderWalk ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-bg-tertiary)]'
-                                                }`}
-                                                title={autoFolderWalk ? 'Auto-walk enabled' : 'Auto-walk disabled'}
-                                            >
-                                                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                                                    autoFolderWalk ? 'translate-x-6' : 'translate-x-1'
-                                                }`} />
+                                            <button onClick={() => setLibTab('lastfm')} className={`btn-tab ${libTab === 'lastfm' ? 'active' : ''}`}>
+                                                <Link size={16} className="inline mr-1 relative -top-[1px]" /> Last.fm
+                                            </button>
+                                            <button onClick={() => setLibTab('genius')} className={`btn-tab ${libTab === 'genius' ? 'active' : ''}`}>
+                                                <Search size={16} className="inline mr-1 relative -top-[1px]" /> Genius
+                                            </button>
+                                            <button onClick={() => setLibTab('musicbrainz')} className={`btn-tab ${libTab === 'musicbrainz' ? 'active' : ''}`}>
+                                                <Globe size={16} className="inline mr-1 relative -top-[1px]" /> MusicBrainz
                                             </button>
                                         </div>
 
-                                        {/* Audio Analysis Section */}
-                                        <div className="mt-6 pt-4 border-t border-[var(--glass-border)]">
-                                            <div className="flex justify-between items-center mb-3">
-                                                <h4 className="text-lg font-semibold text-[var(--color-text-primary)]">Audio Analysis</h4>
-                                                <div className="flex gap-2">
-                                                    <button
-                                                        className="btn btn-primary btn-sm"
-                                                        onClick={handleAnalyze}
-                                                        disabled={isScanning}
-                                                    >
-                                                        {isScanning ? 'Analyzing...' : 'Analyze Missing'}
-                                                    </button>
-                                                    <button
-                                                        className="btn btn-ghost btn-sm"
-                                                        onClick={handleForceAnalyze}
-                                                        disabled={isScanning}
-                                                    >
-                                                        Re-analyze All
+                                        {libTab === 'folders' && (
+                                            <>
+                                                <div className="settings-section-header flex justify-between items-center mb-4">
+                                                    <h3 className="text-lg font-bold text-[var(--color-text-primary)]">Mapped Folders</h3>
+                                                    <button className="btn btn-sm" onClick={handleAddFolder}>+ Map Folder Path</button>
+                                                </div>
+                                                <p className="text-sm text-[var(--color-text-muted)] mb-4">Folders mapped here will be automatically scanned.</p>
+                                                <ul className="flex flex-col gap-3">
+                                                    {libraryFolders.length === 0 ? (
+                                                        <li className="p-4 rounded-xl border border-dashed border-[var(--glass-border)] bg-[var(--glass-bg)] text-center text-sm text-[var(--color-text-muted)] backdrop-blur-sm">No folders mapped yet.</li>
+                                                    ) : (
+                                                        libraryFolders.map((folderPath) => {
+                                                            const stats = dirStats[folderPath];
+                                                            return (
+                                                                <li key={folderPath} className="p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] shadow-sm backdrop-blur-sm">
+                                                                    <div className="flex justify-between items-center mb-2">
+                                                                        <span className="text-sm truncate mr-4 text-[var(--color-text-primary)] font-medium flex items-center gap-2"><Folder size={16} className="shrink-0 text-[var(--color-text-muted)]" /> {folderPath}</span>
+                                                                        <div className="flex gap-2 shrink-0">
+                                                                            <button className="btn btn-primary btn-sm" onClick={() => handleRescanFolder(folderPath)}>Rescan</button>
+                                                                            <button className="btn btn-danger-fill btn-sm" onClick={() => handleRemoveFolder(folderPath)}>Remove</button>
+                                                                        </div>
+                                                                    </div>
+                                                                    {stats && stats.totalTracks > 0 && (
+                                                                        <div className="flex gap-4 text-xs text-[var(--color-text-secondary)] pl-1">
+                                                                            <span>{stats.totalTracks} tracks</span><span>·</span><span>{stats.withMetadata} with metadata</span><span>·</span>
+                                                                            <span className={stats.analyzed === stats.totalTracks ? 'text-green-500' : 'text-amber-500'}>{stats.analyzed} analyzed</span>
+                                                                        </div>
+                                                                    )}
+                                                                    {stats && stats.totalTracks === 0 && (<div className="text-xs text-[var(--color-text-muted)] pl-1">No tracks found. Click Rescan to index this folder.</div>)}
+                                                                </li>
+                                                            );
+                                                        })
+                                                    )}
+                                                </ul>
+                                                <div className="mt-4 flex items-center justify-between p-4 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)]">
+                                                    <div>
+                                                        <p className="text-sm font-medium text-[var(--color-text-primary)]">Automatic Folder Walk</p>
+                                                        <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Re-walk all folders every 30 minutes to detect renamed or deleted files.</p>
+                                                    </div>
+                                                    <button id="autoFolderWalk-toggle" onClick={() => setSettings({ autoFolderWalk: !autoFolderWalk })} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ml-4 ${autoFolderWalk ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-bg-tertiary)]'}`} title={autoFolderWalk ? 'Auto-walk enabled' : 'Auto-walk disabled'}>
+                                                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${autoFolderWalk ? 'translate-x-6' : 'translate-x-1'}`} />
                                                     </button>
                                                 </div>
-                                            </div>
-                                            <p className="text-xs text-[var(--color-text-muted)]">
-                                                Runs Essentia audio feature extraction on tracks that haven't been analyzed yet.
-                                                This powers the recommendation engine (Infinity Mode, Hub playlists).
-                                            </p>
-                                            {(() => {
-                                                const totalStats = Object.values(dirStats).reduce((acc, s) => ({
-                                                    totalTracks: acc.totalTracks + s.totalTracks,
-                                                    withMetadata: acc.withMetadata + s.withMetadata,
-                                                    analyzed: acc.analyzed + s.analyzed,
-                                                }), { totalTracks: 0, withMetadata: 0, analyzed: 0 });
-                                                if (dirStatsLoading) {
-                                                    return (
-                                                        <div className="mt-2">
-                                                            <div className="flex justify-between text-xs text-[var(--color-text-secondary)] mb-1">
-                                                                <span>Library Coverage</span>
-                                                                <span className="animate-pulse">Loading...</span>
-                                                            </div>
-                                                            <div className="w-full h-2 rounded-full bg-[var(--glass-border)] overflow-hidden" />
-                                                        </div>
-                                                    );
-                                                }
-                                                if (totalStats.totalTracks === 0) return null;
-                                                const pct = Math.round((totalStats.analyzed / totalStats.totalTracks) * 100);
-                                                return (
-                                                    <div className="mt-2">
-                                                        <div className="flex justify-between text-xs text-[var(--color-text-secondary)] mb-1">
-                                                            <span>Library Coverage</span>
-                                                            <span>{totalStats.analyzed} / {totalStats.totalTracks} tracks ({pct}%)</span>
-                                                        </div>
-                                                        <div className="w-full h-2 rounded-full bg-[var(--glass-border)] overflow-hidden">
-                                                            <div
-                                                                className="h-full rounded-full transition-all duration-500"
-                                                                style={{
-                                                                    width: `${pct}%`,
-                                                                    backgroundColor: pct === 100 ? '#22c55e' : pct > 50 ? '#f59e0b' : '#ef4444'
-                                                                }}
-                                                            />
+                                                <div className="mt-6 pt-4 border-t border-[var(--glass-border)]">
+                                                    <div className="flex justify-between items-center mb-3">
+                                                        <h4 className="text-lg font-semibold text-[var(--color-text-primary)]">Audio Analysis</h4>
+                                                        <div className="flex gap-2">
+                                                            <button className="btn btn-primary btn-sm" onClick={handleAnalyze} disabled={isScanning}>{isScanning ? 'Analyzing...' : 'Analyze Missing'}</button>
+                                                            <button className="btn btn-ghost btn-sm" onClick={handleForceAnalyze} disabled={isScanning}>Re-analyze All</button>
                                                         </div>
                                                     </div>
-                                                );
-                                            })()}
+                                                    <p className="text-xs text-[var(--color-text-muted)]">Runs Essentia audio feature extraction on tracks that haven't been analyzed yet. This powers the recommendation engine (Infinity Mode, Hub playlists).</p>
+                                                    {(() => {
+                                                        const totalStats = Object.values(dirStats).reduce((acc, s) => ({ totalTracks: acc.totalTracks + s.totalTracks, withMetadata: acc.withMetadata + s.withMetadata, analyzed: acc.analyzed + s.analyzed }), { totalTracks: 0, withMetadata: 0, analyzed: 0 });
+                                                        if (dirStatsLoading) { return (<div className="mt-2"><div className="flex justify-between text-xs text-[var(--color-text-secondary)] mb-1"><span>Library Coverage</span><span className="animate-pulse">Loading...</span></div><div className="w-full h-2 rounded-full bg-[var(--glass-border)] overflow-hidden" /></div>); }
+                                                        if (totalStats.totalTracks === 0) return null;
+                                                        const pct = Math.round((totalStats.analyzed / totalStats.totalTracks) * 100);
+                                                        return (<div className="mt-2"><div className="flex justify-between text-xs text-[var(--color-text-secondary)] mb-1"><span>Library Coverage</span><span>{totalStats.analyzed} / {totalStats.totalTracks} tracks ({pct}%)</span></div><div className="w-full h-2 rounded-full bg-[var(--glass-border)] overflow-hidden"><div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: pct === 100 ? '#22c55e' : pct > 50 ? '#f59e0b' : '#ef4444' }} /></div></div>);
+                                                    })()}
+                                                </div>
+                                            </>
+                                        )}
+
+                                        {libTab === 'lastfm' && (
+                                            <div className="flex flex-col gap-5">
+                                                <div><h3 className="text-lg font-bold text-[var(--color-text-primary)] mb-1">Last.fm</h3><p className="text-sm text-[var(--color-text-muted)]">Metadata and scrobbling service. API key and shared secret are configured by the admin.</p></div>
+                                                <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 flex flex-col gap-3">
+                                                    <input type="text" value={lastFmApiKey} onChange={e => setLastFmApiKey(e.target.value)} placeholder="API Key" className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" />
+                                                    <input type="password" value={lastFmSharedSecret} onChange={e => setLastFmSharedSecret(e.target.value)} placeholder="Shared Secret (for scrobbling)" className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" />
+                                                    <div className="flex items-center gap-3">
+                                                        <button onClick={() => testLastFm(lastFmApiKey)} disabled={lastFmStatus === 'testing' || !lastFmApiKey} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">{lastFmStatus === 'testing' ? 'Testing...' : 'Test'}</button>
+                                                        {lastFmStatus === 'success' && <span className="text-green-500 font-semibold text-xs">✓ {lastFmMessage}</span>}
+                                                        {lastFmStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {lastFmMessage}</span>}
+                                                    </div>
+                                                </div>
+                                                <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5">
+                                                    <h4 className="text-sm font-semibold text-[var(--color-text-primary)] mb-3">Scrobbling</h4>
+                                                    {lastFmConnected ? (
+                                                        <div className="flex flex-col gap-4">
+                                                            <div className="flex items-center justify-between">
+                                                                <span className="text-green-500 font-semibold text-sm">Connected as {lastFmUsername || 'Last.fm'}</span>
+                                                                <button onClick={async () => { try { const res = await fetch('/api/providers/lastfm/disconnect', { method: 'POST' }); const data = await res.json(); if (!res.ok || data.error) { showToast(data.error || 'Failed to disconnect', 'error'); } else { setLastFmConnected(false); setLastFmUsername(''); } } catch (e: any) { showToast(e?.message || 'Network error', 'error'); } }} className="btn btn-danger btn-sm">Remove access</button>
+                                                            </div>
+                                                            <div className="border-t border-[var(--glass-border)] pt-4 flex items-center justify-between">
+                                                                <label className="text-sm text-[var(--color-text-primary)]">Auto-scrobble played tracks</label>
+                                                                <button onClick={() => setLastFmScrobbleEnabled(!lastFmScrobbleEnabled)} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${lastFmScrobbleEnabled ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-bg-tertiary)]'}`}><span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${lastFmScrobbleEnabled ? 'translate-x-6' : 'translate-x-1'}`} /></button>
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="flex flex-col gap-3">
+                                                            <p className="text-sm text-[var(--color-text-muted)]">Link your Last.fm account to scrobble played tracks.</p>
+                                                            <button onClick={async () => { try { const authHeaders = (usePlayerStore.getState() as any).getAuthHeader?.() || {}; const res = await fetch('/api/providers/lastfm/authorize', { headers: { ...authHeaders } }); const data = await res.json(); if (!res.ok || data.error) { showToast(data.error || `Server error: ${res.status}`, 'error'); } else if (data.url) { window.open(data.url, '_blank'); } } catch (e: any) { showToast(e?.message || 'Network error', 'error'); } }} className="btn btn-primary btn-sm">Connect to Last.fm</button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {libTab === 'genius' && (
+                                            <div className="flex flex-col gap-5">
+                                                <div><h3 className="text-lg font-bold text-[var(--color-text-primary)] mb-1">Genius</h3><p className="text-sm text-[var(--color-text-muted)]">Lyrics, artist bios, and album art fallback. Requires a Genius API access token.</p></div>
+                                                <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 flex flex-col gap-3">
+                                                    <div className="flex gap-2">
+                                                        <input type="text" value={geniusApiKey} onChange={e => setGeniusApiKey(e.target.value)} placeholder="Access Token" className="flex-1 p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" />
+                                                        <button onClick={() => testGenius(geniusApiKey)} disabled={geniusStatus === 'testing' || !geniusApiKey} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">{geniusStatus === 'testing' ? 'Testing...' : 'Test'}</button>
+                                                    </div>
+                                                    {geniusStatus === 'success' && <span className="text-green-500 font-semibold text-xs">✓ {geniusMessage}</span>}
+                                                    {geniusStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {geniusMessage}</span>}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {libTab === 'musicbrainz' && (
+                                            <div className="flex flex-col gap-5">
+                                                <div><h3 className="text-lg font-bold text-[var(--color-text-primary)] mb-1">MusicBrainz</h3><p className="text-sm text-[var(--color-text-muted)]">Structured metadata with optional OAuth2. Provides artist disambiguation, official links, genre tags, and album art from Cover Art Archive.</p></div>
+                                                <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 flex flex-col gap-3">
+                                                    <div className="flex items-center justify-between">
+                                                        <label className="text-sm font-medium text-[var(--color-text-primary)]">Enabled</label>
+                                                        <button onClick={() => setMusicBrainzEnabled(!musicBrainzEnabled)} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${musicBrainzEnabled ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-bg-tertiary)]'}`}><span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${musicBrainzEnabled ? 'translate-x-6' : 'translate-x-1'}`} /></button>
+                                                    </div>
+                                                    {musicBrainzEnabled && (
+                                                        <div className="flex flex-col gap-3 mt-1">
+                                                            <input type="text" value={musicBrainzClientId} onChange={e => setMusicBrainzClientId(e.target.value)} placeholder="Client ID" className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" />
+                                                            <input type="password" value={musicBrainzClientSecret} onChange={e => setMusicBrainzClientSecret(e.target.value)} placeholder="Client Secret" className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" />
+                                                            <div className="flex gap-2 items-center">
+                                                                <button onClick={() => testMusicBrainz()} disabled={musicBrainzStatus === 'testing'} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">{musicBrainzStatus === 'testing' ? 'Testing...' : 'Test'}</button>
+                                                                {musicBrainzStatus === 'success' && <span className="text-green-500 font-semibold text-xs">✓ {musicBrainzMessage}</span>}
+                                                                {musicBrainzStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {musicBrainzMessage}</span>}
+                                                                {musicBrainzConnected ? (<><span className="text-green-500 font-semibold text-xs ml-auto">Connected</span><button onClick={async () => { await fetch('/api/providers/musicbrainz/disconnect', { method: 'POST' }); setMusicBrainzConnected(false); }} className="btn btn-danger btn-sm">Remove access</button></>) : (<button onClick={async () => { try { const res = await fetch('/api/providers/musicbrainz/authorize'); const data = await res.json(); if (!res.ok || data.error) { showToast(data.error || `Server error: ${res.status}`, 'error'); } else if (data.url) { window.open(data.url, '_blank'); } } catch (e: any) { showToast(e?.message || 'Network error', 'error'); } }} disabled={!musicBrainzClientId || !musicBrainzClientSecret} className="btn btn-primary btn-sm disabled:opacity-50 ml-auto">Connect</button>)}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        <div className="mt-6 pt-6 border-t border-[var(--glass-border)]">
+                                            <h4 className="text-sm font-semibold text-[var(--color-text-primary)] mb-3">Default Provider per Service</h4>
+                                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                                                <div>
+                                                    <label className="block text-xs text-[var(--color-text-muted)] mb-1">Artist Images</label>
+                                                    <select value={providerArtistImage} onChange={e => setProviderArtistImage(e.target.value as 'lastfm' | 'genius' | 'musicbrainz')} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors">
+                                                        <option value="lastfm">Last.fm</option><option value="genius">Genius</option>{musicBrainzEnabled && <option value="musicbrainz">MusicBrainz</option>}
+                                                    </select>
+                                                </div>
+                                                <div>
+                                                    <label className="block text-xs text-[var(--color-text-muted)] mb-1">Artist Bios</label>
+                                                    <select value={providerArtistBio} onChange={e => setProviderArtistBio(e.target.value as 'lastfm' | 'genius')} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors">
+                                                        <option value="lastfm">Last.fm</option><option value="genius">Genius</option>
+                                                    </select>
+                                                </div>
+                                                <div>
+                                                    <label className="block text-xs text-[var(--color-text-muted)] mb-1">Album Art</label>
+                                                    <select value={providerAlbumArt} onChange={e => setProviderAlbumArt(e.target.value as 'lastfm' | 'genius' | 'musicbrainz')} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors">
+                                                        <option value="lastfm">Last.fm</option><option value="genius">Genius</option>{musicBrainzEnabled && <option value="musicbrainz">MusicBrainz</option>}
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <button onClick={async () => { try { const authHeaders = (usePlayerStore.getState() as any).getAuthHeader?.() || {}; const res = await fetch('/api/providers/external/refresh', { method: 'POST', headers: authHeaders }); const data = await res.json(); if (!res.ok || data.error) { showToast(data.error || 'Failed to clear cache', 'error'); } else { showToast('Provider image & bio cache cleared', 'success'); } } catch (e: any) { showToast(e?.message || 'Network error', 'error'); } }} className="btn btn-ghost btn-sm gap-2"><Trash2 size={14} /> Clear cached images &amp; bios</button>
                                         </div>
                                     </div>
-                                )}
-
-                                {activeTab === 'Playback' && (
+                                )}{activeTab === 'Playback' && (
                                     <div className="settings-section mb-8">
                                         <div className="settings-section-header mb-4">
                                             <h3 className="text-xl font-bold text-[var(--color-text-primary)]">Playback & Discovery</h3>
@@ -1200,175 +1183,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                             </div>
                                         </div>
 
-                                        <div className="settings-section-header mb-4">
-                                            <h3>Metadata Providers</h3>
-                                        </div>
-                                        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5">
-                                            <div className="flex flex-col gap-5">
-                                                {/* Last.fm */}
-                                                <div className="flex flex-col gap-3">
-                                                    <label className="block text-sm font-medium text-[var(--color-text-primary)]">Last.fm</label>
-                                                    <input 
-                                                        type="text" 
-                                                        value={lastFmApiKey} 
-                                                        onChange={e => setLastFmApiKey(e.target.value)} 
-                                                        placeholder="API Key"
-                                                        className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" 
-                                                    />
-                                                    <input 
-                                                        type="password" 
-                                                        value={lastFmSharedSecret} 
-                                                        onChange={e => setLastFmSharedSecret(e.target.value)} 
-                                                        placeholder="Shared Secret (for scrobbling)"
-                                                        className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" 
-                                                    />
-                                                    <div className="flex items-center gap-3">
-                                                        <button onClick={() => testLastFm(lastFmApiKey)} disabled={lastFmStatus === 'testing' || !lastFmApiKey} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">
-                                                            {lastFmStatus === 'testing' ? 'Testing...' : 'Test'}
-                                                        </button>
-                                                        {lastFmStatus === 'success' && <span className="text-green-500 font-semibold text-xs">✓ {lastFmMessage}</span>}
-                                                        {lastFmStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {lastFmMessage}</span>}
-                                                    </div>
-                                                </div>
-
-                                                <div className="border-t border-[var(--glass-border)]" />
-
-                                                {/* Genius */}
-                                                <div className="flex flex-col gap-3">
-                                                    <label className="block text-sm font-medium text-[var(--color-text-primary)]">Genius</label>
-                                                    <div className="flex gap-2">
-                                                        <input 
-                                                            type="text" 
-                                                            value={geniusApiKey} 
-                                                            onChange={e => setGeniusApiKey(e.target.value)} 
-                                                            placeholder="Access Token"
-                                                            className="flex-1 p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" 
-                                                        />
-                                                        <button onClick={() => testGenius(geniusApiKey)} disabled={geniusStatus === 'testing' || !geniusApiKey} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">
-                                                            {geniusStatus === 'testing' ? 'Testing...' : 'Test'}
-                                                        </button>
-                                                    </div>
-                                                    {geniusStatus === 'success' && <span className="text-green-500 font-semibold text-xs">✓ {geniusMessage}</span>}
-                                                    {geniusStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {geniusMessage}</span>}
-                                                </div>
-
-                                                <div className="border-t border-[var(--glass-border)]" />
-
-                                                {/* MusicBrainz */}
-                                                <div className="flex flex-col gap-3">
-                                                    <div className="flex items-center justify-between">
-                                                        <label className="block text-sm font-medium text-[var(--color-text-primary)]">MusicBrainz</label>
-                                                        <button
-                                                            onClick={() => setMusicBrainzEnabled(!musicBrainzEnabled)}
-                                                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${musicBrainzEnabled ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-bg-tertiary)]'}`}
-                                                        >
-                                                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${musicBrainzEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
-                                                        </button>
-                                                    </div>
-                                                    <p className="text-xs text-[var(--color-text-muted)]">Works anonymously for metadata lookups. Log in to tag, rate, and contribute to MusicBrainz directly from Aurora.</p>
-                                                    {musicBrainzEnabled && (
-                                                        <div className="flex flex-col gap-3 mt-1">
-                                                            <input 
-                                                                type="text" 
-                                                                value={musicBrainzClientId} 
-                                                                onChange={e => setMusicBrainzClientId(e.target.value)} 
-                                                                placeholder="Client ID"
-                                                                className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" 
-                                                            />
-                                                            <input 
-                                                                type="password" 
-                                                                value={musicBrainzClientSecret} 
-                                                                onChange={e => setMusicBrainzClientSecret(e.target.value)} 
-                                                                placeholder="Client Secret"
-                                                                className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" 
-                                                            />
-                                                            <div className="flex gap-2 items-center">
-                                                                <button onClick={() => testMusicBrainz()} disabled={musicBrainzStatus === 'testing'} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">
-                                                                    {musicBrainzStatus === 'testing' ? 'Testing...' : 'Test'}
-                                                                </button>
-                                                                {musicBrainzStatus === 'success' && <span className="text-green-500 font-semibold text-xs">✓ {musicBrainzMessage}</span>}
-                                                                {musicBrainzStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {musicBrainzMessage}</span>}
-                                                                {musicBrainzConnected ? (
-                                                                    <>
-                                                                        <span className="text-green-500 font-semibold text-xs ml-auto">Connected</span>
-                                                                        <button onClick={async () => {
-                                                                            await fetch('/api/providers/musicbrainz/disconnect', { method: 'POST' });
-                                                                            setMusicBrainzConnected(false);
-                                                        }} className="btn btn-danger btn-sm">Remove access</button>
-                                                                    </>
-                                                                ) : (
-                                                                    <button onClick={async () => {
-                                                                        try {
-                                                                            const res = await fetch('/api/providers/musicbrainz/authorize');
-                                                                            const data = await res.json();
-                                                                            if (!res.ok || data.error) {
-                                                                                showToast(data.error || `Server error: ${res.status}`, 'error');
-                                                                            } else if (data.url) {
-                                                                                window.open(data.url, '_blank');
-                                                                            }
-                                                                        } catch (e: any) {
-                                                                            showToast(e?.message || 'Network error', 'error');
-                                                                        }
-                                                                    }} disabled={!musicBrainzClientId || !musicBrainzClientSecret} className="btn btn-primary btn-sm disabled:opacity-50 ml-auto">Connect</button>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                </div>
-
-                                                <div className="border-t border-[var(--glass-border)]" />
-
-                                                {/* Default Providers */}
-                                                <div className="flex flex-col gap-3">
-                                                    <label className="block text-sm font-medium text-[var(--color-text-primary)]">Default Provider per Service</label>
-                                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                                                        <div>
-                                                            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Artist Images</label>
-                                                            <select value={providerArtistImage} onChange={e => setProviderArtistImage(e.target.value as 'lastfm' | 'genius' | 'musicbrainz')} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors">
-                                                                <option value="lastfm">Last.fm</option>
-                                                                <option value="genius">Genius</option>
-                                                                {musicBrainzEnabled && <option value="musicbrainz">MusicBrainz</option>}
-                                                            </select>
-                                                        </div>
-                                                        <div>
-                                                            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Artist Bios</label>
-                                                            <select value={providerArtistBio} onChange={e => setProviderArtistBio(e.target.value as 'lastfm' | 'genius')} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors">
-                                                                <option value="lastfm">Last.fm</option>
-                                                                <option value="genius">Genius</option>
-                                                            </select>
-                                                        </div>
-                                                        <div>
-                                                            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Album Art</label>
-                                                            <select value={providerAlbumArt} onChange={e => setProviderAlbumArt(e.target.value as 'lastfm' | 'genius' | 'musicbrainz')} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors">
-                                                                <option value="lastfm">Last.fm</option>
-                                                                <option value="genius">Genius</option>
-                                                                {musicBrainzEnabled && <option value="musicbrainz">MusicBrainz</option>}
-                                                            </select>
-                                                        </div>
-                                                    </div>
-                                                </div>
-
-                                                <div className="border-t border-[var(--glass-border)] pt-4">
-                                                    <button onClick={async () => {
-                                                        try {
-                                                            const authHeaders = (usePlayerStore.getState() as any).getAuthHeader?.() || {};
-                                                            const res = await fetch('/api/providers/external/refresh', { method: 'POST', headers: authHeaders });
-                                                            const data = await res.json();
-                                                            if (!res.ok || data.error) {
-                                                                showToast(data.error || 'Failed to clear cache', 'error');
-                                                            } else {
-                                                                showToast('Provider image & bio cache cleared — will re-fetch on next view', 'success');
-                                                            }
-                                                        } catch (e: any) {
-                                                            showToast(e?.message || 'Network error', 'error');
-                                                        }
-                                                    }} className="btn btn-ghost btn-sm gap-2">
-                                                        <Trash2 size={14} />
-                                                        Clear cached images &amp; bios
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        </div>
                                     </div>
                                 )}
 
