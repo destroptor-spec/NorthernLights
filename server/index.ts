@@ -150,3 +150,68 @@ app.listen(port, () => {
 
 // Initial DB connection attempt
 initDatabaseConnection();
+
+// ─── Auto-Walk Scheduler ────────────────────────────────────────────
+// When the 'autoFolderWalk' setting is enabled, re-walk all mapped folders
+// every 30 minutes to detect renamed/deleted/added files automatically.
+const AUTO_WALK_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+
+async function runAutoWalk() {
+  try {
+    const { getSystemSetting, getDirectories } = await import('./database');
+    const { scanStatus } = await import('./state');
+    const { runSyncWalk } = await import('./routes/library.routes');
+
+    const enabled = await getSystemSetting('autoFolderWalk');
+    if (enabled !== 'true') return;
+
+    if (scanStatus.isScanning) {
+      console.log('[Auto-Walk] Skipping — scan already in progress');
+      return;
+    }
+
+    const dirs = await getDirectories();
+    if (dirs.length === 0) return;
+
+    console.log(`[Auto-Walk] Starting scheduled walk of ${dirs.length} folder(s)...`);
+    const { broadcastScanStatus, scanStatus: ss } = await import('./state');
+
+    ss.isScanning = true;
+    ss.phase = 'walk';
+    ss.scannedFiles = 0;
+    ss.totalFiles = 0;
+    ss.activeFiles = [];
+    ss.activeWorkers = 0;
+    broadcastScanStatus(true);
+
+    let totalAdded = 0;
+    let totalRemoved = 0;
+    for (const dir of dirs) {
+      try {
+        const { added, removed } = await runSyncWalk(dir);
+        totalAdded += added;
+        totalRemoved += removed;
+      } catch (e) {
+        console.error(`[Auto-Walk] Failed for ${dir}:`, e);
+      }
+    }
+
+    ss.isScanning = false;
+    ss.phase = 'idle';
+    ss.currentFile = '';
+    ss.activeFiles = [];
+    ss.activeWorkers = 0;
+    broadcastScanStatus(true);
+
+    console.log(`[Auto-Walk] Complete: +${totalAdded} added, -${totalRemoved} removed`);
+  } catch (e) {
+    console.error('[Auto-Walk] Scheduler error:', e);
+  }
+}
+
+// Delay initial run to give DB time to connect on startup
+setTimeout(() => {
+  runAutoWalk();
+  setInterval(runAutoWalk, AUTO_WALK_INTERVAL_MS);
+}, 60_000);
+

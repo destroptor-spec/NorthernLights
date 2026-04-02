@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { ChildProcessPool } from '../workers/processPool';
 import * as mm from 'music-metadata';
-import { addDirectory, addTrack, addTrackFeatures, getTracksWithoutFeatures, getTrackCountWithFeatures, getAllTracks, getDirectories, removeDirectory, removeTracksByDirectory, getOrCreateArtist, getOrCreateAlbum, getOrCreateGenre, getAllArtists, getAllAlbums, getAllGenres } from '../database';
+import { addDirectory, addTrack, addTrackFeatures, getTracksWithoutFeatures, getTrackCountWithFeatures, getAllTracks, getDirectories, removeDirectory, removeTracksByDirectory, getOrCreateArtist, getOrCreateAlbum, getOrCreateGenre, getAllArtists, getAllAlbums, getAllGenres, getExistingPaths, deleteTracksByIds } from '../database';
 import { genreMatrixService } from '../services/genreMatrix.service';
 import { scanStatus, scanClients, broadcastScanStatus } from '../state';
 
@@ -458,23 +458,69 @@ router.post('/scan', async (req, res) => {
 
     await addDirectory(dirPath);
 
-    // ── Walk ──
-    const dirBuf = Buffer.from(dirPath, 'utf8');
-    const fileBufs = await collectAudioFiles(dirBuf);
+    await runSyncWalk(dirPath);
 
-    if (fileBufs.length === 0) {
-      console.warn(`[Scanner] No audio files found in ${dirPath}.`);
+    res.json({ status: 'completed', message: `Scan completed for ${dirPath}` });
+  } catch (error) {
+    console.error('Scan init error:', error);
+    res.status(500).json({ error: 'Failed to complete scan' });
+  } finally {
+    resetScanStatus();
+  }
+});
+
+// ─── Sync Walk: diff disk vs DB, remove stale, scan new ───────────────
+// Exported so the auto-walk scheduler in server/index.ts can reuse it.
+export async function runSyncWalk(dirPath: string): Promise<{ removed: number; added: number }> {
+  const dirBuf = Buffer.from(dirPath, 'utf8');
+
+  // ── Walk ──
+  const fileBufs = await collectAudioFiles(dirBuf);
+  const diskPaths = new Set(fileBufs.map(b => b.toString('base64')));
+
+  // ── Diff against DB ──
+  // Get all paths currently known for this directory
+  const allExisting = await getExistingPaths(); // Set<base64-path>
+
+  const staleIds: string[] = [];
+  for (const existingPath of allExisting) {
+    // Only consider tracks that belong to this directory (byte-level prefix check)
+    const fileBuf = Buffer.from(existingPath, 'base64');
+    const prefixMatches = fileBuf.length >= dirBuf.length &&
+      fileBuf.slice(0, dirBuf.length).equals(dirBuf);
+    const atBoundary = fileBuf.length === dirBuf.length || fileBuf[dirBuf.length] === 0x2F;
+    if (!prefixMatches || !atBoundary) continue;
+
+    // If this path is no longer on disk, mark for removal
+    if (!diskPaths.has(existingPath)) {
+      staleIds.push(existingPath); // these are the base64 path values which are also the IDs
     }
+  }
 
+  // Remove stale DB entries
+  if (staleIds.length > 0) {
+    console.log(`[Scanner] Removing ${staleIds.length} stale track(s) from ${dirPath}`);
+    await deleteTracksByIds(staleIds);
+  }
+
+  // Determine truly new files (not already in DB)
+  const newFileBufs = fileBufs.filter(b => !allExisting.has(b.toString('base64')));
+
+  if (newFileBufs.length === 0 && staleIds.length === 0) {
+    console.log(`[Scanner] No changes detected in ${dirPath}`);
+    return { removed: staleIds.length, added: 0 };
+  }
+
+  if (newFileBufs.length > 0) {
     // ── Metadata ──
     scanStatus.phase = 'metadata';
-    scanStatus.totalFiles = fileBufs.length;
+    scanStatus.totalFiles = newFileBufs.length;
     scanStatus.scannedFiles = 0;
     scanStatus.currentFile = '';
     broadcastScanStatus(true);
     const metadataConcurrency = await getScannerConcurrency();
-    await processMetadataBatch(fileBufs, metadataConcurrency);
-    console.log(`[Scanner] Metadata phase complete: ${fileBufs.length} files`);
+    await processMetadataBatch(newFileBufs, metadataConcurrency);
+    console.log(`[Scanner] Metadata phase complete: ${newFileBufs.length} new file(s)`);
 
     // ── Analysis ──
     const tracksNeedingAnalysis = await getTracksWithoutFeatures();
@@ -486,25 +532,21 @@ router.post('/scan', async (req, res) => {
       broadcastScanStatus(true);
       const concurrency = await getAnalysisConcurrency();
       await processAnalysisBatch(tracksNeedingAnalysis, concurrency);
-      console.log(`[Scanner] Analysis phase complete: ${tracksNeedingAnalysis.length} tracks analyzed`);
+      console.log(`[Scanner] Analysis phase complete: ${tracksNeedingAnalysis.length} track(s) analyzed`);
     }
+  }
 
-    console.log(`[Scanner] Full scan completed for ${dirPath}: ${fileBufs.length} files`);
-
-    // Trigger Genre Matrix regeneration after scan
+  // Trigger Genre Matrix regeneration after any change
+  if (newFileBufs.length > 0 || staleIds.length > 0) {
     setImmediate(() => {
       genreMatrixService.runDiffAndGenerate()
         .catch(e => console.error('[Genre Matrix] Post-scan categorization failed:', e));
     });
-
-    res.json({ status: 'completed', message: `Scan completed for ${dirPath}` });
-  } catch (error) {
-    console.error('Scan init error:', error);
-    res.status(500).json({ error: 'Failed to complete scan' });
-  } finally {
-    resetScanStatus();
   }
-});
+
+  console.log(`[Scanner] Sync walk complete for ${dirPath}: +${newFileBufs.length} added, -${staleIds.length} removed`);
+  return { removed: staleIds.length, added: newFileBufs.length };
+}
 
 // Trigger standalone analysis (no scan — analyzes tracks missing features)
 router.post('/analyze', async (req, res) => {
@@ -618,9 +660,14 @@ router.get('/stats', async (req, res) => {
       return res.json({ directories: [] });
     }
 
-    // Base64-encode the directory path and escape SQL LIKE special chars (% and _)
+    // Base64-encode the directory path and escape SQL LIKE special chars (% and _).
+    // Strip base64 padding ('=') before using as a LIKE prefix — padding only appears
+    // at the end of a complete encoding and would prevent matching longer child paths
+    // whose base64 naturally doesn't start with the padding-terminated form.
+    // The precise byte-level check below handles exact boundary validation.
     const toLikePrefix = (dirPath: string) =>
       Buffer.from(dirPath, 'utf8').toString('base64')
+        .replace(/=+$/, '')   // strip padding before LIKE prefix use
         .replace(/%/g, '\\%')
         .replace(/_/g, '\\_');
 

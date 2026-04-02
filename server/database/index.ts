@@ -550,6 +550,18 @@ export async function removeTracksByDirectory(dirPath: string) {
   }
 }
 
+// Delete a specific set of tracks by their IDs (used by the sync-walk diff).
+// IDs are base64-encoded file paths, same as the primary key.
+export async function deleteTracksByIds(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const db = await initDB();
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = ids.slice(i, i + 100);
+    const placeholders = chunk.map((_, idx) => `$${idx + 1}`).join(',');
+    await db.query(`DELETE FROM tracks WHERE id IN (${placeholders})`, chunk);
+  }
+}
+
 export async function recordPlayback(trackId: string) {
   const db = await initDB();
   // Increment playCount, update lastPlayedAt, and passively give a small rating bump

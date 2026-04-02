@@ -195,12 +195,27 @@ router.get('/providers/musicbrainz/search/release-group', async (req, res) => {
 
 router.get('/providers/musicbrainz/test', async (req, res) => {
   try {
+    // Test basic API access (works anonymously)
     const json = await mbFetch('https://musicbrainz.org/ws/2/artist/?query=radiohead&limit=1&fmt=json');
-    if (json.artists) {
-      res.json({ status: 'ok' });
-    } else {
-      res.status(502).json({ status: 'error', error: 'Unexpected response' });
+    if (!json.artists) {
+      return res.status(502).json({ status: 'error', error: 'Unexpected response' });
     }
+
+    // If OAuth token exists, validate it via userinfo endpoint
+    const accessToken = await getSystemSetting('musicBrainzAccessToken');
+    if (accessToken) {
+      try {
+        const meRes = await fetch('https://musicbrainz.org/oauth2/userinfo', {
+          headers: { 'Authorization': `Bearer ${accessToken}` },
+        });
+        if (meRes.ok) {
+          const meData = await meRes.json();
+          return res.json({ status: 'ok', mode: 'authenticated', username: meData.sub || 'Connected' });
+        }
+      } catch { /* token validation failed, fall through to anonymous */ }
+    }
+
+    res.json({ status: 'ok', mode: 'anonymous' });
   } catch (err: any) {
     res.status(502).json({ status: 'error', error: err.message || 'Network error' });
   }
@@ -213,13 +228,15 @@ router.get('/providers/musicbrainz/authorize', async (req, res) => {
     const clientId = await getSystemSetting('musicBrainzClientId');
     if (!clientId) return res.status(400).json({ error: 'MusicBrainz Client ID not configured' });
 
+    const userId = req.user?.userId;
     const redirectUri = `${SERVER_URL}/api/providers/musicbrainz/callback`;
     const url = new URL('https://musicbrainz.org/oauth2/authorize');
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('client_id', clientId);
     url.searchParams.set('redirect_uri', redirectUri);
     url.searchParams.set('scope', 'tag rating collection');
-    url.searchParams.set('state', 'aurora');
+    // Encode userId in state so the unauthenticated callback can identify the user
+    url.searchParams.set('state', userId ? `uid:${userId}` : 'aurora');
 
     res.json({ url: url.toString() });
   } catch (err: any) {
@@ -426,11 +443,11 @@ router.get('/providers/lastfm/authorize', async (req, res) => {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Authentication required' });
 
-    const apiKey = await getUserSetting(userId, 'lastFmApiKey');
+    const apiKey = await getSystemSetting('lastFmApiKey');
     if (!apiKey) return res.status(400).json({ error: 'Last.fm API key not configured' });
 
-    // Fetch a request token
-    const sharedSecret = await getUserSetting(userId, 'lastFmSharedSecret') || '';
+    // Fetch a request token (no signature needed for auth.getToken)
+    const sharedSecret = (await getSystemSetting('lastFmSharedSecret')) || '';
     const tokenRes = await lfmFetch(userId, 'auth.getToken', {}, { apiKey, sharedSecret, sessionKey: '' });
 
     if (!tokenRes.token) {
@@ -440,7 +457,9 @@ router.get('/providers/lastfm/authorize', async (req, res) => {
     // Store the temporary token so the callback can use it
     await setUserSetting(userId, 'lastFmPendingToken', tokenRes.token);
 
-    const authUrl = `https://www.last.fm/api/auth/?api_key=${apiKey}&token=${tokenRes.token}`;
+    // Encode userId in callback URL so the unauthenticated callback can identify the user
+    const cbUrl = `${SERVER_URL}/api/providers/lastfm/callback?cb_state=${encodeURIComponent(userId)}`;
+    const authUrl = `https://www.last.fm/api/auth/?api_key=${apiKey}&token=${tokenRes.token}&cb=${encodeURIComponent(cbUrl)}`;
     res.json({ url: authUrl });
   } catch (err: any) {
     console.error('[Last.fm] authorize error:', err.message);
@@ -450,8 +469,9 @@ router.get('/providers/lastfm/authorize', async (req, res) => {
 
 router.get('/providers/lastfm/callback', async (req, res) => {
   try {
-    const userId = req.user?.userId;
-    if (!userId) return res.redirect(`${SERVER_URL}/?lfm_error=not_authenticated`);
+    // userId is passed via the callback URL's cb_state param (set in authorize)
+    const userId = req.query.cb_state as string;
+    if (!userId) return res.redirect(`${SERVER_URL}/?lfm_error=missing_state`);
 
     const { token, error } = req.query;
 
@@ -463,14 +483,14 @@ router.get('/providers/lastfm/callback', async (req, res) => {
       return res.redirect(`${SERVER_URL}/?lfm_error=missing_token`);
     }
 
-    // Verify the token matches what we stored
+    // Verify the token matches what we stored for this user
     const pendingToken = await getUserSetting(userId, 'lastFmPendingToken');
     if (!pendingToken || pendingToken !== token) {
       return res.redirect(`${SERVER_URL}/?lfm_error=token_mismatch`);
     }
 
-    const apiKey = await getUserSetting(userId, 'lastFmApiKey');
-    const sharedSecret = await getUserSetting(userId, 'lastFmSharedSecret') || '';
+    const apiKey = await getSystemSetting('lastFmApiKey');
+    const sharedSecret = (await getSystemSetting('lastFmSharedSecret')) || '';
 
     if (!apiKey) {
       return res.redirect(`${SERVER_URL}/?lfm_error=no_api_key`);
@@ -519,7 +539,7 @@ router.get('/providers/lastfm/status', async (req, res) => {
     const connected = await getUserSetting(userId, 'lastFmConnected');
     const username = await getUserSetting(userId, 'lastFmUsername');
     const scrobbleEnabled = await getUserSetting(userId, 'lastFmScrobbleEnabled');
-    const hasApiKey = !!(await getUserSetting(userId, 'lastFmApiKey'));
+    const hasApiKey = !!(await getSystemSetting('lastFmApiKey'));
 
     res.json({
       connected: connected === true || connected === 'true',

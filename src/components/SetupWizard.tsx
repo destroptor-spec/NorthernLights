@@ -37,8 +37,11 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
 
     // Step 4 State
     const [lastFmKey, setLastFmKeyState] = useState('');
+    const [lastFmSecret, setLastFmSecretState] = useState('');
     const [geniusKey, setGeniusKeyState] = useState('');
     const [musicBrainzEnabledLocal, setMusicBrainzEnabledLocal] = useState(false);
+    const [musicBrainzClientIdLocal, setMusicBrainzClientIdLocal] = useState('');
+    const [musicBrainzClientSecretLocal, setMusicBrainzClientSecretLocal] = useState('');
 
     const {
         lastFmStatus,
@@ -128,8 +131,11 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
                 headers: { 'Content-Type': 'application/json', ...authHeaders },
                 body: JSON.stringify({
                     ...(lastFmKey ? { lastFmApiKey: lastFmKey } : {}),
+                    ...(lastFmSecret ? { lastFmSharedSecret: lastFmSecret } : {}),
                     ...(geniusKey ? { geniusApiKey: geniusKey } : {}),
                     musicBrainzEnabled: musicBrainzEnabledLocal,
+                    ...(musicBrainzClientIdLocal ? { musicBrainzClientId: musicBrainzClientIdLocal } : {}),
+                    ...(musicBrainzClientSecretLocal ? { musicBrainzClientSecret: musicBrainzClientSecretLocal } : {}),
                 })
             });
         } catch (e) { console.warn('Failed to persist provider settings to DB:', e); }
@@ -380,7 +386,7 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">Last.fm Shared Secret</label>
-                                <input type="password" value={''} onChange={() => {}} placeholder="For scrobbling (optional during setup)" className="w-full bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/50 transition-all font-mono text-[var(--color-text-primary)]" />
+                                <input type="password" value={lastFmSecret} onChange={e => setLastFmSecretState(e.target.value)} placeholder="For scrobbling (optional during setup)" className="w-full bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/50 transition-all font-mono text-[var(--color-text-primary)]" />
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">Genius Access Token</label>
@@ -414,9 +420,9 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
                                             {musicBrainzStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {musicBrainzMessage}</span>}
                                         </div>
                                         <label className="block text-xs font-medium text-[var(--color-text-secondary)]">Client ID (optional)</label>
-                                        <input type="text" value={''} onChange={() => {}} placeholder="From musicbrainz.org/account/applications" className="w-full bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/50 transition-all text-sm font-mono text-[var(--color-text-primary)]" />
+                                        <input type="text" value={musicBrainzClientIdLocal} onChange={e => setMusicBrainzClientIdLocal(e.target.value)} placeholder="From musicbrainz.org/account/applications" className="w-full bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/50 transition-all text-sm font-mono text-[var(--color-text-primary)]" />
                                         <label className="block text-xs font-medium text-[var(--color-text-secondary)]">Client Secret (optional)</label>
-                                        <input type="password" value={''} onChange={() => {}} placeholder="From musicbrainz.org/account/applications" className="w-full bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/50 transition-all text-sm font-mono text-[var(--color-text-primary)]" />
+                                        <input type="password" value={musicBrainzClientSecretLocal} onChange={e => setMusicBrainzClientSecretLocal(e.target.value)} placeholder="From musicbrainz.org/account/applications" className="w-full bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/50 transition-all text-sm font-mono text-[var(--color-text-primary)]" />
                                     </div>
                                 )}
                             </div>

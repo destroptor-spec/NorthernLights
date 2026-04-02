@@ -74,6 +74,7 @@ export interface PlayerState {
   repeat: "none" | "one" | "all";
   theme: 'light' | 'dark';
   lastFmApiKey: string;
+  lastFmSharedSecret: string;
   lastFmScrobbleEnabled: boolean;
   lastFmConnected: boolean;
   lastFmUsername: string;
@@ -112,6 +113,7 @@ export interface PlayerState {
   genreMatrixLastRun: number | null;
   genreMatrixLastResult: string | null;
   genreMatrixProgress: string | null;
+  autoFolderWalk: boolean;
 
   isSidebarCollapsed: boolean;
   setIsSidebarCollapsed: (collapsed: boolean) => void;
@@ -178,6 +180,7 @@ export interface PlayerState {
   cycleRepeat: () => void;
   setTheme: (theme: 'light' | 'dark') => void;
   setLastFmApiKey: (key: string) => void;
+  setLastFmSharedSecret: (secret: string) => void;
   setLastFmScrobbleEnabled: (enabled: boolean) => void;
   setLastFmConnected: (connected: boolean) => void;
   setLastFmUsername: (username: string) => void;
@@ -302,6 +305,7 @@ export const usePlayerStore = create<PlayerState>()(
         repeat: "none" as "none" | "one" | "all",
         theme: 'light' as 'light' | 'dark',
         lastFmApiKey: '',
+        lastFmSharedSecret: '',
         lastFmScrobbleEnabled: false as boolean,
         lastFmConnected: false as boolean,
         lastFmUsername: '',
@@ -341,6 +345,7 @@ export const usePlayerStore = create<PlayerState>()(
         genreMatrixLastRun: null as number | null,
         genreMatrixLastResult: null as string | null,
         genreMatrixProgress: null as string | null,
+        autoFolderWalk: false as boolean,
 
         isSidebarCollapsed: false as boolean,
         setIsSidebarCollapsed: (collapsed: boolean) => set({ isSidebarCollapsed: collapsed }),
@@ -460,6 +465,7 @@ export const usePlayerStore = create<PlayerState>()(
                 genreMatrixLastResult: data.genreMatrixLastResult || null,
                 genreMatrixProgress: data.genreMatrixProgress || null,
                 lastFmApiKey: data.lastFmApiKey || '',
+                lastFmSharedSecret: data.lastFmSharedSecret || '',
                 lastFmScrobbleEnabled: data.lastFmScrobbleEnabled ?? false,
                 lastFmConnected: data.lastFmConnected ?? false,
                 lastFmUsername: data.lastFmUsername || '',
@@ -471,7 +477,8 @@ export const usePlayerStore = create<PlayerState>()(
                 preferredProvider: data.preferredProvider || 'lastfm',
                 providerArtistImage: data.providerArtistImage || 'lastfm',
                 providerArtistBio: data.providerArtistBio || 'lastfm',
-                providerAlbumArt: data.providerAlbumArt || 'lastfm'
+                providerAlbumArt: data.providerAlbumArt || 'lastfm',
+                autoFolderWalk: data.autoFolderWalk === 'true' || data.autoFolderWalk === true
               });
             }
           } catch (e) {
@@ -498,6 +505,7 @@ export const usePlayerStore = create<PlayerState>()(
                 llmApiKey: state.llmApiKey,
                 llmModelName: state.llmModelName,
                 lastFmApiKey: state.lastFmApiKey,
+                lastFmSharedSecret: state.lastFmSharedSecret,
                 lastFmScrobbleEnabled: state.lastFmScrobbleEnabled,
                 geniusApiKey: state.geniusApiKey,
                 musicBrainzEnabled: state.musicBrainzEnabled,
@@ -506,7 +514,8 @@ export const usePlayerStore = create<PlayerState>()(
                 preferredProvider: state.preferredProvider,
                 providerArtistImage: state.providerArtistImage,
                 providerArtistBio: state.providerArtistBio,
-                providerAlbumArt: state.providerAlbumArt
+                providerAlbumArt: state.providerAlbumArt,
+                autoFolderWalk: state.autoFolderWalk
               };
               await fetch('/api/settings', {
                  method: 'POST',
@@ -1058,6 +1067,7 @@ export const usePlayerStore = create<PlayerState>()(
         syncPlaybackState: (state: PlaybackState) => set({ playbackState: state }),
         
         setLastFmApiKey: (key: string) => set({ lastFmApiKey: key }),
+        setLastFmSharedSecret: (secret: string) => set({ lastFmSharedSecret: secret }),
         setLastFmScrobbleEnabled: (enabled: boolean) => set({ lastFmScrobbleEnabled: enabled }),
         setLastFmConnected: (connected: boolean) => set({ lastFmConnected: connected }),
         setLastFmUsername: (username: string) => set({ lastFmUsername: username }),
@@ -1107,6 +1117,7 @@ export const usePlayerStore = create<PlayerState>()(
         repeat: state.repeat,
         theme: state.theme,
         lastFmApiKey: state.lastFmApiKey,
+        // lastFmSharedSecret intentionally not persisted to localStorage (sensitive, loaded from DB)
         lastFmScrobbleEnabled: state.lastFmScrobbleEnabled,
         lastFmConnected: state.lastFmConnected,
         lastFmUsername: state.lastFmUsername,

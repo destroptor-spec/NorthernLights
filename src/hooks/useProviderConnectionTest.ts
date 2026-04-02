@@ -72,11 +72,17 @@ export const useProviderConnectionTest = () => {
     setMusicBrainzStatus('testing');
     setMusicBrainzMessage('');
     try {
-      const res = await fetch('/api/providers/musicbrainz/test');
+      const state = usePlayerStore.getState();
+      const authHeaders = (state as any).getAuthHeader?.() || {};
+      const res = await fetch('/api/providers/musicbrainz/test', { headers: authHeaders });
       const data = await res.json();
       if (data.status === 'ok') {
         setMusicBrainzStatus('success');
-        setMusicBrainzMessage('Connection OK');
+        if (data.mode === 'authenticated') {
+          setMusicBrainzMessage(`Connected as ${data.username || 'MusicBrainz user'}`);
+        } else {
+          setMusicBrainzMessage('Connected (anonymous)');
+        }
       } else {
         setMusicBrainzStatus('error');
         setMusicBrainzMessage(data.error || 'Connection failed');

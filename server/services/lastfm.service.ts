@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { getUserSetting, setUserSetting } from '../database';
+import { getUserSetting, setUserSetting, getSystemSetting } from '../database';
 
 const LFM_API_URL = 'https://ws.audioscrobbler.com/2.0/';
 
@@ -16,11 +16,12 @@ export interface LfmTrack {
 }
 
 /**
- * Get user's Last.fm credentials from user_settings.
+ * Get user's Last.fm credentials. API key + shared secret are system-level,
+ * session key is per-user.
  */
 async function getUserLfmCreds(userId: string): Promise<{ apiKey: string; sharedSecret: string; sessionKey: string }> {
-  const apiKey = (await getUserSetting(userId, 'lastFmApiKey')) || '';
-  const sharedSecret = (await getUserSetting(userId, 'lastFmSharedSecret')) || '';
+  const apiKey = (await getSystemSetting('lastFmApiKey')) || '';
+  const sharedSecret = (await getSystemSetting('lastFmSharedSecret')) || '';
   const sessionKey = (await getUserSetting(userId, 'lastFmSessionKey')) || '';
   return { apiKey, sharedSecret, sessionKey };
 }

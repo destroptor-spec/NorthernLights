@@ -21,6 +21,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     const setTheme = usePlayerStore(state => state.setTheme);
     const lastFmApiKey = usePlayerStore(state => state.lastFmApiKey);
     const setLastFmApiKey = usePlayerStore(state => state.setLastFmApiKey);
+    const lastFmSharedSecret = usePlayerStore(state => state.lastFmSharedSecret);
+    const setLastFmSharedSecret = usePlayerStore(state => state.setLastFmSharedSecret);
     const lastFmScrobbleEnabled = usePlayerStore(state => state.lastFmScrobbleEnabled);
     const setLastFmScrobbleEnabled = usePlayerStore(state => state.setLastFmScrobbleEnabled);
     const lastFmConnected = usePlayerStore(state => state.lastFmConnected);
@@ -68,6 +70,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     const library = usePlayerStore(state => state.library);
     const currentUser = usePlayerStore(state => state.currentUser);
     const isScanning = usePlayerStore(state => state.isScanning);
+    const autoFolderWalk = usePlayerStore(state => state.autoFolderWalk);
     
     const [isClosing, setIsClosing] = useState(false);
     const [isRunningMatrix, setIsRunningMatrix] = useState(false);
@@ -799,6 +802,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                             )}
                                         </ul>
 
+                                        {/* Auto Folder Walk Toggle */}
+                                        <div className="mt-4 flex items-center justify-between p-4 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)]">
+                                            <div>
+                                                <p className="text-sm font-medium text-[var(--color-text-primary)]">Automatic Folder Walk</p>
+                                                <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Re-walk all folders every 30 minutes to detect renamed or deleted files.</p>
+                                            </div>
+                                            <button
+                                                id="autoFolderWalk-toggle"
+                                                onClick={() => setSettings({ autoFolderWalk: !autoFolderWalk })}
+                                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ml-4 ${
+                                                    autoFolderWalk ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-bg-tertiary)]'
+                                                }`}
+                                                title={autoFolderWalk ? 'Auto-walk enabled' : 'Auto-walk disabled'}
+                                            >
+                                                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                                    autoFolderWalk ? 'translate-x-6' : 'translate-x-1'
+                                                }`} />
+                                            </button>
+                                        </div>
+
                                         {/* Audio Analysis Section */}
                                         <div className="mt-6 pt-4 border-t border-[var(--glass-border)]">
                                             <div className="flex justify-between items-center mb-3">
@@ -1181,9 +1204,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                     />
                                                     <input 
                                                         type="password" 
-                                                        value={''} 
-                                                        onChange={() => {}} 
-                                                        placeholder="Shared Secret (stored on server)"
+                                                        value={lastFmSharedSecret} 
+                                                        onChange={e => setLastFmSharedSecret(e.target.value)} 
+                                                        placeholder="Shared Secret (for scrobbling)"
                                                         className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" 
                                                     />
                                                     <div className="flex items-center gap-3">
@@ -1229,7 +1252,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                             <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${musicBrainzEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
                                                         </button>
                                                     </div>
-                                                    <p className="text-xs text-[var(--color-text-muted)]">Structured metadata — add your OAuth2 credentials for authenticated access</p>
+                                                    <p className="text-xs text-[var(--color-text-muted)]">Works anonymously for metadata lookups. Log in to tag, rate, and contribute to MusicBrainz directly from Aurora.</p>
                                                     {musicBrainzEnabled && (
                                                         <div className="flex flex-col gap-3 mt-1">
                                                             <input 
