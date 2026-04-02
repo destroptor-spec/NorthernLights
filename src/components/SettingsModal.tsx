@@ -6,7 +6,7 @@ import { useProviderConnectionTest } from '../hooks/useProviderConnectionTest';
 import { ConfirmModal } from './ConfirmModal';
 import { PromptModal } from './PromptModal';
 import { Toast, type ToastType } from './Toast';
-import { Folder, User, Palette, Play, Cpu, Globe, LogOut, Search, X, Shield, Users, Link, Trash2, Plus, Copy, Check, Database, BarChart2, Wrench } from 'lucide-react';
+import { Folder, User, Palette, Play, Cpu, Globe, LogOut, Search, X, Shield, Users, Link, Trash2, Plus, Copy, Check, Database, BarChart2, Wrench, Radio } from 'lucide-react';
 import { DatabaseControl } from './DatabaseControl';
 
 interface SettingsModalProps {
@@ -90,6 +90,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         loadSettings();
         fetchMappings();
     }, []);
+
+    // 1b. Check Last.fm configuration status
+    React.useEffect(() => {
+        const fetchLastFmStatus = async () => {
+            try {
+                const authHeaders = getAuthHeader();
+                const res = await fetch('/api/providers/lastfm/status', { headers: authHeaders });
+                if (res.ok) {
+                    const data = await res.json();
+                    setLastFmConfigured(!!data.hasApiKey);
+                }
+            } catch {}
+        };
+        fetchLastFmStatus();
+    }, [getAuthHeader]);
 
     // 2. Initialize/Sync isRunningMatrix based on progress string
     React.useEffect(() => {
@@ -355,6 +370,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     const [activeTab, setActiveTab] = useState('My Account');
     const [dbTab, setDbTab] = useState<'stats' | 'maintenance'>('stats');
     const [playbackTab, setPlaybackTab] = useState<'infinity' | 'llm'>('infinity');
+    const [lastFmConfigured, setLastFmConfigured] = useState(false);
 
     const isAdmin = currentUser?.role === 'admin';
 
@@ -396,6 +412,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
     const tabs = [
         { id: 'My Account', label: 'My Account', category: 'User Settings' },
+        ...(lastFmConfigured ? [{ id: 'Scrobble', label: 'Scrobble', category: 'User Settings' }] : []),
         { id: 'Appearance', label: 'Appearance', category: 'App Settings' },
         { id: 'Library', label: 'Library', category: 'App Settings' },
         { id: 'Playback', label: 'Playback', category: 'App Settings' },
@@ -414,6 +431,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         
         // Also search within common setting labels for this tab
         if (tab.id === 'Appearance') return 'light dark theme'.includes(query);
+        if (tab.id === 'Scrobble') return 'lastfm scrobble connect'.includes(query);
         if (tab.id === 'Library') return 'folder path scan library'.includes(query);
         if (tab.id === 'Playback') return 'infinity discovery genre artist amnesia matrix llm playlist diversity blend tracks wander'.includes(query);
         if (tab.id === 'System') return 'cpu audio analysis scanner concurrency hub schedule'.includes(query);
@@ -445,10 +463,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     <div className="settings-mobile-tabs">
                         <div className="flex items-center gap-1 overflow-x-auto hide-scrollbar px-2 pt-3 pb-2">
                             {filteredTabs.map(tab => {
-                                const Icon = tab.id === 'My Account' ? User : 
+                                 const Icon = tab.id === 'My Account' ? User : 
                                              tab.id === 'Appearance' ? Palette :
                                              tab.id === 'Library' ? Folder :
                                              tab.id === 'Playback' ? Play :
+                                             tab.id === 'Scrobble' ? Radio :
                                              tab.id === 'System' ? Cpu :
                                              tab.id === 'Users' ? Users :
                                              tab.id === 'Database' ? Database :
@@ -658,6 +677,56 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                             >
                                                 Delete Account
                                             </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {activeTab === 'Scrobble' && lastFmConfigured && (
+                                    <div className="settings-section mb-8">
+                                        <div className="settings-section-header mb-4">
+                                            <h3>Last.fm Scrobbling</h3>
+                                        </div>
+                                        <p className="settings-description">
+                                            Connect your Last.fm account to automatically scrobble tracks as you listen.
+                                        </p>
+                                        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5">
+                                            {lastFmConnected ? (
+                                                <div className="flex flex-col gap-4">
+                                                    <div className="flex items-center justify-between">
+                                                        <span className="text-green-500 font-semibold text-sm">Connected as {lastFmUsername || 'Last.fm'}</span>
+                                                        <button onClick={async () => {
+                                                            try {
+                                                                await fetch('/api/providers/lastfm/disconnect', { method: 'POST' });
+                                                                setLastFmConnected(false);
+                                                                setLastFmUsername('');
+                                                            } catch {}
+                                                        }} className="btn btn-danger btn-sm">Disconnect</button>
+                                                    </div>
+                                                    <div className="border-t border-[var(--glass-border)] pt-4 flex items-center justify-between">
+                                                        <label className="text-sm text-[var(--color-text-primary)]">Auto-scrobble played tracks</label>
+                                                        <button
+                                                            onClick={() => setLastFmScrobbleEnabled(!lastFmScrobbleEnabled)}
+                                                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${lastFmScrobbleEnabled ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-bg-tertiary)]'}`}
+                                                        >
+                                                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${lastFmScrobbleEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="flex flex-col gap-3">
+                                                    <p className="text-sm text-[var(--color-text-muted)]">
+                                                        Link your Last.fm account to start scrobbling your played tracks.
+                                                    </p>
+                                                    <button onClick={async () => {
+                                                        try {
+                                                            const authHeaders = (usePlayerStore.getState() as any).getAuthHeader?.() || {};
+                                                            const res = await fetch('/api/providers/lastfm/authorize', { headers: { ...authHeaders } });
+                                                            const data = await res.json();
+                                                            if (data.url) window.open(data.url, '_blank');
+                                                        } catch {}
+                                                    }} className="btn btn-primary">Connect to Last.fm</button>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 )}
@@ -1021,211 +1090,219 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                 {activeTab === 'Providers' && (
                                     <div className="settings-section mb-8">
                                         <div className="settings-section-header mb-4">
-                                            <h3 className="text-xl font-bold text-[var(--color-text-primary)]">LLM / Engine Configurations</h3>
+                                            <h3>LLM / Engine Configurations</h3>
                                         </div>
-                                        <p className="text-sm text-[var(--color-text-muted)] mb-4">
+                                        <p className="settings-description">
                                             Bring your own LLM to generate Hub playlists securely on your own hardware.
                                         </p>
-                                        <div className="flex flex-col gap-4 mb-8 border-b border-[var(--glass-border)] pb-8">
-                                            <div>
-                                                <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">API Base URL</label>
-                                                <input 
-                                                    type="text" 
-                                                    value={llmBaseUrl} 
-                                                    onChange={(e) => setSettings({ llmBaseUrl: e.target.value })}
-                                                    placeholder="https://api.openai.com/v1"
-                                                    className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors"
-                                                />
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">API Key</label>
-                                                <input 
-                                                    type="password" 
-                                                    value={llmApiKey} 
-                                                    onChange={(e) => setSettings({ llmApiKey: e.target.value })}
-                                                    placeholder="Leave blank if using local unrestricted provider"
-                                                    className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors"
-                                                />
-                                            </div>
-                                            <div className="relative">
-                                                <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">Model Name</label>
-                                                <input 
-                                                    type="text" 
-                                                    value={llmModelName} 
-                                                    onChange={(e) => setSettings({ llmModelName: e.target.value })}
-                                                    onFocus={() => setShowModelDropdown(true)}
-                                                    onBlur={() => setTimeout(() => setShowModelDropdown(false), 200)}
-                                                    placeholder="gpt-4o / llama-3"
-                                                    className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors"
-                                                />
-                                                {availableModels.length > 0 && showModelDropdown && (
-                                                    <ul className="absolute left-0 right-0 z-50 w-full mt-2 max-h-48 overflow-y-auto bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl shadow-xl py-1">
-                                                        {availableModels.map(m => (
-                                                            <li 
-                                                                key={m} 
-                                                                className="px-4 py-3 text-sm text-[var(--color-text-primary)] hover:bg-[var(--glass-bg-hover)] cursor-pointer transition-colors"
-                                                                onMouseDown={(e) => {
-                                                                    e.preventDefault();
-                                                                    setSettings({ llmModelName: m });
-                                                                    setShowModelDropdown(false);
-                                                                }}
-                                                            >
-                                                                {m}
-                                                            </li>
-                                                        ))}
-                                                    </ul>
-                                                )}
-                                            </div>
-                                            <div className="flex items-center gap-4 mt-2">
-                                                <button 
-                                                    onClick={() => runConnectionTest(llmBaseUrl, llmApiKey)}
-                                                    disabled={connectionStatus === 'testing'}
-                                                    className="btn btn-ghost disabled:opacity-50"
-                                                >
-                                                    {connectionStatus === 'testing' ? 'Testing...' : 'Test Connection'}
-                                                </button>
-                                                {connectionStatus === 'success' && (
-                                                    <span className="text-green-500 font-semibold text-sm">✓ {connectionMessage}</span>
-                                                )}
-                                                {connectionStatus === 'error' && (
-                                                    <span className="text-red-500 font-semibold text-sm truncate max-w-xs">✗ {connectionMessage}</span>
-                                                )}
+                                        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 mb-8">
+                                            <div className="flex flex-col gap-4">
+                                                <div>
+                                                    <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">API Base URL</label>
+                                                    <input 
+                                                        type="text" 
+                                                        value={llmBaseUrl} 
+                                                        onChange={(e) => setSettings({ llmBaseUrl: e.target.value })}
+                                                        placeholder="https://api.openai.com/v1"
+                                                        className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">API Key</label>
+                                                    <input 
+                                                        type="password" 
+                                                        value={llmApiKey} 
+                                                        onChange={(e) => setSettings({ llmApiKey: e.target.value })}
+                                                        placeholder="Leave blank if using local unrestricted provider"
+                                                        className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors"
+                                                    />
+                                                </div>
+                                                <div className="relative">
+                                                    <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">Model Name</label>
+                                                    <input 
+                                                        type="text" 
+                                                        value={llmModelName} 
+                                                        onChange={(e) => setSettings({ llmModelName: e.target.value })}
+                                                        onFocus={() => setShowModelDropdown(true)}
+                                                        onBlur={() => setTimeout(() => setShowModelDropdown(false), 200)}
+                                                        placeholder="gpt-4o / llama-3"
+                                                        className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors"
+                                                    />
+                                                    {availableModels.length > 0 && showModelDropdown && (
+                                                        <ul className="absolute left-0 right-0 z-50 w-full mt-2 max-h-48 overflow-y-auto bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl shadow-xl py-1">
+                                                            {availableModels.map(m => (
+                                                                <li 
+                                                                    key={m} 
+                                                                    className="px-4 py-3 text-sm text-[var(--color-text-primary)] hover:bg-[var(--glass-bg-hover)] cursor-pointer transition-colors"
+                                                                    onMouseDown={(e) => {
+                                                                        e.preventDefault();
+                                                                        setSettings({ llmModelName: m });
+                                                                        setShowModelDropdown(false);
+                                                                    }}
+                                                                >
+                                                                    {m}
+                                                                </li>
+                                                            ))}
+                                                        </ul>
+                                                    )}
+                                                </div>
+                                                <div className="flex items-center gap-4 mt-2">
+                                                    <button 
+                                                        onClick={() => runConnectionTest(llmBaseUrl, llmApiKey)}
+                                                        disabled={connectionStatus === 'testing'}
+                                                        className="btn btn-ghost disabled:opacity-50"
+                                                    >
+                                                        {connectionStatus === 'testing' ? 'Testing...' : 'Test Connection'}
+                                                    </button>
+                                                    {connectionStatus === 'success' && (
+                                                        <span className="text-green-500 font-semibold text-sm">✓ {connectionMessage}</span>
+                                                    )}
+                                                    {connectionStatus === 'error' && (
+                                                        <span className="text-red-500 font-semibold text-sm truncate max-w-xs">✗ {connectionMessage}</span>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
 
                                         <div className="settings-section-header mb-4">
-                                            <h3 className="font-semibold tracking-wide text-sm text-[var(--color-text-secondary)] uppercase">Metadata Providers</h3>
+                                            <h3>Metadata Providers</h3>
                                         </div>
-                                        <div className="flex flex-col gap-4">
-                                            <div>
-                                                <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">Last.fm API Key</label>
-                                                <input type="text" value={lastFmApiKey} onChange={e => setLastFmApiKey(e.target.value)} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none" />
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">Last.fm Shared Secret</label>
-                                                <input type="password" value={''} onChange={() => {}} placeholder="Stored on server" className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none" />
-                                                <p className="text-xs text-[var(--color-text-muted)] mt-1">Required for scrobbling. Enter via Setup or API.</p>
-                                            </div>
-                                            <div className="flex flex-wrap gap-2 items-center">
-                                                {lastFmConnected ? (
-                                                    <>
-                                                        <span className="text-green-500 font-semibold text-sm">Connected as {lastFmUsername || 'Last.fm'}</span>
-                                                        <button onClick={async () => {
-                                                            const authHeaders = (usePlayerStore.getState() as any).getAuthHeader?.() || {};
-                                                            await fetch('/api/providers/lastfm/disconnect', { method: 'POST', headers: { ...authHeaders } });
-                                                            setLastFmConnected(false);
-                                                            setLastFmUsername('');
-                                                        }} className="btn btn-danger btn-sm">Disconnect</button>
-                                                    </>
-                                                ) : (
-                                                    <button onClick={async () => {
-                                                        try {
-                                                            const authHeaders = (usePlayerStore.getState() as any).getAuthHeader?.() || {};
-                                                            const res = await fetch('/api/providers/lastfm/authorize', { headers: { ...authHeaders } });
-                                                            const data = await res.json();
-                                                            if (data.url) window.open(data.url, '_blank');
-                                                        } catch {}
-                                                    }} disabled={!lastFmApiKey} className="btn btn-primary btn-sm disabled:opacity-50">Connect to Last.fm</button>
-                                                )}
-                                                <button onClick={() => testLastFm(lastFmApiKey)} disabled={lastFmStatus === 'testing' || !lastFmApiKey} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">
-                                                    {lastFmStatus === 'testing' ? 'Testing...' : 'Test'}
-                                                </button>
-                                                {lastFmStatus === 'success' && <span className="text-green-500 font-semibold text-xs">✓ {lastFmMessage}</span>}
-                                                {lastFmStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {lastFmMessage}</span>}
-                                            </div>
-                                            {lastFmConnected && (
-                                                <div className="flex items-center justify-between">
-                                                    <label className="text-sm text-[var(--color-text-primary)]">Auto-scrobble played tracks</label>
-                                                    <button
-                                                        onClick={() => setLastFmScrobbleEnabled(!lastFmScrobbleEnabled)}
-                                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${lastFmScrobbleEnabled ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-bg-tertiary)]'}`}
-                                                    >
-                                                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${lastFmScrobbleEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
-                                                    </button>
+                                        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5">
+                                            <div className="flex flex-col gap-5">
+                                                {/* Last.fm */}
+                                                <div className="flex flex-col gap-3">
+                                                    <label className="block text-sm font-medium text-[var(--color-text-primary)]">Last.fm</label>
+                                                    <input 
+                                                        type="text" 
+                                                        value={lastFmApiKey} 
+                                                        onChange={e => setLastFmApiKey(e.target.value)} 
+                                                        placeholder="API Key"
+                                                        className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" 
+                                                    />
+                                                    <input 
+                                                        type="password" 
+                                                        value={''} 
+                                                        onChange={() => {}} 
+                                                        placeholder="Shared Secret (stored on server)"
+                                                        className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" 
+                                                    />
+                                                    <div className="flex items-center gap-3">
+                                                        <button onClick={() => testLastFm(lastFmApiKey)} disabled={lastFmStatus === 'testing' || !lastFmApiKey} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">
+                                                            {lastFmStatus === 'testing' ? 'Testing...' : 'Test'}
+                                                        </button>
+                                                        {lastFmStatus === 'success' && <span className="text-green-500 font-semibold text-xs">✓ {lastFmMessage}</span>}
+                                                        {lastFmStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {lastFmMessage}</span>}
+                                                    </div>
                                                 </div>
-                                            )}
-                                            <div>
-                                                <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">Genius Access Token</label>
-                                                <div className="flex gap-2">
-                                                    <input type="text" value={geniusApiKey} onChange={e => setGeniusApiKey(e.target.value)} className="flex-1 p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none" />
-                                                    <button onClick={() => testGenius(geniusApiKey)} disabled={geniusStatus === 'testing' || !geniusApiKey} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">
-                                                        {geniusStatus === 'testing' ? 'Testing...' : 'Test'}
-                                                    </button>
+
+                                                <div className="border-t border-[var(--glass-border)]" />
+
+                                                {/* Genius */}
+                                                <div className="flex flex-col gap-3">
+                                                    <label className="block text-sm font-medium text-[var(--color-text-primary)]">Genius</label>
+                                                    <div className="flex gap-2">
+                                                        <input 
+                                                            type="text" 
+                                                            value={geniusApiKey} 
+                                                            onChange={e => setGeniusApiKey(e.target.value)} 
+                                                            placeholder="Access Token"
+                                                            className="flex-1 p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" 
+                                                        />
+                                                        <button onClick={() => testGenius(geniusApiKey)} disabled={geniusStatus === 'testing' || !geniusApiKey} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">
+                                                            {geniusStatus === 'testing' ? 'Testing...' : 'Test'}
+                                                        </button>
+                                                    </div>
+                                                    {geniusStatus === 'success' && <span className="text-green-500 font-semibold text-xs">✓ {geniusMessage}</span>}
+                                                    {geniusStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {geniusMessage}</span>}
                                                 </div>
-                                                {geniusStatus === 'success' && <span className="text-green-500 font-semibold text-sm mt-1 block">✓ {geniusMessage}</span>}
-                                                {geniusStatus === 'error' && <span className="text-red-500 font-semibold text-sm mt-1 block">✗ {geniusMessage}</span>}
-                                            </div>
-                                            <div>
-                                                <div className="flex items-center justify-between mb-1">
-                                                    <label className="block text-sm font-medium text-[var(--color-text-primary)]">MusicBrainz</label>
-                                                    <button
-                                                        onClick={() => setMusicBrainzEnabled(!musicBrainzEnabled)}
-                                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${musicBrainzEnabled ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-bg-tertiary)]'}`}
-                                                    >
-                                                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${musicBrainzEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
-                                                    </button>
-                                                </div>
-                                                <p className="text-xs text-[var(--color-text-muted)] mb-2">Structured metadata — add your OAuth2 credentials for authenticated access</p>
-                                                {musicBrainzEnabled && (
-                                                    <div className="flex flex-col gap-2">
-                                                        <div className="flex gap-2 items-center">
-                                                            <button onClick={() => testMusicBrainz()} disabled={musicBrainzStatus === 'testing'} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">
-                                                                {musicBrainzStatus === 'testing' ? 'Testing...' : 'Test'}
-                                                            </button>
-                                                            {musicBrainzStatus === 'success' && <span className="text-green-500 font-semibold text-xs">✓ {musicBrainzMessage}</span>}
-                                                            {musicBrainzStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {musicBrainzMessage}</span>}
-                                                        </div>
-                                                        <label className="block text-xs font-medium text-[var(--color-text-primary)]">Client ID</label>
-                                                        <input type="text" value={musicBrainzClientId} onChange={e => setMusicBrainzClientId(e.target.value)} placeholder="From musicbrainz.org/account/applications" className="w-full p-2.5 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] text-sm focus:outline-none" />
-                                                        <label className="block text-xs font-medium text-[var(--color-text-primary)]">Client Secret</label>
-                                                        <input type="password" value={musicBrainzClientSecret} onChange={e => setMusicBrainzClientSecret(e.target.value)} placeholder="From musicbrainz.org/account/applications" className="w-full p-2.5 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] text-sm focus:outline-none" />
-                                                        <div className="flex gap-2 items-center mt-1">
-                                                            {musicBrainzConnected ? (
-                                                                <>
-                                                                    <span className="text-green-500 font-semibold text-xs">Connected</span>
+
+                                                <div className="border-t border-[var(--glass-border)]" />
+
+                                                {/* MusicBrainz */}
+                                                <div className="flex flex-col gap-3">
+                                                    <div className="flex items-center justify-between">
+                                                        <label className="block text-sm font-medium text-[var(--color-text-primary)]">MusicBrainz</label>
+                                                        <button
+                                                            onClick={() => setMusicBrainzEnabled(!musicBrainzEnabled)}
+                                                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${musicBrainzEnabled ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-bg-tertiary)]'}`}
+                                                        >
+                                                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${musicBrainzEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                                                        </button>
+                                                    </div>
+                                                    <p className="text-xs text-[var(--color-text-muted)]">Structured metadata — add your OAuth2 credentials for authenticated access</p>
+                                                    {musicBrainzEnabled && (
+                                                        <div className="flex flex-col gap-3 mt-1">
+                                                            <input 
+                                                                type="text" 
+                                                                value={musicBrainzClientId} 
+                                                                onChange={e => setMusicBrainzClientId(e.target.value)} 
+                                                                placeholder="Client ID"
+                                                                className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" 
+                                                            />
+                                                            <input 
+                                                                type="password" 
+                                                                value={musicBrainzClientSecret} 
+                                                                onChange={e => setMusicBrainzClientSecret(e.target.value)} 
+                                                                placeholder="Client Secret"
+                                                                className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" 
+                                                            />
+                                                            <div className="flex gap-2 items-center">
+                                                                <button onClick={() => testMusicBrainz()} disabled={musicBrainzStatus === 'testing'} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">
+                                                                    {musicBrainzStatus === 'testing' ? 'Testing...' : 'Test'}
+                                                                </button>
+                                                                {musicBrainzStatus === 'success' && <span className="text-green-500 font-semibold text-xs">✓ {musicBrainzMessage}</span>}
+                                                                {musicBrainzStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {musicBrainzMessage}</span>}
+                                                                {musicBrainzConnected ? (
+                                                                    <>
+                                                                        <span className="text-green-500 font-semibold text-xs ml-auto">Connected</span>
+                                                                        <button onClick={async () => {
+                                                                            await fetch('/api/providers/musicbrainz/disconnect', { method: 'POST' });
+                                                                            setMusicBrainzConnected(false);
+                                                                        }} className="btn btn-danger btn-sm">Disconnect</button>
+                                                                    </>
+                                                                ) : (
                                                                     <button onClick={async () => {
-                                                                        await fetch('/api/providers/musicbrainz/disconnect', { method: 'POST' });
-                                                                        setMusicBrainzConnected(false);
-                                                                    }} className="btn btn-danger btn-sm">Disconnect</button>
-                                                                </>
-                                                            ) : (
-                                                                <button onClick={async () => {
-                                                                    try {
-                                                                        const res = await fetch('/api/providers/musicbrainz/authorize');
-                                                                        const data = await res.json();
-                                                                        if (data.url) window.open(data.url, '_blank');
-                                                                    } catch {}
-                                                                }} disabled={!musicBrainzClientId || !musicBrainzClientSecret} className="btn btn-primary btn-sm disabled:opacity-50">Connect to MusicBrainz</button>
-                                                            )}
+                                                                        try {
+                                                                            const res = await fetch('/api/providers/musicbrainz/authorize');
+                                                                            const data = await res.json();
+                                                                            if (data.url) window.open(data.url, '_blank');
+                                                                        } catch {}
+                                                                    }} disabled={!musicBrainzClientId || !musicBrainzClientSecret} className="btn btn-primary btn-sm disabled:opacity-50 ml-auto">Connect</button>
+                                                                )}
+                                                            </div>
                                                         </div>
-                                                    </div>
-                                                )}
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-3 uppercase tracking-wider text-xs">Default Provider per Service</label>
-                                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                                                    <div>
-                                                        <label className="block text-xs text-[var(--color-text-muted)] mb-1">Artist Images</label>
-                                                        <select value={providerArtistImage} onChange={e => setProviderArtistImage(e.target.value as 'lastfm' | 'genius' | 'musicbrainz')} className="w-full p-2.5 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] text-sm focus:outline-none">
-                                                            <option value="lastfm">Last.fm</option>
-                                                            <option value="genius">Genius</option>
-                                                            {musicBrainzEnabled && <option value="musicbrainz">MusicBrainz</option>}
-                                                        </select>
-                                                    </div>
-                                                    <div>
-                                                        <label className="block text-xs text-[var(--color-text-muted)] mb-1">Artist Bios</label>
-                                                        <select value={providerArtistBio} onChange={e => setProviderArtistBio(e.target.value as 'lastfm' | 'genius')} className="w-full p-2.5 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] text-sm focus:outline-none">
-                                                            <option value="lastfm">Last.fm</option>
-                                                            <option value="genius">Genius</option>
-                                                        </select>
-                                                    </div>
-                                                    <div>
-                                                        <label className="block text-xs text-[var(--color-text-muted)] mb-1">Album Art</label>
-                                                        <select value={providerAlbumArt} onChange={e => setProviderAlbumArt(e.target.value as 'lastfm' | 'genius' | 'musicbrainz')} className="w-full p-2.5 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] text-sm focus:outline-none">
-                                                            <option value="lastfm">Last.fm</option>
-                                                            <option value="genius">Genius</option>
-                                                            {musicBrainzEnabled && <option value="musicbrainz">MusicBrainz</option>}
-                                                        </select>
+                                                    )}
+                                                </div>
+
+                                                <div className="border-t border-[var(--glass-border)]" />
+
+                                                {/* Default Providers */}
+                                                <div className="flex flex-col gap-3">
+                                                    <label className="block text-sm font-medium text-[var(--color-text-primary)]">Default Provider per Service</label>
+                                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                                        <div>
+                                                            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Artist Images</label>
+                                                            <select value={providerArtistImage} onChange={e => setProviderArtistImage(e.target.value as 'lastfm' | 'genius' | 'musicbrainz')} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors">
+                                                                <option value="lastfm">Last.fm</option>
+                                                                <option value="genius">Genius</option>
+                                                                {musicBrainzEnabled && <option value="musicbrainz">MusicBrainz</option>}
+                                                            </select>
+                                                        </div>
+                                                        <div>
+                                                            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Artist Bios</label>
+                                                            <select value={providerArtistBio} onChange={e => setProviderArtistBio(e.target.value as 'lastfm' | 'genius')} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors">
+                                                                <option value="lastfm">Last.fm</option>
+                                                                <option value="genius">Genius</option>
+                                                            </select>
+                                                        </div>
+                                                        <div>
+                                                            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Album Art</label>
+                                                            <select value={providerAlbumArt} onChange={e => setProviderAlbumArt(e.target.value as 'lastfm' | 'genius' | 'musicbrainz')} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors">
+                                                                <option value="lastfm">Last.fm</option>
+                                                                <option value="genius">Genius</option>
+                                                                {musicBrainzEnabled && <option value="musicbrainz">MusicBrainz</option>}
+                                                            </select>
+                                                        </div>
                                                     </div>
                                                 </div>
                                             </div>

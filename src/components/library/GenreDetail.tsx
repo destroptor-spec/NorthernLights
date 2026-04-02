@@ -31,9 +31,17 @@ export const GenreDetail: React.FC = () => {
     }, [genreName]);
 
     const genreTracks = useMemo(() => {
-        if (!genreId) return [];
-        return library.filter(t => t.genreId === genreId);
-    }, [library, genreId]);
+        if (!genreName || !genreId) return [];
+        const genreNameLower = genreName.toLowerCase();
+        
+        return library.filter(t => {
+            if (t.genreId === genreId) return true;
+            if (Array.isArray(t.genres)) {
+                return t.genres.some(g => g.toLowerCase() === genreNameLower);
+            }
+            return t.genre?.toLowerCase() === genreNameLower;
+        });
+    }, [library, genreId, genreName]);
 
     // Group genre tracks by album
     const albums = useMemo(() => {

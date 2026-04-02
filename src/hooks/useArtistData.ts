@@ -28,7 +28,7 @@ export const useArtistData = (artistName: string, mbArtistId?: string | null, op
   const [error, setError] = useState<string | undefined>();
 
   useEffect(() => {
-    if (!artistName || !enabled) {
+    if (!artistName || !enabled || artistName === 'Unknown Artist') {
       setIsLoading(false);
       return;
     }

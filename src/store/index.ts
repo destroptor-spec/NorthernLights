@@ -607,9 +607,15 @@ export const usePlayerStore = create<PlayerState>()(
                   try { artistsArray = JSON.parse(t.artists); } catch(e) {}
                 }
                 
+                let genresArray = t.genres;
+                if (typeof t.genres === 'string') {
+                  try { genresArray = JSON.parse(t.genres); } catch(e) {}
+                }
+                
                 return {
                   ...t,
                   artists: artistsArray,
+                  genres: genresArray,
                   ...buildTrackUrls(t.path, token),
                 };
               });

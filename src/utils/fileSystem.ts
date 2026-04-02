@@ -37,10 +37,10 @@ export interface TrackInfo {
   bitrate?: number;
   format?: string;
   
-  // Entity IDs for navigation
   artistId?: string;
   albumId?: string;
   genreId?: string;
+  genres?: string[] | string;
   
   // MusicBrainz IDs
   isrc?: string;

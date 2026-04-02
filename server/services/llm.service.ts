@@ -39,6 +39,7 @@ export interface HubCollection {
   title?: string;
   description: string;
   target_vector: [number, number, number, number, number, number, number];
+  target_genre?: string; // A single macro-genre keyword (e.g. "r&b", "pop", "electronic")
 }
 
 export async function generateHubConcepts(
@@ -54,6 +55,8 @@ export async function generateHubConcepts(
 
   const conceptCount = context.count ?? 3;
 
+  const macroGenreList = MACRO_GENRES.join(', ');
+
   const prompt = `
 You are a Creative Director for a music application.
 The user's current time is ${context.timeOfDay}. 
@@ -62,6 +65,7 @@ A brief summary of their recent listening history: ${context.historySummary}.
 Using this context, generate ${conceptCount} Hub playlist concepts. Each concept must output optimal acoustic target values between 0.0 and 1.0.
 IMPORTANT: Each concept must be DIVERSE from the others. Vary the energy, mood, and acoustic profile significantly between concepts. Do not create similar-sounding playlists.
 The vector array must precisely match this order: [energy, brightness, percussiveness, chromagram, instrumentalness, acousticness, danceability].
+You must also include a "target_genre" field: a single lowercase genre keyword chosen from this list: ${macroGenreList}. Pick the genre that best matches the playlist's mood and concept.
 Only output valid JSON matching this schema:
 {
   "hub_collections": [
@@ -69,6 +73,7 @@ Only output valid JSON matching this schema:
       "section": "Time-of-Day",
       "title": "Deep Work Coding",
       "description": "Driving electronic beats with zero vocals.",
+      "target_genre": "electronic",
       "target_vector": [0.6, 0.3, 0.8, 0.5, 0.9, 0.1, 0.8] 
     }
   ]
@@ -169,6 +174,8 @@ export async function generateCustomPlaylist(userPrompt: string): Promise<HubCol
 
   const openai = new OpenAI({ baseURL: baseUrl, apiKey });
 
+  const macroGenreList = MACRO_GENRES.join(', ');
+
   const prompt = `
 You are a Creative Director for a music application.
 The user has asked you to create a playlist with the following description:
@@ -186,11 +193,14 @@ The vector array is a 7-dimensional fingerprint: [energy, brightness, percussive
 Choose values that PRECISELY match the mood of the user's description. 
 For example: "chill" or "wind-down" → low energy (0.1-0.3), high acousticness (0.6-0.9), low percussiveness (0.1-0.3), low danceability (0.1-0.3).
 
+You must also include a "target_genre" field: a single lowercase genre keyword chosen from this list: ${macroGenreList}. Pick the genre that best matches the user's request.
+
 Only output valid JSON matching this schema exactly:
 {
   "section": "Custom",
   "title": "A short evocative playlist title",
   "description": "One sentence describing the vibe",
+  "target_genre": "pop",
   "target_vector": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
 }
 `;

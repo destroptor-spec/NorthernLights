@@ -102,7 +102,7 @@ export async function getHubCollections(
       if (assignedTrackIds.size > 0) {
         const ids = Array.from(assignedTrackIds);
         const placeholders = ids.map((_, i) => `$${i + 3}`).join(',');
-        exclusionClause = `WHERE t.id NOT IN (${placeholders})`;
+        exclusionClause = `AND t.id NOT IN (${placeholders})`;
         exclusionParams.push(...ids);
       }
 
@@ -125,7 +125,7 @@ export async function getHubCollections(
             SELECT t.*, tf.acoustic_vector <-> $1 AS distance
             FROM tracks t
             JOIN track_features tf ON t.id = tf.track_id
-            ${renumberedExclusion}
+            WHERE 1=1 ${renumberedExclusion}
             ORDER BY distance ASC
             LIMIT 50
           `, [vectorStr, ...exclusionParams]);
@@ -137,19 +137,35 @@ export async function getHubCollections(
           SELECT t.*, tf.acoustic_vector <-> $1 AS distance
           FROM tracks t
           JOIN track_features tf ON t.id = tf.track_id
-          ${renumberedExclusion}
+          WHERE 1=1 ${renumberedExclusion}
           ORDER BY distance ASC
           LIMIT 50
         `, [vectorStr, ...exclusionParams]);
       }
       
       if (res.rows.length > 0) {
-        // Re-rank by macro-genre to avoid jarring transitions
-        const referenceGenre = res.rows[0].genre || '';
-        const ranked = reRankByHopCost(res.rows, referenceGenre, Math.max(tracksPerPlaylist * 2, 20));
+        // Use the LLM's explicit genre intent as the re-ranking anchor.
+        // Falling back to res.rows[0].genre (the first acoustic neighbor) was the
+        // source of genre drift: if trance happened to be acoustically closest, the
+        // hop-cost ranking would then pull toward *more* trance.
+        const referenceGenre = (concept as any).target_genre || res.rows[0].genre || '';
+
+        // Apply a 2× boosted weight when the concept carries an explicit genre target.
+        // This gives genre adherence real scoring power vs. raw acoustic distance,
+        // without completely overriding acoustic quality for edge-case sparse libraries.
+        const llmGenreWeight = (concept as any).target_genre
+          ? Math.min(1.0, genreBlend * 2)
+          : genreBlend;
+
+        if (referenceGenre) {
+          console.log(`[LLM Hub] "${concept.title}" → anchoring re-rank to genre "${referenceGenre}" (weight=${llmGenreWeight.toFixed(2)})`);
+        }
+
+        const ranked = reRankByHopCost(res.rows, referenceGenre, Math.max(tracksPerPlaylist * 2, 20), llmGenreWeight);
 
         // Apply wander factor for diversity instead of deterministic top-N
         const topTracks = wanderSelect(ranked, tracksPerPlaylist, diversity);
+
 
         // Register these track IDs to prevent overlap in subsequent playlists
         for (const t of topTracks) {
