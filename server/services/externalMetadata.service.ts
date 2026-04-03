@@ -277,18 +277,27 @@ export async function getArtistData(name: string, mbArtistId?: string | null): P
     }
   }
 
-  // Build provider priority order for image + bio
+  // Build provider priority order for image + bio based on dropdown settings
   const seen = new Set<string>();
   const apisToTry: string[] = [];
   const pushApi = (api: string) => {
     if (!seen.has(api)) { seen.add(api); apisToTry.push(api); }
   };
-  if (settings.providerArtistImage === 'genius' && settings.geniusApiKey) pushApi('genius');
-  if (settings.providerArtistBio === 'genius' && settings.geniusApiKey) pushApi('genius');
-  if (settings.providerArtistImage === 'lastfm' && settings.lastFmApiKey) pushApi('lastfm');
-  if (settings.providerArtistBio === 'lastfm' && settings.lastFmApiKey) pushApi('lastfm');
-  if (settings.geniusApiKey) pushApi('genius');
-  if (settings.lastFmApiKey) pushApi('lastfm');
+  
+  // Add providers in dropdown preference order
+  const imgProvider = settings.providerArtistImage;
+  const bioProvider = settings.providerArtistBio;
+  
+  if (imgProvider === 'genius' && settings.geniusApiKey) pushApi('genius');
+  if (imgProvider === 'lastfm' && settings.lastFmApiKey) pushApi('lastfm');
+  if (bioProvider === 'genius' && settings.geniusApiKey) pushApi('genius');
+  if (bioProvider === 'lastfm' && settings.lastFmApiKey) pushApi('lastfm');
+  
+  // Fallback: if selected provider has no key, try the other
+  if (imgProvider === 'lastfm' && !settings.lastFmApiKey && settings.geniusApiKey) pushApi('genius');
+  if (imgProvider === 'genius' && !settings.geniusApiKey && settings.lastFmApiKey) pushApi('lastfm');
+  if (bioProvider === 'lastfm' && !settings.lastFmApiKey && settings.geniusApiKey) pushApi('genius');
+  if (bioProvider === 'genius' && !settings.geniusApiKey && settings.lastFmApiKey) pushApi('lastfm');
 
   for (const api of apisToTry) {
     try {
@@ -402,14 +411,21 @@ export async function getAlbumImage(albumName: string, artistName: string, mbAlb
     } catch { /* fall through */ }
   }
 
-  // Try Last.fm and Genius
+  // Try providers in dropdown preference order
   const apisToTry: string[] = [];
-  if (settings.providerAlbumArt === 'genius' && settings.geniusApiKey) {
-    apisToTry.push('genius');
-    if (settings.lastFmApiKey) apisToTry.push('lastfm');
-  } else {
-    if (settings.lastFmApiKey) apisToTry.push('lastfm');
-    if (settings.geniusApiKey) apisToTry.push('genius');
+  const pushApi = (api: string) => { if (!apisToTry.includes(api)) apisToTry.push(api); };
+  const albumProvider = settings.providerAlbumArt;
+  
+  if (albumProvider === 'genius' && settings.geniusApiKey) pushApi('genius');
+  if (albumProvider === 'lastfm' && settings.lastFmApiKey) pushApi('lastfm');
+  if (albumProvider === 'musicbrainz' && settings.musicBrainzEnabled) pushApi('musicbrainz');
+  
+  // Fallback to other providers if selected one has no key
+  if (albumProvider === 'lastfm' && !settings.lastFmApiKey && settings.geniusApiKey) pushApi('genius');
+  if (albumProvider === 'genius' && !settings.geniusApiKey && settings.lastFmApiKey) pushApi('lastfm');
+  if (albumProvider === 'musicbrainz' && !settings.musicBrainzEnabled) {
+    if (settings.lastFmApiKey) pushApi('lastfm');
+    if (settings.geniusApiKey) pushApi('genius');
   }
 
   for (const api of apisToTry) {
