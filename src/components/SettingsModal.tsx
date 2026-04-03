@@ -866,19 +866,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
                                                 <div>
                                                     <label className="block text-xs text-[var(--color-text-muted)] mb-1">Artist Images</label>
-                                                    <select value={providerArtistImage} onChange={e => setProviderArtistImage(e.target.value as 'lastfm' | 'genius' | 'musicbrainz')} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors">
+                                                    <select value={providerArtistImage} onChange={e => setSettings({ providerArtistImage: e.target.value as 'lastfm' | 'genius' | 'musicbrainz' })} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors">
                                                         <option value="lastfm">Last.fm</option><option value="genius">Genius</option>{musicBrainzEnabled && <option value="musicbrainz">MusicBrainz</option>}
                                                     </select>
                                                 </div>
                                                 <div>
                                                     <label className="block text-xs text-[var(--color-text-muted)] mb-1">Artist Bios</label>
-                                                    <select value={providerArtistBio} onChange={e => setProviderArtistBio(e.target.value as 'lastfm' | 'genius')} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors">
+                                                    <select value={providerArtistBio} onChange={e => setSettings({ providerArtistBio: e.target.value as 'lastfm' | 'genius' })} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors">
                                                         <option value="lastfm">Last.fm</option><option value="genius">Genius</option>
                                                     </select>
                                                 </div>
                                                 <div>
                                                     <label className="block text-xs text-[var(--color-text-muted)] mb-1">Album Art</label>
-                                                    <select value={providerAlbumArt} onChange={e => setProviderAlbumArt(e.target.value as 'lastfm' | 'genius' | 'musicbrainz')} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors">
+                                                    <select value={providerAlbumArt} onChange={e => setSettings({ providerAlbumArt: e.target.value as 'lastfm' | 'genius' | 'musicbrainz' })} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors">
                                                         <option value="lastfm">Last.fm</option><option value="genius">Genius</option>{musicBrainzEnabled && <option value="musicbrainz">MusicBrainz</option>}
                                                     </select>
                                                 </div>
