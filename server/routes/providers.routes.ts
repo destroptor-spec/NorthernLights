@@ -625,7 +625,8 @@ router.get('/providers/external/lyrics', requireAuth, async (req, res) => {
 });
 
 // Image proxy — fetches external images server-side, streams back to avoid CORS
-router.get('/providers/external/proxy-image', requireAuth, async (req, res) => {
+// No auth required — endpoint validates domain allowlist internally
+router.get('/providers/external/proxy-image', async (req, res) => {
   try {
     const url = req.query.url as string;
     if (!url) return res.status(400).json({ error: 'Missing url parameter' });
