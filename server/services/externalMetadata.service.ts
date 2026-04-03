@@ -347,7 +347,7 @@ export async function getArtistData(name: string, mbArtistId?: string | null): P
             const artistId = match?.result?.primary_artist?.id;
             const imageUrl = match?.result?.primary_artist?.image_url;
 
-            if (imageUrl && !data.imageUrl) {
+            if (imageUrl && !data.imageUrl && !imageUrl.includes('default_cover_image.png')) {
               data.imageUrl = imageUrl;
             }
 
@@ -484,7 +484,7 @@ export async function getAlbumImage(albumName: string, artistName: string, mbAlb
           if (hits && hits.length > 0) {
             const songHit = hits.find((h: any) => h.type === 'song');
             const imageUrl = songHit?.result?.song_art_image_url || songHit?.result?.header_image_url;
-            if (imageUrl) {
+            if (imageUrl && !imageUrl.includes('default_cover_image.png')) {
               await upsertAlbumCache(albumName, artistName, imageUrl, null);
               return imageUrl;
             }
@@ -591,11 +591,12 @@ export async function getLyrics(trackName: string, artistName: string): Promise<
     if (!songHit) return undefined;
 
     const song = songHit.result;
+    const thumbnailUrl = song.song_art_image_thumbnail_url;
     return {
       songUrl: song.url,
       title: song.title || trackName,
       artist: song.primary_artist?.name || artistName,
-      thumbnailUrl: song.song_art_image_thumbnail_url,
+      thumbnailUrl: thumbnailUrl?.includes('default_cover_image.png') ? undefined : thumbnailUrl,
     };
   } catch (e) {
     console.warn('[ExternalMeta] Failed fetching lyrics:', e);
