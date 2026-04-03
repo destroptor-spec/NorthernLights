@@ -632,7 +632,7 @@ router.get('/providers/external/proxy-image', async (req, res) => {
     if (!url) return res.status(400).json({ error: 'Missing url parameter' });
 
     // Only allow known external image domains
-    const allowed = ['lastfm.freetls.fastly.net', 'images.genius.com', 'coverartarchive.org',
+    const allowed = ['lastfm.freetls.fastly.net', 'images.genius.com', 'filepicker-images.genius.com', 'coverartarchive.org',
       'e.snmc.io', 'is1-ssl.mzstatic.com', 'is2-ssl.mzstatic.com', 'is3-ssl.mzstatic.com',
       'is4-ssl.mzstatic.com', 'is5-ssl.mzstatic.com'];
     let parsed: URL;
