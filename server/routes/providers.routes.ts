@@ -331,11 +331,13 @@ router.post('/providers/genius/test', async (req, res) => {
     });
 
     if (geniusRes.ok) {
-      res.json({ status: 'ok' });
+      const data = await geniusRes.json();
+      const artist = data.response?.hits?.[0]?.result?.primary_artist?.name;
+      res.json({ status: 'ok', artist });
     } else if (geniusRes.status === 401) {
-      res.status(401).json({ status: 'error', error: 'Invalid token' });
+      res.status(401).json({ status: 'error', error: 'Invalid API Key' });
     } else {
-      res.status(geniusRes.status).json({ status: 'error', error: `HTTP ${geniusRes.status}` });
+      res.status(geniusRes.status).json({ status: 'error', error: `Genius API error: HTTP ${geniusRes.status}` });
     }
   } catch (err: any) {
     res.status(502).json({ status: 'error', error: err.message || 'Network error' });

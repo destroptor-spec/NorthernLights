@@ -142,11 +142,20 @@ async function lastFmArtistInfo(artist: string, apiKey: string): Promise<any> {
     const res = await fetchWithRetry(
       `${LASTFM_API}?method=artist.getinfo&artist=${encodeURIComponent(artist)}&api_key=${apiKey}&format=json`
     );
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn(`[ExternalMeta] Last.fm artist.getinfo failed for "${artist}": HTTP ${res.status}`);
+      return null;
+    }
     const json = await res.json();
-    if (json.error) return null;
+    if (json.error) {
+      console.warn(`[ExternalMeta] Last.fm API error for "${artist}": ${json.message} (code ${json.error})`);
+      return null;
+    }
     return json.artist || null;
-  } catch { return null; }
+  } catch (err: any) {
+    console.error(`[ExternalMeta] Last.fm fetch error for "${artist}":`, err.message);
+    return null;
+  }
 }
 
 async function lastFmAlbumInfo(album: string, artist: string, apiKey: string): Promise<any> {
@@ -200,9 +209,15 @@ async function geniusSearch(query: string, apiKey: string): Promise<any> {
     const res = await fetchWithRetry(`https://api.genius.com/search?q=${encodeURIComponent(query)}`, {
       headers: { 'Authorization': `Bearer ${apiKey}` }
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn(`[ExternalMeta] Genius search failed for "${query}": HTTP ${res.status}`);
+      return null;
+    }
     return res.json();
-  } catch { return null; }
+  } catch (err: any) {
+    console.error(`[ExternalMeta] Genius search error for "${query}":`, err.message);
+    return null;
+  }
 }
 
 async function geniusGetArtist(artistId: number, apiKey: string): Promise<any> {
@@ -210,9 +225,15 @@ async function geniusGetArtist(artistId: number, apiKey: string): Promise<any> {
     const res = await fetchWithRetry(`https://api.genius.com/artists/${artistId}`, {
       headers: { 'Authorization': `Bearer ${apiKey}` }
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn(`[ExternalMeta] Genius getArtist failed for ID ${artistId}: HTTP ${res.status}`);
+      return null;
+    }
     return res.json();
-  } catch { return null; }
+  } catch (err: any) {
+    console.error(`[ExternalMeta] Genius getArtist error for ID ${artistId}:`, err.message);
+    return null;
+  }
 }
 
 // ─── MusicBrainz helpers ────────────────────────────────────────────
@@ -306,9 +327,25 @@ export async function getArtistData(name: string, mbArtistId?: string | null): P
         if (json) {
           const hits = json.response?.hits;
           if (hits && hits.length > 0) {
-            const hit = hits.find((h: any) => h.type === 'song' && h.result.primary_artist.name.toLowerCase() === name.toLowerCase());
-            const artistId = hit ? hit.result.primary_artist.id : hits[0]?.result?.primary_artist?.id;
-            const imageUrl = hit ? hit.result.primary_artist.image_url : hits[0]?.result?.primary_artist?.image_url;
+            // Priority 1: Exact artist name match on primary artist
+            let match = hits.find((h: any) => 
+               h.type === 'song' && 
+               h.result?.primary_artist?.name?.toLowerCase() === name.toLowerCase()
+            );
+            
+            // Priority 2: Case-insensitive \"contains\" match
+            if (!match) {
+              match = hits.find((h: any) => 
+                h.type === 'song' && 
+                h.result?.primary_artist?.name?.toLowerCase().includes(name.toLowerCase())
+              );
+            }
+            
+            // Priority 3: Just use the first hit
+            if (!match) match = hits[0];
+
+            const artistId = match?.result?.primary_artist?.id;
+            const imageUrl = match?.result?.primary_artist?.image_url;
 
             if (imageUrl && !data.imageUrl) {
               data.imageUrl = imageUrl;
@@ -569,10 +606,13 @@ export async function getLyrics(trackName: string, artistName: string): Promise<
 /**
  * Test Last.fm connection by fetching artist info.
  */
-export async function testLastFm(): Promise<{ status: string; error?: string }> {
+export async function testLastFm(): Promise<{ status: string; error?: string; username?: string }> {
   try {
     const apiKey = (await getSystemSetting('lastFmApiKey')) || '';
+    const sharedSecret = (await getSystemSetting('lastFmSharedSecret')) || '';
+    
     if (!apiKey) return { status: 'error', error: 'No API key configured' };
+    if (!sharedSecret) return { status: 'error', error: 'No Shared Secret configured' };
 
     const res = await fetchWithRetry(
       `${LASTFM_API}?method=artist.getinfo&artist=Radiohead&api_key=${apiKey}&format=json`

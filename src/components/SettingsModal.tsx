@@ -71,6 +71,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     const currentUser = usePlayerStore(state => state.currentUser);
     const isScanning = usePlayerStore(state => state.isScanning);
     const autoFolderWalk = usePlayerStore(state => state.autoFolderWalk);
+    const authToken = usePlayerStore(state => state.authToken);
     
     const [isClosing, setIsClosing] = useState(false);
     const [isRunningMatrix, setIsRunningMatrix] = useState(false);
@@ -816,7 +817,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                     ) : (
                                                         <div className="flex flex-col gap-3">
                                                             <p className="text-sm text-[var(--color-text-muted)]">Link your Last.fm account to scrobble played tracks.</p>
-                                                            <button onClick={async () => { try { const authHeaders = (usePlayerStore.getState() as any).getAuthHeader?.() || {}; const res = await fetch('/api/providers/lastfm/authorize', { headers: { ...authHeaders } }); const data = await res.json(); if (!res.ok || data.error) { showToast(data.error || `Server error: ${res.status}`, 'error'); } else if (data.url) { window.open(data.url, '_blank'); } } catch (e: any) { showToast(e?.message || 'Network error', 'error'); } }} className="btn btn-primary btn-sm">Connect to Last.fm</button>
+                                                            <button onClick={async () => { try { const tokenParam = authToken ? `?token=${authToken}` : ''; window.location.href = `/api/providers/lastfm/authorize${tokenParam}`; } catch (e: any) { showToast(e?.message || 'Network error', 'error'); } }} className="btn btn-primary btn-sm">Connect to Last.fm</button>
                                                         </div>
                                                     )}
                                                 </div>
@@ -853,7 +854,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                                 <button onClick={() => testMusicBrainz()} disabled={musicBrainzStatus === 'testing'} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">{musicBrainzStatus === 'testing' ? 'Testing...' : 'Test'}</button>
                                                                 {musicBrainzStatus === 'success' && <span className="text-green-500 font-semibold text-xs">✓ {musicBrainzMessage}</span>}
                                                                 {musicBrainzStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {musicBrainzMessage}</span>}
-                                                                {musicBrainzConnected ? (<><span className="text-green-500 font-semibold text-xs ml-auto">Connected</span><button onClick={async () => { await fetch('/api/providers/musicbrainz/disconnect', { method: 'POST' }); setMusicBrainzConnected(false); }} className="btn btn-danger btn-sm">Remove access</button></>) : (<button onClick={async () => { try { const res = await fetch('/api/providers/musicbrainz/authorize'); const data = await res.json(); if (!res.ok || data.error) { showToast(data.error || `Server error: ${res.status}`, 'error'); } else if (data.url) { window.open(data.url, '_blank'); } } catch (e: any) { showToast(e?.message || 'Network error', 'error'); } }} disabled={!musicBrainzClientId || !musicBrainzClientSecret} className="btn btn-primary btn-sm disabled:opacity-50 ml-auto">Connect</button>)}
+                                                                {musicBrainzConnected ? (<><span className="text-green-500 font-semibold text-xs ml-auto">Connected</span><button onClick={async () => { await fetch('/api/providers/musicbrainz/disconnect', { method: 'POST' }); setMusicBrainzConnected(false); }} className="btn btn-danger btn-sm">Remove access</button></>) : (<button onClick={async () => { try { const tokenParam = authToken ? `?token=${authToken}` : ''; window.location.href = `/api/providers/musicbrainz/authorize${tokenParam}`; } catch (e: any) { showToast(e?.message || 'Network error', 'error'); } }} disabled={!musicBrainzClientId || !musicBrainzClientSecret} className="btn btn-primary btn-sm disabled:opacity-50 ml-auto">Connect</button>)}
                                                             </div>
                                                         </div>
                                                     )}

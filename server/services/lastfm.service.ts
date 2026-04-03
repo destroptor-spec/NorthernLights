@@ -69,14 +69,8 @@ export async function lfmFetch(
     allParams.sk = sessionKey;
   }
 
-  // Build signature (sk is included if present)
-  const sigString = Object.entries(allParams)
-    .filter(([key]) => key !== 'format' && key !== 'callback')
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, value]) => key + value)
-    .join('') + sharedSecret;
-
-  allParams.api_sig = createHash('md5').update(sigString, 'utf8').digest('hex');
+  // Build signature (sk is included in allParams if present)
+  allParams.api_sig = buildSignature(allParams, sharedSecret);
 
   const body = new URLSearchParams(allParams);
 
