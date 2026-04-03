@@ -1,6 +1,16 @@
 # Project Memory / Changelog
 
-## [2026-03-31] V16: 20-Dimensional Dual-Vector Audio Recommendation Architecture
+## [2026-04-03] V17: Provider Reliability & Integration Overhaul (Part 2)
+- **Artist Library Lazy Loading Fix**: Artist images now load on scroll via IntersectionObserver (`useInView` hook with 200px rootMargin). Added 200ms debounce in `useArtistData` to prevent API storms during rapid scrolling.
+- **Backend Modularization**: Split monolithic `externalMetadata.service.ts` into `server/services/metadata/` directory:
+  - `errors.ts` — `RateLimitError` and `ProviderError` classes with type guards
+  - `cache.ts` — DB caching with `updateLastUpdated` flag (skips cache update on rate limit)
+  - `rateLimiter.ts` — Semaphore class + retry logic
+  - `providers/lastfm.ts`, `genius.ts`, `musicbrainz.ts` — separate API clients with proper error handling
+  - `index.ts` — unified API with error propagation
+- **Semaphore Bug Fix**: Fixed critical bug in concurrency limiter where queued tasks never executed. `release()` now properly calls pending resolve functions.
+- **Global Toast System**: Added `toasts`, `addToast`, `removeToast` to Zustand store. Created `useToast()` hook and `ToastContainer` component rendered in `App.tsx`. SettingsModal now uses global toast instead of local state.
+- **Configurable Debounce**: Added `debounceMs` option to `useArtistData` (default 200ms) and `useExternalImage` (default 0ms).
 - **Dual-Vector Schema**: `track_features` table extended with `mfcc_vector VECTOR(13)` (nullable). Additive schema migration — existing data is preserved. Independent HNSW index (`track_features_mfcc_idx`) added for fast 13D ANN search.
 - **MFCC Extraction (Essentia.js)**: `audioExtraction.service.ts` now runs `ess.MFCC(spectrum)` inside the existing `safeCall` wrapper after the 7-feature block. Each of the 13 coefficients is sigmoid-normalized to `[0,1]` (scale 20 for k=0, scale 8 for k>0). Falls back to `0.5` per coefficient if spectrum is unavailable. `AudioFeatures` interface extended with `mfcc_vector: [13 floats]`.
 - **Boot-time MFCC Migrator**: `server/index.ts` fires a non-blocking IIFE 8 seconds after startup that calls `getTracksWithoutMfcc()` and runs `runBackgroundAnalysis()` at concurrency=1 to silently backfill MFCC data for previously-analyzed tracks.

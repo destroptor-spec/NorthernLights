@@ -33,6 +33,35 @@ interface ProviderSettings {
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days in ms
 const LASTFM_API = 'https://ws.audioscrobbler.com/2.0/';
 
+// ─── Concurrency Limiting ──────────────────────────────────────────
+class Semaphore {
+  private tasks: Array<() => void> = [];
+  private count: number;
+
+  constructor(max: number) { this.count = max; }
+
+  async acquire() {
+    if (this.count > 0) {
+      this.count--;
+      return;
+    }
+    await new Promise<void>((resolve) => { 
+      this.tasks.push(resolve); 
+    });
+  }
+
+  release() {
+    if (this.tasks.length > 0) {
+      const fn = this.tasks.shift();
+      if (fn) fn();
+    } else {
+      this.count++;
+    }
+  }
+}
+
+const externalRequestSemaphore = new Semaphore(5); // Max 5 parallel external API calls
+
 // ─── Helpers ────────────────────────────────────────────────────────
 function cleanHtml(text: string): string {
   // Strip HTML tags and decode basic entities
@@ -138,6 +167,7 @@ async function upsertGenreCache(name: string, imageUrl: string | null, descripti
 
 // ─── Last.fm API (server-side reads) ────────────────────────────────
 async function lastFmArtistInfo(artist: string, apiKey: string): Promise<any> {
+  await externalRequestSemaphore.acquire();
   try {
     const res = await fetchWithRetry(
       `${LASTFM_API}?method=artist.getinfo&artist=${encodeURIComponent(artist)}&api_key=${apiKey}&format=json`
@@ -149,49 +179,61 @@ async function lastFmArtistInfo(artist: string, apiKey: string): Promise<any> {
     const json = await res.json();
     if (json.error) {
       console.warn(`[ExternalMeta] Last.fm API error for "${artist}": ${json.message} (code ${json.error})`);
+      if (json.error === 29) return { _isRateLimited: true };
       return null;
     }
     return json.artist || null;
   } catch (err: any) {
     console.error(`[ExternalMeta] Last.fm fetch error for "${artist}":`, err.message);
     return null;
+  } finally {
+    externalRequestSemaphore.release();
   }
 }
 
 async function lastFmAlbumInfo(album: string, artist: string, apiKey: string): Promise<any> {
+  await externalRequestSemaphore.acquire();
   try {
     const res = await fetchWithRetry(
       `${LASTFM_API}?method=album.getinfo&api_key=${apiKey}&artist=${encodeURIComponent(artist)}&album=${encodeURIComponent(album)}&format=json`
     );
     if (!res.ok) return null;
     const json = await res.json();
+    if (json.error === 29) return { _isRateLimited: true };
     if (json.error) return null;
     return json.album || null;
   } catch { return null; }
+  finally { externalRequestSemaphore.release(); }
 }
 
 async function lastFmTagTopAlbums(tag: string, apiKey: string): Promise<any> {
+  await externalRequestSemaphore.acquire();
   try {
     const res = await fetchWithRetry(
       `${LASTFM_API}?method=tag.gettopalbums&tag=${encodeURIComponent(tag)}&api_key=${apiKey}&format=json&limit=1`
     );
     if (!res.ok) return null;
     const json = await res.json();
+    if (json.error === 29) return { _isRateLimited: true };
     if (json.error) return null;
     return json.albums || null;
   } catch { return null; }
+  finally { externalRequestSemaphore.release(); }
 }
 
 async function lastFmTagInfo(tag: string, apiKey: string): Promise<any> {
+  await externalRequestSemaphore.acquire();
   try {
     const res = await fetchWithRetry(
       `${LASTFM_API}?method=tag.getinfo&tag=${encodeURIComponent(tag)}&api_key=${apiKey}&format=json`
     );
     if (!res.ok) return null;
     const json = await res.json();
+    if (json.error === 29) return { _isRateLimited: true };
     if (json.error) return null;
     return json.tag || null;
   } catch { return null; }
+  finally { externalRequestSemaphore.release(); }
 }
 
 function extractLastFmImage(images: any[]): string | undefined {
@@ -205,6 +247,7 @@ function extractLastFmImage(images: any[]): string | undefined {
 
 // ─── Genius API (server-side) ───────────────────────────────────────
 async function geniusSearch(query: string, apiKey: string): Promise<any> {
+  await externalRequestSemaphore.acquire();
   try {
     const res = await fetchWithRetry(`https://api.genius.com/search?q=${encodeURIComponent(query)}`, {
       headers: { 'Authorization': `Bearer ${apiKey}` }
@@ -217,10 +260,13 @@ async function geniusSearch(query: string, apiKey: string): Promise<any> {
   } catch (err: any) {
     console.error(`[ExternalMeta] Genius search error for "${query}":`, err.message);
     return null;
+  } finally {
+    externalRequestSemaphore.release();
   }
 }
 
 async function geniusGetArtist(artistId: number, apiKey: string): Promise<any> {
+  await externalRequestSemaphore.acquire();
   try {
     const res = await fetchWithRetry(`https://api.genius.com/artists/${artistId}`, {
       headers: { 'Authorization': `Bearer ${apiKey}` }
@@ -233,6 +279,8 @@ async function geniusGetArtist(artistId: number, apiKey: string): Promise<any> {
   } catch (err: any) {
     console.error(`[ExternalMeta] Genius getArtist error for ID ${artistId}:`, err.message);
     return null;
+  } finally {
+    externalRequestSemaphore.release();
   }
 }
 
@@ -320,6 +368,7 @@ export async function getArtistData(name: string, mbArtistId?: string | null): P
   if (bioProvider === 'lastfm' && !settings.lastFmApiKey && settings.geniusApiKey) pushApi('genius');
   if (bioProvider === 'genius' && !settings.geniusApiKey && settings.lastFmApiKey) pushApi('lastfm');
 
+  let wasRateLimited = false;
   for (const api of apisToTry) {
     try {
       if (api === 'genius' && settings.geniusApiKey) {
@@ -333,7 +382,7 @@ export async function getArtistData(name: string, mbArtistId?: string | null): P
                h.result?.primary_artist?.name?.toLowerCase() === name.toLowerCase()
             );
             
-            // Priority 2: Case-insensitive \"contains\" match
+            // Priority 2: Case-insensitive "contains" match
             if (!match) {
               match = hits.find((h: any) => 
                 h.type === 'song' && 
@@ -365,6 +414,10 @@ export async function getArtistData(name: string, mbArtistId?: string | null): P
       } else if (api === 'lastfm' && settings.lastFmApiKey) {
         const artist = await lastFmArtistInfo(name, settings.lastFmApiKey);
         if (artist) {
+          if (artist._isRateLimited) {
+            wasRateLimited = true;
+            continue;
+          }
           if (!data.bio && artist.bio?.summary) {
             const rawBio = artist.bio.summary;
             data.bio = cleanHtml(rawBio.split('<a href')[0].trim());
@@ -381,8 +434,10 @@ export async function getArtistData(name: string, mbArtistId?: string | null): P
     }
   }
 
-  // Upsert into DB cache
-  await upsertArtistCache(name, data.imageUrl || null, data.bio || null, mbArtistId || cached?.mbid || null);
+  // Upsert into DB cache ONLY if we weren't rate limited OR we found actual data
+  if (!wasRateLimited || data.imageUrl || data.bio) {
+    await upsertArtistCache(name, data.imageUrl || null, data.bio || null, mbArtistId || cached?.mbid || null);
+  }
 
   return data;
 }
@@ -465,15 +520,22 @@ export async function getAlbumImage(albumName: string, artistName: string, mbAlb
     if (settings.geniusApiKey) pushApi('genius');
   }
 
+  let wasRateLimited = false;
   for (const api of apisToTry) {
     try {
       if (api === 'lastfm' && settings.lastFmApiKey) {
         const album = await lastFmAlbumInfo(albumName, artistName, settings.lastFmApiKey);
-        if (album && album.image) {
-          const imageUrl = extractLastFmImage(album.image);
-          if (imageUrl) {
-            await upsertAlbumCache(albumName, artistName, imageUrl, null);
-            return imageUrl;
+        if (album) {
+          if (album._isRateLimited) {
+            wasRateLimited = true;
+            continue;
+          }
+          if (album.image) {
+            const imageUrl = extractLastFmImage(album.image);
+            if (imageUrl) {
+              await upsertAlbumCache(albumName, artistName, imageUrl, null);
+              return imageUrl;
+            }
           }
         }
       } else if (api === 'genius' && settings.geniusApiKey) {
@@ -496,8 +558,10 @@ export async function getAlbumImage(albumName: string, artistName: string, mbAlb
     }
   }
 
-  // Cache the miss
-  await upsertAlbumCache(albumName, artistName, null, null);
+  // Cache the miss ONLY if we weren't rate limited
+  if (!wasRateLimited) {
+    await upsertAlbumCache(albumName, artistName, null, null);
+  }
   return undefined;
 }
 
@@ -517,11 +581,14 @@ export async function getGenreImage(genreName: string): Promise<string | undefin
 
   try {
     const albums = await lastFmTagTopAlbums(genreName, apiKey);
-    if (albums && albums.album && albums.album.length > 0) {
-      const imageUrl = extractLastFmImage(albums.album[0].image);
-      if (imageUrl) {
-        await upsertGenreCache(genreName, imageUrl, cached?.description || null);
-        return imageUrl;
+    if (albums) {
+      if (albums._isRateLimited) return undefined;
+      if (albums.album && albums.album.length > 0) {
+        const imageUrl = extractLastFmImage(albums.album[0].image);
+        if (imageUrl) {
+          await upsertGenreCache(genreName, imageUrl, cached?.description || null);
+          return imageUrl;
+        }
       }
     }
   } catch (e) {
@@ -550,6 +617,7 @@ export async function getGenreInfo(genreName: string): Promise<{ imageUrl?: stri
 
   try {
     const tag = await lastFmTagInfo(genreName, apiKey);
+    if (tag?._isRateLimited) return undefined;
     const summary = tag?.wiki?.summary ? cleanHtml(tag.wiki.summary.split('<a href')[0].trim()) : undefined;
     const result: { imageUrl?: string; summary?: string } = {};
     if (summary && summary.length > 0) result.summary = summary;

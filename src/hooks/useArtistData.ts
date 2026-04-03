@@ -14,8 +14,9 @@ interface ArtistDataState {
   error: string | undefined;
 }
 
-export const useArtistData = (artistName: string, mbArtistId?: string | null, options?: { enabled?: boolean }): ArtistDataState => {
+export const useArtistData = (artistName: string, mbArtistId?: string | null, options?: { enabled?: boolean; debounceMs?: number }): ArtistDataState => {
   const enabled = options?.enabled !== false;
+  const debounceMs = options?.debounceMs ?? 200;
   const [imageUrl, setImageUrl] = useState<string | undefined>();
   const [bio, setBio] = useState<string | undefined>();
   const [disambiguation, setDisambiguation] = useState<string | undefined>();
@@ -27,43 +28,63 @@ export const useArtistData = (artistName: string, mbArtistId?: string | null, op
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
+  const [lastFetchedName, setLastFetchedName] = useState<string | undefined>();
+
   useEffect(() => {
     if (!artistName || !enabled || artistName === 'Unknown Artist') {
       setIsLoading(false);
       return;
     }
+
     let mounted = true;
-    setImageUrl(undefined);
-    setBio(undefined);
-    setDisambiguation(undefined);
-    setArea(undefined);
-    setType(undefined);
-    setLifeSpan(undefined);
-    setLinks(undefined);
-    setGenres(undefined);
-    setError(undefined);
-    setIsLoading(true);
-    fetchArtistData(artistName, mbArtistId)
-      .then(data => {
-        if (mounted) {
-          setImageUrl(data.imageUrl);
-          setBio(data.bio);
-          setDisambiguation(data.disambiguation);
-          setArea(data.area);
-          setType(data.type);
-          setLifeSpan(data.lifeSpan);
-          setLinks(data.links);
-          setGenres(data.genres);
-        }
-      })
-      .catch(err => {
-        if (mounted) setError(err?.message || 'Failed to load artist data');
-      })
-      .finally(() => {
-        if (mounted) setIsLoading(false);
-      });
-    return () => { mounted = false; };
-  }, [artistName, mbArtistId, enabled]);
+    let timer: NodeJS.Timeout | null = null;
+
+    // Reset metadata only if the artist name has changed (not just scrolling in view)
+    if (lastFetchedName !== artistName) {
+      setImageUrl(undefined);
+      setBio(undefined);
+      setDisambiguation(undefined);
+      setArea(undefined);
+      setType(undefined);
+      setLifeSpan(undefined);
+      setLinks(undefined);
+      setGenres(undefined);
+      setError(undefined);
+    }
+
+    const startFetch = () => {
+      setIsLoading(true);
+      fetchArtistData(artistName, mbArtistId)
+        .then(data => {
+          if (mounted) {
+            setLastFetchedName(artistName);
+            setImageUrl(data.imageUrl);
+            setBio(data.bio);
+            setDisambiguation(data.disambiguation);
+            setArea(data.area);
+            setType(data.type);
+            setLifeSpan(data.lifeSpan);
+            setLinks(data.links);
+            setGenres(data.genres);
+            setError(undefined);
+          }
+        })
+        .catch(err => {
+          if (mounted) setError(err?.message || 'Failed to load artist data');
+        })
+        .finally(() => {
+          if (mounted) setIsLoading(false);
+        });
+    };
+
+    // Debounce the call to avoid hitting API rate limits during rapid scroll
+    timer = setTimeout(startFetch, debounceMs);
+
+    return () => {
+      mounted = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [artistName, mbArtistId, enabled, debounceMs, lastFetchedName]);
 
   return { imageUrl, bio, disambiguation, area, type, lifeSpan, links, genres, isLoading, error };
 };

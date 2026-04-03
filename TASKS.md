@@ -30,22 +30,16 @@ The core music player architecture has transitioned to a client-server model usi
   - **Concurrency Control**: Connected `audioAnalysisCpu` setting (Background/Balanced/Maximum) to analysis worker pool size: 1/4/6 workers respectively. Added per-file 90-second timeout to prevent hung files from blocking the entire batch.
   - **Analysis Transparency**: Scan indicator now shows `"Artist - Title"` format instead of just filename during both metadata and analysis phases. New "Audio Analysis" section in Settings → Library with "Analyze Missing" and "Re-analyze All" buttons, plus library-wide coverage progress bar (green when 100%, amber when partial).
 - [x] **V16: 20D Audio Recommendation Architecture**:
-  - **Schema Update**: Extended `track_features` with `mfcc_vector VECTOR(13)` and an independent HNSW pgvector index (`track_features_mfcc_idx`).
-  - **Engine Upgrades**: Modified the Recommendation Engine (`getHubCollections`, Infinity Mode, Vault, UpNext) to deploy `(tf.acoustic_vector <-> $1) + (tf.mfcc_vector <-> $2) AS distance` math uniformly.
-  - **Timbre Imputation Pipeline**: Integrated LLM generated concepts (7D) with physical hardware mapping (20D) dynamically across subsets of library items.
-  - **Auto-Migrator**: Added a boot-time checker inside `server/index.ts` to seamlessly identify and append older tracks lacking 13D MFCC profiles directly into the background analysis queue.
-- [ ] **V17: Provider Reliability & Integration Overhaul**:
-  - **Connection Tests**: New `useProviderConnectionTest` hook with `testLastFm` and `testGenius` functions. Added "Test" buttons with ✓/✗ status badges to SettingsModal Providers tab and SetupWizard Step 4. Tests against live API endpoints (Last.fm `artist.getinfo`, Genius `search`).
-  - **Error Handling**: `useExternalImage` now returns `{ imageUrl, isLoading, error }` with proper `.catch()` handling. All consumer components (AlbumArt, ArtistDetail, GenreDetail, LibraryHome) updated to use new shape. ArtistDetail hero shows pulse animation while loading.
-  - **Last.fm Error Inspection**: All Last.fm API responses now check for `json.error` field (API returns 200 with error codes for auth failures). Errors logged and provider skipped on failure.
-  - **Rate Limit Handling**: New `fetchWithRetry` wrapper handles HTTP 429 responses with `Retry-After` header support. Single retry with max 5s delay.
-  - **Cache TTL**: Cache entries now include `_ts` timestamp and `_miss` flag. Successful results cached 30 days, failed lookups cached 1 day then automatically re-fetched.
-  - **Backend Persistence**: Provider keys (`lastFmApiKey`, `geniusApiKey`, `preferredProvider`) now saved to and loaded from the PostgreSQL database via `/api/settings` endpoints. Previously only stored in browser localStorage. SetupWizard `handleFinish` now persists keys to DB on first setup.
-  - **Preferred Provider UI**: Added dropdown selector in SettingsModal Providers tab (was declared in store but had no UI control).
-  - **Genre Tag Splitting**: Scanner and `migrateEntityIds` now split dirty genre tags (e.g. "folk, country, blues") on `,`, `;`, `/`, `&` delimiters. Only the primary (first) genre is stored per track. Existing dirty genres in tracks with NULL genre_id are cleaned on startup.
-  - **Lyrics (Genius)**: New `fetchLyrics(trackName, artistName)` function searches Genius API for matching song, returns song URL + metadata. New `LyricsPanel` component with loading spinner, thumbnail, and "View on Genius" link. Desktop: lyrics button in PlayerControls opens popover above player pill. Mobile: lyrics button in NowPlaying secondary controls toggles between album art and lyrics panel.
-  - **Genius Album Art Fallback**: `fetchAlbumImage` now tries Genius as fallback when Last.fm fails (or as primary when Genius is preferred provider). Searches Genius for album+artist, returns `song_art_image_url`.
-  - **Genre Descriptions**: New `fetchGenreInfo(genreName)` function calls Last.fm `tag.getinfo` to get wiki summary. GenreDetail page now displays genre description below title (truncated, expandable on hover), same pattern as artist bio.
+   - **Schema Update**: Extended `track_features` with `mfcc_vector VECTOR(13)` and an independent HNSW pgvector index (`track_features_mfcc_idx`).
+   - **Engine Upgrades**: Modified the Recommendation Engine (`getHubCollections`, Infinity Mode, Vault, UpNext) to deploy `(tf.acoustic_vector <-> $1) + (tf.mfcc_vector <-> $2) AS distance` math uniformly.
+   - **Timbre Imputation Pipeline**: Integrated LLM generated concepts (7D) with physical hardware mapping (20D) dynamically across subsets of library items.
+   - **Auto-Migrator**: Added a boot-time checker inside `server/index.ts` to seamlessly identify and append older tracks lacking 13D MFCC profiles directly into the background analysis queue.
+- [x] **V17: Provider Reliability & Integration Overhaul (Phase 2)**:
+  - **Artist Library Lazy Loading**: Implemented IntersectionObserver-based lazy loading in `useInView` hook (200px rootMargin). Artist images load when scrolled into view.
+  - **Backend Metadata Modularization**: Split `externalMetadata.service.ts` into `server/services/metadata/` with separate modules for errors, caching, rate limiting, and per-provider APIs. Fixed Semaphore bug where queued tasks never executed.
+  - **Rate Limit Detection & Handling**: Last.fm error code 29 now detected and thrown as `RateLimitError`. Cache updates skipped on rate limit to allow retry later.
+  - **Global Toast System**: Added toast state to Zustand store (`toasts`, `addToast`, `removeToast`). Created `useToast()` hook and `ToastContainer` rendered in `App.tsx`. SettingsModal converted to global toast.
+  - **Configurable Debounce**: Added `debounceMs` option to `useArtistData` (default 200ms) and `useExternalImage` (default 0ms).
 
 ---
 

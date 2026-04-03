@@ -23,6 +23,7 @@ import { UserMenu } from './components/UserMenu';
 import { Settings as SettingsIcon, AudioWaveform, X } from 'lucide-react';
 import { TrackContextMenu } from './components/library/TrackContextMenu';
 import { DatabaseControl } from './components/DatabaseControl';
+import { ToastContainer } from './components/ToastContainer';
 
 const TAB_CONFIG = [
   { path: '/library', label: 'Hub', end: true },
@@ -533,6 +534,8 @@ const App: React.FC = () => {
         {isSettingsOpen && (
           <SettingsModal onClose={() => setIsSettingsOpen(false)} />
         )}
+
+        <ToastContainer />
 
         {/* Mobile Sidebar Overlay Backdrop */}
         {isSidebarOpen && (

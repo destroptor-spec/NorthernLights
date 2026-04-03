@@ -11,7 +11,9 @@ import {
   getLyrics,
   testLastFm,
   clearExternalCache,
-} from '../services/externalMetadata.service';
+  RateLimitError,
+  ProviderError,
+} from '../services/metadata';
 
 const router = Router();
 
@@ -549,7 +551,9 @@ router.post('/providers/lastfm/unlove', async (req, res) => {
 // ─── Last.fm Test (server-side, consistent with Genius/MusicBrainz) ──
 router.get('/providers/lastfm/test', async (req, res) => {
   try {
-    const result = await testLastFm();
+    const apiKey = await getSystemSetting('lastFmApiKey') || '';
+    const sharedSecret = await getSystemSetting('lastFmSharedSecret') || '';
+    const result = await testLastFm(apiKey, sharedSecret);
     if (result.status === 'ok') {
       res.json(result);
     } else {

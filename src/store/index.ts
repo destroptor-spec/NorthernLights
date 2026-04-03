@@ -5,6 +5,13 @@ import { extractMetadata } from '../utils/fileSystem';
 import { playbackManager, PlaybackState } from '../utils/PlaybackManager';
 import { safeBtoa } from '../utils/safeBtoa';
 import { clearExternalCache } from '../utils/externalImagery';
+import type { ToastType } from '../components/Toast';
+
+export interface ToastItem {
+  id: number;
+  message: string;
+  type: ToastType;
+}
 
 // Re-entrancy guard: incremented on each playAtIndex call to discard stale callbacks
 let playGeneration = 0;
@@ -204,13 +211,18 @@ export interface PlayerState {
   sessionHistoryTrackIds: string[];
   recordPlay: (trackId: string) => void;
   recordSkip: (trackId: string) => void;
+
+  // Toast state
+  toasts: ToastItem[];
+  addToast: (message: string, type: ToastType) => void;
+  removeToast: (id: number) => void;
 }
 
 // Remove `PlayerPersist` hack as it was unnecessary and broke inference further
 
 export const usePlayerStore = create<PlayerState>()(
   persist(
-    (set: any, get: any) => {
+    (set, get) => {
       // Setup PlaybackManager callbacks to update store state
       playbackManager.setCallbacks({
         onTimeUpdate: (time) => {
@@ -1105,6 +1117,22 @@ export const usePlayerStore = create<PlayerState>()(
             body: JSON.stringify({ trackId })
           }).catch((e: Error) => console.warn('Telemetry skip failed:', e));
         },
+
+        toasts: [],
+        addToast: (message: string, type: ToastType) => {
+          const id = Date.now();
+          set((state: PlayerState) => ({
+            toasts: [...state.toasts, { id, message, type }]
+          }));
+          setTimeout(() => {
+            get().removeToast(id);
+          }, 4000);
+        },
+        removeToast: (id: number) => {
+          set((state: PlayerState) => ({
+            toasts: state.toasts.filter(t => t.id !== id)
+          }));
+        },
       };
     },
     {
@@ -1117,7 +1145,6 @@ export const usePlayerStore = create<PlayerState>()(
         repeat: state.repeat,
         theme: state.theme,
         lastFmApiKey: state.lastFmApiKey,
-        // lastFmSharedSecret intentionally not persisted to localStorage (sensitive, loaded from DB)
         lastFmScrobbleEnabled: state.lastFmScrobbleEnabled,
         lastFmConnected: state.lastFmConnected,
         lastFmUsername: state.lastFmUsername,
@@ -1131,10 +1158,6 @@ export const usePlayerStore = create<PlayerState>()(
         providerAlbumArt: state.providerAlbumArt,
         authToken: state.authToken,
         currentUser: state.currentUser,
-
-        // We do *not* persist DB settings in localStorage, we ONLY load them from DB on mount
-        // by calling loadSettings() from an effect in the app root.
-        // Provider keys are persisted in both localStorage (fast boot) and DB (cross-device sync).
       }),
     }
   )

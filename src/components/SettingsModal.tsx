@@ -5,7 +5,7 @@ import { useLlmConnectionTest } from '../hooks/useLlmConnectionTest';
 import { useProviderConnectionTest } from '../hooks/useProviderConnectionTest';
 import { ConfirmModal } from './ConfirmModal';
 import { PromptModal } from './PromptModal';
-import { Toast, type ToastType } from './Toast';
+import { useToast } from '../hooks/useToast';
 import { Folder, User, Palette, Play, Cpu, Globe, LogOut, Search, X, Shield, Users, Link, Trash2, Plus, Copy, Check, Database, BarChart2, Wrench, Radio, Brain } from 'lucide-react';
 import { DatabaseControl } from './DatabaseControl';
 
@@ -82,12 +82,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     // Dialog state
     const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; confirmLabel?: string; onConfirm: () => void } | null>(null);
     const [promptDialog, setPromptDialog] = useState<{ title: string; label?: string; placeholder?: string; onSubmit: (value: string) => void } | null>(null);
-    const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
 
-    const showToast = useCallback((message: string, type: ToastType) => {
-        setToast(null);
-        setTimeout(() => setToast({ message, type }), 0);
-    }, []);
+    // Global toast
+    const { addToast } = useToast();
+    const showToast = useCallback((message: string, type: 'success' | 'error' | 'info') => {
+        addToast(message, type);
+    }, [addToast]);
 
     // 1. On mount: fetch latest settings and mappings
     React.useEffect(() => {
@@ -1329,14 +1329,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     onCancel={() => setPromptDialog(null)}
                 />
             )}
-
-            {toast && (
-                <Toast
-                    message={toast.message}
-                    type={toast.type}
-                    onDismiss={() => setToast(null)}
-                />
-            )}
         </div>,
         document.body
     );
@@ -1367,7 +1359,7 @@ interface Invite {
 const AdminSettingsContent: React.FC<{
   getAuthHeader: () => Record<string, string>;
   currentUser: { id: string; username: string; role: string } | null;
-  showToast: (msg: string, type: ToastType) => void;
+  showToast: (msg: string, type: 'success' | 'error' | 'info') => void;
 }> = ({ getAuthHeader, currentUser, showToast }) => {
   const [users, setUsers] = useState<User[]>([]);
   const [invites, setInvites] = useState<Invite[]>([]);

@@ -129,12 +129,22 @@ Library scanning operates in three distinct phases:
 - `recommendation.service.ts` — Infinity Mode and Hub playlist generation using 20-dimensional pgvector HNSW similarity search (acoustic + MFCC) and genre hop cost adjacency matrices. Timbre Imputation bridging for LLM playlists.
 - `llm.service.ts` — LLM integration for natural language playlist generation. Supports local providers (LM Studio, Ollama) and cloud (OpenAI).
 - `genreMatrix.service.ts` — LLM-assisted 39-genre ontology classification with diff-based updates.
+- `metadata/` — Modularized external metadata service:
+  - `errors.ts` — `RateLimitError`, `ProviderError` classes for typed error handling
+  - `cache.ts` — Database caching with conditional `updateLastUpdated` flag
+  - `rateLimiter.ts` — Semaphore class for concurrency limiting + retry logic
+  - `providers/lastfm.ts` — Last.fm API client with rate limit detection
+  - `providers/genius.ts` — Genius API client
+  - `providers/musicbrainz.ts` — MusicBrainz API client
+  - `index.ts` — Unified API (getArtistData, getAlbumImage, getGenreImage, getLyrics)
 
 ## Shared Hooks (src/hooks/)
 - `useDominantColor(tracks)` — Extracts art URLs and dominant color from a track list. Returns `{ artUrls, primaryArt, bgColor }`.
-- `useExternalImage(fetcher, deps)` — Generic image fetching with mounted guard. Returns `string | undefined`.
+- `useExternalImage(fetcher, deps)` — Generic image fetching with mounted guard. Returns `{ imageUrl, isLoading, error }`. Supports optional `debounceMs` parameter.
+- `useArtistData(name, mbArtistId, options?)` — Fetches artist image/bio/metadata. Returns `{ imageUrl, bio, disambiguation, area, type, lifeSpan, links, genres, isLoading, error }`. Supports `enabled` and `debounceMs` (default 200ms) options.
 - `useLlmConnectionTest({ getAuthHeader, onModelsReceived })` — LLM connection testing state + logic.
 - `useSwipe(ref, { onSwipeLeft, onSwipeRight, onSwipeUp, onSwipeDown, threshold })` — Reusable touch swipe gesture detection hook. Returns a ref to attach to the target element.
+- `useToast()` — Global toast access. Returns `{ toasts, addToast, removeToast }`. Toast items rendered via `ToastContainer` in App.tsx.
 
 ## Workflow
 - Always check `package.json` before installing new dependencies.
