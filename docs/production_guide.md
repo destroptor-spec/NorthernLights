@@ -8,8 +8,9 @@ Before we start, you need to install a few "helper" programs on your server:
 
 *   **Node.js (v18 or higher):** The engine that runs the app. [Download it here](https://nodejs.org/).
 *   **Git:** To download and update the app's code. [Download it here](https://git-scm.com/).
-*   **FFmpeg:** Required for non-native audio (like WMA). Install via `sudo apt install ffmpeg` (Linux) or `brew install ffmpeg` (macOS).
+*   **FFmpeg:** Required for non-native audio (like WMA) and audio analysis.
 *   **Podman or Docker:** For the automatic database.
+*   **curl & bzip2:** Required for downloading and extracting the **MusicBrainz Genre Taxonomy**.
     *   **Podman (Recommended for Linux):** `sudo apt install podman`
     *   **Docker:** [Download Docker Desktop](https://www.docker.com/products/docker-desktop/).
 
@@ -94,7 +95,10 @@ You will first see the **Database Control** screen showing "Database Not Found".
 
 1.  **Create the Database:** Click the green **"Create Database"** button. The app will pull the PostgreSQL image and start a container via Podman or Docker. This may take a minute on first run.
 2.  **Setup Wizard:** Once the database is online, the app will automatically advance to the Setup Wizard. Create your admin account.
-3.  **Add Music:** In Settings (gear icon ⚙️), enter the absolute path to your music folder (e.g., `/home/user/Music`).
+3.  **MusicBrainz Taxonomy:** In Step 3, you'll be prompted to import the global genre hierarchy.
+    - **Why?** This enables zero-token AI recommendations with highly accurate genre "hopping".
+    - **Requirement:** Ensure you have **at least 5GB of free space** on your `/tmp` partition before clicking Import.
+4.  **Add Music:** In Settings (gear icon ⚙️), enter the absolute path to your music folder (e.g., `/home/user/Music`).
 
 ---
 
@@ -137,9 +141,9 @@ If the app crashes or isn't behaving as expected, looking at the server logs is 
 
     | Use Case | RAM |
     |---|---|
-    | Minimum (small library, no AI) | 4GB |
-    | Comfortable (medium library, AI features) | 8GB |
-    | Large library (10k+ tracks, AI) | 16GB |
+    | Minimum (small library, basic features) | 4GB |
+    | **Recommended** (standard library + MBDB Taxonomy) | 8GB |
+    | Large library (10k+ tracks, heavy AI usage) | 16GB |
 
 *   **Workaround on low-memory VMs:** Add these to your `.env` to limit resource usage:
     ```bash
@@ -149,4 +153,10 @@ If the app crashes or isn't behaving as expected, looking at the server logs is 
 
 ---
 
+---
+ 
+### MusicBrainz Import Failing ("No space left on device")
+*   **Cause:** The download and extraction process for the genre database requires ~5GB of temporary space on your `/tmp` partition.
+*   **Fix:** Ensure you have enough disk space. You can change your system `/tmp` directory or use `TMPDIR=/some/other/path` when starting the server if necessary.
+ 
 **Need more help?** Check the `README.md` or the [Deployment Docs](file:///home/andreas/VS%20Code/Music%20App/docs/architecture_overview.md).

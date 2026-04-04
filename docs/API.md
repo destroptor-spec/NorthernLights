@@ -143,6 +143,28 @@ Check the status of the PostgreSQL container.
     }
   }
   ```
+ 
+### [POST] `/api/admin/mbdb/import`
+Trigger the MusicBrainz hierarchical taxonomy import.
+- **How to use**: Downloads the latest MusicBrainz dump, extracts (~5GB needed), and populates the genre hierarchy tables. 
+- **Example Response**:
+  ```json
+  { "status": "started" }
+  ```
+ 
+### [GET] `/api/admin/mbdb/status` (SSE)
+Receive real-time progress of the MusicBrainz import.
+- **How to use**: Connect via `new EventSource('/api/admin/mbdb/status?token=<jwt>')`.
+- **Example Message**:
+  ```json
+  {
+    "isImporting": true,
+    "phase": "downloading",
+    "message": "Downloading and extracting MusicBrainz dump...",
+    "progress": 45
+  }
+  ```
+
 
 ---
 
@@ -186,9 +208,9 @@ Receive real-time scan progress.
   ```json
   {
     "isScanning": true,
-    "phase": "metadata",
+    "phase": "taxonomy",
     "currentFile": "artist - title.mp3",
-    "scannedFiles": 150,
+    "scannedFiles": 850,
     "totalFiles": 1000,
     "activeWorkers": 8
   }

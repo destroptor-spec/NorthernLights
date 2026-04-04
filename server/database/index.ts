@@ -211,7 +211,8 @@ export async function initDB(): Promise<Pool> {
                     entity1 AS genre_id, 
                     g.name::TEXT AS genre_name,
                     g.name::TEXT AS path,
-                    1 AS level
+                    1 AS level,
+                    ARRAY[entity1] AS visited
                 FROM l_genre_genre lgg
                 JOIN genre g ON lgg.entity1 = g.id
                 WHERE lgg.entity0 NOT IN (SELECT entity1 FROM l_genre_genre) 
@@ -222,12 +223,15 @@ export async function initDB(): Promise<Pool> {
                     child.entity1, 
                     g.name::TEXT AS genre_name,
                     (parent.path || '.' || g.name)::TEXT,
-                    parent.level + 1
+                    parent.level + 1,
+                    parent.visited || child.entity1
                 FROM l_genre_genre child
                 JOIN genre_tree parent ON child.entity0 = parent.genre_id
                 JOIN genre g ON child.entity1 = g.id
+                WHERE child.entity1 != ALL(parent.visited)  -- cycle protection
+                AND parent.level < 20                        -- max depth guard
             )
-            SELECT * FROM genre_tree;
+            SELECT genre_id, genre_name, path, level FROM genre_tree;
         EXCEPTION 
             WHEN OTHERS THEN 
                 RAISE NOTICE 'Materialized view creation failed (tables might be empty): %', SQLERRM;
