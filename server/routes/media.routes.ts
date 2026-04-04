@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
 import * as mm from 'music-metadata';
-import { isPathAllowed, pathToBuffer, safeAtob } from '../state';
+import { isPathAllowed, pathToBuffer } from '../state';
 
 const router = Router();
 
@@ -23,10 +23,9 @@ router.get('/stream', async (req, res) => {
     return res.status(400).send('Missing path parameter');
   }
 
-  let dbPathStr = rawPath;
-  if (b64Path) {
-    dbPathStr = safeAtob(b64Path);
-  }
+  // pathB64 is the DB base64 path, URL-encoded by the frontend.
+  // decodeURIComponent undoes the URL-encoding; the result is the raw DB base64 string.
+  const dbPathStr = b64Path ? decodeURIComponent(b64Path) : rawPath;
 
   const fileBuf = pathToBuffer(dbPathStr);
 
@@ -125,10 +124,7 @@ router.get('/art', async (req, res) => {
 
   if (!b64Path && !rawPath) return res.status(404).send('Not found');
 
-  let dbPathStr = rawPath;
-  if (b64Path) {
-    dbPathStr = safeAtob(b64Path);
-  }
+  const dbPathStr = b64Path ? decodeURIComponent(b64Path) : rawPath;
 
   const fileBuf = pathToBuffer(dbPathStr);
   if (!fs.existsSync(fileBuf)) {
@@ -142,22 +138,21 @@ router.get('/art', async (req, res) => {
 
   try {
     const utf8Path = fileBuf.toString('utf8');
-
-    const fileBufHack = Buffer.from(fileBuf) as any;
-    fileBufHack.lastIndexOf = (search: string) => utf8Path.lastIndexOf(search);
-    fileBufHack.substring = (start: number, end?: number) => utf8Path.substring(start, end);
-    fileBufHack.toLowerCase = () => utf8Path.toLowerCase();
-
-    const metadata = await mm.parseFile(fileBufHack);
-    const picture = metadata.common.picture && metadata.common.picture[0];
+    const metadata = await mm.parseFile(utf8Path);
+    const picture = metadata.common.picture?.[0];
 
     if (picture) {
-      res.setHeader('Content-Type', picture.format);
+      // Sanitize Content-Type: WMA files can embed malformed format strings
+      // containing non-ASCII/control characters that crash Node's setHeader.
+      const validMime = /^[\x20-\x7E]+$/.test(picture.format) ? picture.format : 'image/jpeg';
+      res.setHeader('Content-Type', validMime);
+      res.setHeader('Cache-Control', 'public, max-age=86400');
       res.send(picture.data);
     } else {
       res.status(404).send('No art found');
     }
-  } catch (err) {
+  } catch (err: any) {
+    console.error('[Art] Error reading embedded art:', err?.message || err);
     res.status(500).send('Error reading metadata');
   }
 });

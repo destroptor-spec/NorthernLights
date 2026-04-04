@@ -83,21 +83,6 @@ export function pathToBuffer(p: string): Buffer {
   return Buffer.from(p, 'base64');
 }
 
-// Reverses the frontend's safeBtoa to recover the exact string sent by the client
-export function safeAtob(b64: string): string {
-  const uriStr = Buffer.from(b64, 'base64').toString('latin1');
-  const bytes: number[] = [];
-  for (let i = 0; i < uriStr.length; i++) {
-    if (uriStr[i] === '%' && i + 2 < uriStr.length) {
-      bytes.push(parseInt(uriStr.substring(i + 1, i + 3), 16));
-      i += 2;
-    } else {
-      bytes.push(uriStr.charCodeAt(i));
-    }
-  }
-  return Buffer.from(bytes).toString('utf8');
-}
-
 // Security: Check if a raw-byte path Buffer resides within an allowed directory.
 import { getDirectories } from './database';
 import path from 'path';

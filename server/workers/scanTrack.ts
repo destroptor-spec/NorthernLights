@@ -21,17 +21,10 @@ process.stdin.on('data', async (chunk: string) => {
     }
 
     try {
-      const filePathBuf = Buffer.from(msg.filePathBase64, 'base64');
-      
-      // We must emulate the exact File Buffer Hack used by the original scanner
-      // because native music-metadata struggles natively resolving extension off buffers.
-      const fileBufHack = Buffer.from(filePathBuf) as any;
-      fileBufHack.lastIndexOf = (search: string) => msg.nameStr.lastIndexOf(search);
-      fileBufHack.substring = (start: number, end?: number) => msg.nameStr.substring(start, end);
-      fileBufHack.toLowerCase = () => msg.nameStr.toLowerCase();
+      const utf8Path = Buffer.from(msg.filePathBase64, 'base64').toString('utf8');
 
-      // Optimize metadata extraction slightly since we only need ID3 tags and not cover images right now
-      const metadata = await mm.parseFile(fileBufHack, { skipCovers: true, skipPostHeaders: true });
+      // parseFile() accepts a plain string path — no Buffer hacks needed.
+      const metadata = await mm.parseFile(utf8Path, { skipCovers: true, skipPostHeaders: true });
       
       process.stdout.write(JSON.stringify({ 
         id: msg.id, 

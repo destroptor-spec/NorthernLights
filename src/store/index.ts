@@ -3,7 +3,7 @@ import { persist, PersistOptions } from 'zustand/middleware';
 import type { TrackInfo } from '../utils/fileSystem';
 import { extractMetadata } from '../utils/fileSystem';
 import { playbackManager, PlaybackState } from '../utils/PlaybackManager';
-import { safeBtoa } from '../utils/safeBtoa';
+
 import { clearExternalCache } from '../utils/externalImagery';
 import type { ToastType } from '../components/Toast';
 
@@ -19,7 +19,8 @@ let playGeneration = 0;
 const buildTrackUrls = (path: string, token: string) => {
   const base = `${window.location.protocol}//${window.location.host}`;
   const tokenParam = token ? `&token=${token}` : '';
-  const pathB64 = safeBtoa(path);
+  // path is already base64 from the DB — just URL-encode for safe transport
+  const pathB64 = encodeURIComponent(path);
   return {
     url: `${base}/api/stream?pathB64=${pathB64}${tokenParam}`,
     artUrl: `${base}/api/art?pathB64=${pathB64}${tokenParam}`,

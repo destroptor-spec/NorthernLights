@@ -660,16 +660,26 @@ router.get('/stats', async (req, res) => {
       return res.json({ directories: [] });
     }
 
-    // Base64-encode the directory path and escape SQL LIKE special chars (% and _).
-    // Strip base64 padding ('=') before using as a LIKE prefix — padding only appears
-    // at the end of a complete encoding and would prevent matching longer child paths
-    // whose base64 naturally doesn't start with the padding-terminated form.
-    // The precise byte-level check below handles exact boundary validation.
-    const toLikePrefix = (dirPath: string) =>
-      Buffer.from(dirPath, 'utf8').toString('base64')
-        .replace(/=+$/, '')   // strip padding before LIKE prefix use
+    // Build a safe base64 LIKE prefix for a directory path.
+    //
+    // Base64 encodes 3 input bytes → 4 output chars. If the directory path is
+    // NOT a multiple of 3 bytes, the last partial group gets encoded differently
+    // depending on what follows it (i.e. the rest of the file path), so the
+    // directory's base64 and a child file's base64 will DIVERGE for any chars
+    // past the last complete 3-byte boundary.
+    //
+    // Fix: only base64-encode the first floor(len/3)×3 bytes. This produces a
+    // prefix that is always a substring of every child file's base64 encoding.
+    // The precise byte-level check below (prefixMatches + atBoundary) handles
+    // the accurate filtering within the pre-filtered rows.
+    const toLikePrefix = (dirPath: string) => {
+      const bytes = Buffer.from(dirPath, 'utf8');
+      const safeLen = Math.floor(bytes.length / 3) * 3; // last complete 3-byte group
+      if (safeLen === 0) return ''; // path < 3 bytes — skip LIKE pre-filter
+      return bytes.slice(0, safeLen).toString('base64') // no padding chars ever
         .replace(/%/g, '\\%')
         .replace(/_/g, '\\_');
+    };
 
     const result = [];
 
@@ -677,16 +687,27 @@ router.get('/stats', async (req, res) => {
       const dirBuf = Buffer.from(dir, 'utf8');
       const likePrefix = toLikePrefix(dir);
 
-      // SQL pre-filter: only rows whose base64 path starts with this directory's base64
-      const tracksRes = await db.query(`
-        SELECT t.path,
-               t.artist IS NOT NULL AND t.artist != '' AS has_artist,
-               t.album IS NOT NULL AND t.album != '' AS has_album,
-               tf.track_id IS NOT NULL AS has_features
-        FROM tracks t
-        LEFT JOIN track_features tf ON t.id = tf.track_id
-        WHERE t.path LIKE $1 || '%'
-      `, [likePrefix]);
+      // SQL pre-filter using the safe base64 prefix (guaranteed to align to a
+      // 3-byte base64 group boundary, so it reliably matches all child paths).
+      // Falls back to a full scan when the prefix is too short to be useful.
+      const tracksRes = likePrefix
+        ? await db.query(`
+            SELECT t.path,
+                   t.artist IS NOT NULL AND t.artist != '' AS has_artist,
+                   t.album IS NOT NULL AND t.album != '' AS has_album,
+                   tf.track_id IS NOT NULL AS has_features
+            FROM tracks t
+            LEFT JOIN track_features tf ON t.id = tf.track_id
+            WHERE t.path LIKE $1 || '%'
+          `, [likePrefix])
+        : await db.query(`
+            SELECT t.path,
+                   t.artist IS NOT NULL AND t.artist != '' AS has_artist,
+                   t.album IS NOT NULL AND t.album != '' AS has_album,
+                   tf.track_id IS NOT NULL AS has_features
+            FROM tracks t
+            LEFT JOIN track_features tf ON t.id = tf.track_id
+          `);
 
       let total = 0;
       let withMetadata = 0;

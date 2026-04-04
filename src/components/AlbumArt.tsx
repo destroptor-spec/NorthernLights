@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { fetchAlbumImage } from '../utils/externalImagery';
 import { Disc3 } from 'lucide-react';
 import { useInView } from '../hooks/useInView';
@@ -12,47 +12,66 @@ interface AlbumArtProps {
 }
 
 const AlbumArt: React.FC<AlbumArtProps> = ({ artUrl, artist, album, size = 300, className = '' }) => {
-  const [imageError, setImageError] = useState(false);
+  const [localError, setLocalError] = useState(false);
   const [fetchedArtUrl, setFetchedArtUrl] = useState<string | undefined>();
+  const [externalFailed, setExternalFailed] = useState(false);
+  const fetchAttempted = useRef(false);
   const [ref, inView] = useInView();
 
-  // Reset error state when artUrl changes so new art is attempted
+  // Reset all state when artUrl changes so fresh art is attempted
   useEffect(() => {
-    setImageError(false);
+    setLocalError(false);
     setFetchedArtUrl(undefined);
+    setExternalFailed(false);
+    fetchAttempted.current = false;
   }, [artUrl]);
 
+  // Fetch external art when local art is missing or errored (once only)
   useEffect(() => {
     if (!inView) return;
-    // If local artUrl is missing or errored, try fetching from external
-    if ((!artUrl || imageError) && album && artist) {
-        let mounted = true;
-        fetchAlbumImage(album, artist)
-            .then(url => {
-                if (mounted && url) {
-                    setFetchedArtUrl(url);
-                    setImageError(false); // Reset error if we got a fetched URL
-                }
-            })
-            .catch(() => {});
-        return () => { mounted = false; };
+    if (fetchAttempted.current) return;
+    if ((!artUrl || localError) && album && artist) {
+      fetchAttempted.current = true;
+      let mounted = true;
+      fetchAlbumImage(album, artist)
+        .then(url => {
+          if (mounted && url) {
+            setFetchedArtUrl(url);
+          }
+        })
+        .catch(() => {});
+      return () => { mounted = false; };
     }
-  }, [inView, artUrl, imageError, album, artist]);
+  }, [inView, artUrl, localError, album, artist]);
 
-  const activeUrl = fetchedArtUrl || artUrl;
-  const showImage = activeUrl && !imageError;
+  // Determine which URL to show: local first, external fallback
+  let activeUrl: string | undefined;
+  if (artUrl && !localError) {
+    activeUrl = artUrl;
+  } else if (fetchedArtUrl && !externalFailed) {
+    activeUrl = fetchedArtUrl;
+  }
+
+  const handleError = () => {
+    if (activeUrl === artUrl) {
+      setLocalError(true);
+    } else {
+      // External image also failed — give up, show fallback icon
+      setExternalFailed(true);
+    }
+  };
 
   return (
     <div
       ref={ref}
       className={`relative overflow-hidden bg-[var(--glass-bg)] w-full h-full ${className}`}
     >
-      {showImage ? (
+      {activeUrl ? (
         <img
           src={activeUrl}
           alt={artist ? `${artist} album artwork` : 'Album artwork'}
           className="w-full h-full object-cover"
-          onError={() => setImageError(true)}
+          onError={handleError}
           loading="lazy"
         />
       ) : (
