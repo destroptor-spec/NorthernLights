@@ -372,10 +372,42 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     }, []);
 
     const [activeTab, setActiveTab] = useState('My Account');
-    const [dbTab, setDbTab] = useState<'stats' | 'maintenance'>('stats');
+    const [dbTab, setDbTab] = useState<'stats' | 'maintenance' | 'mbdb'>('stats');
     const [playbackTab, setPlaybackTab] = useState<'infinity' | 'llm'>('infinity');
     const [libTab, setLibTab] = useState<'folders' | 'lastfm' | 'genius' | 'musicbrainz'>('folders');
     const [lastFmConfigured, setLastFmConfigured] = useState(false);
+    
+    const [mbdbProgress, setMbdbProgress] = useState<{ isImporting: boolean, phase: string, message: string }>({ isImporting: false, phase: 'idle', message: '' });
+
+    React.useEffect(() => {
+        if (dbTab === 'mbdb' && activeTab === 'Database' && authToken) {
+            const es = new EventSource('/api/admin/mbdb/status?token=' + authToken);
+            es.onmessage = (e) => {
+                try {
+                    const data = JSON.parse(e.data);
+                    setMbdbProgress(data);
+                } catch {}
+            };
+            return () => es.close();
+        }
+    }, [dbTab, activeTab, authToken]);
+
+    const handleMbdbImport = async () => {
+        setConfirmDialog({
+            title: 'Start MusicBrainz Import',
+            message: 'This will stream the MusicBrainz database dump (~3.5GB) to extract taxonomy. This process can take several minutes depending on network speed.',
+            confirmLabel: 'Start Import',
+            onConfirm: async () => {
+                setConfirmDialog(null);
+                try {
+                    const res = await fetch('/api/admin/mbdb/import', { method: 'POST', headers: getAuthHeader() });
+                    if (!res.ok) throw new Error(await res.text());
+                } catch(e) {
+                    showToast('Failed to start import', 'error');
+                }
+            }
+        });
+    };
 
     const isAdmin = currentUser?.role === 'admin';
 
@@ -1265,6 +1297,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                             >
                                                 <Wrench size={16} className="inline mr-1 relative -top-[1px]" /> Maintenance
                                             </button>
+                                            <button
+                                                onClick={() => setDbTab('mbdb')}
+                                                className={`btn-tab ${dbTab === 'mbdb' ? 'active' : ''}`}
+                                            >
+                                                <Globe size={16} className="inline mr-1 relative -top-[1px]" /> MBDB
+                                            </button>
                                         </div>
 
                                         {dbTab === 'stats' && (
@@ -1291,6 +1329,45 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                     >
                                                         <Trash2 size={16} /> Clean Orphaned Playlists
                                                     </button>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {dbTab === 'mbdb' && (
+                                            <div className="space-y-4">
+                                                <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--glass-border)] p-4">
+                                                    <div className="flex justify-between items-center mb-4">
+                                                        <div>
+                                                            <h4 className="text-lg font-semibold text-[var(--color-text-primary)]">MusicBrainz Taxonomy Database</h4>
+                                                            <p className="text-sm text-[var(--color-text-muted)]">Import the latest comprehensive genre taxonomy straight from the official MusicBrainz database dumps. Enables high-accuracy, zero-token playlist navigation.</p>
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    {!mbdbProgress.isImporting ? (
+                                                        <div className="flex flex-col gap-3">
+                                                            {mbdbProgress.phase === 'complete' && (
+                                                                <div className="text-green-500 font-medium text-sm flex items-center gap-2">✓ Last Import Successful. Tree paths cached.</div>
+                                                            )}
+                                                            {mbdbProgress.phase === 'error' && (
+                                                                <div className="text-red-500 font-medium text-sm flex items-center gap-2">⚠️ {mbdbProgress.message}</div>
+                                                            )}
+                                                            <button 
+                                                                onClick={handleMbdbImport}
+                                                                className="btn btn-primary self-start"
+                                                            >
+                                                                <Database size={16} /> Sync MBDB Now
+                                                            </button>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="border border-[var(--glass-border)] rounded-lg p-4 bg-black/5 dark:bg-white/5 relative overflow-hidden">
+                                                            <div className="absolute top-0 left-0 h-1 bg-[var(--color-primary)] animate-pulse w-full"></div>
+                                                            <div className="flex items-center gap-3 mb-2">
+                                                                <div className="w-5 h-5 border-2 border-[var(--color-primary)]/30 border-t-[var(--color-primary)] rounded-full animate-spin flex-shrink-0" />
+                                                                <span className="font-semibold text-[var(--color-text-primary)] capitalize">{mbdbProgress.phase}</span>
+                                                            </div>
+                                                            <p className="text-sm text-[var(--color-text-secondary)] break-all">{mbdbProgress.message}</p>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </div>
                                         )}

@@ -104,3 +104,21 @@ export async function isPathAllowed(requestedPathBuf: Buffer): Promise<boolean> 
   }
   return false;
 }
+
+// ─── MBDB State ────────────────────────────────────────────────────────
+export const mbdbStatus = {
+  isImporting: false,
+  phase: 'idle', // 'idle' | 'downloading' | 'extracting' | 'inserting' | 'complete' | 'error'
+  progress: 0,
+  message: '',
+};
+
+export const mbdbClients = new Set<Response>();
+
+export function broadcastMbdbStatus() {
+  const payload = `data: ${JSON.stringify(mbdbStatus)}\n\n`;
+  for (const client of mbdbClients) {
+    client.write(payload);
+  }
+}
+

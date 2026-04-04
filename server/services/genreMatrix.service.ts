@@ -1,37 +1,23 @@
+// server/services/genreMatrix.service.ts
 import { 
   getAllTracks, 
-  getMacroMatrix, 
-  updateMacroMatrix, 
   getSubGenreMappings, 
   upsertSubGenreMapping,
+  clearSubGenreMappings,
   getMacroGenreFromKNN,
   setSystemSetting,
-  clearSubGenreMappings
- } from '../database';
-import { categorizeSubGenres, MACRO_GENRES } from './llm.service';
+  initDB
+} from '../database';
+import { categorizeSubGenres } from './llm.service';
 
 export class GenreMatrixService {
-  private macroMatrix: Record<string, Record<string, number>> | null = null;
   private subGenreMap: Record<string, string> | null = null;
   private isGenerating = false;
 
   async init() {
     this.subGenreMap = await getSubGenreMappings();
-    this.macroMatrix = await getMacroMatrix();
-    
-    // If matrix is empty OR doesn't contain all new genres, re-seed it
-    const existingGenres = this.macroMatrix ? Object.keys(this.macroMatrix) : [];
-    const isMissingGenres = MACRO_GENRES.some(g => !existingGenres.includes(g));
 
-    if (!this.macroMatrix || isMissingGenres) {
-      console.log('[GenreMatrix] Initializing/Expanding macro-genre matrix seed...');
-      const seed = this.generateExpandedSeed();
-      await updateMacroMatrix(seed);
-      this.macroMatrix = seed;
-    }
-
-    // Sanitize progress on startup (unlock UI if server was killed during run)
-    const { initDB } = await import('../database');
+    // Sanitize progress on startup
     const db = await initDB();
     const progRes = await db.query("SELECT value FROM system_settings WHERE key = 'genreMatrixProgress'");
     const progress = progRes.rows[0]?.value ? JSON.parse(progRes.rows[0].value) : null;
@@ -42,85 +28,53 @@ export class GenreMatrixService {
     }
   }
 
-  private generateExpandedSeed(): Record<string, Record<string, number>> {
-    const seed: Record<string, Record<string, number>> = {};
-    
-    // Families for logical hop-cost defaulting
-    const families = {
-      electronic: ['electronic', 'edm/dance', 'house', 'techno', 'drum & bass', 'dubstep', 'trance', 'uk garage', 'breakbeat', 'electro', 'hardstyle/hardcore', 'downtempo'],
-      soulful: ['r&b', 'soul/funk', 'gospel/religious', 'jazz', 'blues'],
-      rock: ['rock', 'indie/alternative', 'metal', 'punk', 'experimental/avant-garde'],
-      global: ['latin', 'afrobeats/african', 'k-pop/j-pop', 'world/traditional', 'reggae/dancehall'],
-      root: ['folk/acoustic', 'country'],
-      pop: ['pop'],
-      utility: ['classical', 'soundtrack/score', 'spoken word/audio', 'children\'s music', 'holiday/seasonal', 'comedy/novelty', 'easy listening/lounge']
-    };
-
-    const findFamily = (g: string) => Object.entries(families).find(([_, list]) => list.includes(g))?.[0] || 'other';
-
-    for (const row of MACRO_GENRES) {
-      seed[row] = {};
-      const familyA = findFamily(row);
-      
-      for (const col of MACRO_GENRES) {
-        if (row === col) continue;
-        const familyB = findFamily(col);
-        
-        let cost = 0.5; // Default "Unknown" distance
-
-        if (familyA === familyB) {
-          cost = 0.15; // Same family (e.g. House -> Techno)
-        } else if (
-           (familyA === 'electronic' && familyB === 'pop') || (familyA === 'pop' && familyB === 'electronic') ||
-           (familyA === 'soulful' && familyB === 'pop') || (familyA === 'pop' && familyB === 'soulful') ||
-           (familyA === 'rock' && familyB === 'pop') || (familyA === 'pop' && familyB === 'rock')
-        ) {
-          cost = 0.3; // High-affinity neighbors
-        } else if (
-           (familyA === 'rock' && familyB === 'metal') || (familyA === 'metal' && familyB === 'rock') ||
-           (familyA === 'jazz' && familyB === 'classical') || (familyA === 'classical' && familyB === 'jazz')
-        ) {
-          cost = 0.25; // Close cousins across families
-        } else if (
-           (familyA === 'utility' || familyB === 'utility')
-        ) {
-          cost = 0.7; // Utility genres are generally distant from main flows
-        }
-
-        seed[row][col] = cost;
-      }
-    }
-    return seed;
+  private sanitize(s: string): string {
+    return s.toLowerCase().trim().replace(/[^\w\s-]/g, '');
   }
 
-  private sanitizeGenre(g: string): string {
-    return g.toLowerCase().trim().replace(/[^\w\s-]/g, '');
-  }
-
+  // Calculate Hop Cost using Lowest Common Ancestor string splitting.
+  // Paths are stored in dot-notation like `Electronic.House.Deep House`
   getHopCost(genreA: string, genreB: string): number {
-    const a = this.sanitizeGenre(genreA || '');
-    const b = this.sanitizeGenre(genreB || '');
+    const a = this.sanitize(genreA || '');
+    const b = this.sanitize(genreB || '');
     
     if (a === b) return 0.0;
     
-    const macroA = this.subGenreMap?.[a] || 'unknown';
-    const macroB = this.subGenreMap?.[b] || 'unknown';
+    const pathA = this.subGenreMap?.[a];
+    const pathB = this.subGenreMap?.[b];
     
-    if (macroA === 'unknown' || macroB === 'unknown') {
-      return 0.7; // high penalty for missing/unknown genres
-    }
-    if (macroA === macroB) {
+    // If we have an exact match in subGenreMap
+    if (pathA && pathA === pathB) {
       return 0.0;
     }
 
-    const cost = this.macroMatrix?.[macroA]?.[macroB] ?? this.macroMatrix?.[macroB]?.[macroA];
-    if (cost !== undefined) return cost;
+    if (!pathA || !pathB) {
+      return 0.7; // High penalty for unknown genres
+    }
 
-    // Handle the "all" default in the seed for spoken word/other
-    if (this.macroMatrix?.[macroA]?.['all'] !== undefined) return this.macroMatrix[macroA]['all'];
-    if (this.macroMatrix?.[macroB]?.['all'] !== undefined) return this.macroMatrix[macroB]['all'];
+    const partsA = pathA.split('.');
+    const partsB = pathB.split('.');
+    
+    const lenA = Math.max(1, partsA.length);
+    const lenB = Math.max(1, partsB.length);
+    let lcaDepth = 0;
 
-    return 0.7; // default fallback
+    const minDepth = Math.min(lenA, lenB);
+    for (let i = 0; i < minDepth; i++) {
+        if (partsA[i].toLowerCase() === partsB[i].toLowerCase()) {
+            lcaDepth++;
+        } else {
+            break;
+        }
+    }
+
+    // Distance = hops up from A to LCA + hops down from LCA to B
+    const hops = (lenA - lcaDepth) + (lenB - lcaDepth);
+    
+    // Each hop adds 0.15 to the cost. Cap at 0.8 to allow for serendipity.
+    const cost = Math.min(0.8, hops * 0.15);
+    
+    return cost;
   }
 
   async runDiffAndGenerate() {
@@ -134,57 +88,110 @@ export class GenreMatrixService {
       const itemsToCategorize: { subGenre?: string, artist?: string, originalTag: string }[] = [];
       const newMappings: Record<string, string> = {};
 
+      const db = await initDB();
+
       for (const track of tracks) {
-        const subGenre = this.sanitizeGenre(track.genre || '');
+        const subGenre = this.sanitize(track.genre || '');
         if (!subGenre) {
           // Tier 1 & 2: Missing Genre Fallback
           // Try artist deduction first
-          if (track.artist && !mappings[this.sanitizeGenre(track.artist)]) {
-            itemsToCategorize.push({ artist: track.artist, originalTag: track.artist });
+          if (track.artist && !mappings[this.sanitize(track.artist)] && !newMappings[this.sanitize(track.artist)]) {
+            itemsToCategorize.push({ artist: track.artist, originalTag: this.sanitize(track.artist) });
           } else if (!track.artist) {
             // Tier 2: KNN
-            const res = await import('../database');
-            const tfRes = await (await res.initDB()).query('SELECT acoustic_vector FROM track_features WHERE track_id = $1', [track.id]);
+            const tfRes = await db.query('SELECT acoustic_vector FROM track_features WHERE track_id = $1', [track.id]);
             if (tfRes.rows.length > 0) {
               const vector = JSON.parse(tfRes.rows[0].acoustic_vector);
               const knnMacro = await getMacroGenreFromKNN(vector);
               if (knnMacro) {
-                // We'll use a special "path" key for KNN results if needed, or just skip LLM
-                // For now, let's just use the track ID as a placeholder to store it
-                newMappings[`knn_${track.id}`] = knnMacro;
+                  // Fallback for KNN: Don't globally cache this as a general mapping,
+                  // just return it dynamically or maybe save it for UI purposes later.
+                  // For now, this just passes over it since we are looking for topological subgenres anyway.
+                  // We removed the `newMappings[\`knn_\${track.id}\`]` pollution here.
               }
             }
           }
           continue;
         }
 
-        if (!mappings[subGenre]) {
-          itemsToCategorize.push({ subGenre, originalTag: subGenre });
+        if (!mappings[subGenre] && !newMappings[subGenre]) {
+            // STEP 1: Direct SQL Match against MBDB Taxonomy
+            const res = await db.query(
+                `SELECT path FROM genre_tree_paths 
+                 WHERE LOWER(genre_name) = $1 OR genre_id IN (
+                    SELECT genre FROM genre_alias WHERE LOWER(name) = $1
+                 ) LIMIT 1`, 
+                [subGenre]
+            );
+            if (res.rows.length > 0) {
+                const path = res.rows[0].path;
+                await upsertSubGenreMapping(subGenre, path);
+                newMappings[subGenre] = path;
+                mappings[subGenre] = path; // Mutate mapping to prevent re-checking
+            } else {
+                itemsToCategorize.push({ subGenre, originalTag: subGenre });
+                // We add a dummy map to prevent pushing duplicate items into itemsToCategorize
+                newMappings[subGenre] = 'pending';
+            }
         }
+      }
+
+      // Filter out 'pending' from newMappings before reporting length
+      for (const key of Object.keys(newMappings)) {
+         if (newMappings[key] === 'pending') delete newMappings[key];
       }
 
       if (itemsToCategorize.length === 0) {
         await setSystemSetting('genreMatrixLastRun', Date.now());
-        await setSystemSetting('genreMatrixLastResult', 'All genres already mapped.');
+        await setSystemSetting('genreMatrixLastResult', 'All genres already mapped natively.');
         return;
       }
 
-      // Batch LLM calls (50 per prompt)
-      const BATCH_SIZE = 50;
+      // STEP 2: LLM Batch Processing
+      // Batch size reduced to 20 to ensure strict JSON output and prevent context overflow
+      const BATCH_SIZE = 20;
       const totalBatches = Math.ceil(itemsToCategorize.length / BATCH_SIZE);
+      let matchCount = Object.keys(newMappings).length; // Keep track of DB matches + LLM matches
+      let failureCount = 0;
+
       for (let i = 0; i < itemsToCategorize.length; i += BATCH_SIZE) {
         const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-        const progressMsg = `Categorizing batch ${batchNum}/${totalBatches}...`;
+        const progressMsg = `Categorizing batch ${batchNum}/${totalBatches} with LLM...`;
         await setSystemSetting('genreMatrixProgress', progressMsg);
         
         const batch = itemsToCategorize.slice(i, i + BATCH_SIZE);
         console.log(`[GenreMatrix] ${progressMsg}`);
         
-        const results = await categorizeSubGenres(batch);
-        for (const [key, macro] of Object.entries(results)) {
-           if (MACRO_GENRES.includes(macro)) {
-             await upsertSubGenreMapping(key, macro);
-             newMappings[key] = macro;
+        const results = await categorizeSubGenres(batch.map(b => ({ subGenre: b.subGenre, artist: b.artist })));
+        
+        for (const input of batch) {
+           const generatedGenres = results[input.originalTag];
+           let found = false;
+
+           if (generatedGenres && Array.isArray(generatedGenres)) {
+               for (const g of generatedGenres) {
+                   const cleanG = this.sanitize(g);
+                   const res = await db.query(
+                        `SELECT path FROM genre_tree_paths 
+                         WHERE LOWER(genre_name) = $1 OR genre_id IN (
+                            SELECT genre FROM genre_alias WHERE LOWER(name) = $1
+                         ) LIMIT 1`, 
+                        [cleanG]
+                   );
+                   if (res.rows.length > 0) {
+                       const path = res.rows[0].path;
+                       await upsertSubGenreMapping(input.originalTag, path);
+                       newMappings[input.originalTag] = path;
+                       matchCount++;
+                       found = true;
+                       break; 
+                   }
+               }
+           }
+
+           if (!found) {
+               console.warn(`[GenreMatrix] LLM Categorization Failed for "${input.originalTag}". Output: ${JSON.stringify(generatedGenres)}`);
+               failureCount++;
            }
         }
       }
@@ -192,7 +199,7 @@ export class GenreMatrixService {
       // Final refresh
       this.subGenreMap = await getSubGenreMappings();
       await setSystemSetting('genreMatrixLastRun', Date.now());
-      await setSystemSetting('genreMatrixLastResult', `Categorized ${Object.keys(newMappings).length} new mappings.`);
+      await setSystemSetting('genreMatrixLastResult', `Categorized ${matchCount} total (${matchCount - Object.keys(newMappings).length + failureCount} LLM requests. Failures: ${failureCount}).`);
       await setSystemSetting('genreMatrixProgress', 'Complete');
     } catch (e: any) {
       console.error('Failed to run genre matrix categorization:', e);
@@ -205,18 +212,15 @@ export class GenreMatrixService {
 
   async remapAll() {
     if (this.isGenerating) return;
-    console.log('[GenreMatrix] FORCED REMAP: Clearing all existing mappings and re-seeding matrix for 39 genres...');
+    console.log('[GenreMatrix] FORCED REMAP: Clearing all existing mappings and re-running pipeline...');
     
     // 1. Clear DB
     await clearSubGenreMappings();
     
-    // 2. Clear local cache and re-init (re-seeds matrix if MACRO_GENRES changed)
+    // 2. Clear local cache
     this.subGenreMap = {};
-    this.macroMatrix = null;
-    await this.init();
     
     // 3. Trigger full categorization
-    // Non-blocking call to runDiffAndGenerate()
     this.runDiffAndGenerate();
   }
 }

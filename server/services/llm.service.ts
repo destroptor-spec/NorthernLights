@@ -55,8 +55,6 @@ export async function generateHubConcepts(
 
   const conceptCount = context.count ?? 3;
 
-  const macroGenreList = MACRO_GENRES.join(', ');
-
   const prompt = `
 You are a Creative Director for a music application.
 The user's current time is ${context.timeOfDay}. 
@@ -65,7 +63,7 @@ A brief summary of their recent listening history: ${context.historySummary}.
 Using this context, generate ${conceptCount} Hub playlist concepts. Each concept must output optimal acoustic target values between 0.0 and 1.0.
 IMPORTANT: Each concept must be DIVERSE from the others. Vary the energy, mood, and acoustic profile significantly between concepts. Do not create similar-sounding playlists.
 The vector array must precisely match this order: [energy, brightness, percussiveness, chromagram, instrumentalness, acousticness, danceability].
-You must also include a "target_genre" field: a single lowercase genre keyword chosen from this list: ${macroGenreList}. Pick the genre that best matches the playlist's mood and concept.
+You must also include "target_genres": an array of 2-3 standard broad genre keywords (e.g., "electronic", "rock", "pop", "jazz", "hip-hop") that best match the playlist's mood and concept.
 Only output valid JSON matching this schema:
 {
   "hub_collections": [
@@ -73,7 +71,7 @@ Only output valid JSON matching this schema:
       "section": "Time-of-Day",
       "title": "Deep Work Coding",
       "description": "Driving electronic beats with zero vocals.",
-      "target_genre": "electronic",
+      "target_genres": ["electronic", "ambient", "techno"],
       "target_vector": [0.6, 0.3, 0.8, 0.5, 0.9, 0.1, 0.8] 
     }
   ]
@@ -101,18 +99,7 @@ Only output valid JSON matching this schema:
   }
 }
 
-export const MACRO_GENRES = [
-  'pop', 'rock', 'hip-hop', 'r&b', 'electronic', 'edm/dance', 'house', 'techno', 
-  'drum & bass', 'dubstep', 'trance', 'uk garage', 'breakbeat', 'electro', 
-  'hardstyle/hardcore', 'downtempo', 'metal', 'punk', 'indie/alternative', 
-  'jazz', 'blues', 'classical', 'folk/acoustic', 'country', 'reggae/dancehall', 
-  'latin', 'soul/funk', 'ambient/new age', 'world/traditional', 'spoken word/audio', 
-  'gospel/religious', 'soundtrack/score', 'children\'s music', 'holiday/seasonal', 
-  'comedy/novelty', 'easy listening/lounge', 'experimental/avant-garde', 
-  'afrobeats/african', 'k-pop/j-pop'
-];
-
-export async function categorizeSubGenres(inputs: { subGenre?: string, artist?: string }[]): Promise<Record<string, string>> {
+export async function categorizeSubGenres(inputs: { subGenre?: string, artist?: string }[]): Promise<Record<string, string[]>> {
   const { apiKey, baseUrl, modelName } = await getLlmConfig();
   if (baseUrl.includes('api.openai.com') && apiKey === 'dummy-key') return {};
 
@@ -122,25 +109,21 @@ export async function categorizeSubGenres(inputs: { subGenre?: string, artist?: 
   });
 
   const prompt = `
-Act as an expert musicologist. I am building a genre ontology. 
-Objective: Map specific sub-genres or artists to one of the 20 approved Macro-Genres.
-
-Approved Macro-Genres:
-${MACRO_GENRES.join(', ')}
+Act as an expert musicologist. I am building a genre ontology and need to map specific artists or obscure sub-genres to standard top-level genres.
 
 Inputs to categorize:
 ${inputs.map((inp, i) => `${i + 1}. ${inp.subGenre ? `Sub-Genre: ${inp.subGenre}` : `Artist: ${inp.artist}`}`).join('\n')}
 
 Rules:
-1. Return ONLY a JSON object where each key is the original input string (the sub-genre or artist name) and the value is the single MOST appropriate Macro-Genre from the list above.
-2. If an input is ambiguous, use your best musicological judgment.
-3. If completely unknown, use "spoken word/other".
+1. Return ONLY a JSON object where each key is the original input string (the sub-genre or artist name).
+2. The value for each key MUST be an array of EXACTLY 2 OR 3 standard top-level genre keywords (e.g., "electronic", "alternative rock", "jazz", "hip-hop", "contemporary r&b") that best encompass the input.
+3. Order the array from most relevant to least relevant.
 
-Return ONLY valid JSON:
+Return ONLY valid JSON exactly matching this schema:
 {
   "mappings": {
-    "swedish melodic death metal": "metal",
-    "daft punk": "electronic"
+    "swedish melodic death metal": ["metal", "death metal", "rock"],
+    "daft punk": ["electronic", "house", "pop"]
   }
 }
 `;
@@ -149,19 +132,37 @@ Return ONLY valid JSON:
     const response = await openai.chat.completions.create({
       model: modelName,
       messages: [{ role: 'user', content: prompt }]
-    });
+    }, { timeout: 45000 }); // 45 second timeout
 
     const content = response.choices[0].message.content;
-    if (!content) return {};
+    if (!content) {
+      console.warn('[LLM Categorization] Empty response received from OpenAI.');
+      return {};
+    }
 
     const parsed = extractJson(content);
     if (!parsed || !parsed.mappings) {
-      console.warn('[LLM Genre] Could not extract mappings from response:', content.slice(0, 200));
-      return {};
+       console.warn('[LLM Categorization] Invalid JSON returned from LLM. Expected {"mappings": {}}', content.slice(0, 200));
+       return {};
     }
-    return parsed.mappings;
-  } catch (err) {
-    console.error('LLM Genre Categorization error', err);
+
+    // Validate that values are arrays of 2-3 strings
+    const validatedMappings: Record<string, string[]> = {};
+    for (const [key, val] of Object.entries(parsed.mappings)) {
+      if (Array.isArray(val) && val.length > 0) {
+        validatedMappings[key] = val.map(String).slice(0, 3);
+      } else {
+        console.warn(`[LLM Categorization] Dropped key "${key}" due to invalid mapping value:`, val);
+      }
+    }
+
+    return validatedMappings;
+  } catch (e: any) {
+    if (e.name === 'AbortError' || e.message?.includes('timeout')) {
+      console.error('[LLM Categorization] Request timed out explicitly.');
+    } else {
+      console.error('[LLM Categorization] Fetching categorization failed', e.message);
+    }
     return {};
   }
 }
@@ -173,8 +174,6 @@ export async function generateCustomPlaylist(userPrompt: string): Promise<HubCol
   if (baseUrl.includes('api.openai.com') && apiKey === 'dummy-key') return null;
 
   const openai = new OpenAI({ baseURL: baseUrl, apiKey });
-
-  const macroGenreList = MACRO_GENRES.join(', ');
 
   const prompt = `
 You are a Creative Director for a music application.
@@ -193,14 +192,14 @@ The vector array is a 7-dimensional fingerprint: [energy, brightness, percussive
 Choose values that PRECISELY match the mood of the user's description. 
 For example: "chill" or "wind-down" → low energy (0.1-0.3), high acousticness (0.6-0.9), low percussiveness (0.1-0.3), low danceability (0.1-0.3).
 
-You must also include a "target_genre" field: a single lowercase genre keyword chosen from this list: ${macroGenreList}. Pick the genre that best matches the user's request.
+You must also include "target_genres": an array of 2-3 standard broad genre keywords that best match the user's request.
 
 Only output valid JSON matching this schema exactly:
 {
   "section": "Custom",
-  "title": "A short evocative playlist title",
-  "description": "One sentence describing the vibe",
-  "target_genre": "pop",
+  "title": "A short, catchy title for the playlist",
+  "description": "A very short description matching the mood.",
+  "target_genres": ["rock", "indie", "alternative"],
   "target_vector": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
 }
 `;

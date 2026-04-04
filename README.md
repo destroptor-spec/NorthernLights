@@ -37,7 +37,8 @@ pm2 start "npx tsx server/index.ts" --name northernlights
 - **UUID Entity System**: Artists, albums, and genres each have unique UUIDs with proper database tables. Multi-artist tracks (e.g. "Skrillex ft. Metallica") are split into individual artist entities, each with their own page showing where they appear.
 - **Smart Library Scanning**: Recursive directory scanning with concurrent metadata extraction via `music-metadata`. Automatically detects and persists artist, album, genre, and release type (Album/EP/Single/Compilation) from ID3/Vorbis tags.
 - **Gapless Playback**: Custom `PlaybackManager` supporting HTTP range requests to seamlessly stream high-quality audio files from your server to your browser.
-- **AI-Driven Playlists & Vector Recommendations**: Connect to local or cloud LLMs (like LM Studio or OpenAI) to generate hyper-personalized playlists via natural language. Uses rigorous **20-Dimensional PGVector** similarity searches (7D acoustic semantic + 13D Timbre MFCC) and **Genre Hop Cost adjacency matrices** for natural sonic progression. Fully tunable — adjust playlist diversity, genre coherence, track count, and number of playlists per cycle in Settings.
+- **AI-Driven Playlists & Vector Recommendations**: Connect to local or cloud LLMs (like LM Studio or OpenAI) to generate hyper-personalized playlists via natural language. Uses rigorous **20-Dimensional PGVector** similarity searches (7D acoustic semantic + 13D Timbre MFCC) and a **Dynamic Hierarchical Genre Taxonomy** imported from **MusicBrainz**. Hierarchical "Hop-Costs" are calculated using Lowest Common Ancestor (LCA) tree traversal for natural sonic progression. Fully tunable — adjust playlist diversity, genre coherence, track count, and number of playlists per cycle in Settings.
+- **MusicBrainz Integration**: Native support for importing the official MusicBrainz genre ontology (~2,000+ genres). Includes a 3-step categorization pipeline (Direct SQL Match, LLM Batch Processing, and KNN/Artist Fallback) to map your library's tags to a standardized global hierarchy with zero token cost for core traversal.
 - **Playlist Management**: Create and delete playlists manually or via AI generation. Drag-and-drop track reordering with persistent queue state. **Pin** AI-generated playlists to protect them from auto-cleanup.
 - **Global Search**: Instant search across artists, albums, and tracks with clickable results that navigate directly to entity pages.
 - **Advanced Play Queue & Context Menus**: Drag-and-drop track reordering, global "Play Next" and "Add to Playlist" context menus anywhere a track is visible.
@@ -63,6 +64,7 @@ pm2 start "npx tsx server/index.ts" --name northernlights
 - Node.js & Express
 - PostgreSQL (`pg` + `pgvector` via Podman/Docker)
 - music-metadata (Tag parsing)
+- MusicBrainz (Hierarchical Taxonomy)
 - Basic Auth Middleware (Secure streaming)
 
 ## Supported Formats

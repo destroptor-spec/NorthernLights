@@ -92,6 +92,22 @@ else
   $SUDO apt-get install -y ffmpeg
 fi
 
+# curl (required by MBDB service)
+if has curl; then
+  ok "curl already installed"
+else
+  info "Installing curl..."
+  $SUDO apt-get install -y curl
+fi
+
+# bzip2 (required by MBDB service)
+if has bzip2; then
+  ok "bzip2 already installed"
+else
+  info "Installing bzip2..."
+  $SUDO apt-get install -y bzip2
+fi
+
 # Container runtime (prefer podman, fallback to docker)
 RUNTIME=""
 if has podman; then
@@ -202,8 +218,8 @@ fi
 
 echo ""
 echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║        NorthernLights (V16) installed successfully!            ║${NC}"
-echo -e "${GREEN}║  Features: AI playlists • 20D audio analysis • Worker threads  ║${NC}"
+echo -e "${GREEN}║        NorthernLights (V18) installed successfully!            ║${NC}"
+echo -e "${GREEN}║  Features: AI playlists • 20D analysis • Genre Taxonomy        ║${NC}"
 echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -218,7 +234,7 @@ echo -e "  1. Open the URL above in your browser"
 echo -e "  2. Click ${CYAN}Create Database${NC} to start PostgreSQL"
 echo -e "  3. Follow the Setup Wizard to create your admin account"
 echo -e "  4. Map your music folders in Settings → Library"
-echo -e "  5. The three-phase scanner will: walk → metadata → audio analysis"
+echo -e "  5. The four-phase scanner will: walk → metadata → analysis → taxonomy"
 echo ""
 echo -e "  ${YELLOW}To update later:${NC}"
 echo -e "  ${CYAN}cd ~/NorthernLights && git pull && npm install && npm run build && pm2 restart northernlights${NC}"

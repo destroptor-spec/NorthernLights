@@ -39,24 +39,39 @@ async function runLlmHubRegeneration(userId: string, opts: { force?: boolean } =
   const llmPlaylistCountRaw = await getUserSetting(userId, 'llmPlaylistCount');
   const llmPlaylistCount = llmPlaylistCountRaw ? Number(llmPlaylistCountRaw) : 3;
 
-  const concepts: HubCollection[] = await generateHubConcepts({ timeOfDay, historySummary, count: llmPlaylistCount });
+  const genreBlendRaw = await getUserSetting(userId, 'genreBlendWeight');
+  const tracksPerRaw = await getUserSetting(userId, 'llmTracksPerPlaylist');
+  const diversityRaw = await getUserSetting(userId, 'llmPlaylistDiversity');
 
-  if (concepts.length > 0) {
-    const genreBlendRaw = await getUserSetting(userId, 'genreBlendWeight');
-    const tracksPerRaw = await getUserSetting(userId, 'llmTracksPerPlaylist');
-    const diversityRaw = await getUserSetting(userId, 'llmPlaylistDiversity');
+  const hubSettings = {
+    genreBlendWeight: genreBlendRaw !== null ? Number(genreBlendRaw) : 50,
+    llmTracksPerPlaylist: tracksPerRaw !== null ? Number(tracksPerRaw) : 10,
+    llmPlaylistDiversity: diversityRaw !== null ? Number(diversityRaw) : 50,
+  };
 
-    const hubSettings = {
-      genreBlendWeight: genreBlendRaw !== null ? Number(genreBlendRaw) : 50,
-      llmTracksPerPlaylist: tracksPerRaw !== null ? Number(tracksPerRaw) : 10,
-      llmPlaylistDiversity: diversityRaw !== null ? Number(diversityRaw) : 50,
-    };
+  let validConcepts: HubCollection[] = [];
+  let attempts = 0;
+  const MAX_ATTEMPTS = 3;
 
-    await getHubCollections(concepts, userId, hubSettings);
+  while (validConcepts.length < llmPlaylistCount && attempts < MAX_ATTEMPTS) {
+    const needed = llmPlaylistCount - validConcepts.length;
+    const concepts: HubCollection[] = await generateHubConcepts({ timeOfDay, historySummary, count: needed });
+
+    if (concepts.length > 0) {
+      await getHubCollections(concepts, userId, hubSettings);
+      const kept = concepts.filter(c => !(c as any).dropped);
+      validConcepts.push(...kept);
+      
+      if (kept.length < concepts.length) {
+         console.warn(`[LLM Hub] (Attempt ${attempts + 1}/${MAX_ATTEMPTS}) ${concepts.length - kept.length} concepts dropped. Retrying...`);
+         if (attempts < MAX_ATTEMPTS - 1) await new Promise(r => setTimeout(r, 2000)); // Backoff
+      }
+    }
+    attempts++;
   }
 
-  console.log(`[LLM Hub] Generated and saved ${concepts.length} playlist(s) for user ${userId} (${timeOfDay})`);
-  return { generated: concepts.length };
+  console.log(`[LLM Hub] Generated and saved ${validConcepts.length} playlist(s) for user ${userId} (${timeOfDay})`);
+  return { generated: validConcepts.length };
 }
 
 // Get Hub Data (per-user)
@@ -98,10 +113,6 @@ router.post('/generate-custom', async (req, res) => {
     if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
       return res.status(400).json({ error: 'A prompt is required' });
     }
-    const concept = await generateCustomPlaylist(prompt.trim());
-    if (!concept) {
-      return res.status(503).json({ error: 'LLM did not return a valid playlist concept. Check your LLM configuration.' });
-    }
     const genreBlendRaw = userId ? await getUserSetting(userId, 'genreBlendWeight') : null;
     const tracksPerRaw = userId ? await getUserSetting(userId, 'llmTracksPerPlaylist') : null;
     const diversityRaw = userId ? await getUserSetting(userId, 'llmPlaylistDiversity') : null;
@@ -110,8 +121,32 @@ router.post('/generate-custom', async (req, res) => {
       llmTracksPerPlaylist: tracksPerRaw !== null ? Number(tracksPerRaw) : 10,
       llmPlaylistDiversity: diversityRaw !== null ? Number(diversityRaw) : 50,
     };
-    const saved = await getHubCollections([concept], userId, hubSettings);
-    const playlist = saved.find(c => c.isLlmGenerated);
+
+    let playlist = null;
+    let attempts = 0;
+    while (attempts < 3) {
+      const concept = await generateCustomPlaylist(prompt.trim());
+      if (!concept) {
+        attempts++;
+        continue;
+      }
+      
+      const saved = await getHubCollections([concept], userId, hubSettings);
+      playlist = saved.find(c => c.isLlmGenerated && c.title === (concept.title || concept.section));
+      
+      if (!playlist || (concept as any).dropped) {
+        console.warn(`[LLM Hub] Custom concept failed/dropped on attempt ${attempts + 1}. Retrying...`);
+        attempts++;
+        if (attempts < 3) await new Promise(r => setTimeout(r, 2000)); // Backoff
+        continue;
+      }
+      break; // Success
+    }
+
+    if (!playlist) {
+      return res.status(503).json({ error: 'LLM generated genres could not be matched after 3 retries or failed completely.' });
+    }
+
     res.json({ playlist });
   } catch (error) {
     console.error('Custom playlist generation error:', error);

@@ -3,7 +3,8 @@ import { listUsers, createUser, getUserByUsername, updateUser, deleteUser, listI
 import { hashPassword } from '../services/auth.service';
 import { requireAdmin } from '../middleware/auth';
 import { getContainerStatus, startContainer, stopContainer, createContainer, recreateContainer, getConfiguredDatabaseInfo, ContainerConfig } from '../services/containerControl.service';
-import { dbConnected, setDbConnected, initDatabaseConnection } from '../state';
+import { dbConnected, setDbConnected, initDatabaseConnection, mbdbStatus, mbdbClients } from '../state';
+import { mbdbService } from '../services/mbdb.service';
 import { verifyToken } from '../services/auth.service';
 import { Request, Response, NextFunction } from 'express';
 
@@ -249,6 +250,32 @@ router.post('/db/recreate', requireAdminOrDbDown, async (req, res) => {
     console.error('DB recreate error:', error);
     res.status(500).json({ error: error.message || 'Failed to recreate database' });
   }
+});
+
+// ─── MBDB Endpoints ───────────────────────────────────────────────────
+
+router.get('/mbdb/status', requireAdmin, (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  if (mbdbClients) mbdbClients.add(res);
+  res.write(`data: ${JSON.stringify(mbdbStatus)}\n\n`);
+
+  req.on('close', () => {
+    if (mbdbClients) mbdbClients.delete(res);
+  });
+});
+
+router.post('/mbdb/import', requireAdmin, async (req, res) => {
+  if (mbdbStatus.isImporting) {
+    return res.status(400).json({ error: 'Import already in progress' });
+  }
+  
+  // Fire and forget, client listens via SSE
+  mbdbService.importDatabase().catch(err => console.error('MBDB Import failed:', err));
+  
+  res.json({ message: 'MBDB Import started' });
 });
 
 export default router;

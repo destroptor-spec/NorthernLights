@@ -40,6 +40,11 @@ The core music player architecture has transitioned to a client-server model usi
   - **Rate Limit Detection & Handling**: Last.fm error code 29 now detected and thrown as `RateLimitError`. Cache updates skipped on rate limit to allow retry later.
   - **Global Toast System**: Added toast state to Zustand store (`toasts`, `addToast`, `removeToast`). Created `useToast()` hook and `ToastContainer` rendered in `App.tsx`. SettingsModal converted to global toast.
   - **Configurable Debounce**: Added `debounceMs` option to `useArtistData` (default 200ms) and `useExternalImage` (default 0ms).
+- [x] **V18: Hierarchical Genre Taxonomy & Dynamic Hop-Cost Engine**:
+  - **MusicBrainz Integration**: Implemented `mbdb.service.ts` for streaming download, extraction, and bulk insertion of MusicBrainz TSV data (genre, genre_alias, l_genre_genre).
+  - **Dynamic Hop-Cost Engine**: Replaced static 39-macro-genre matrix with a path-based LCA (Lowest Common Ancestor) calculation on a `genre_tree_paths` materialized view.
+  - **3-Step Categorization Pipeline**: Implemented (1) Direct SQL match, (2) LLM batch categorization with strict JSON schema, and (3) KNN/Artist fallback.
+  - **Resilience & UX**: Added disk space pre-checks (statfs), LLM request timeouts (45s), backoff retry loops, and SetupWizard progress persistence (localStorage). Improved MBDB UI with skip option and real-time SSE progress.
 
 ---
 

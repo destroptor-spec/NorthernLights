@@ -1,5 +1,19 @@
 # Project Memory / Changelog
 
+## [2026-04-04] V18: Hierarchical Genre Taxonomy & Dynamic Hop-Cost Engine
+- **Hierarchical Genre Migration**: Successfully replaced the static 39-macro-genre matrix with a dynamic hierarchy imported from **MusicBrainz** (~2,000 genres).
+- **Materialized Tree Paths**: Created `genre_tree_paths` materialized view in PostgreSQL using recursive CTEs to calculate path strings (e.g. `electronic.house.deep house`).
+- **Dynamic Hop-Cost Calculation**: Replaced the matrix lookup with string-splitting LCA (Lowest Common Ancestor) distance math in `genreMatrix.service.ts`.
+- **MusicBrainz High-Performance Importer**: `mbdb.service.ts` implements streaming download + extraction (`tar -xjf`) + bulk insertion (`INSERT ... VALUES (...)`) of `genre`, `genre_alias`, and `l_genre_genre` TSVs.
+- **3-Step Categorization Pipeline**:
+  - **SQL Match**: Direct identifier/alias lookup in MBDB.
+  - **LLM Batch**: Grouped tag categorization (20 tags/batch) with strict array validation (2-3 tags) and 45s timeout.
+  - **KNN Fallback**: Weighted timbre/acoustic similarity mapping if no metadata is available.
+- **Resilience Overhaul**: Added disk space pre-checks (statfs for /tmp), detailed boolean parsing logic (`t`/`f` normalization), and SSE-based real-time progress syncing in `broadcastMbdbStatus`.
+- **UI/UX Polishing**:
+  - **SetupWizard Stability**: Added `localStorage` persistence for current setup step. Added "Skip MBDB Import" option to Step 3.
+  - **Settings Modal**: New "MBDB" tab for database management, status monitoring, and re-imports.
+
 ## [2026-04-03] V17: Provider Reliability & Integration Overhaul (Part 2)
 - **Artist Library Lazy Loading Fix**: Artist images now load on scroll via IntersectionObserver (`useInView` hook with 200px rootMargin). Added 200ms debounce in `useArtistData` to prevent API storms during rapid scrolling.
 - **Backend Modularization**: Split monolithic `externalMetadata.service.ts` into `server/services/metadata/` directory:

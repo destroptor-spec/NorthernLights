@@ -110,6 +110,11 @@ Library scanning operates in three distinct phases:
    - **Safe Essentia**: Individual algorithm error handling with graceful fallbacks
    - **Results**: 20-dimensional feature vectors (7D acoustic semantic + 13D MFCC) stored in `track_features` table
 
+4. **Taxonomic Categorization Phase**: After analysis, the system runs a 3-step pipeline to map local tags to the MusicBrainz hierarchical taxonomy:
+   - **Step 1: Direct SQL Match** — Exact match against MusicBrainz Genres or Aliases.
+   - **Step 2: LLM Batch Processing** — Grouping unmapped tags for bulk AI translation into standard keywords.
+   - **Step 3: Fallback Logic** — Artist-based deduction or KNN-based acoustic similarity mapping if no metadata exists.
+
 **API Endpoints:**
 - `POST /api/library/scan` — Full three-phase scan
 - `POST /api/library/analyze` — Analysis phase only (tracks without features)
@@ -128,7 +133,8 @@ Library scanning operates in three distinct phases:
 - `audioExtraction.service.ts` — ffmpeg subprocess decoding + Essentia.js WASM analysis. Smart seeking (35% into track), 15-second decode, non-ASCII filename symlink workaround, safe Essentia with individual algorithm error handling.
 - `recommendation.service.ts` — Infinity Mode and Hub playlist generation using 20-dimensional pgvector HNSW similarity search (acoustic + MFCC) and genre hop cost adjacency matrices. Timbre Imputation bridging for LLM playlists.
 - `llm.service.ts` — LLM integration for natural language playlist generation. Supports local providers (LM Studio, Ollama) and cloud (OpenAI).
-- `genreMatrix.service.ts` — LLM-assisted 39-genre ontology classification with diff-based updates.
+- `genreMatrix.service.ts` — LLM-assisted 3nd-gen hierarchical ontology classification using MusicBrainz tree-paths and Lowest Common Ancestor (LCA) hop-cost math.
+- `mbdb.service.ts` — High-performance streaming importer for MusicBrainz database dumps. Handles downloading, TSV extraction, and bulk PostgreSQL insertion.
 - `metadata/` — Modularized external metadata service:
   - `errors.ts` — `RateLimitError`, `ProviderError` classes for typed error handling
   - `cache.ts` — Database caching with conditional `updateLastUpdated` flag

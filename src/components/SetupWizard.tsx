@@ -6,7 +6,14 @@ import { useProviderConnectionTest } from '../hooks/useProviderConnectionTest';
 
 export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
     const { addLibraryFolder, setLastFmApiKey, setGeniusApiKey, setMusicBrainzEnabled, setSettings, getAuthHeader } = usePlayerStore();
-    const [step, setStep] = useState(1);
+    const [step, setStep] = useState(() => {
+        const saved = localStorage.getItem('setupWizardStep');
+        return saved ? Number(saved) : 1;
+    });
+
+    React.useEffect(() => {
+        localStorage.setItem('setupWizardStep', step.toString());
+    }, [step]);
     
     // Step 1 State
     const [username, setUsername] = useState('');
@@ -57,10 +64,34 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
 
     // Token estimate
     const [trackCount, setTrackCount] = useState(1000);
-
     const [isSaving, setIsSaving] = useState(false);
+    const [mbdbProgress, setMbdbProgress] = useState<{ isImporting: boolean, phase: string, message: string }>({ isImporting: false, phase: 'idle', message: '' });
 
-    const TOTAL_STEPS = 4;
+    React.useEffect(() => {
+        if (step === 3) {
+            const token = usePlayerStore.getState().authToken;
+            if (!token) return;
+            const es = new EventSource('/api/admin/mbdb/status?token=' + token);
+            es.onmessage = (e) => {
+                try {
+                    const data = JSON.parse(e.data);
+                    setMbdbProgress(data);
+                } catch {}
+            };
+            return () => es.close();
+        }
+    }, [step]);
+
+    const TOTAL_STEPS = 5;
+
+    const handleMbdbImport = async () => {
+        try {
+            const authHeaders = getAuthHeader();
+            await fetch('/api/admin/mbdb/import', { method: 'POST', headers: authHeaders });
+        } catch(e) {
+            console.error('Failed to start MBDB import', e);
+        }
+    };
 
     const handleCreateAdmin = async () => {
         setAuthError('');
@@ -139,6 +170,7 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
                 })
             });
         } catch (e) { console.warn('Failed to persist provider settings to DB:', e); }
+        localStorage.removeItem('setupWizardStep');
         onComplete();
     };
 
@@ -166,12 +198,12 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
 
                 {/* Step Indicators */}
                 <div className="flex items-center justify-center gap-2 mb-10">
-                    {[1, 2, 3, 4].map(i => (
+                    {[1, 2, 3, 4, 5].map(i => (
                         <div key={i} className="flex items-center">
                             <div className={stepDotClass(i)}>
                                 {step > i ? <CheckCircle2 className="w-4 h-4" /> : i}
                             </div>
-                            {i < TOTAL_STEPS && <div className={`w-10 h-1 mx-2 rounded ${step > i ? 'bg-[var(--color-primary)]' : 'bg-[var(--glass-border)]'}`} />}
+                            {i < TOTAL_STEPS && <div className={`w-6 md:w-10 h-1 mx-1 md:mx-2 rounded ${step > i ? 'bg-[var(--color-primary)]' : 'bg-[var(--glass-border)]'}`} />}
                         </div>
                     ))}
                 </div>
@@ -230,8 +262,53 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
                     </div>
                 )}
 
-                {/* Step 3: LLM Provider */}
+                {/* Step 3: MBDB Import */}
                 {step === 3 && (
+                    <div className="space-y-6 animate-in slide-in-from-right-8 fade-in duration-500 fill-mode-both">
+                        <div className="text-center mb-6">
+                            <h2 className="text-xl font-bold flex justify-center items-center gap-2"><Database className="w-5 h-5 text-[var(--color-primary)]"/> MusicBrainz Taxonomy</h2>
+                            <p className="text-sm text-[var(--color-text-secondary)] mt-1">Import the latest comprehensive genre taxonomy from the official MusicBrainz database. This enables high-accuracy recommendation tracking with zero AI token cost.</p>
+                        </div>
+                        
+                        <div className="bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl p-5 mb-4">
+                            {!mbdbProgress.isImporting ? (
+                                <div className="flex flex-col gap-3">
+                                    {mbdbProgress.phase === 'complete' ? (
+                                        <div className="text-green-500 font-medium text-sm flex items-center justify-center gap-2 p-2">✓ Import completed successfully.</div>
+                                    ) : (
+                                        <button 
+                                            onClick={handleMbdbImport}
+                                            className="w-full bg-[var(--color-bg)] hover:bg-[var(--glass-bg)] text-[var(--color-text-primary)] border border-[var(--color-primary)] font-semibold py-3 rounded-lg shadow-sm transition-transform active:scale-[0.98] flex items-center justify-center gap-2"
+                                        >
+                                            <Database size={18} /> Start Download & Import (~3.5GB)
+                                        </button>
+                                    )}
+                                    {mbdbProgress.phase === 'error' && (
+                                        <div className="text-red-500 font-medium text-sm mt-2 text-center">⚠️ {mbdbProgress.message}</div>
+                                    )}
+                                </div>
+                            ) : (
+                                <div className="border border-[var(--glass-border)] rounded-lg p-4 bg-black/5 dark:bg-white/5 relative overflow-hidden">
+                                    <div className="absolute top-0 left-0 h-1 bg-[var(--color-primary)] animate-pulse w-full"></div>
+                                    <div className="flex items-center gap-3 mb-2">
+                                        <div className="w-5 h-5 border-2 border-[var(--color-primary)]/30 border-t-[var(--color-primary)] rounded-full animate-spin flex-shrink-0" />
+                                        <span className="font-semibold text-[var(--color-text-primary)] capitalize">{mbdbProgress.phase}</span>
+                                    </div>
+                                    <p className="text-sm text-[var(--color-text-secondary)] break-all">{mbdbProgress.message}</p>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="flex gap-4 mt-6">
+                            <button disabled={mbdbProgress.isImporting} onClick={() => setStep(4)} className="flex-1 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white font-semibold py-4 rounded-xl shadow-lg transition-transform active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-50">
+                                {mbdbProgress.phase === 'complete' ? 'Next Step' : 'Skip MBDB Import'} <ChevronRight className="w-5 h-5" />
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Step 4: LLM Provider */}
+                {step === 4 && (
                     <div className="space-y-5 animate-in slide-in-from-right-8 fade-in duration-500 fill-mode-both">
                         <div className="text-center mb-4">
                             <h2 className="text-xl font-bold flex justify-center items-center gap-2"><Cpu className="w-5 h-5 text-[var(--color-primary)]"/> AI Playlist Provider</h2>
@@ -354,18 +431,18 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
                         </div>
 
                         <div className="flex gap-4 mt-2">
-                            <button onClick={handleSaveLlm} className="flex-1 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white font-semibold py-4 rounded-xl shadow-lg transition-transform active:scale-[0.98] flex items-center justify-center gap-2">
+                            <button onClick={() => { handleSaveLlm(); setStep(5); }} className="flex-1 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white font-semibold py-4 rounded-xl shadow-lg transition-transform active:scale-[0.98] flex items-center justify-center gap-2">
                                 Save & Continue <ChevronRight className="w-5 h-5" />
                             </button>
-                            <button onClick={() => setStep(4)} className="px-6 bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] border border-[var(--glass-border)] text-[var(--color-text-primary)] font-semibold rounded-xl transition-all">
+                            <button onClick={() => setStep(5)} className="px-6 bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] border border-[var(--glass-border)] text-[var(--color-text-primary)] font-semibold rounded-xl transition-all">
                                 Skip
                             </button>
                         </div>
                     </div>
                 )}
 
-                {/* Step 4: External APIs */}
-                {step === 4 && (
+                {/* Step 5: External APIs */}
+                {step === 5 && (
                     <div className="space-y-6 animate-in slide-in-from-right-8 fade-in duration-500 fill-mode-both">
                         <div className="text-center mb-6">
                             <h2 className="text-xl font-bold flex justify-center items-center gap-2"><Settings className="w-5 h-5 text-[var(--color-primary)]"/> External Enablers</h2>

@@ -91,6 +91,27 @@ export async function getHubCollections(
   for (const concept of llmConcepts) {
     // Case B: LLM High-Concept generated concept (e.g. "Evening Acoustic Drift")
     if (concept.target_vector) {
+      const targetGenres = (concept as any).target_genres || [];
+      let matchedGenrePath = '';
+
+      if (targetGenres.length > 0) {
+        for (const g of targetGenres) {
+          const clean = g.toLowerCase().trim();
+          const res = await db.query(`SELECT path FROM genre_tree_paths WHERE LOWER(genre_name) = $1 OR genre_id IN (SELECT genre FROM genre_alias WHERE LOWER(name) = $1) LIMIT 1`, [clean]);
+          if (res.rows.length > 0) {
+            matchedGenrePath = res.rows[0].path;
+            break;
+          }
+        }
+      }
+
+      if (targetGenres.length > 0 && !matchedGenrePath) {
+         console.warn(`[LLM Hub] Dropping playlist "${concept.title}" - target genres [${targetGenres.join(', ')}] not found in DB.`);
+         // Setting a special flag so callers can retry
+         (concept as any).dropped = true;
+         continue;
+      }
+
       const vectorStr = `[${concept.target_vector.join(',')}]`;
 
       // Synthesize MFCC timbre centroid from the 7D acoustic neighbourhood
@@ -144,21 +165,15 @@ export async function getHubCollections(
       }
       
       if (res.rows.length > 0) {
-        // Use the LLM's explicit genre intent as the re-ranking anchor.
-        // Falling back to res.rows[0].genre (the first acoustic neighbor) was the
-        // source of genre drift: if trance happened to be acoustically closest, the
-        // hop-cost ranking would then pull toward *more* trance.
-        const referenceGenre = (concept as any).target_genre || res.rows[0].genre || '';
+        // Use the mapped path as the reference genre
+        const referenceGenre = matchedGenrePath || res.rows[0].genre || '';
 
-        // Apply a 2× boosted weight when the concept carries an explicit genre target.
-        // This gives genre adherence real scoring power vs. raw acoustic distance,
-        // without completely overriding acoustic quality for edge-case sparse libraries.
-        const llmGenreWeight = (concept as any).target_genre
+        const llmGenreWeight = matchedGenrePath
           ? Math.min(1.0, genreBlend * 2)
           : genreBlend;
 
         if (referenceGenre) {
-          console.log(`[LLM Hub] "${concept.title}" → anchoring re-rank to genre "${referenceGenre}" (weight=${llmGenreWeight.toFixed(2)})`);
+          console.log(`[LLM Hub] "${concept.title}" → anchoring re-rank to genre path "${referenceGenre}" (weight=${llmGenreWeight.toFixed(2)})`);
         }
 
         const ranked = reRankByHopCost(res.rows, referenceGenre, Math.max(tracksPerPlaylist * 2, 20), llmGenreWeight);

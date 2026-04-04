@@ -137,15 +137,104 @@ export async function initDB(): Promise<Pool> {
           PRIMARY KEY (playlistId, trackId)
         );
 
-        CREATE TABLE IF NOT EXISTS subgenre_mappings (
+        DROP TABLE IF EXISTS subgenre_mappings CASCADE;
+        CREATE TABLE subgenre_mappings (
           sub_genre TEXT PRIMARY KEY,
-          macro_genre TEXT NOT NULL
+          path TEXT NOT NULL
         );
 
-        CREATE TABLE IF NOT EXISTS macro_matrix_cache (
-          id TEXT PRIMARY KEY,
-          matrix TEXT NOT NULL
+        DROP TABLE IF EXISTS macro_matrix_cache CASCADE;
+
+        CREATE TABLE IF NOT EXISTS genre (
+          id INTEGER PRIMARY KEY,
+          gid UUID NOT NULL,
+          name TEXT NOT NULL,
+          comment TEXT,
+          edits_pending INTEGER,
+          last_updated TIMESTAMP WITH TIME ZONE
         );
+
+        CREATE TABLE IF NOT EXISTS genre_alias (
+          id INTEGER PRIMARY KEY,
+          genre INTEGER REFERENCES genre(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          locale TEXT,
+          edits_pending INTEGER,
+          last_updated TIMESTAMP WITH TIME ZONE,
+          type INTEGER,
+          sort_name TEXT,
+          begin_date_year INTEGER,
+          begin_date_month INTEGER,
+          begin_date_day INTEGER,
+          end_date_year INTEGER,
+          end_date_month INTEGER,
+          end_date_day INTEGER,
+          primary_for_locale BOOLEAN,
+          ended BOOLEAN
+        );
+
+        CREATE TABLE IF NOT EXISTS l_genre_genre (
+          id INTEGER PRIMARY KEY,
+          link INTEGER NOT NULL,
+          entity0 INTEGER NOT NULL REFERENCES genre(id) ON DELETE CASCADE,
+          entity1 INTEGER NOT NULL REFERENCES genre(id) ON DELETE CASCADE,
+          edits_pending INTEGER,
+          last_updated TIMESTAMP WITH TIME ZONE,
+          link_order INTEGER,
+          entity0_credit TEXT,
+          entity1_credit TEXT
+        );
+
+        -- Note: We can only create the materialized view after l_genre_genre and genre are created.
+        -- We will recreate it inside a DO block to catch if tables are empty.
+        -- Auto-migrate the materialized view if the old schema exists
+        DO $$ 
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM pg_class c 
+                JOIN pg_namespace n ON n.oid = c.relnamespace 
+                WHERE c.relname = 'genre_tree_paths' AND c.relkind = 'm'
+            ) AND NOT EXISTS (
+                SELECT 1 FROM pg_attribute a 
+                JOIN pg_class c ON a.attrelid = c.oid 
+                WHERE c.relname = 'genre_tree_paths' AND a.attname = 'genre_name'
+            ) THEN
+                DROP MATERIALIZED VIEW genre_tree_paths CASCADE;
+            END IF;
+        END $$;
+
+        DO $$ 
+        BEGIN 
+            CREATE MATERIALIZED VIEW IF NOT EXISTS genre_tree_paths AS
+            WITH RECURSIVE genre_tree AS (
+                SELECT 
+                    entity1 AS genre_id, 
+                    g.name::TEXT AS genre_name,
+                    g.name::TEXT AS path,
+                    1 AS level
+                FROM l_genre_genre lgg
+                JOIN genre g ON lgg.entity1 = g.id
+                WHERE lgg.entity0 NOT IN (SELECT entity1 FROM l_genre_genre) 
+                
+                UNION ALL
+                
+                SELECT 
+                    child.entity1, 
+                    g.name::TEXT AS genre_name,
+                    (parent.path || '.' || g.name)::TEXT,
+                    parent.level + 1
+                FROM l_genre_genre child
+                JOIN genre_tree parent ON child.entity0 = parent.genre_id
+                JOIN genre g ON child.entity1 = g.id
+            )
+            SELECT * FROM genre_tree;
+        EXCEPTION 
+            WHEN OTHERS THEN 
+                RAISE NOTICE 'Materialized view creation failed (tables might be empty): %', SQLERRM;
+        END $$;
+
+        -- Enhance lookups on the materialized view
+        CREATE INDEX IF NOT EXISTS genre_tree_paths_name_idx ON genre_tree_paths (LOWER(genre_name));
 
         -- Entity tables for UUID-based navigation
         CREATE EXTENSION IF NOT EXISTS "pgcrypto";
@@ -1070,37 +1159,15 @@ export async function getSystemSetting(key: string) {
     return null;
   }
 }
-export async function getMacroMatrix() {
-  const db = await initDB();
-  const res = await db.query('SELECT matrix FROM macro_matrix_cache WHERE id = $1', ['default']);
-  if (res.rows.length === 0 || !(res.rows[0] as any).matrix) return null;
-  const matrix = (res.rows[0] as any).matrix as string;
-  try {
-    return JSON.parse(matrix);
-  } catch(e) {
-    return null;
-  }
-}
-
-export async function updateMacroMatrix(matrix: any) {
-  const db = await initDB();
-  const matrixStr = JSON.stringify(matrix);
-  await db.query(`
-    INSERT INTO macro_matrix_cache (id, matrix)
-    VALUES ($1, $2)
-    ON CONFLICT (id) DO UPDATE SET matrix = EXCLUDED.matrix
-  `, ['default', matrixStr]);
-}
-
-export async function upsertSubGenreMapping(subGenre: string, macroGenre: string) {
+export async function upsertSubGenreMapping(subGenre: string, path: string) {
   const db = await initDB();
   const sanitized = subGenre.toLowerCase().trim().replace(/[^\w\s-]/g, '');
   if (!sanitized) return;
   await db.query(`
-    INSERT INTO subgenre_mappings (sub_genre, macro_genre)
+    INSERT INTO subgenre_mappings (sub_genre, path)
     VALUES ($1, $2)
-    ON CONFLICT (sub_genre) DO UPDATE SET macro_genre = EXCLUDED.macro_genre
-  `, [sanitized, macroGenre]);
+    ON CONFLICT (sub_genre) DO UPDATE SET path = EXCLUDED.path
+  `, [sanitized, path]);
 }
 
 export async function clearSubGenreMappings() {
@@ -1113,7 +1180,7 @@ export async function getSubGenreMappings(): Promise<Record<string, string>> {
   const res = await db.query('SELECT * FROM subgenre_mappings');
   const mappings: Record<string, string> = {};
   res.rows.forEach((row: any) => {
-    mappings[row.sub_genre] = row.macro_genre;
+    mappings[row.sub_genre] = row.path;
   });
   return mappings;
 }
