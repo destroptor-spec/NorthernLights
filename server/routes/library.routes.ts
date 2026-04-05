@@ -458,9 +458,18 @@ router.post('/scan', async (req, res) => {
 
     await addDirectory(dirPath);
 
-    await runSyncWalk(dirPath);
+    console.log(`[Scan] Starting scan for: ${dirPath}`);
+    const walkResult = await runSyncWalk(dirPath);
+    console.log(`[Scan] Completed for ${dirPath}: ${walkResult.added} added, ${walkResult.removed} removed`);
 
-    res.json({ status: 'completed', message: `Scan completed for ${dirPath}` });
+    res.json({ 
+      status: 'completed', 
+      added: walkResult.added, 
+      removed: walkResult.removed,
+      message: walkResult.added > 0 || walkResult.removed > 0 
+        ? `Added ${walkResult.added} tracks, removed ${walkResult.removed} stale`
+        : 'No changes detected'
+    });
   } catch (error) {
     console.error('Scan init error:', error);
     res.status(500).json({ error: 'Failed to complete scan' });

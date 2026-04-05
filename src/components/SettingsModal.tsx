@@ -257,16 +257,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                         await new Promise(r => setTimeout(r, 1000));
                     } else {
                         console.error('Rescan error:', errorData.error);
+                        addToast(`Rescan failed: ${errorData.error}`, 'error');
                         scanStarted = true;
                     }
                 } else {
                     scanStarted = true;
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data.added > 0 || data.removed > 0) {
+                            addToast(`Scanned ${data.added} new tracks, removed ${data.removed} stale`, 'success');
+                        } else {
+                            addToast('No changes detected in folder', 'info');
+                        }
+                    } else {
+                        const errData = await res.json().catch(() => ({}));
+                        addToast(`Rescan failed: ${errData.error || res.statusText}`, 'error');
+                    }
                 }
             }
             await fetchLibraryFromServer();
             fetchDirStats();
         } catch (e) {
             console.error('Failed to rescan folder', e);
+            addToast(`Rescan failed: ${e}`, 'error');
         }
     };
 
