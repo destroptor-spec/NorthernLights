@@ -224,6 +224,8 @@ export async function extractAudioFeatures(filePath: Buffer | string, vectorStat
   // Keep as Buffer on Linux for raw-byte filesystem paths; convert to string only if already a string
   const pathArg: Buffer | string = filePath instanceof Buffer ? filePath : filePath;
   const pathForLog = typeof pathArg === 'string' ? pathArg : pathArg.toString('utf8');
+  console.log(`[AudioExtract] Starting analysis for: ${pathForLog}`);
+  const startTime = Date.now();
   const stat = await fs.promises.stat(pathArg);
   const fileSize = stat.size;
 
@@ -388,22 +390,24 @@ export async function extractAudioFeatures(filePath: Buffer | string, vectorStat
       return 1 / (1 + Math.exp(-z));
     };
 
-    return {
-      bpm: Math.round(bpm),
-      acoustic_vector: [
-        zScoreNormalize(energy || 0, 0, 100),
-        zScoreNormalize(centroid || 0, 1, 10000),
-        zScoreNormalize(percussiveness || 0, 2, 50),
-        zScoreNormalize(pitch || 0, 3, 1),
-        zScoreNormalize(flux || 0, 4, 50),
-        zScoreNormalize(zcr || 0, 5, 0.5),
-        zScoreNormalize(danceability || 0, 6, 3)
-      ],
-      mfcc_vector
-    };
-  } finally {
-    // Cleanup C++ allocated memory (frame-level vectors are deleted inside the loop)
-    if (audioVector) audioVector.delete();
-    if (spectrum) spectrum.delete();
+      return {
+        bpm: Math.round(bpm),
+        acoustic_vector: [
+          zScoreNormalize(energy || 0, 0, 100),
+          zScoreNormalize(centroid || 0, 1, 10000),
+          zScoreNormalize(percussiveness || 0, 2, 50),
+          zScoreNormalize(pitch || 0, 3, 1),
+          zScoreNormalize(flux || 0, 4, 50),
+          zScoreNormalize(zcr || 0, 5, 0.5),
+          zScoreNormalize(danceability || 0, 6, 3)
+        ],
+        mfcc_vector
+      };
+    } finally {
+      const elapsed = Date.now() - startTime;
+      console.log(`[AudioExtract] Completed analysis for: ${pathForLog} in ${elapsed}ms`);
+      // Cleanup C++ allocated memory (frame-level vectors are deleted inside the loop)
+      if (audioVector) audioVector.delete();
+      if (spectrum) spectrum.delete();
+    }
   }
-}

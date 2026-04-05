@@ -138,20 +138,24 @@ export class ChildProcessPool {
     }
   }
 
-  public runJob(job: PoolJob, timeoutMs = 180000): Promise<any> {
+  public runJob(job: PoolJob, timeoutMs = 300000): Promise<any> { // 5 min default
     return new Promise((resolve) => {
       let settled = false;
+      console.log(`[Pool] Starting job ${job.id} with ${timeoutMs}ms timeout`);
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
+        console.error(`[Pool] Job ${job.id} timed out after ${timeoutMs}ms`);
         // Remove from queue if still pending
         const qIdx = this.jobQueue.findIndex(j => j.job.id === job.id);
         if (qIdx !== -1) {
+          console.error(`[Pool] Job ${job.id} was still in queue at position ${qIdx}`);
           this.jobQueue.splice(qIdx, 1);
         }
         // Kill the worker if it was processing this job
         for (const [worker, task] of this.workerTasks) {
           if (task.id === job.id) {
+            console.error(`[Pool] Killing worker processing job ${job.id}`);
             this.workerTasks.delete(worker);
             this.activeCount--;
             worker.kill();
