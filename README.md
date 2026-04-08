@@ -41,6 +41,7 @@ pm2 start "npx tsx server/index.ts" --name northernlights
 - **AI-Driven Playlists & Vector Recommendations**: Connect to local or cloud LLMs (like LM Studio or OpenAI) to generate hyper-personalized playlists via natural language. Uses rigorous **21-Dimensional PGVector** similarity searches (**8D acoustic semantic** + 13D Timbre MFCC) and a **Dynamic Hierarchical Genre Taxonomy** imported from **MusicBrainz**. Hierarchical "Hop-Costs" are calculated using Lowest Common Ancestor (LCA) tree traversal for natural sonic progression. Optimized with SQL-side aggregation and BPM-aware rhythm extraction. Fully tunable — adjust playlist diversity, genre coherence, track count, and number of playlists per cycle in Settings.
 - **MusicBrainz Integration**: Native support for importing the official MusicBrainz genre ontology (~2,000+ genres). Includes a 3-step categorization pipeline (Direct SQL Match, LLM Batch Processing, and KNN/Artist Fallback) to map your library's tags to a standardized global hierarchy with zero token cost for core traversal.
 - **Playlist Management**: Create and delete playlists manually or via AI generation. Drag-and-drop track reordering with persistent queue state. **Pin** AI-generated playlists to protect them from auto-cleanup.
+- **Self-Cleaning Library**: Folder removal automatically purges orphaned album, artist, and genre entities. Includes a safety-net for path-encoding mismatches to ensure no "ghost" tracks or forbidden paths remain in the database.
 - **Global Search**: Instant search across artists, albums, and tracks with clickable results that navigate directly to entity pages.
 - **Advanced Play Queue & Context Menus**: Drag-and-drop track reordering, global "Play Next" and "Add to Playlist" context menus anywhere a track is visible.
 - **Rich External Metadata**: Native integrations with the **Last.fm** and **Genius** APIs to automatically fetch missing album artwork, high-resolution artist hero imagery, and rich biographies seamlessly on the frontend.
@@ -144,5 +145,27 @@ To safely host NorthernLights on a public domain:
    This compiles everything into a `dist/` directory.
 4. Serve the application using `pm2` or Docker to keep the Express server running eternally:
    ```bash
-   npx tsx server/index.ts
-   ```
+    npx tsx server/index.ts
+    ```
+
+## License
+
+Copyright (c) 2026 Andreas Destroptor-spec
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
