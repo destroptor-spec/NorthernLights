@@ -9,6 +9,7 @@ dist/
 *.db
 *.sqlite
 postgres-data/
+mbdb-data/
 
 # IDE & OS
 .vscode/

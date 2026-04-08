@@ -6,12 +6,18 @@ import { parseArtists } from '../../utils/artistUtils';
 import { formatTime } from '../../utils/formatTime';
 import { BackButton } from './BackButton';
 
-import { MoreHorizontal } from 'lucide-react';
+import { MoreHorizontal, Play } from 'lucide-react';
 
 export const AlbumDetail: React.FC = () => {
     const { albumId } = useParams<{ albumId: string }>();
     const navigate = useNavigate();
-    const { library, albums, artists, setPlaylist, openContextMenu } = usePlayerStore();
+    
+    // Select granularly to prevent full-store renders that kill performance on playback tick
+    const library = usePlayerStore(state => state.library);
+    const albums = usePlayerStore(state => state.albums);
+    const artists = usePlayerStore(state => state.artists);
+    const setPlaylist = usePlayerStore(state => state.setPlaylist);
+    const openContextMenu = usePlayerStore(state => state.openContextMenu);
 
     // Find album info from the entity list
     const albumInfo = useMemo(() => albums.find(a => a.id === albumId), [albums, albumId]);
@@ -36,7 +42,7 @@ export const AlbumDetail: React.FC = () => {
 
 
     if (!albumId || albumTracks.length === 0) {
-        return <div>Album not found.</div>;
+        return <div className="flex-1 flex justify-center items-center text-[var(--color-text-muted)]">Album not found.</div>;
     }
 
     const albumTitle = albumInfo?.title || albumTracks[0]?.album || 'Unknown Album';
@@ -68,19 +74,19 @@ export const AlbumDetail: React.FC = () => {
     };
 
     return (
-        <div className="album-detail flex flex-col overflow-hidden p-4 md:p-8 lg:p-12 flex-1">
+        <div className="flex flex-col overflow-hidden p-4 md:p-8 lg:p-12 flex-1">
 
-            <div className="shrink-0"><BackButton onClick={() => navigate(-1)} /></div>
+            <div className="shrink-0 mb-6"><BackButton onClick={() => navigate(-1)} /></div>
 
-            <div className="album-header shrink-0 flex flex-col md:flex-row gap-6 md:gap-8 mb-8 md:mb-12 items-center md:items-end text-center md:text-left">
-                <div className="w-48 h-48 md:w-60 md:h-60 shrink-0 rounded-2xl border border-[var(--glass-border)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)] relative overflow-hidden backdrop-blur-md">
-                    <AlbumArt artUrl={artUrl} artist={albumArtist} size={240} className="w-full h-full object-cover" />
+            <div className="shrink-0 flex flex-col md:flex-row gap-6 md:gap-8 mb-8 md:mb-12 items-center md:items-end text-center md:text-left">
+                <div className="w-48 h-48 md:w-60 md:h-60 shrink-0 rounded-2xl border border-black/10 dark:border-white/10 shadow-2xl relative overflow-hidden backdrop-blur-xl bg-black/10 dark:bg-white/5">
+                    <AlbumArt artUrl={artUrl} artist={albumArtist} size={240} className="w-full h-full object-cover rounded-2xl" />
                 </div>
-                <div className="flex flex-col justify-end">
+                <div className="flex flex-col justify-end items-center md:items-start max-w-full">
                     <div className="font-semibold text-sm tracking-wider uppercase text-[var(--color-primary)]">Album</div>
-                    <h1 className="font-bold text-4xl md:text-5xl lg:text-6xl tracking-tight my-2 leading-tight text-[var(--color-text-primary)]">{albumTitle}</h1>
-                    <h2 className="text-xl text-[var(--color-text-secondary)] mb-1 flex items-center gap-2">
-                        <span>
+                    <h1 className="font-bold text-4xl md:text-5xl lg:text-6xl tracking-tight my-2 leading-tight text-[var(--color-text-primary)] truncate w-full" title={albumTitle}>{albumTitle}</h1>
+                    <h2 className="text-xl text-[var(--color-text-secondary)] flex flex-wrap justify-center md:justify-start items-center gap-2 mb-2 w-full truncate">
+                        <span className="truncate">
                         {headerArtists.map((a, i) => {
                             const link = getArtistLink(a);
                             return (
@@ -98,43 +104,56 @@ export const AlbumDetail: React.FC = () => {
                             );
                         })}
                         </span>
-                        {' '} • {albumTracks.length} track{albumTracks.length !== 1 ? 's' : ''}
-                        {albumYear && ` • ${albumYear}`}
+                        <span className="hidden md:inline shrink-0"> • </span>
+                        <span className="shrink-0 text-sm md:text-xl text-[var(--color-text-muted)]">
+                           {albumTracks.length} track{albumTracks.length !== 1 ? 's' : ''}
+                           {albumYear && ` • ${albumYear}`}
+                        </span>
                     </h2>
+                    
                     {albumGenre && (
-                        <span className="inline-block mt-1 mb-3 text-xs font-semibold uppercase tracking-widest px-3 py-1 rounded-full border border-[var(--glass-border)] bg-[var(--glass-bg)] text-[var(--color-primary)] w-fit backdrop-blur-sm">
+                        <span className="inline-block mt-2 mb-4 text-xs font-semibold uppercase tracking-widest px-3 py-1 rounded-full border border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 text-[var(--color-primary)] w-fit backdrop-blur-sm">
                             {albumGenre}
                         </span>
                     )}
 
-                    <div className="mt-4 flex justify-center md:justify-start">
+                    <div className="mt-4 flex justify-center md:justify-start w-full md:w-auto">
                         <button
                             onClick={handlePlayAll}
-                            className="btn btn-lg btn-primary"
+                            className="flex items-center justify-center gap-2 px-8 py-3.5 bg-emerald-500/90 hover:bg-emerald-400 text-white font-bold text-sm tracking-widest uppercase rounded-full shadow-[0_4px_24px_rgba(16,185,129,0.3)] hover:shadow-[0_8px_32px_rgba(16,185,129,0.4)] hover:scale-105 active:scale-95 transition-all duration-300 w-full md:w-auto"
                         >
+                            <Play size={18} fill="currentColor" className="ml-1" />
                             PLAY ALBUM
                         </button>
                     </div>
                 </div>
             </div>
 
-            <div className="album-tracks mt-4 overflow-y-auto flex-1 min-h-0">
-                <div className="grid grid-cols-[40px_1fr_100px] px-4 py-3 border-b border-[var(--glass-border)] font-semibold text-xs uppercase tracking-wider text-[var(--color-text-muted)]">
-                    <div>#</div>
+            <div className="mt-4 overflow-y-auto flex-1 min-h-0 hide-scrollbar pb-6">
+                <div className="grid grid-cols-[30px_1fr_40px] md:grid-cols-[40px_1fr_100px] px-2 md:px-4 py-3 border-b border-black/5 dark:border-white/10 font-semibold text-xs uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+                    <div className="text-center md:text-left">#</div>
                     <div>Title</div>
-                    <div className="text-right">Time</div>
+                    <div className="text-right hidden md:block">Time</div>
                 </div>
                 {sortedTracks.map((track, i) => (
                     <div
                         key={track.id}
                         onClick={() => handlePlayTrack(i)}
-                        className="grid grid-cols-[40px_1fr_100px] px-4 py-3 border-b border-[var(--glass-border)] cursor-pointer items-center transition-all duration-200 hover:bg-[var(--glass-bg-hover)] rounded-lg my-1 group"
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                handlePlayTrack(i);
+                            }
+                        }}
+                        className="grid grid-cols-[30px_1fr_40px] md:grid-cols-[40px_1fr_100px] gap-2 px-2 md:px-4 py-2 border-b border-black/5 dark:border-white/5 cursor-pointer items-center transition-all duration-200 hover:bg-black/5 dark:hover:bg-white/5 focus-visible:bg-black/5 dark:focus-visible:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] rounded-lg my-0.5 group"
                     >
-                        <div className="text-[var(--color-text-muted)] group-hover:text-[var(--color-primary)] transition-colors">{i + 1}</div>
-                        <div className="font-medium truncate text-[var(--color-text-primary)] group-hover:text-[var(--color-primary)] transition-colors">
-                            <span>{track.title || track.path.split(/[\/\\]/).pop()}</span>
+                        <div className="text-center md:text-left text-[var(--color-text-muted)] group-hover:text-[var(--color-primary)] transition-colors text-sm">{i + 1}</div>
+                        <div className="font-medium truncate text-[var(--color-text-primary)] group-hover:text-[var(--color-primary)] transition-colors min-w-0">
+                            <span className="block truncate text-sm md:text-base">{track.title || track.path.split(/[\/\\]/).pop()}</span>
                             {((track.artists && Array.isArray(track.artists) && track.artists.length > 0) || (track.artist && parseArtists(track.artist).length > 0)) && (
-                                <span className="block text-xs text-[var(--color-text-muted)] mt-0.5">
+                                <span className="block text-xs text-[var(--color-text-muted)] mt-0.5 truncate">
                                     {(Array.isArray(track.artists) && track.artists.length > 0 ? track.artists : parseArtists(track.artist || '')).map((a, i) => {
                                         const link = getArtistLink(a);
                                         return (
@@ -155,8 +174,8 @@ export const AlbumDetail: React.FC = () => {
                                 </span>
                             )}
                         </div>
-                        <div className="text-[var(--color-text-muted)] text-right group-hover:text-[var(--color-text-primary)] transition-colors flex items-center justify-end gap-3">
-                            <span className="w-12 text-right">
+                        <div className="text-[var(--color-text-muted)] text-right group-hover:text-[var(--color-text-primary)] transition-colors flex flex-row items-center justify-end md:gap-3">
+                            <span className="w-12 text-right hidden md:inline text-sm tabular-nums">
                                 {formatTime(track.duration, '--:--')}
                             </span>
                             <button
@@ -165,9 +184,9 @@ export const AlbumDetail: React.FC = () => {
                                     e.stopPropagation();
                                     openContextMenu(track, e.clientX, e.clientY);
                                 }}
-                                className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-primary)] transition-all p-1"
+                                className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-primary)] hover:bg-black/5 dark:hover:bg-white/10 rounded-md transition-all p-1.5 focus:opacity-100"
                             >
-                                <MoreHorizontal size={16} />
+                                <MoreHorizontal size={18} />
                             </button>
                         </div>
                     </div>

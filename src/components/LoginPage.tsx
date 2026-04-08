@@ -25,7 +25,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
 
   return (
     <div className="fixed inset-0 z-[100] bg-[var(--color-bg)] flex items-center justify-center p-4">
-      <div className="absolute inset-0 z-0 opacity-30 bg-gradient-to-br from-[var(--color-primary-dark)] via-[var(--color-bg)] to-purple-900 pointer-events-none" />
+      <div className="absolute inset-0 z-0 opacity-30 bg-aurora-deep pointer-events-none" />
 
       <div className="relative z-10 w-full max-w-sm bg-[var(--glass-bg)] border border-[var(--glass-border)] shadow-2xl rounded-3xl p-8 backdrop-blur-3xl">
         <div className="flex flex-col items-center mb-8">

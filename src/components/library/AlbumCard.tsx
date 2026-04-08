@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { Link } from 'react-router-dom';
 import { AlbumArt } from '../AlbumArt';
 import { Play } from 'lucide-react';
@@ -13,14 +13,31 @@ interface AlbumCardProps {
     linkTo?: string;
 }
 
-export const AlbumCard: React.FC<AlbumCardProps> = ({ title, artist, artUrl, subtitle, onPlay, onOpen, linkTo }) => {
-    const cardContent = (
+export const AlbumCard: React.FC<AlbumCardProps> = memo(({ title, artist, artUrl, subtitle, onPlay, onOpen, linkTo }) => {
+    return (
         <div
-            className="album-card group flex flex-col cursor-pointer"
-            onClick={onOpen}
+            className="group flex flex-col relative cursor-pointer"
+            role={!linkTo ? "button" : undefined}
+            tabIndex={!linkTo ? 0 : undefined}
+            onClick={!linkTo ? onOpen : undefined}
+            onKeyDown={!linkTo ? (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    if (onOpen) onOpen();
+                }
+            } : undefined}
         >
+            {/* Semantic Invisible Link Overlay */}
+            {linkTo && (
+                <Link 
+                    to={linkTo} 
+                    className="absolute inset-0 z-10 rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                    aria-label={`View album: ${title}`}
+                />
+            )}
+            
             {/* Art container */}
-            <div className="relative aspect-square w-full mb-3 rounded-2xl border border-[var(--glass-border)] bg-[var(--color-surface)] shadow-[var(--shadow-md)] overflow-hidden">
+            <div className="relative aspect-square w-full mb-3 rounded-2xl border border-black/5 dark:border-white/5 bg-white/5 dark:bg-black/20 shadow-md overflow-hidden transition-transform duration-300 group-hover:scale-[1.02]">
                 <AlbumArt
                     artUrl={artUrl}
                     artist={artist}
@@ -30,47 +47,44 @@ export const AlbumCard: React.FC<AlbumCardProps> = ({ title, artist, artUrl, sub
                 />
 
                 {/* Hover overlay */}
-                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-all duration-300 flex items-center justify-center">
+                <div className="absolute inset-0 bg-transparent group-hover:bg-black/40 transition-colors duration-300 flex items-center justify-center z-10 pointer-events-none rounded-2xl">
                     <button
-                        onClick={(e) => { e.stopPropagation(); onPlay(e); }}
+                        onClick={(e) => { 
+                            e.preventDefault(); 
+                            e.stopPropagation(); 
+                            onPlay(e); 
+                        }}
                         aria-label={`Play ${title}`}
                         className="
+                            z-20 pointer-events-auto
                             w-14 h-14 rounded-full
                             flex items-center justify-center
                             opacity-0 scale-75
                             group-hover:opacity-100 group-hover:scale-100
                             transition-all duration-300 ease-out
-                            hover:scale-110
+                            hover:scale-110 active:scale-95
+                            bg-emerald-500/90 hover:bg-emerald-400 text-white backdrop-blur-sm
+                            shadow-[0_4px_24px_rgba(16,185,129,0.3)] hover:shadow-[0_8px_32px_rgba(16,185,129,0.5)]
+                            focus-visible:opacity-100 focus-visible:scale-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white
                         "
-                        style={{
-                            background: 'linear-gradient(145deg, rgba(139, 92, 246, 0.9), rgba(109, 40, 217, 0.95))',
-                            border: '1px solid rgba(168, 85, 247, 0.5)',
-                            backdropFilter: 'blur(20px)',
-                            WebkitBackdropFilter: 'blur(20px)',
-                            boxShadow: '0 0 28px rgba(139, 92, 246, 0.55), inset 0 1px 0 rgba(255,255,255,0.2)',
-                            color: '#fff',
-                        }}
                     >
-                        <Play size={24} className="text-white ml-0.5" />
+                        <Play size={24} fill="currentColor" className="text-white ml-1" />
                     </button>
                 </div>
             </div>
 
             {/* Text */}
-            <div className="flex flex-col px-1">
+            <div className="flex flex-col px-1 relative z-10 pointer-events-none">
                 <div className="font-semibold text-sm md:text-base tracking-wide truncate text-[var(--color-text-primary)] group-hover:text-[var(--color-primary)] transition-colors">
                     {title}
                 </div>
                 {subtitle && (
-                    <div className="text-xs md:text-sm text-[var(--color-text-secondary)] truncate">{subtitle}</div>
+                    <div className="text-xs md:text-sm text-[var(--color-text-secondary)] truncate mt-0.5">{subtitle}</div>
                 )}
             </div>
         </div>
     );
+});
 
-    if (linkTo) {
-        return <Link to={linkTo} className="no-underline">{cardContent}</Link>;
-    }
+AlbumCard.displayName = 'AlbumCard';
 
-    return cardContent;
-};

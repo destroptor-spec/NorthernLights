@@ -9,7 +9,48 @@ Use [TASKS.md](./TASKS.md) for a detailed status of each milestone.
 Update this file when changes are made, started and ended.
 Be specific and thorough so progress can be picked up easily.
 
-## Stability & File Editing (CRITICAL)
+## Versioning Schema
+
+This project uses **Semantic Versioning (semver)** with a pre-1.0 release model:
+
+| Format | Example | Meaning |
+|--------|---------|---------|
+| `major.minor.patch` | `1.0.0` | Stable release |
+| `major.minor.patch-prerelease` | `1.0.0-beta.1` | Pre-release (beta, alpha, rc) |
+
+### Current Version
+- **package.json**: `version` field — currently `1.0.0-beta.1`
+- **TASKS.md / MEMORY.md**: Milestones labeled as `v1.0.0-beta.1`, `v0.9.0`, `v0.8.0`, etc.
+
+### Version Mapping (Historical Milestones)
+| Milestone | Version | Description |
+|-----------|---------|-------------|
+| V18 | v1.0.0-beta.1 | Hierarchical MBDB Taxonomy & 21D (8D+13D) Recommendations |
+| V17 | v0.9.0 | Provider Reliability & Integration Overhaul (Part 2) |
+| V16 | v0.8.0 | 20D Audio Recommendation Architecture |
+| V15 | v0.7.0 | Three-Phase Scanner & Worker Thread Analysis |
+| V14 | v0.6.0 | Server Refactor & Real Audio Decoding |
+| V13 | v0.5.0 | Mobile Optimization |
+| V12 | v0.4.0 | LLM Deduplication Bug Fix & Tunable Engine Settings |
+| V11 | v0.3.0 | Playlist Pinning & Hub Improvements |
+| V10 | v0.2.0 | PWA & Chromecast |
+| V9 | v0.1.0 | Multi-User System |
+| V8–V1 | v0.0.x | Earlier milestones |
+
+### Versioning Rules
+- **Breaking changes**: Increment `major` (e.g., `1.0.0` → `2.0.0`)
+- **New features (backward-compatible)**: Increment `minor` (e.g., `1.0.0` → `1.1.0`)
+- **Bug fixes (backward-compatible)**: Increment `patch` (e.g., `1.0.0` → `1.0.1`)
+- **Pre-releases**: Append hyphen + label (e.g., `1.0.0-beta.1`, `0.9.0-alpha.2`)
+- **Pre-1.0 development**: All versions are `0.x.y` — no stability guarantee
+
+### When Releasing a New Version
+1. Update `version` in `package.json`
+2. Create new entry in `MEMORY.md` with date and version tag
+3. Create new entry in `TASKS.md` milestone list if it marks a significant feature
+4. If pre-release, use `-beta.N`, `-alpha.N`, or `-rc.N` suffix
+
+### Stability & File Editing (CRITICAL)
 - **Read-First:** Always read the target file immediately before editing to ensure exact whitespace/content match.
 - **Safe Overwrite:** Prefer `cat << 'EOF' > filename` for small/medium files.
 - **No Sudo:** Stay within `$HOME`. System paths are read-only.
@@ -17,9 +58,10 @@ Be specific and thorough so progress can be picked up easily.
 
 ## Project Structure & Data Flow
 Follow this directory hierarchy strictly:
-- `src/components/`: Pure UI & layout (PlayerControls, ProgressBar, Sidebar, UserMenu, AdminPanel, InviteRegister, MobileMiniPlayer, MobileBottomTabs, MobileNowPlaying, GlobalSearch).
+- `src/components/`: Pure UI & layout (PlayerControls, ProgressBar, Sidebar, UserMenu, AdminPanel, InviteRegister, MobileMiniPlayer, MobileBottomTabs, MobileNowPlaying, GlobalSearch, SettingsModal, ConfirmModal, PromptModal).
 - `src/components/library/`: Library views (AlbumDetail, GenreDetail, ArtistDetail, LibraryHome, Playlists).
-- `src/hooks/`: Custom React hooks (useLoadLibrary, useVolumeSync, useDominantColor, useExternalImage, useLlmConnectionTest, useSwipe).
+- `src/components/settings/`: Modular settings tab components (AccountTab, AppearanceTab, LibraryTab, PlaybackTab, SystemTab, GenAiTab, GenreMatrixTab, DatabaseTab, AdminDashboard).
+- `src/hooks/`: Custom React hooks (useLoadLibrary, useVolumeSync, useDominantColor, useExternalImage, useArtistData, useSwipe, useToast).
 - `src/store/`: Zustand state definitions + persistence middleware.
 - `src/utils/`: Pure utility functions (formatTime, safeBtoa, fileSystem, artistUtils, PlaybackManager, externalImagery, metadataCache).
 - `src/App.tsx`: Layout orchestration. `main.tsx`: Entry point.
@@ -108,7 +150,7 @@ Library scanning operates in three distinct phases:
    - **15-Second Decode**: Captures enough audio for accurate features while minimizing memory
    - **Symlink Workaround**: Non-ASCII filenames handled via temp symlinks in `/tmp/am-*/`
    - **Safe Essentia**: Individual algorithm error handling with graceful fallbacks
-   - **Results**: 20-dimensional feature vectors (7D acoustic semantic + 13D MFCC) stored in `track_features` table
+   - **Results**: 21-dimensional feature vectors (**8D acoustic semantic** + 13D MFCC) stored in `track_features` table. Supports slicing for legacy 7D compatibility. Uses native SQL aggregation (`AVG`/`STDDEV`) for ultra-fast library-wide vector normalization.
 
 4. **Taxonomic Categorization Phase**: After analysis, the system runs a 3-step pipeline to map local tags to the MusicBrainz hierarchical taxonomy:
    - **Step 1: Direct SQL Match** — Exact match against MusicBrainz Genres or Aliases.
@@ -119,7 +161,11 @@ Library scanning operates in three distinct phases:
 - `POST /api/library/scan` — Full three-phase scan
 - `POST /api/library/analyze` — Analysis phase only (tracks without features)
 - `GET /api/library/stats` — Per-directory coverage statistics
-- `GET /api/library/scan/status` — SSE stream for real-time scan progress
+- `GET /api/library/status` — SSE stream for real-time scan progress.
+- `GET /api/library/scan/status` — SSE stream for real-time scan progress (aliased).
+
+**Scanner UI Reactivity**:
+The scanner indicator in `App.tsx` must use reactive Zustand subscriptions for `scanPhaseGlobal`, `scannedFilesGlobal`, `totalFilesGlobal`, etc., rather than `getState()` snapshots. This ensures the UI accurately reflects transition between walk, metadata, and analysis phases. Updated `server/index.ts` and `library.routes.ts` now track a `libraryChanged` flag to eliminate redundant frontend re-fetches during no-op auto-walk ticks.
 
 ## Shared Utilities (src/utils/)
 - `formatTime(seconds, fallback?)` — Formats seconds as `M:SS`. Returns fallback for invalid input (default `'0:00'`).
@@ -130,8 +176,8 @@ Library scanning operates in three distinct phases:
 - `PlaybackManager` — Singleton audio playback manager. Routes play/pause/seek to local `HTMLAudioElement` or `CastManager` depending on connection state.
 
 ## Server Services (server/services/)
-- `audioExtraction.service.ts` — ffmpeg subprocess decoding + Essentia.js WASM analysis. Smart seeking (35% into track), 15-second decode, non-ASCII filename symlink workaround, safe Essentia with individual algorithm error handling.
-- `recommendation.service.ts` — Infinity Mode and Hub playlist generation using 20-dimensional pgvector HNSW similarity search (acoustic + MFCC) and genre hop cost adjacency matrices. Timbre Imputation bridging for LLM playlists.
+- `audioExtraction.service.ts` — ffmpeg subprocess decoding + Essentia.js WASM analysis. Smart seeking (35% into track), 15-second decode, non-ASCII filename symlink workaround, safe Essentia with individual algorithm error handling. Feature extraction optimized with **Hanning Window pre-computation** and **WASM buffer reuse**.
+- `recommendation.service.ts` — Infinity Mode and Hub playlist generation using **21-dimensional** pgvector HNSW similarity search (8D acoustic + 13D MFCC) and genre hop-cost adjacency logic on MBDB. Hardened with `NaN` guards and cross-dimension compatibility (7D/8D).
 - `llm.service.ts` — LLM integration for natural language playlist generation. Supports local providers (LM Studio, Ollama) and cloud (OpenAI).
 - `genreMatrix.service.ts` — LLM-assisted 3nd-gen hierarchical ontology classification using MusicBrainz tree-paths and Lowest Common Ancestor (LCA) hop-cost math.
 - `mbdb.service.ts` — High-performance streaming importer for MusicBrainz database dumps. Handles downloading, TSV extraction, and bulk PostgreSQL insertion.

@@ -13,7 +13,7 @@ Most endpoints require authentication via a JWT token.
 7. [Hub & AI Features](#-hub--ai-features)
 8. [Entities](#-entities)
 9. [Media & Streaming](#-media--streaming)
-10. [External Providers](#-external-providers)
+10. [Providers](#-providers)
 11. [Miscellaneous](#-miscellaneous)
 
 ---
@@ -81,11 +81,46 @@ Register a new user using an invite token.
   }
   ```
 
+### [GET] `/api/auth/me`
+Get the currently authenticated user.
+- **Example Response**:
+  ```json
+  {
+    "user": { "id": "uuid-v4", "username": "johndoe", "role": "user" }
+  }
+  ```
+
+### [POST] `/api/auth/change-password`
+Change the current user's password.
+- **Example Request**:
+  ```json
+  {
+    "currentPassword": "oldpassword",
+    "newPassword": "newpassword"
+  }
+  ```
+
+### [DELETE] `/api/auth/delete-account`
+Delete the currently authenticated user's account.
+- **Example Request**:
+  ```json
+  { "password": "currentpassword" }
+  ```
+
+### [GET] `/api/auth/invites/:token/validate`
+Validate an invite token.
+- **Example Response**:
+  ```json
+  { "valid": true }
+  ```
+
 ---
 
 ## 🛠️ Admin
 
-Endpoints in this section require the `admin` role.
+Endpoints in this section require the `admin` role unless otherwise noted.
+
+### User Management
 
 ### [GET] `/api/admin/users`
 List all users in the system.
@@ -104,6 +139,40 @@ List all users in the system.
   }
   ```
 
+### [POST] `/api/admin/users`
+Create a new user directly (bypasses invite system).
+- **Example Request**:
+  ```json
+  {
+    "username": "newuser",
+    "password": "password123",
+    "role": "user"
+  }
+  ```
+
+### [PUT] `/api/admin/users/:id`
+Update a user's details.
+- **Example Request**:
+  ```json
+  {
+    "username": "updatedname",
+    "role": "admin"
+  }
+  ```
+
+### [DELETE] `/api/admin/users/:id`
+Delete a user.
+- **Note**: Cannot delete your own account.
+
+### Invite Management
+
+### [GET] `/api/admin/invites`
+List all active invites.
+- **Example Response**:
+  ```json
+  { "invites": [...] }
+  ```
+
 ### [POST] `/api/admin/invites`
 Create a new registration invitation.
 - **Example Request**:
@@ -111,22 +180,26 @@ Create a new registration invitation.
   {
     "role": "user",
     "maxUses": 5,
-    "expiresIn": 86400 
+    "expiresIn": 86400
   }
   ```
 - **Example Response**:
   ```json
   {
-    "invite": {
-      "token": "abcdef...",
-      "role": "user",
-      "max_uses": 5,
-      "uses": 0,
-      "expires_at": 1712054400000
-    },
+    "invite": { "token": "abcdef...", "role": "user", "max_uses": 5, "uses": 0, "expires_at": 1712054400000 },
     "inviteUrl": "http://localhost:3000/invite/abcdef..."
   }
   ```
+
+### [DELETE] `/api/admin/invites/:token`
+Revoke an invitation.
+
+### Cleanup
+
+### [POST] `/api/admin/cleanup-playlists`
+Clean up orphaned playlists (playlists belonging to deleted users).
+
+### Database Container Control
 
 ### [GET] `/api/admin/db/status`
 Check the status of the PostgreSQL container.
@@ -135,25 +208,24 @@ Check the status of the PostgreSQL container.
   {
     "running": true,
     "status": "up",
-    "configuredData": {
-      "user": "musicuser",
-      "port": "5432",
-      "host": "localhost",
-      "database": "musicdb"
-    }
+    "configuredData": { "user": "musicuser", "port": "5432", "host": "localhost", "database": "musicdb" }
   }
   ```
- 
-### [POST] `/api/admin/mbdb/import`
-Trigger the MusicBrainz hierarchical taxonomy import.
-- **How to use**: Downloads the latest MusicBrainz dump, extracts (~5GB needed), and populates the genre hierarchy tables. 
+
+### [GET] `/api/admin/db/stats`
+Get database statistics (table counts, connection pool status).
+
+### [POST] `/api/admin/db/start` (or `stop`, `create`, `recreate`)
+Control the PostgreSQL container.
 - **Example Response**:
   ```json
   { "status": "started" }
   ```
- 
+
+### MusicBrainz Taxonomy
+
 ### [GET] `/api/admin/mbdb/status` (SSE)
-Receive real-time progress of the MusicBrainz import.
+Receive real-time import progress.
 - **How to use**: Connect via `new EventSource('/api/admin/mbdb/status?token=<jwt>')`.
 - **Example Message**:
   ```json
@@ -165,13 +237,38 @@ Receive real-time progress of the MusicBrainz import.
   }
   ```
 
+### [POST] `/api/admin/mbdb/import`
+Trigger the MusicBrainz hierarchical taxonomy import.
+- **How to use**: Downloads the latest MusicBrainz dump, extracts (~5GB needed), and populates the genre hierarchy tables.
+- **Example Response**:
+  ```json
+  { "message": "MBDB Import started" }
+  ```
+
+### [POST] `/api/admin/mbdb/cancel`
+Cancel an in-progress import.
+
+### [GET] `/api/admin/mbdb/check-update`
+Check if a newer MusicBrainz dump is available.
+- **Example Response**:
+  ```json
+  {
+    "latestTag": "2024-04-01",
+    "lastImportTag": "2024-03-01",
+    "updateAvailable": true,
+    "lastImport": { "tag": "2024-03-01", "timestamp": 1711968000000 }
+  }
+  ```
+
+### [GET] `/api/admin/health`
+Unified admin health check (SSE, DB, container, scanner, MBDB status).
 
 ---
 
 ## 📚 Library
 
 ### [GET] `/api/library`
-Get the entire library structure.
+Get the entire library structure (tracks, directories, artists, albums, genres).
 - **Example Track Object**:
   ```json
   {
@@ -192,6 +289,16 @@ Get the entire library structure.
     "genreId": "uuid-v4"
   }
   ```
+
+### [POST] `/api/library/add`
+Add a mapped folder.
+- **Example Request**:
+  ```json
+  { "path": "/home/user/music" }
+  ```
+
+### [POST] `/api/library/remove`
+Remove a mapped folder and its tracks.
 
 ### [POST] `/api/library/scan`
 Trigger a recursive directory scan.
@@ -216,6 +323,32 @@ Receive real-time scan progress.
   }
   ```
 
+### [POST] `/api/library/analyze`
+Run audio analysis on tracks without features.
+- **Query Params**: `force` (optional, analyze all tracks if true)
+- **Example Response**:
+  ```json
+  { "status": "completed", "message": "Analyzed 150 tracks", "count": 150 }
+  ```
+
+### [GET] `/api/library/analyze/status`
+Get analysis coverage statistics.
+- **Example Response**:
+  ```json
+  { "totalTracks": 1000, "analyzedTracks": 850, "pendingTracks": 150 }
+  ```
+
+### [GET] `/api/library/stats`
+Get per-directory statistics.
+- **Example Response**:
+  ```json
+  {
+    "directories": [
+      { "path": "/home/user/music", "totalTracks": 500, "withMetadata": 480, "analyzed": 450 }
+    ]
+  }
+  ```
+
 ---
 
 ## 🎵 Playlists
@@ -231,19 +364,35 @@ List all playlists owned by or pinned by the current user.
         "title": "My Chill Mix",
         "description": "Chill vibes for coding",
         "isLlmGenerated": false,
+        "isPinned": false,
         "tracks": [{ "id": "...", "title": "..." }]
       }
     ]
   }
   ```
 
+### [POST] `/api/playlists`
+Create a new playlist.
+- **Example Request**:
+  ```json
+  { "title": "My Summer Hits", "description": "Upbeat tracks for summer" }
+  ```
+
 ### [POST] `/api/playlists/:id/tracks`
 Add tracks to an existing playlist.
 - **Example Request**:
   ```json
-  {
-    "trackIds": ["track-v4-id-1", "track-v4-id-2"]
-  }
+  { "trackIds": ["track-v4-id-1", "track-v4-id-2"] }
+  ```
+
+### [DELETE] `/api/playlists/:id`
+Delete a playlist (owner or admin).
+
+### [PATCH] `/api/playlists/:id/pin`
+Pin or unpin a playlist.
+- **Example Request**:
+  ```json
+  { "pinned": true }
   ```
 
 ---
@@ -259,14 +408,38 @@ Get all server and user configuration settings.
     "scannerConcurrency": "SSD",
     "discoveryLevel": 50,
     "llmModelName": "gpt-4",
-    "llmBaseUrl": "https://api.openai.com/v1"
+    "llmBaseUrl": "https://api.openai.com/v1",
+    "genreStrictness": 50,
+    "artistAmnesiaLimit": 200,
+    "llmPlaylistDiversity": 50,
+    "genreBlendWeight": 50,
+    "llmTracksPerPlaylist": 10,
+    "llmPlaylistCount": 3
   }
   ```
 
 ### [POST] `/api/settings`
 Update settings. User-level keys are saved per-user; system-level keys require Admin role.
-- **Valid System Keys**: `audioAnalysisCpu`, `scannerConcurrency`, `llmBaseUrl`, `llmApiKey`, `llmModelName`, `musicBrainzEnabled`, `geniusApiKey`.
-- **Valid User Keys**: `discoveryLevel`, `genreStrictness`, `artistAmnesiaLimit`, `llmPlaylistDiversity`, `genreBlendWeight`, `llmTracksPerPlaylist`, `llmPlaylistCount`.
+- **Valid System Keys**: `audioAnalysisCpu`, `scannerConcurrency`, `llmBaseUrl`, `llmApiKey`, `llmModelName`, `hubGenerationSchedule`, `geniusApiKey`, `lastFmApiKey`, `lastFmSharedSecret`, `musicBrainzEnabled`, `musicBrainzClientId`, `musicBrainzClientSecret`, `providerArtistImage`, `providerArtistBio`, `providerAlbumArt`, `autoFolderWalk`.
+- **Valid User Keys**: `discoveryLevel`, `genreStrictness`, `artistAmnesiaLimit`, `llmPlaylistDiversity`, `genreBlendWeight`, `llmTracksPerPlaylist`, `llmPlaylistCount`, `lastFmScrobbleEnabled`.
+
+### [POST] `/api/settings/health/llm`
+Test LLM connection.
+- **Example Request**:
+  ```json
+  { "llmBaseUrl": "https://api.openai.com/v1", "llmApiKey": "sk-..." }
+  ```
+
+### Genre Matrix
+
+### [GET] `/api/settings/genre-matrix/mappings`
+Get genre-to-subgenre mappings.
+
+### [POST] `/api/settings/genre-matrix/remap-all`
+Trigger full remapping of all genres (admin only).
+
+### [POST] `/api/settings/genre-matrix/regenerate`
+Manually trigger genre matrix regeneration (admin only).
 
 ---
 
@@ -288,51 +461,211 @@ Get the user's AI-generated hub collections.
   }
   ```
 
+### [POST] `/api/hub/regenerate`
+Trigger regeneration of LLM playlists for the user.
+- **Query Params**: `force` (optional, regenerate even if recent)
+- **Example Response**:
+  ```json
+  { "generated": 3 }
+  ```
+
 ### [POST] `/api/hub/generate-custom`
 Generate a new playlist concept from a natural language prompt.
 - **Example Request**:
   ```json
-  {
-    "prompt": "Synthwave for driving late at night in a neon city"
-  }
+  { "prompt": "Synthwave for driving late at night in a neon city" }
   ```
+
+---
+
+## 👤 Entities
+
+### Artists
+
+### [GET] `/api/artists`
+List all artists.
+- **Example Response**:
+  ```json
+  [{ "id": "uuid", "name": "Led Zeppelin", "trackCount": 42 }]
+  ```
+
+### [GET] `/api/artists/:id`
+Get artist details with tracks.
+- **Example Response**:
+  ```json
+  { "id": "uuid", "name": "Led Zeppelin", "tracks": [...] }
+  ```
+
+### Albums
+
+### [GET] `/api/albums`
+List all albums.
+
+### [GET] `/api/albums/:id`
+Get album details with tracks.
+
+### Genres
+
+### [GET] `/api/genres`
+List all genres.
+
+### [GET] `/api/genres/:id`
+Get genre details with tracks.
 
 ---
 
 ## 📻 Media & Streaming
 
-### [GET] `/api/stream`
+### [GET] `/api/media/stream`
 Stream audio content. Supports HTTP Range for seeking.
-- **Query Params**: `pathB64` or `path`.
+- **Query Params**: `pathB64` or `path` (base64-encoded file path).
 - **Note**: WMA files auto-transcode to MP3 if FFmpeg is present.
 
-### [GET] `/api/art`
+### [GET] `/api/media/art`
 Retrieve album art image.
 - **Query Params**: `pathB64` or `path`.
 - **Returns**: Binary image blob (JPG/PNG).
 
 ---
 
-## 🌍 External Providers
+## 🔌 Providers
 
-Proxies for external APIs to avoid CORS issues and manage rate-limiting.
+### MusicBrainz (proxy + OAuth)
 
 ### [GET] `/api/providers/musicbrainz/artist/:mbid`
 Proxy request to MusicBrainz artist endpoint.
-- **Example**: `/api/providers/musicbrainz/artist/uuid-mbid`
+
+### [GET] `/api/providers/musicbrainz/release-group/:mbid`
+Proxy request to MusicBrainz release-group endpoint.
+
+### [GET] `/api/providers/musicbrainz/recording/:mbid`
+Proxy request to MusicBrainz recording endpoint.
+
+### [GET] `/api/providers/musicbrainz/isrc/:isrc`
+Lookup recording by ISRC.
+
+### [GET] `/api/providers/musicbrainz/search/artist`
+Search for artists.
+- **Query Params**: `q` (search query), `limit`
+
+### [GET] `/api/providers/musicbrainz/search/release-group`
+Search for release groups.
+
+### [GET] `/api/providers/musicbrainz/test`
+Test MusicBrainz connection.
+
+### [GET] `/api/providers/musicbrainz/authorize`
+Get OAuth2 authorization URL.
+
+### [GET] `/api/providers/musicbrainz/callback`
+OAuth2 callback handler.
+
+### [POST] `/api/providers/musicbrainz/refresh`
+Refresh OAuth token.
+
+### [POST] `/api/providers/musicbrainz/disconnect`
+Disconnect OAuth.
+
+### [GET] `/api/providers/musicbrainz/status`
+Get connection status.
+
+### Last.fm (per-user)
+
+### [GET] `/api/providers/lastfm/authorize`
+Get Last.fm authorization URL.
+
+### [GET] `/api/providers/lastfm/callback`
+OAuth callback handler.
+
+### [POST] `/api/providers/lastfm/disconnect`
+Disconnect Last.fm.
+
+### [GET] `/api/providers/lastfm/status`
+Get connection status.
+
+### [POST] `/api/providers/lastfm/scrobble`
+Scrobble tracks.
+- **Example Request**:
+  ```json
+  { "tracks": [{ "artist": "Radiohead", "track": "Creep", "timestamp": 1711968000 }] }
+  ```
+
+### [POST] `/api/providers/lastfm/now-playing`
+Update now playing status.
+
+### [POST] `/api/providers/lastfm/love`
+Love a track.
+
+### [POST] `/api/providers/lastfm/unlove`
+Unlove a track.
+
+### [GET] `/api/providers/lastfm/test`
+Test Last.fm connection.
+
+### Genius
 
 ### [POST] `/api/providers/genius/search`
 Search for song details or lyrics metadata on Genius.
 - **Example Request**:
   ```json
-  {
-    "query": "Bohemian Rhapsody"
-  }
+  { "query": "Bohemian Rhapsody" }
   ```
+
+### [POST] `/api/providers/genius/artist/:id`
+Get artist details from Genius.
+
+### [POST] `/api/providers/genius/test`
+Test Genius API key.
+
+### External Metadata (cached, server-side)
+
+### [GET] `/api/providers/external/artist`
+Fetch artist data (image, bio, metadata).
+- **Query Params**: `name`, `mbid` (optional)
+- **Note**: Requires authentication.
+
+### [GET] `/api/providers/external/album-art`
+Fetch album artwork.
+- **Query Params**: `album`, `artist`, `mbid` (optional)
+
+### [GET] `/api/providers/external/genre-image`
+Fetch genre artwork.
+
+### [GET] `/api/providers/external/genre-info`
+Fetch genre information.
+
+### [GET] `/api/providers/external/lyrics`
+Fetch lyrics.
+- **Query Params**: `track`, `artist`
+
+### [GET] `/api/providers/external/proxy-image`
+Proxy external images server-side to avoid CORS.
+- **Query Params**: `url`
+- **Note**: Only allows known domains (last.fm, genius, coverartarchive.org, iTunes).
+
+### [POST] `/api/providers/external/refresh`
+Clear external metadata cache (admin only).
 
 ---
 
-## ✨ Miscellaneous
+## ✨ Playback & History
+
+### [POST] `/api/playback/history`
+Record track to session history for Infinity Mode.
+- **Example Request**:
+  ```json
+  { "trackId": "track-v4-id" }
+  ```
+
+### [POST] `/api/playback/record`
+Record a successful playback (increments play count).
+- **Example Request**:
+  ```json
+  { "trackId": "track-v4-id" }
+  ```
+
+### [POST] `/api/playback/skip`
+Record a track skip.
 
 ### [POST] `/api/recommend`
 Get the next track for Infinity Mode based on current session history.
@@ -350,6 +683,20 @@ Get the next track for Infinity Mode based on current session history.
   }
   ```
 
+---
+
+## 🌍 Miscellaneous
+
 ### [GET] `/api/health`
 General system health check.
-- **Returns**: `{ "status": "ok", "dbConnected": true, "message": "..." }`
+- **Example Response**:
+  ```json
+  {
+    "status": "ok",
+    "dbConnected": true,
+    "dbLiveness": true,
+    "dbLatency": "5ms",
+    "container": { "status": "running", "runtime": "docker", "image": "pgvector/pgvector:pg16" },
+    "message": "Aurora Media Server is running!"
+  }
+  ```

@@ -5,26 +5,32 @@ import { genreMatrixService } from './services/genreMatrix.service';
 import { EventEmitter } from 'events';
 
 export const settingsEmitter = new EventEmitter();
+export const dbEmitter = new EventEmitter();
 
 // Global DB connectivity flag
 export let dbConnected = false;
 
 export function setDbConnected(val: boolean) {
+  const changed = dbConnected !== val;
   dbConnected = val;
+  if (changed) {
+    dbEmitter.emit('connectionStatusChanged', val);
+  }
 }
 
 let isInitializing = false;
-export async function initDatabaseConnection(retries = 15, delay = 2000) {
+export async function initDatabaseConnection(retries = 15, initialDelay = 1000) {
   if (isInitializing) return;
   isInitializing = true;
 
   for (let i = 0; i < retries; i++) {
     try {
       await genreMatrixService.init();
-      dbConnected = true;
+      setDbConnected(true);
       console.log('[DB] Connected and genre matrix initialized.');
       // Backfill entity IDs for existing tracks
       try {
+        const { migrateEntityIds } = await import('./database');
         await migrateEntityIds();
       } catch (e: any) {
         console.error('[DB] Entity migration failed (non-fatal):', e.message || e);
@@ -32,8 +38,9 @@ export async function initDatabaseConnection(retries = 15, delay = 2000) {
       isInitializing = false;
       return;
     } catch (e: any) {
-      dbConnected = false;
-      console.error(`[DB] Connection attempt ${i + 1}/${retries} failed:`, e.message || e);
+      setDbConnected(false);
+      const delay = initialDelay * Math.pow(2, i);
+      console.error(`[DB] Connection attempt ${i + 1}/${retries} failed (retrying in ${delay}ms):`, e.message || e);
       if (i < retries - 1) {
         await new Promise(resolve => setTimeout(resolve, delay));
       }
@@ -64,7 +71,8 @@ export const scanStatus = {
   totalFiles: 0,
   activeFiles: [] as string[],
   activeWorkers: 0,
-  currentFile: '' // kept for backwards-compat
+  currentFile: '', // kept for backwards-compat
+  libraryChanged: false, // true when a walk/scan actually added or removed tracks
 };
 
 export const scanClients = new Set<Response>();
@@ -108,12 +116,41 @@ export async function isPathAllowed(requestedPathBuf: Buffer): Promise<boolean> 
 // ─── MBDB State ────────────────────────────────────────────────────────
 export const mbdbStatus = {
   isImporting: false,
-  phase: 'idle', // 'idle' | 'downloading' | 'extracting' | 'inserting' | 'complete' | 'error'
+  phase: 'idle', // 'idle' | 'downloading' | 'inserting' | 'refreshing' | 'complete' | 'error'
   progress: 0,
   message: '',
+  elapsedSeconds: 0,
+  currentTable: '',
+  counts: { genres: 0, aliases: 0, links: 0 },
+  lastImport: null as { timestamp: number; duration: number; counts: { genres: number; aliases: number; links: number } } | null,
+  completedPhases: [] as string[],
 };
 
+// Track long-running operations to suppress false-positive leak warnings
+let longRunningOperationCount = 0;
+
+export function startLongRunningOperation() {
+  longRunningOperationCount++;
+}
+
+export function endLongRunningOperation() {
+  longRunningOperationCount = Math.max(0, longRunningOperationCount - 1);
+}
+
+export function isLongRunningOperationActive(): boolean {
+  return longRunningOperationCount > 0;
+}
+
 export const mbdbClients = new Set<Response>();
+let mbdbCancelRequested = false;
+
+export function setMbdbCancelRequested(val: boolean) {
+  mbdbCancelRequested = val;
+}
+
+export function getMbdbCancelRequested() {
+  return mbdbCancelRequested;
+}
 
 export function broadcastMbdbStatus() {
   const payload = `data: ${JSON.stringify(mbdbStatus)}\n\n`;

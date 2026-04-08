@@ -38,7 +38,7 @@ export interface HubCollection {
   section: string;
   title?: string;
   description: string;
-  target_vector: [number, number, number, number, number, number, number];
+  target_vector: [number, number, number, number, number, number, number, number];
   target_genre?: string; // A single macro-genre keyword (e.g. "r&b", "pop", "electronic")
 }
 
@@ -62,7 +62,8 @@ A brief summary of their recent listening history: ${context.historySummary}.
 
 Using this context, generate ${conceptCount} Hub playlist concepts. Each concept must output optimal acoustic target values between 0.0 and 1.0.
 IMPORTANT: Each concept must be DIVERSE from the others. Vary the energy, mood, and acoustic profile significantly between concepts. Do not create similar-sounding playlists.
-The vector array must precisely match this order: [energy, brightness, percussiveness, chromagram, instrumentalness, acousticness, danceability].
+The vector array must precisely match this order: [energy, brightness, percussiveness, chromagram, instrumentalness, acousticness, danceability, tempo].
+- tempo: normalized BPM where 0.0 = 60 BPM (slow), 0.5 = 120 BPM (moderate), 1.0 = 200+ BPM (fast)
 You must also include "target_genres": an array of 2-3 standard broad genre keywords (e.g., "electronic", "rock", "pop", "jazz", "hip-hop") that best match the playlist's mood and concept.
 Only output valid JSON matching this schema:
 {
@@ -72,7 +73,7 @@ Only output valid JSON matching this schema:
       "title": "Deep Work Coding",
       "description": "Driving electronic beats with zero vocals.",
       "target_genres": ["electronic", "ambient", "techno"],
-      "target_vector": [0.6, 0.3, 0.8, 0.5, 0.9, 0.1, 0.8] 
+      "target_vector": [0.6, 0.3, 0.8, 0.5, 0.9, 0.1, 0.8, 0.7] 
     }
   ]
 }
@@ -200,7 +201,7 @@ Only output valid JSON matching this schema exactly:
   "title": "A short, catchy title for the playlist",
   "description": "A very short description matching the mood.",
   "target_genres": ["rock", "indie", "alternative"],
-  "target_vector": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+  "target_vector": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
 }
 `;
 

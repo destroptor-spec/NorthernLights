@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { ChildProcessPool } from '../workers/processPool';
 import * as mm from 'music-metadata';
-import { addDirectory, addTrack, addTrackFeatures, getTracksWithoutFeatures, getTrackCountWithFeatures, getAllTracks, getDirectories, removeDirectory, removeTracksByDirectory, getOrCreateArtist, getOrCreateAlbum, getOrCreateGenre, getAllArtists, getAllAlbums, getAllGenres, getExistingPaths, deleteTracksByIds } from '../database';
+import { addDirectory, addTrack, addTrackFeatures, getTracksWithoutFeatures, getTrackCountWithFeatures, getAllTracks, getDirectories, removeDirectory, removeTracksByDirectory, getOrCreateArtist, getOrCreateAlbum, getOrCreateGenre, getAllArtists, getAllAlbums, getAllGenres, getExistingPaths, deleteTracksByIds, purgeOrphanedEntities, purgeOrphanedTracks } from '../database';
 import { genreMatrixService } from '../services/genreMatrix.service';
 import { scanStatus, scanClients, broadcastScanStatus } from '../state';
 
@@ -79,6 +79,8 @@ async function getScannerConcurrency(): Promise<number> {
 }
 
 async function processMetadataBatch(fileBufs: Buffer[], concurrency: number): Promise<void> {
+  const startTime = Date.now();
+  let errorCount = 0;
   const { settingsEmitter } = await import('../state');
   let index = 0;
   const activeSet = new Set<string>();
@@ -98,6 +100,17 @@ async function processMetadataBatch(fileBufs: Buffer[], concurrency: number): Pr
       while (orchestrationActive && activeLoops <= currentConcurrency && index < total) {
         const i = index++;
         if (i >= total) break;
+
+        // Graceful degradation: pause if DB is down
+        const { dbConnected } = await import('../state');
+        if (!dbConnected) {
+          console.warn('[Scanner] Database disconnected. Pausing metadata batch...');
+          while (!(await import('../state')).dbConnected && orchestrationActive) {
+            await new Promise(r => setTimeout(r, 5000));
+          }
+          if (!orchestrationActive) break;
+          console.log('[Scanner] Database reconnected. Resuming metadata batch.');
+        }
 
         const fullBuf = fileBufs[i];
         const dbPath = fullBuf.toString('base64');
@@ -170,12 +183,20 @@ async function processMetadataBatch(fileBufs: Buffer[], concurrency: number): Pr
             let artistId = null;
             let albumId = null;
             let genreId = null;
-            try { artistId = await getOrCreateArtist(albumArtistName); } catch (e) { /* skip */ }
-            for (const a of finalArtists) {
-              try { await getOrCreateArtist(a); } catch (e) { /* skip */ }
+            try { artistId = await getOrCreateArtist(albumArtistName); } catch (e) {
+              console.warn(`[Scanner] Failed to get/create artist "${albumArtistName}" for ${nameStr}:`, e);
             }
-            try { albumId = await getOrCreateAlbum(albumTitle, albumArtistName); } catch (e) { /* skip */ }
-            try { genreId = await getOrCreateGenre(primaryGenreName); } catch (e) { /* skip */ }
+            for (const a of finalArtists) {
+              try { await getOrCreateArtist(a); } catch (e) {
+                console.warn(`[Scanner] Failed to get/create artist "${a}" for ${nameStr}:`, e);
+              }
+            }
+            try { albumId = await getOrCreateAlbum(albumTitle, albumArtistName); } catch (e) {
+              console.warn(`[Scanner] Failed to get/create album "${albumTitle}" for ${nameStr}:`, e);
+            }
+            try { genreId = await getOrCreateGenre(primaryGenreName); } catch (e) {
+              console.warn(`[Scanner] Failed to get/create genre "${primaryGenreName}" for ${nameStr}:`, e);
+            }
 
             await addTrack({
               path: dbPath,
@@ -211,10 +232,12 @@ async function processMetadataBatch(fileBufs: Buffer[], concurrency: number): Pr
             }
           } else {
             console.warn(`Failed to parse metadata for ${nameStr}: ${result.error}`);
+            errorCount++;
             await addTrack({ path: dbPath, title: nameStr, bitrate: null, format: null });
           }
         } catch (err) {
           console.warn(`Failed metadata processing for ${nameStr}`, err);
+          errorCount++;
           await addTrack({ path: dbPath, title: nameStr, bitrate: null, format: null });
         } finally {
           activeSet.delete(activeLabel);
@@ -260,6 +283,8 @@ async function processMetadataBatch(fileBufs: Buffer[], concurrency: number): Pr
   orchestrationActive = false;
   settingsEmitter.off('concurrencyChanged', onSettingsChanged);
   pool.terminate();
+  const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+  console.log(`[Scanner] Phase: metadata - Duration: ${duration}s, Errors: ${errorCount}`);
 }
 
 // ─── Phase 3: Parallel audio analysis (ffmpeg + Essentia) ────────────
@@ -286,6 +311,8 @@ async function getAnalysisConcurrency(): Promise<number> {
 }
 
 async function processAnalysisBatch(tracks: { id: string; filePath: Buffer; title: string; artist?: string | null }[], concurrency: number): Promise<void> {
+  const startTime = Date.now();
+  let errorCount = 0;
   const { settingsEmitter } = await import('../state');
   const { getVectorStats } = await import('../database');
   let index = 0;
@@ -346,9 +373,11 @@ async function processAnalysisBatch(tracks: { id: string; filePath: Buffer; titl
             }
           } else if (result.error) {
             console.warn(`[Analysis] Failed for "${track.title || result.id}": ${result.error}`);
+            errorCount++;
           }
         } catch (err) {
           console.error(`[Analysis] Job failed for "${track.title}":`, err);
+          errorCount++;
         } finally {
           activeSet.delete(displayName);
           scanStatus.activeFiles = Array.from(activeSet);
@@ -397,12 +426,13 @@ async function processAnalysisBatch(tracks: { id: string; filePath: Buffer; titl
 
 // ─── Shared scan lifecycle helpers ────────────────────────────────────
 
-function resetScanStatus() {
+function resetScanStatus(libraryChanged = false) {
   scanStatus.isScanning = false;
   scanStatus.phase = 'idle';
   scanStatus.currentFile = '';
   scanStatus.activeFiles = [];
   scanStatus.activeWorkers = 0;
+  scanStatus.libraryChanged = libraryChanged;
   broadcastScanStatus(true);
 }
 
@@ -446,6 +476,7 @@ router.post('/scan', async (req, res) => {
     return res.status(400).json({ error: 'Scan already in progress' });
   }
 
+  let walkResult: { added: number; removed: number } | null = null;
   try {
     scanStatus.isScanning = true;
     scanStatus.scannedFiles = 0;
@@ -459,7 +490,7 @@ router.post('/scan', async (req, res) => {
     await addDirectory(dirPath);
 
     console.log(`[Scan] Starting scan for: ${dirPath}`);
-    const walkResult = await runSyncWalk(dirPath);
+    walkResult = await runSyncWalk(dirPath);
     console.log(`[Scan] Completed for ${dirPath}: ${walkResult.added} added, ${walkResult.removed} removed`);
 
     res.json({ 
@@ -474,17 +505,20 @@ router.post('/scan', async (req, res) => {
     console.error('Scan init error:', error);
     res.status(500).json({ error: 'Failed to complete scan' });
   } finally {
-    resetScanStatus();
+    resetScanStatus(walkResult ? (walkResult.added > 0 || walkResult.removed > 0) : false);
   }
 });
 
 // ─── Sync Walk: diff disk vs DB, remove stale, scan new ───────────────
 // Exported so the auto-walk scheduler in server/index.ts can reuse it.
 export async function runSyncWalk(dirPath: string): Promise<{ removed: number; added: number }> {
+  const totalStartTime = Date.now();
   const dirBuf = Buffer.from(dirPath, 'utf8');
 
   // ── Walk ──
+  const walkStartTime = Date.now();
   const fileBufs = await collectAudioFiles(dirBuf);
+  console.log(`[Scanner] Phase: walk - Duration: ${((Date.now() - walkStartTime) / 1000).toFixed(1)}s`);
   const diskPaths = new Set(fileBufs.map(b => b.toString('base64')));
 
   // ── Diff against DB ──
@@ -510,6 +544,11 @@ export async function runSyncWalk(dirPath: string): Promise<{ removed: number; a
   if (staleIds.length > 0) {
     console.log(`[Scanner] Removing ${staleIds.length} stale track(s) from ${dirPath}`);
     await deleteTracksByIds(staleIds);
+    // Clean up any albums/artists/genres that now have zero tracks
+    const purged = await purgeOrphanedEntities();
+    if (purged.albums > 0 || purged.artists > 0 || purged.genres > 0) {
+      console.log(`[Scanner] Purged orphans after stale removal: ${purged.albums} albums, ${purged.artists} artists, ${purged.genres} genres`);
+    }
   }
 
   // Determine truly new files (not already in DB)
@@ -553,14 +592,19 @@ export async function runSyncWalk(dirPath: string): Promise<{ removed: number; a
     });
   }
 
-  console.log(`[Scanner] Sync walk complete for ${dirPath}: +${newFileBufs.length} added, -${staleIds.length} removed`);
+  const totalDuration = ((Date.now() - totalStartTime) / 1000).toFixed(1);
+  console.log(`[Scanner] Sync walk complete for ${dirPath}: +${newFileBufs.length} added, -${staleIds.length} removed (Total: ${totalDuration}s)`);
   return { removed: staleIds.length, added: newFileBufs.length };
 }
 
 // Trigger standalone analysis (no scan — analyzes tracks missing features)
 router.post('/analyze', async (req, res) => {
   if (scanStatus.isScanning) {
-    return res.status(400).json({ error: 'A scan or analysis is already in progress' });
+    return res.status(400).json({ 
+      error: 'A scan or analysis is already in progress',
+      phase: scanStatus.phase,
+      detail: `Currently in ${scanStatus.phase} phase. Please wait for it to complete.`
+    });
   }
 
   const force = req.body?.force === true;
@@ -633,10 +677,16 @@ router.post('/remove', async (req, res) => {
   }
 
   try {
+    // 1. Remove the directory registration first so isPathAllowed starts rejecting it immediately
     await removeDirectory(dirPath);
+    // 2. Primary path-prefix deletion
     await removeTracksByDirectory(dirPath);
-    console.log(`[Scanner] Removed directory and tracks for ${dirPath}`);
-    res.json({ status: 'removed' });
+    // 3. Safety-net: catch any tracks missed by path-prefix matching
+    const staleTracks = await purgeOrphanedTracks();
+    // 4. Clean up entity rows that now have zero tracks
+    const purged = await purgeOrphanedEntities();
+    console.log(`[Scanner] Removed directory ${dirPath}. Purged ${staleTracks} stale tracks, ${purged.albums} albums, ${purged.artists} artists, ${purged.genres} genres`);
+    res.json({ status: 'removed', staleTracks, purged });
   } catch (error) {
     console.error('Remove error:', error);
     res.status(500).json({ error: 'Failed to remove directory' });

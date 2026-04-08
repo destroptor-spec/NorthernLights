@@ -103,7 +103,7 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose }) => {
             {currentTrack.artist || 'Unknown Artist'}
           </p>
           {currentTrack.album && (
-            <p className="text-xs text-[var(--aurora-purple)] mt-0.5 truncate">
+            <p className="text-xs text-[var(--aurora-extra-glow)] mt-0.5 truncate">
               {currentTrack.album}
             </p>
           )}
@@ -193,8 +193,8 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose }) => {
             className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border border-[var(--glass-border)] transition-all"
             style={{
               opacity: isInfinityMode ? 1 : 0.4,
-              color: isInfinityMode ? 'var(--aurora-purple)' : 'var(--color-text-muted)',
-              filter: isInfinityMode ? 'drop-shadow(0 0 4px var(--aurora-purple))' : 'none',
+              color: isInfinityMode ? 'var(--color-primary)' : 'var(--color-text-muted)',
+              filter: isInfinityMode ? 'drop-shadow(0 0 4px var(--color-primary))' : 'none',
             }}
           >
             <InfinityIcon size={16} />
@@ -205,8 +205,8 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose }) => {
             onClick={() => castManager.requestSession()}
             className="w-10 h-10 flex items-center justify-center rounded-full active:scale-90 transition-all"
             style={{
-              color: castConnected ? 'var(--aurora-purple)' : 'var(--color-text-muted)',
-              filter: castConnected ? 'drop-shadow(0 0 4px var(--aurora-purple))' : 'none',
+              color: castConnected ? 'var(--color-primary)' : 'var(--color-text-muted)',
+              filter: castConnected ? 'drop-shadow(0 0 4px var(--color-primary))' : 'none',
             }}
             title={castConnected ? 'Casting' : 'Cast to device'}
           >

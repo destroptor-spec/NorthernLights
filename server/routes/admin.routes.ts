@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { listUsers, createUser, getUserByUsername, updateUser, deleteUser, listInvites, createInvite, getInvite, deleteInvite, cleanupOrphanedPlaylists, getDatabaseStats } from '../database';
+import { listUsers, createUser, getUserByUsername, updateUser, deleteUser, listInvites, createInvite, getInvite, deleteInvite, cleanupOrphanedPlaylists, getDatabaseStats, getPoolStats } from '../database';
 import { hashPassword } from '../services/auth.service';
 import { requireAdmin } from '../middleware/auth';
 import { getContainerStatus, startContainer, stopContainer, createContainer, recreateContainer, getConfiguredDatabaseInfo, ContainerConfig } from '../services/containerControl.service';
@@ -171,7 +171,8 @@ router.get('/db/status', requireAdminOrDbDown, async (req, res) => {
 router.get('/db/stats', requireAdminOrDbDown, async (req, res) => {
   try {
     const stats = await getDatabaseStats();
-    res.json(stats);
+    const poolStats = await getPoolStats();
+    res.json({ ...stats, pool: poolStats });
   } catch (error: any) {
     console.error('DB stats error:', error);
     res.status(500).json({ error: error.message || 'Failed to get database statistics' });
@@ -276,6 +277,80 @@ router.post('/mbdb/import', requireAdmin, async (req, res) => {
   mbdbService.importDatabase().catch(err => console.error('MBDB Import failed:', err));
   
   res.json({ message: 'MBDB Import started' });
+});
+
+router.post('/mbdb/cancel', requireAdmin, async (req, res) => {
+  if (!mbdbStatus.isImporting) {
+    return res.status(400).json({ error: 'No import in progress' });
+  }
+  
+  mbdbService.cancelImport();
+  res.json({ message: 'Import cancellation requested' });
+});
+
+router.get('/mbdb/check-update', requireAdmin, async (req, res) => {
+  try {
+    const latestResponse = await fetch('https://data.metabrainz.org/pub/musicbrainz/data/fullexport/LATEST');
+    const latestTag = (await latestResponse.text()).trim();
+    
+    // Get last import info
+    const { queryWithRetry } = await import('../utils/db');
+    let lastImport = null;
+    try {
+      const result = await queryWithRetry("SELECT value FROM system_settings WHERE key = 'mbdbLastImport'");
+      if (result.rows.length > 0) {
+        lastImport = JSON.parse(result.rows[0].value);
+      }
+    } catch (e) {}
+    
+    res.json({
+      latestTag,
+      lastImportTag: lastImport?.tag || null,
+      lastImportTimestamp: lastImport?.timestamp || null,
+      updateAvailable: lastImport ? latestTag !== lastImport.tag : true,
+      lastImport
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Unified Health Endpoint ──────────────────────────────────────────
+
+router.get('/health', requireAdmin, async (req, res) => {
+  try {
+    const containerName = process.env.DB_CONTAINER_NAME || 'music-postgres';
+    const containerStatus = await getContainerStatus(containerName);
+    const poolStats = getPoolStats();
+    const { scanStatus, mbdbStatus } = await import('../state');
+    const { queryWithRetry } = await import('../utils/db');
+    
+    // Check MBDB record count for better "Import correct" feedback
+    let mbdbCount = 0;
+    if (dbConnected) {
+      try {
+        const mbdbCountRes = await queryWithRetry('SELECT COUNT(*) as count FROM genre_tree_paths');
+        mbdbCount = parseInt((mbdbCountRes.rows[0] as any).count, 10);
+      } catch (e) {
+        console.warn('[Admin Health] Could not fetch MBDB count (DB likely down or uninitialized)');
+      }
+    }
+
+    res.json({
+      status: 'ok',
+      database: {
+        connected: dbConnected,
+        pool: poolStats,
+        mbdb_records: mbdbCount
+      },
+      container: containerStatus,
+      scanner: scanStatus,
+      mbdb: mbdbStatus
+    });
+  } catch (error: any) {
+    console.error('Admin health check error:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch health metrics' });
+  }
 });
 
 export default router;

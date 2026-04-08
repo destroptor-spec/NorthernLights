@@ -1,7 +1,9 @@
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
-import { execSync } from 'child_process';
+import { EventEmitter } from 'events';
+
+export const containerEvents = new EventEmitter();
 
 // Detect available container runtime (prefer podman, fallback to docker)
 let containerRuntime: 'podman' | 'docker' | null = null;
@@ -399,4 +401,49 @@ export async function getPortInUse(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+let monitoringInterval: NodeJS.Timeout | null = null;
+let isMonitoring = false;
+
+export function startHealthMonitoring(intervalMs = 30000) {
+  if (isMonitoring) return;
+  isMonitoring = true;
+
+  console.log(`[ContainerControl] Starting background health monitoring (interval: ${intervalMs}ms)`);
+
+  const check = async () => {
+    const config = getConfiguredDatabaseInfo();
+    const containerName = config.name;
+
+    try {
+      const status = await getContainerStatus(containerName);
+      
+      if (status.status === 'stopped') {
+        console.warn(`[ContainerControl] Container ${containerName} is STOPPED. Attempting auto-restart...`);
+        const result = await startContainer(containerName);
+        containerEvents.emit('containerRestarted', { name: containerName, result });
+      } else if (status.status === 'error') {
+        console.error(`[ContainerControl] Error checking status for ${containerName}: ${status.error}`);
+        // Attempt to re-detect runtime if we have an error
+        containerRuntime = detectRuntime();
+      }
+
+      containerEvents.emit('statusChecked', status);
+    } catch (err: any) {
+      console.error(`[ContainerControl] Monitoring loop error:`, err.message);
+    }
+  };
+
+  monitoringInterval = setInterval(check, intervalMs);
+  // Run initial check immediately
+  check();
+}
+
+export function stopHealthMonitoring() {
+  if (monitoringInterval) {
+    clearInterval(monitoringInterval);
+    monitoringInterval = null;
+  }
+  isMonitoring = false;
 }

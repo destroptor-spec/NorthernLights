@@ -1,141 +1,110 @@
+import React, { useEffect, useState } from 'react';
 import { usePlayerStore } from '../store/index';
 import { useVolumeSync } from '../hooks/useVolumeSync';
-import React, { useEffect, useState } from 'react';
 import { Infinity, Cast, FileText } from 'lucide-react';
 import { castManager } from '../utils/CastManager';
 import { LyricsPanel } from './LyricsPanel';
+import {
+  IconPrev,
+  IconPlay,
+  IconPause,
+  IconNext,
+  IconShuffle,
+  IconSequential,
+  IconRepeatAll,
+  IconRepeatOne,
+  IconVolume
+} from './icons/PlayerIcons';
 
-/* ─── Inline SVG Icons ─── */
-const IconPrev = () => (
-  <svg viewBox="0 0 24 24" fill="currentColor">
-    <path d="M6 6h2v12H6V6zm3.5 6 8.5 6V6l-8.5 6z" />
-  </svg>
-);
+const baseBtnClass = "flex items-center justify-center w-10 h-10 rounded-full border border-black/10 bg-black/5 backdrop-blur-md text-black/60 hover:text-black/90 hover:border-black/20 hover:bg-black/10 hover:shadow-[0_4px_16px_rgba(0,0,0,0.1),inset_0_1px_0_rgba(255,255,255,0.6)] active:scale-95 active:bg-black/10 dark:border-white/10 dark:bg-white/5 dark:text-white/75 dark:hover:text-white dark:hover:border-white/20 dark:hover:bg-white/10 dark:hover:shadow-[0_4px_16px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.12)] transition-all duration-150";
 
-const IconPlay = () => (
-  <svg viewBox="0 0 24 24" fill="currentColor">
-    <path d="M8 5v14l11-7L8 5z" />
-  </svg>
-);
+const playBtnClass = "flex items-center justify-center w-14 h-14 rounded-full border border-emerald-500/40 bg-gradient-to-br from-emerald-500/85 to-emerald-600/90 backdrop-blur-[20px] text-white shadow-[0_0_24px_rgba(16,185,129,0.35),inset_0_1px_0_rgba(255,255,255,0.2)] hover:from-emerald-400/90 hover:to-emerald-500/95 hover:border-emerald-300/60 hover:shadow-[0_0_36px_rgba(16,185,129,0.65),inset_0_1px_0_rgba(255,255,255,0.25)] hover:scale-105 active:scale-95 transition-all duration-200";
 
-const IconPause = () => (
-  <svg viewBox="0 0 24 24" fill="currentColor">
-    <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
-  </svg>
-);
+const volumeSliderClass = "w-20 h-1 appearance-none bg-black/5 dark:bg-white/5 rounded-full cursor-pointer outline-none transition-all hover:h-1.5 " +
+  "[&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2.5 [&::-webkit-slider-thumb]:h-2.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[var(--color-text-secondary)] [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:transition-all " +
+  "hover:[&::-webkit-slider-thumb]:bg-[var(--color-text-primary)] hover:[&::-webkit-slider-thumb]:scale-125 hover:[&::-webkit-slider-thumb]:shadow-[0_0_8px_rgba(16,185,129,0.3)]";
 
-const IconNext = () => (
-  <svg viewBox="0 0 24 24" fill="currentColor">
-    <path d="M6 18l8.5-6L6 6v12zm10-12v12h2V6h-2z" />
-  </svg>
-);
-
-const IconShuffle = () => (
-  <svg viewBox="0 0 24 24" fill="currentColor">
-    <path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z" />
-  </svg>
-);
-
-const IconSequential = () => (
-  <svg viewBox="0 0 24 24" fill="currentColor">
-    <path d="M14 16v-4l8 5-8 5v-4H2v-2h12zM10 8V4L2 9l8 5v-4h12V8H10z" opacity="0.5" />
-  </svg>
-);
-
-const IconRepeatAll = () => (
-  <svg viewBox="0 0 24 24" fill="currentColor">
-    <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z" />
-  </svg>
-);
-
-const IconRepeatOne = () => (
-  <svg viewBox="0 0 24 24" fill="currentColor">
-    <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z" />
-  </svg>
-);
-
-const IconVolume = () => (
-  <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-    <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" />
-  </svg>
-);
-
-
-const PlayerControls = () => {
+export const PlayerControls: React.FC = () => {
   const playbackState = usePlayerStore((state) => state.playbackState);
-  const isPlaying = playbackState === 'playing';
-  const pause = usePlayerStore((state) => state.pause);
-  const resume = usePlayerStore((state) => state.resume);
+  const volume = usePlayerStore((state) => state.volume);
+  const shuffle = usePlayerStore((state) => state.shuffle);
+  const repeat = usePlayerStore((state) => state.repeat);
+  const isInfinityMode = usePlayerStore((state) => state.isInfinityMode);
+  
+  // By avoiding mapping over the entire playlist slice, we stop mass re-renders on playlist appending
+  const currentTrack = usePlayerStore((state) => 
+    state.currentIndex !== null ? state.playlist[state.currentIndex] : null
+  );
+
+  const setVolume = usePlayerStore((state) => state.setVolume);
   const nextTrackAction = usePlayerStore((state) => state.nextTrack);
   const prevTrackAction = usePlayerStore((state) => state.prevTrack);
-  const volume = usePlayerStore((state) => state.volume);
-  const setVolume = usePlayerStore((state) => state.setVolume);
-  const shuffle = usePlayerStore((state) => state.shuffle);
   const toggleShuffle = usePlayerStore((state) => state.toggleShuffle);
-  const repeat = usePlayerStore((state) => state.repeat);
   const cycleRepeatAction = usePlayerStore((state) => state.cycleRepeat);
-  const isInfinityMode = usePlayerStore((state) => state.isInfinityMode);
   const toggleInfinityMode = usePlayerStore((state) => state.toggleInfinityMode);
-  const playlist = usePlayerStore((state) => state.playlist);
-  const currentIndex = usePlayerStore((state) => state.currentIndex);
-  const currentTrack = currentIndex !== null ? playlist[currentIndex] : null;
+
+  const isPlaying = playbackState === 'playing';
 
   const togglePlay = React.useCallback(() => {
-    if (playlist.length === 0) return;
-    if (isPlaying) {
-      pause();
+    const state = usePlayerStore.getState();
+    if (state.playlist.length === 0) return;
+    if (state.playbackState === 'playing') {
+      state.pause();
     } else {
-      if (currentIndex === null) {
-        usePlayerStore.getState().playAtIndex(0);
+      if (state.currentIndex === null) {
+        state.playAtIndex(0);
       } else {
-        resume();
+        state.resume();
       }
     }
-  }, [playlist.length, isPlaying, pause, currentIndex, resume]);
+  }, []);
 
-  // Keyboard shortcuts
+  // Optimized keyboard shortcuts logic capturing active state lazily 
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      const state = usePlayerStore.getState();
       switch (e.code) {
         case 'Space':
           e.preventDefault();
           togglePlay();
           break;
         case 'ArrowRight':
-          nextTrackAction();
+          state.nextTrack();
           break;
         case 'ArrowLeft':
-          prevTrackAction();
+          state.prevTrack();
           break;
         case 'KeyM':
-          setVolume(Math.min(1, volume + 0.05));
+          state.setVolume(Math.min(1, state.volume + 0.05));
           break;
         case 'Comma':
-          setVolume(Math.max(0, volume - 0.05));
+          state.setVolume(Math.max(0, state.volume - 0.05));
           break;
         case 'KeyS':
-          toggleShuffle();
+          state.toggleShuffle();
           break;
         case 'KeyR':
-          cycleRepeatAction();
+          state.cycleRepeat();
           break;
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [togglePlay, nextTrackAction, prevTrackAction, setVolume, volume, toggleShuffle, cycleRepeatAction]);
+  }, [togglePlay]);
 
   useVolumeSync();
 
   const [castAvailable, setCastAvailable] = useState(false);
   const [castConnected, setCastConnected] = useState(false);
   const [showLyrics, setShowLyrics] = useState(false);
+
   useEffect(() => {
     const handleCastReady = () => {
       setCastAvailable(true);
       setCastConnected(castManager.isConnected());
     };
+    // Window interface extension avoided using 'any' by moving to standard TS interface check logic or ignoring local
     if ((window as any).cast?.framework) {
       handleCastReady();
     } else {
@@ -156,9 +125,10 @@ const PlayerControls = () => {
         {castAvailable && (
           <button
             onClick={() => castManager.requestSession()}
-            className="cast-btn transition-colors"
-            style={{ color: castConnected ? 'var(--aurora-purple)' : 'var(--color-text-muted)', filter: castConnected ? 'drop-shadow(0 0 4px var(--aurora-purple))' : 'none' }}
+            className="transition-colors hover:scale-105"
+            style={{ color: castConnected ? 'var(--color-primary)' : 'var(--color-text-muted)', filter: castConnected ? 'drop-shadow(0 0 4px var(--color-primary))' : 'none' }}
             title={castConnected ? 'Casting' : 'Cast to device'}
+            aria-label={castConnected ? 'Casting' : 'Cast to device'}
           >
             <Cast size={20} />
           </button>
@@ -166,9 +136,10 @@ const PlayerControls = () => {
         {currentTrack && (
           <button
             onClick={() => setShowLyrics(!showLyrics)}
-            className="transition-colors"
+            className="transition-colors hover:scale-105"
             style={{ color: showLyrics ? 'var(--color-primary)' : 'var(--color-text-muted)' }}
             title="Lyrics"
+            aria-label="Open Lyrics"
           >
             <FileText size={18} />
           </button>
@@ -186,7 +157,7 @@ const PlayerControls = () => {
       </div>
 
       {/* Center: Now Playing + Main Controls */}
-      <div className="flex flex-col items-center gap-3 flex-[2] min-w-0">
+      <div className="flex flex-col items-center gap-3 flex-[2] min-w-0" aria-live="polite">
         {/* Metadata Stack */}
         {currentTrack ? (
           <div className="flex flex-col items-center min-w-0 w-full animate-in fade-in slide-in-from-bottom-2 duration-500">
@@ -219,49 +190,47 @@ const PlayerControls = () => {
         )}
 
         {/* Transport Buttons */}
-        <div className="player-controls">
-          <button onClick={toggleShuffle} aria-label="Toggle shuffle" className="player-control-btn"
+        <div className="flex items-center justify-center gap-4">
+          <button onClick={toggleShuffle} aria-label="Toggle shuffle" className={baseBtnClass}
             style={{ opacity: shuffle ? 1 : 0.4 }}>
             {shuffle ? <IconShuffle /> : <IconSequential />}
           </button>
 
-          <button onClick={prevTrackAction} aria-label="Previous track" className="player-control-btn">
+          <button onClick={prevTrackAction} aria-label="Previous track" className={baseBtnClass}>
             <IconPrev />
           </button>
 
-          <button onClick={togglePlay} aria-label={isPlaying ? "Pause" : "Play"} className="player-control-btn play-btn-main">
+          <button onClick={togglePlay} aria-label={isPlaying ? "Pause" : "Play"} className={playBtnClass}>
             {isPlaying ? <IconPause /> : <IconPlay />}
           </button>
 
-          <button onClick={nextTrackAction} aria-label="Next track" className="player-control-btn">
+          <button onClick={nextTrackAction} aria-label="Next track" className={baseBtnClass}>
             <IconNext />
           </button>
 
-          <div className="repeat-toggle">
-            <button onClick={cycleRepeatAction} aria-label="Cycle repeat mode" className="player-control-btn"
-              style={{ opacity: repeat === 'none' ? 0.4 : 1 }}>
-              {repeat === 'one' ? <IconRepeatOne /> : <IconRepeatAll />}
-            </button>
-          </div>
+          <button onClick={cycleRepeatAction} aria-label={`Repeat mode: ${repeat}`} className={baseBtnClass}
+            style={{ opacity: repeat === 'none' ? 0.4 : 1 }}>
+            {repeat === 'one' ? <IconRepeatOne /> : <IconRepeatAll />}
+          </button>
 
-          <div className="infinity-toggle" style={{ marginLeft: '12px' }}>
-            <button onClick={toggleInfinityMode} aria-label="Toggle Infinity Mode" className="player-control-btn"
-              style={{ 
-                opacity: isInfinityMode ? 1 : 0.4, 
-                color: isInfinityMode ? 'var(--aurora-purple)' : 'inherit',
-                filter: isInfinityMode ? 'drop-shadow(0 0 6px var(--aurora-purple))' : 'none',
-                transition: 'all 0.3s ease'
-              }}>
-              <Infinity size={20} strokeWidth={2} />
-            </button>
-          </div>
+          <button onClick={toggleInfinityMode} aria-label="Toggle Infinity Mode" className={`${baseBtnClass} ml-3 border-transparent bg-transparent hover:bg-transparent shadow-none`}
+            style={{ 
+              opacity: isInfinityMode ? 1 : 0.4, 
+              color: isInfinityMode ? 'var(--color-primary)' : 'inherit',
+              filter: isInfinityMode ? 'drop-shadow(0 0 6px var(--color-primary))' : 'none',
+              transform: isInfinityMode ? 'scale(1.1)' : 'scale(1)'
+            }}>
+            <Infinity size={20} strokeWidth={2} />
+          </button>
         </div>
       </div>
 
       {/* Right Column: Aux Controls */}
       <div className="flex-1 flex justify-end items-center gap-4">
-        <div className="volume-control">
-          <span className="volume-icon"><IconVolume /></span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[var(--color-text-muted)] text-[0.8rem] flex items-center" aria-hidden="true">
+            <IconVolume />
+          </span>
           <input
             id="volume-slider"
             type="range"
@@ -270,9 +239,10 @@ const PlayerControls = () => {
             step={0.01}
             value={volume}
             onChange={(e) => setVolume(parseFloat(e.target.value))}
-            className="volume-slider"
+            className={volumeSliderClass}
+            aria-label="Volume Control"
           />
-          <span style={{ minWidth: 28, fontSize: '0.68rem', color: 'var(--color-text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+          <span className="min-w-[28px] text-[0.68rem] text-[var(--color-text-muted)] tracking-tighter" style={{ fontVariantNumeric: 'tabular-nums' }} aria-hidden="true">
             {volumePercent}%
           </span>
         </div>

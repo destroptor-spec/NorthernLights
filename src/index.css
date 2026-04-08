@@ -11,28 +11,28 @@
   --color-background: #F2F5F8; /* Soft blue-grey white */
   --color-surface: rgba(255, 255, 255, 0.6);
   --color-surface-variant: rgba(255, 255, 255, 0.8);
-  --color-primary: #5E5CE6; /* iOS Indigo */
-  --color-primary-dark: #4B49B8;
+  --color-primary: #059669; /* Emerald 600 - Readable on light */
+  --color-primary-dark: #047857; 
   --color-secondary: #E5E5EA; /* Light grey */
   --color-text-primary: #1C1C1E; /* Almost black */
   --color-text-secondary: #3A3A3C;
   --color-text-muted: #8E8E93; 
   --color-border: rgba(0, 0, 0, 0.05); /* Soft glass borders */
-  --color-accent: #FF2D55; /* iOS Pink accent */
+  --color-accent: #E11D48; /* Rose 600 */
   --color-error: #FF3B30;
   --color-success: #34C759;
 
-  /* Gentle gradient spectrum for iOS style */
-  --aurora-purple: rgba(94, 92, 230, 0.4);
-  --aurora-blue: rgba(10, 132, 255, 0.3);
-  --aurora-green: rgba(48, 209, 88, 0.3);
-  --aurora-teal: rgba(90, 200, 250, 0.3);
-  --aurora-pink: rgba(255, 45, 85, 0.3);
+  /* Gentle gradient spectrum for Oxygen/Nitrogen style */
+  --aurora-green: rgba(34, 197, 94, 0.3);
+  --aurora-teal: rgba(20, 184, 166, 0.3);
+  --aurora-blue: rgba(6, 182, 212, 0.2);
+  --aurora-extra-glow: rgba(5, 150, 105, 0.3); /* Emerald/Green glow */
+  --aurora-pink: rgba(225, 29, 72, 0.2);
 
-  /* Shared purple play-button gradient */
-  --aurora-play-gradient: linear-gradient(145deg, rgba(139, 92, 246, 0.85), rgba(109, 40, 217, 0.9));
-  --aurora-play-border: 1px solid rgba(168, 85, 247, 0.5);
-  --aurora-play-glow: 0 0 24px rgba(139, 92, 246, 0.45), inset 0 1px 0 rgba(255,255,255,0.2);
+  /* Shared green play-button gradient */
+  --aurora-play-gradient: linear-gradient(145deg, rgba(16, 185, 129, 0.85), rgba(5, 150, 105, 0.9));
+  --aurora-play-border: 1px solid rgba(16, 185, 129, 0.4);
+  --aurora-play-glow: 0 0 24px rgba(16, 185, 129, 0.35), inset 0 1px 0 rgba(255,255,255,0.2);
 
   /* Glass - Light Mode */
   --glass-bg: rgba(255, 255, 255, 0.65);
@@ -66,7 +66,7 @@
   --shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.05);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.08);
   --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.12);
-  --shadow-glow: 0 0 20px rgba(94, 92, 230, 0.2);
+  --shadow-glow: 0 0 20px rgba(5, 150, 105, 0.2);
 
   /* Motion */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -98,29 +98,29 @@
   --color-background: #030208;
   --color-surface: rgba(6, 4, 18, 0.72);
   --color-surface-variant: rgba(14, 11, 32, 0.5);
-  --color-primary: #8B5CF6;
-  --color-primary-dark: #7C3AED;
-  --color-secondary: #10B981;
+  --color-primary: #22C983; /* Oxygen Green */
+  --color-primary-dark: #10B981;
+  --color-secondary: #0ea5e9; /* Sky Blue */
   --color-text-primary: #d8d8e8;
   --color-text-secondary: #8e8ea0;
   --color-text-muted: #55556a;
-  --color-border: rgba(139, 92, 246, 0.08);
-  --color-accent: #03dac6;
+  --color-border: rgba(34, 201, 131, 0.08);
+  --color-accent: #f43f5e; /* Rose 500 */
   --color-error: #f87171;
   --color-success: #34d399;
 
   /* Aurora spectrum */
   --aurora-green: #22c983;
   --aurora-teal: #2dd4bf;
-  --aurora-blue: #5b8def;
-  --aurora-purple: #7c5ce6;
-  --aurora-pink: #d97fb8;
+  --aurora-blue: #0ea5e9;
+  --aurora-extra-glow: #10b981; /* High altitude Emerald */
+  --aurora-pink: #f43f5e;
 
   /* Glass - Dark Mode */
   --glass-bg: rgba(4, 2, 14, 0.6);
   --glass-bg-hover: rgba(10, 8, 28, 0.7);
   --glass-border: rgba(255, 255, 255, 0.04);
-  --glass-border-hover: rgba(139, 92, 246, 0.15);
+  --glass-border-hover: rgba(34, 201, 131, 0.15);
   --glass-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
 
   /* Radius (Restore rounds for dark mode) */
@@ -132,7 +132,7 @@
   --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.5);
-  --shadow-glow: 0 0 30px rgba(139, 92, 246, 0.12);
+  --shadow-glow: 0 0 30px rgba(34, 201, 131, 0.12);
 
   /* Aliases used by components */
   --color-bg-primary: var(--color-background);
@@ -205,9 +205,9 @@ body {
   /* Light Mode Background */
   background-color: var(--color-background);
   background-image: 
-    radial-gradient(circle at 15% 50%, rgba(94, 92, 230, 0.15), transparent 25%),
-    radial-gradient(circle at 85% 30%, rgba(10, 132, 255, 0.15), transparent 25%),
-    radial-gradient(circle at 50% 80%, rgba(255, 45, 85, 0.1), transparent 30%);
+    radial-gradient(circle at 15% 50%, rgba(5, 150, 105, 0.1), transparent 25%),
+    radial-gradient(circle at 85% 30%, rgba(6, 182, 212, 0.1), transparent 25%),
+    radial-gradient(circle at 50% 80%, rgba(225, 29, 72, 0.05), transparent 30%);
   background-attachment: fixed;
   background-size: cover;
 }
@@ -232,9 +232,9 @@ body::after {
   /* Dark Mode Background */
   background-color: #050510;
   background-image: 
-    radial-gradient(circle at 15% 50%, rgba(139, 92, 246, 0.15), transparent 25%),
-    radial-gradient(circle at 85% 30%, rgba(56, 189, 248, 0.15), transparent 25%),
-    radial-gradient(circle at 50% 80%, rgba(46, 196, 182, 0.1), transparent 30%);
+    radial-gradient(circle at 15% 50%, rgba(34, 201, 131, 0.15), transparent 25%),
+    radial-gradient(circle at 85% 30%, rgba(14, 165, 233, 0.15), transparent 25%),
+    radial-gradient(circle at 50% 80%, rgba(244, 63, 94, 0.1), transparent 30%);
 }
 
 #root {
@@ -244,12 +244,12 @@ body::after {
 }
 
 ::selection {
-  background: rgba(139, 92, 246, 0.25);
+  background: rgba(34, 201, 131, 0.25);
   color: #fff;
 }
 
 :focus-visible {
-  outline: 1px solid rgba(139, 92, 246, 0.4);
+  outline: 1px solid rgba(34, 201, 131, 0.4);
   outline-offset: 2px;
 }
 
@@ -275,7 +275,7 @@ body::after {
   color: var(--color-text-primary);
   letter-spacing: -0.03em;
   line-height: 1.15;
-  text-shadow: 0 0 60px rgba(139, 92, 246, 0.15);
+  text-shadow: 0 0 60px rgba(34, 201, 131, 0.15);
 }
 
 .track-info-artist {
@@ -290,7 +290,7 @@ body::after {
 .track-info-album {
   font-size: 0.85rem;
   font-weight: 300;
-  color: var(--aurora-purple);
+  color: var(--aurora-extra-glow);
   margin-top: var(--spacing-xs);
   letter-spacing: 0.02em;
 }
@@ -314,7 +314,7 @@ body::after {
   background: linear-gradient(135deg,
       var(--aurora-green) 0%,
       var(--aurora-blue) 35%,
-      var(--aurora-purple) 70%,
+      var(--aurora-extra-glow) 70%,
       var(--aurora-pink) 100%);
   background-size: 200% 200%;
   animation: aurora-text 8s ease-in-out infinite;
@@ -378,7 +378,7 @@ body::after {
   transform: scale(0.97);
 }
 
-/* Primary — filled purple action */
+/* Primary — filled green action */
 .btn-primary {
   background: var(--color-primary);
   color: white;
@@ -589,8 +589,8 @@ body::after {
 }
 
 .dark .playlist-item.active {
-  background: rgba(139, 92, 246, 0.06);
-  border-color: rgba(139, 92, 246, 0.1);
+  background: rgba(16, 185, 129, 0.06);
+  border-color: rgba(16, 185, 129, 0.1);
 }
 
 .playlist-item.active .playlist-item-index, 
@@ -678,7 +678,7 @@ body::after {
   top: 0;
   left: 0;
   height: 100%;
-  background: linear-gradient(90deg, var(--aurora-green), var(--aurora-blue), var(--aurora-purple));
+  background: linear-gradient(90deg, var(--aurora-green), var(--aurora-teal), var(--aurora-blue), var(--aurora-pink));
   background-size: 300% 100%;
   animation: aurora-bar 8s ease-in-out infinite;
   border-radius: var(--radius-pill);
@@ -708,7 +708,7 @@ body::after {
   height: 11px;
   border-radius: 50%;
   background: var(--color-text-primary);
-  box-shadow: 0 0 8px rgba(139, 92, 246, 0.3);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.3);
   transition: transform var(--transition-fast);
 }
 
@@ -770,7 +770,7 @@ body::after {
 .volume-slider::-webkit-slider-thumb:hover {
   background: var(--color-text-primary);
   transform: scale(1.2);
-  box-shadow: 0 0 8px rgba(139, 92, 246, 0.3);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.3);
 }
 
 .volume-slider::-moz-range-thumb {
@@ -852,7 +852,7 @@ body::after {
   fill: currentColor;
 }
 
-/* Main play/pause — purple gradient, same in both modes */
+/* Main play/pause — emerald gradient, same in both modes */
 .play-btn-main {
   width: 56px;
   height: 56px;
@@ -870,9 +870,9 @@ body::after {
 }
 
 .play-btn-main:hover {
-  background: linear-gradient(145deg, rgba(167, 139, 250, 0.9), rgba(139, 92, 246, 0.95));
-  border-color: rgba(196, 181, 253, 0.6);
-  box-shadow: 0 0 36px rgba(139, 92, 246, 0.65), inset 0 1px 0 rgba(255,255,255,0.25);
+  background: linear-gradient(145deg, rgba(52, 211, 153, 0.9), rgba(16, 185, 129, 0.95));
+  border-color: rgba(110, 231, 183, 0.6);
+  box-shadow: 0 0 36px rgba(16, 185, 129, 0.65), inset 0 1px 0 rgba(255,255,255,0.25);
   transform: scale(1.06);
 }
 
@@ -1563,7 +1563,7 @@ body::after {
 .scanning-spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid rgba(139, 92, 246, 0.3);
+  border: 2px solid rgba(16, 185, 129, 0.3);
   border-top-color: var(--color-primary);
   border-radius: 50%;
   animation: spin 1s infinite linear;
@@ -1718,8 +1718,8 @@ body::after {
   gap: 6px;
   padding: 8px 12px;
   border-radius: 9999px;
-  background: rgba(139, 92, 246, 0.12);
-  border: 1px solid rgba(139, 92, 246, 0.25);
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.25);
   color: var(--color-primary);
   font-size: 0.875rem;
   font-family: var(--font-display);
@@ -1730,8 +1730,8 @@ body::after {
 }
 
 .scan-indicator-btn:hover {
-  background: rgba(139, 92, 246, 0.2);
-  border-color: rgba(139, 92, 246, 0.4);
+  background: rgba(16, 185, 129, 0.2);
+  border-color: rgba(16, 185, 129, 0.4);
 }
 
 .scan-indicator-btn--dot-only {

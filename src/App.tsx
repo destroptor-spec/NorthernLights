@@ -55,6 +55,11 @@ const App: React.FC = () => {
   const [scannerVisible, setScannerVisible] = React.useState(false);
   const isScanningGlobal = usePlayerStore(state => state.isScanning);
   const scanningFileGlobal = usePlayerStore(state => state.scanningFile);
+  const scanPhaseGlobal = usePlayerStore(state => state.scanPhase);
+  const scannedFilesGlobal = usePlayerStore(state => state.scannedFiles);
+  const totalFilesGlobal = usePlayerStore(state => state.totalFiles);
+  const activeWorkersGlobal = usePlayerStore(state => state.activeWorkers);
+  const activeFilesGlobal = usePlayerStore(state => state.activeFiles);
   const isSidebarCollapsed = usePlayerStore(state => state.isSidebarCollapsed);
   const playlist = usePlayerStore(state => state.playlist);
   const currentUser = usePlayerStore(state => state.currentUser);
@@ -151,7 +156,7 @@ const App: React.FC = () => {
         data.currentFile
       );
 
-      if (wasScanning && !data.isScanning) {
+      if (wasScanning && !data.isScanning && data.libraryChanged) {
         usePlayerStore.getState().fetchLibraryFromServer();
       }
     };
@@ -324,10 +329,8 @@ const App: React.FC = () => {
       <TrackContextMenu />
       {/* Global Scanning Indicator (admin only) */}
       {isAdmin && isScanningGlobal && scannerVisible && (() => {
-        const scanPhase = usePlayerStore.getState().scanPhase;
-        const isAnalysis = scanPhase === 'analysis';
-        const isMetaOrAnalysis = scanPhase === 'metadata' || scanPhase === 'analysis';
-        const activeFiles = usePlayerStore.getState().activeFiles;
+        const isAnalysis = scanPhaseGlobal === 'analysis';
+        const isMetaOrAnalysis = scanPhaseGlobal === 'metadata' || scanPhaseGlobal === 'analysis';
 
         return (
           <div className="global-scanning-indicator">
@@ -343,14 +346,14 @@ const App: React.FC = () => {
                     {isAnalysis ? 'Analyzing Audio...' : 'Scanning Library...'}
                   </span>
                   <span className={`scan-phase-badge ${isAnalysis ? 'scan-phase-badge--analysis' : 'scan-phase-badge--other'}`}>
-                    {scanPhase}
+                    {scanPhaseGlobal}
                   </span>
                 </div>
 
                 {isMetaOrAnalysis ? (
                   <div className="scan-progress-row">
-                    <span>{usePlayerStore.getState().scannedFiles} / {usePlayerStore.getState().totalFiles} {isAnalysis ? 'tracks' : 'files'}</span>
-                    <span>{usePlayerStore.getState().activeWorkers} workers</span>
+                    <span>{scannedFilesGlobal} / {totalFilesGlobal} {isAnalysis ? 'tracks' : 'files'}</span>
+                    <span>{activeWorkersGlobal} workers</span>
                   </div>
                 ) : (
                   <div className="scan-walk-status">
@@ -360,18 +363,18 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {isMetaOrAnalysis && activeFiles.length > 0 && (
+            {isMetaOrAnalysis && activeFilesGlobal.length > 0 && (
               <div className="scan-active-files">
                 <div className="scan-active-files-heading">
                   {isAnalysis ? 'Currently Analyzing:' : 'Currently Processing:'}
                 </div>
                 <ul className="scan-active-files-list">
-                  {activeFiles.slice(0, 10).map((file, i) => (
+                  {activeFilesGlobal.slice(0, 10).map((file, i) => (
                     <li key={i}>{file}</li>
                   ))}
-                  {activeFiles.length > 10 && (
+                  {activeFilesGlobal.length > 10 && (
                     <li className="scan-active-files-more">
-                      ...and {activeFiles.length - 10} more
+                      ...and {activeFilesGlobal.length - 10} more
                     </li>
                   )}
                 </ul>
@@ -412,21 +415,16 @@ const App: React.FC = () => {
                         key={tab.path}
                         to={tab.path}
                         end={tab.end}
-                        className={`
+                        className={({ isActive }) => `
                             capitalize font-semibold text-sm px-5 py-2 rounded-full
                             border backdrop-blur-md whitespace-nowrap
                             transition-all duration-200 cursor-pointer
                             active:scale-95 no-underline
                             ${isActive
-                                ? 'text-white border-purple-500/50 shadow-[0_0_18px_rgba(139,92,246,0.4)] hover:shadow-[0_0_24px_rgba(139,92,246,0.55)] hover:brightness-110'
+                                ? 'btn-aurora shadow-aurora'
                                 : 'text-[var(--color-text-secondary)] border-[var(--color-border)] bg-black/5 dark:bg-white/[0.06] hover:bg-black/10 dark:hover:bg-white/[0.12] hover:text-[var(--color-text-primary)] hover:border-[var(--glass-border-hover)]'
                             }
                         `}
-                        style={isActive ? {
-                            background: 'linear-gradient(145deg, rgba(139, 92, 246, 0.85), rgba(109, 40, 217, 0.9))',
-                            border: '1px solid rgba(168, 85, 247, 0.5)',
-                            boxShadow: '0 0 18px rgba(139, 92, 246, 0.4), inset 0 1px 0 rgba(255,255,255,0.15)',
-                        } : {}}
                     >
                         {tab.label}
                     </NavLink>
@@ -463,7 +461,7 @@ const App: React.FC = () => {
                   <Route path="/invite/:token" element={<InviteRegister />} />
                   <Route path="*" element={
                     <div className="empty-state font-body flex flex-col items-center justify-center p-8 flex-1">
-                      <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-transparent bg-clip-text bg-gradient-to-br from-[var(--aurora-green)] to-[var(--aurora-purple)] mb-4">
+                      <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-transparent bg-clip-text bg-gradient-to-br from-[var(--aurora-green)] to-[var(--color-primary)] mb-4">
                         NorthernLights
                       </h1>
                       <p className="text-lg text-[var(--color-text-secondary)] mb-8 max-w-md text-center">

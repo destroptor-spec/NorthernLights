@@ -122,9 +122,44 @@ app.post('/api/recommend', async (req, res) => {
 });
 
 // Health check
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
   const { dbConnected } = require('./state');
-  res.json({ status: 'ok', dbConnected, message: 'Aurora Media Server is running!' });
+  const { initDB } = require('./database');
+  const { getContainerStatus, getConfiguredDatabaseInfo } = require('./services/containerControl.service');
+  
+  let dbLatency = -1;
+  let dbLiveness = false;
+  let containerStatus = null;
+
+  if (dbConnected) {
+    try {
+      const start = Date.now();
+      const db = await initDB();
+      await db.query('SELECT 1');
+      dbLatency = Date.now() - start;
+      dbLiveness = true;
+    } catch (e) {
+      dbLiveness = false;
+    }
+  }
+
+  try {
+    const config = getConfiguredDatabaseInfo();
+    containerStatus = await getContainerStatus(config.name);
+  } catch (e) {}
+
+  res.json({ 
+    status: 'ok', 
+    dbConnected, 
+    dbLiveness,
+    dbLatency: dbLatency !== -1 ? `${dbLatency}ms` : 'N/A',
+    container: containerStatus ? {
+      status: containerStatus.status,
+      runtime: require('./services/containerControl.service').containerRuntime || 'unknown',
+      image: containerStatus.image
+    } : null,
+    message: 'Aurora Media Server is running!' 
+  });
 });
 
 // Pre-flight check: warn at startup if FFmpeg is missing
@@ -144,6 +179,17 @@ function checkFfmpegAvailability() {
 
 // Start server
 checkFfmpegAvailability();
+
+// Start container health monitoring (background)
+import { startHealthMonitoring, containerEvents } from './services/containerControl.service';
+startHealthMonitoring();
+
+// Listen for container restarts to trigger DB reconnection automatically
+containerEvents.on('containerRestarted', ({ name }) => {
+  console.log(`[Server] Container ${name} restarted. Triggering database reconnection...`);
+  initDatabaseConnection();
+});
+
 app.listen(port, () => {
   console.log(`Aurora Media Server listening at http://localhost:${port}`);
 });
@@ -182,6 +228,7 @@ async function runAutoWalk() {
     ss.totalFiles = 0;
     ss.activeFiles = [];
     ss.activeWorkers = 0;
+    ss.libraryChanged = false;
     broadcastScanStatus(true);
 
     let totalAdded = 0;
@@ -201,6 +248,7 @@ async function runAutoWalk() {
     ss.currentFile = '';
     ss.activeFiles = [];
     ss.activeWorkers = 0;
+    ss.libraryChanged = totalAdded > 0 || totalRemoved > 0;
     broadcastScanStatus(true);
 
     console.log(`[Auto-Walk] Complete: +${totalAdded} added, -${totalRemoved} removed`);

@@ -10,7 +10,7 @@ export class ChildProcessPool {
   private workers: ChildProcess[] = [];
   private freeWorkers: ChildProcess[] = [];
   private jobQueue: { job: PoolJob; resolve: (val: any) => void }[] = [];
-  private workerTasks = new Map<ChildProcess, { id: string; resolve: (val: any) => void }>();
+  private workerTasks = new Map<ChildProcess, { id: string; resolve: (val: any) => void; startTime: number }>();
   private activeCount = 0;
   private pendingKills = 0;
   private terminated = false;
@@ -124,6 +124,9 @@ export class ChildProcessPool {
   private handleResult(child: ChildProcess, result: any) {
     const task = this.workerTasks.get(child);
     if (task && task.id === result.id) {
+       const duration = (Date.now() - task.startTime) / 1000;
+       console.log(`[Pool] Job ${task.id} completed in ${duration.toFixed(2)}s`);
+       
        task.resolve(result);
        this.workerTasks.delete(child);
        this.activeCount--;
@@ -184,7 +187,7 @@ export class ChildProcessPool {
       const worker = this.freeWorkers.pop()!;
       const { job, resolve } = this.jobQueue.shift()!;
       this.activeCount++;
-      this.workerTasks.set(worker, { id: job.id, resolve });
+      this.workerTasks.set(worker, { id: job.id, resolve, startTime: Date.now() });
 
       if (worker.stdin && !worker.stdin.destroyed) {
          worker.stdin.write(JSON.stringify(job.payload) + '\n');

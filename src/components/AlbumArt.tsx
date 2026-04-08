@@ -64,7 +64,7 @@ const AlbumArt: React.FC<AlbumArtProps> = ({ artUrl, artist, album, size = 300, 
   return (
     <div
       ref={ref}
-      className={`relative overflow-hidden bg-[var(--glass-bg)] w-full h-full ${className}`}
+      className={`relative overflow-hidden bg-[var(--glass-bg)] rounded-sm ${className}`}
     >
       {activeUrl ? (
         <img

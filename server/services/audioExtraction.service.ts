@@ -40,10 +40,12 @@ async function checkFfmpeg(): Promise<boolean> {
 
 export interface AudioFeatures {
   bpm: number;
-  acoustic_vector: [number, number, number, number, number, number, number];
-  // [energy, brightness, percussiveness, chromagram, instrumentalness, acousticness, danceability]
+  acoustic_vector: [number, number, number, number, number, number, number, number];
+  // [energy, brightness, percussiveness, chromagram, instrumentalness, acousticness, danceability, tempo]
   mfcc_vector: [number, number, number, number, number, number, number, number, number, number, number, number, number];
   // 13 Mel-Frequency Cepstral Coefficients providing timbre fingerprint
+  is_simulated: boolean;
+  // true when ffmpeg was unavailable and features were computed from synthetic PCM
 }
 
 /**
@@ -221,12 +223,10 @@ export interface VectorStats {
 export async function extractAudioFeatures(filePath: Buffer | string, vectorStats?: VectorStats | null): Promise<AudioFeatures> {
   const ess = await initEssentia();
 
-  // Keep as Buffer on Linux for raw-byte filesystem paths; convert to string only if already a string
-  const pathArg: Buffer | string = filePath instanceof Buffer ? filePath : filePath;
-  const pathForLog = typeof pathArg === 'string' ? pathArg : pathArg.toString('utf8');
+  const pathForLog = typeof filePath === 'string' ? filePath : filePath.toString('utf8');
   console.log(`[AudioExtract] Starting analysis for: ${pathForLog}`);
   const startTime = Date.now();
-  const stat = await fs.promises.stat(pathArg);
+  const stat = await fs.promises.stat(filePath);
   const fileSize = stat.size;
 
   // Try real audio decoding via ffmpeg, fall back to simulated data
@@ -236,13 +236,13 @@ export async function extractAudioFeatures(filePath: Buffer | string, vectorStat
   const hasFfmpeg = await checkFfmpeg();
   if (hasFfmpeg) {
     try {
-      pcmData = await decodeToPCM(pathArg, 15, true);
+      pcmData = await decodeToPCM(filePath, 15, true);
       usingRealAudio = true;
     } catch (err: any) {
       if (err.message.includes('FFMPEG_SEEK_FAILED')) {
         try {
           console.warn(`[AudioExtract] Seek failed for "${pathForLog}", retrying from the start...`);
-          pcmData = await decodeToPCM(pathArg, 15, false);
+          pcmData = await decodeToPCM(filePath, 15, false);
           usingRealAudio = true;
         } catch (retryErr: any) {
           console.warn(`[AudioExtract] ffmpeg retry decode failed for "${pathForLog}":`, retryErr.message);
@@ -316,8 +316,17 @@ export async function extractAudioFeatures(filePath: Buffer | string, vectorStat
     // 7. Danceability
     const danceability = safeCall(() => ess.Danceability(audioVector).danceability, 0, 'Danceability');
 
-    // BPM estimation
-    const bpm = 120.0 + (zcr * 10) + (fileSize % 40);
+    // BPM estimation using RhythmExtractor2013
+    let bpm = 120;
+    try {
+      const rhythmResult = ess.RhythmExtractor2013(audioVector);
+      bpm = Math.round(rhythmResult.bpm ?? 120);
+      if (rhythmResult) {
+        try { rhythmResult.delete(); } catch {}
+      }
+    } catch (err) {
+      console.warn(`[AudioExtract] RhythmExtractor2013 failed:`, err);
+    }
 
     // ── MFCC Timbre Extraction — Option C: frame-averaged (13 coefficients) ─
     // Split the 15s PCM into overlapping 2048-sample Hanning-windowed frames
@@ -329,17 +338,24 @@ export async function extractAudioFeatures(filePath: Buffer | string, vectorStat
     const NUM_MFCC = 13;
     const sigmoid = (x: number, scale: number) => 1 / (1 + Math.exp(-x / scale));
 
+    // Pre-compute Hanning window coefficients once (avoids 644×2048 = 1.3M cos() calls)
+    const hanningWindow = new Float32Array(FRAME_SIZE);
+    for (let i = 0; i < FRAME_SIZE; i++) {
+      hanningWindow[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (FRAME_SIZE - 1)));
+    }
+
     const mfccAccum = new Array(NUM_MFCC).fill(0);
     let validFrames = 0;
     const numFrames = Math.max(0, Math.floor((pcmData.length - FRAME_SIZE) / HOP_SIZE) + 1);
 
+    // Reuse a single buffer for windowed frame data
+    const windowed = new Float32Array(FRAME_SIZE);
+
     for (let fi = 0; fi < numFrames; fi++) {
       const start = fi * HOP_SIZE;
-      // Apply Hanning window in JavaScript (avoids an extra WASM round-trip)
-      const windowed = new Float32Array(FRAME_SIZE);
+      // Apply pre-computed Hanning window
       for (let i = 0; i < FRAME_SIZE; i++) {
-        const sample = pcmData[start + i] ?? 0;
-        windowed[i] = sample * 0.5 * (1 - Math.cos((2 * Math.PI * i) / (FRAME_SIZE - 1)));
+        windowed[i] = (pcmData[start + i] ?? 0) * hanningWindow[i];
       }
 
       let frameVec: any = null;
@@ -373,11 +389,9 @@ export async function extractAudioFeatures(filePath: Buffer | string, vectorStat
       return sigmoid(avg, k === 0 ? 20 : 8);
     }) as AudioFeatures['mfcc_vector'];
 
-    // Use pre-fetched stats if provided, otherwise fetch from DB (fallback for single-track usage)
-    const stats = vectorStats !== undefined ? vectorStats : await (async () => {
-      const { getVectorStats } = await import('../database');
-      return getVectorStats();
-    })();
+    // Use pre-fetched stats if provided; on first-ever scan (no existing features), stats will be null
+    // and we fall through to the simple divisor normalization below.
+    const stats = vectorStats ?? null;
 
     const zScoreNormalize = (val: number, idx: number, fallbackDivisor: number) => {
       if (!stats) {
@@ -399,9 +413,11 @@ export async function extractAudioFeatures(filePath: Buffer | string, vectorStat
           zScoreNormalize(pitch || 0, 3, 1),
           zScoreNormalize(flux || 0, 4, 50),
           zScoreNormalize(zcr || 0, 5, 0.5),
-          zScoreNormalize(danceability || 0, 6, 3)
+          zScoreNormalize(danceability || 0, 6, 3),
+          zScoreNormalize(bpm, 7, 200)
         ],
-        mfcc_vector
+        mfcc_vector,
+        is_simulated: !usingRealAudio
       };
     } finally {
       const elapsed = Date.now() - startTime;

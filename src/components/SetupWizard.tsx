@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { usePlayerStore } from '../store/index';
-import { Settings, FolderPlus, Key, Database, ChevronRight, CheckCircle2, Cpu } from 'lucide-react';
+import { Settings, FolderPlus, Key, Database, ChevronRight, CheckCircle2, Cpu, Clock, X, AlertCircle, Check, ArrowRight } from 'lucide-react';
 import { useLlmConnectionTest } from '../hooks/useLlmConnectionTest';
 import { useProviderConnectionTest } from '../hooks/useProviderConnectionTest';
 
@@ -65,22 +65,57 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
     // Token estimate
     const [trackCount, setTrackCount] = useState(1000);
     const [isSaving, setIsSaving] = useState(false);
-    const [mbdbProgress, setMbdbProgress] = useState<{ isImporting: boolean, phase: string, message: string }>({ isImporting: false, phase: 'idle', message: '' });
+    const [mbdbProgress, setMbdbProgress] = useState<{
+        isImporting: boolean,
+        phase: string,
+        message: string,
+        progress: number,
+        elapsedSeconds?: number,
+        currentTable?: string,
+        counts?: { genres: number, aliases: number, links: number },
+        lastImport?: { timestamp: number; duration: number; counts: { genres: number; aliases: number; links: number } } | null,
+        completedPhases?: string[]
+    }>({ isImporting: false, phase: 'idle', message: '', progress: 0, completedPhases: [] });
+
+    const [mbdbUpdateInfo, setMbdbUpdateInfo] = useState<{
+        latestTag: string;
+        lastImportTag: string | null;
+        updateAvailable: boolean;
+        lastImport: { timestamp: number; duration: number; counts: { genres: number; aliases: number; links: number } } | null;
+    } | null>(null);
+
+    const fetchMbdbUpdateInfo = useCallback(async () => {
+        const token = usePlayerStore.getState().authToken;
+        if (!token) return;
+        try {
+            const res = await fetch('/api/admin/mbdb/check-update', { headers: { Authorization: `Bearer ${token}` } });
+            if (res.ok) {
+                const data = await res.json();
+                setMbdbUpdateInfo(data);
+            }
+        } catch (e) {
+            console.error('Failed to fetch MBDB update info', e);
+        }
+    }, []);
 
     React.useEffect(() => {
         if (step === 3) {
             const token = usePlayerStore.getState().authToken;
             if (!token) return;
+            fetchMbdbUpdateInfo();
             const es = new EventSource('/api/admin/mbdb/status?token=' + token);
             es.onmessage = (e) => {
                 try {
                     const data = JSON.parse(e.data);
                     setMbdbProgress(data);
+                    if (data.phase === 'complete') {
+                        fetchMbdbUpdateInfo();
+                    }
                 } catch {}
             };
             return () => es.close();
         }
-    }, [step]);
+    }, [step, fetchMbdbUpdateInfo]);
 
     const TOTAL_STEPS = 5;
 
@@ -90,6 +125,15 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
             await fetch('/api/admin/mbdb/import', { method: 'POST', headers: authHeaders });
         } catch(e) {
             console.error('Failed to start MBDB import', e);
+        }
+    };
+
+    const handleMbdbCancel = async () => {
+        try {
+            const authHeaders = getAuthHeader();
+            await fetch('/api/admin/mbdb/cancel', { method: 'POST', headers: authHeaders });
+        } catch(e) {
+            console.error('Failed to cancel MBDB import', e);
         }
     };
 
@@ -183,7 +227,7 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
 
     return (
         <div className="fixed inset-0 z-[100] bg-[var(--color-bg)] flex items-center justify-center p-4">
-            <div className="absolute inset-0 z-0 opacity-30 bg-gradient-to-br from-[var(--color-primary-dark)] via-[var(--color-bg)] to-purple-900 pointer-events-none" />
+            <div className="absolute inset-0 z-0 opacity-30 bg-aurora-deep pointer-events-none" />
             
             <div className="relative z-10 w-full max-w-2xl bg-[var(--glass-bg)] border border-[var(--glass-border)] shadow-2xl rounded-3xl p-8 md:p-12 backdrop-blur-3xl overflow-hidden">
                 
@@ -278,29 +322,91 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
                                     ) : (
                                         <button 
                                             onClick={handleMbdbImport}
-                                            className="w-full bg-[var(--color-bg)] hover:bg-[var(--glass-bg)] text-[var(--color-text-primary)] border border-[var(--color-primary)] font-semibold py-3 rounded-lg shadow-sm transition-transform active:scale-[0.98] flex items-center justify-center gap-2"
+                                            className="w-full bg-[var(--color-bg)] hover:bg-[var(--glass-bg)] text-[var(--color-text-primary)] border border-[var(--color-primary)] font-semibold py-3 rounded-lg shadow-sm transition-transform active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                            disabled={mbdbUpdateInfo?.updateAvailable === false}
                                         >
-                                            <Database size={18} /> Start Download & Import (~3.5GB)
+                                            <Database size={18} /> {mbdbUpdateInfo?.updateAvailable === false ? 'Already Up to Date' : 'Start Download & Import (~3.5GB)'}
                                         </button>
                                     )}
                                     {mbdbProgress.phase === 'error' && (
-                                        <div className="text-red-500 font-medium text-sm mt-2 text-center">⚠️ {mbdbProgress.message}</div>
+                                        <div className="text-red-500 font-medium text-sm mt-2 text-center flex items-center justify-center gap-2">
+                                            <AlertCircle size={16} /> {mbdbProgress.message}
+                                        </div>
+                                    )}
+                                    
+                                    {/* Update Status */}
+                                    {mbdbUpdateInfo && (
+                                        <div className="bg-black/5 dark:bg-white/5 rounded-lg p-3 space-y-2">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-xs text-[var(--color-text-muted)] uppercase tracking-wide">Status</span>
+                                                {mbdbUpdateInfo.updateAvailable ? (
+                                                    <span className="text-xs text-[var(--color-primary)] font-medium">Update Available</span>
+                                                ) : (
+                                                    <span className="text-xs text-green-500 font-medium">Up to Date</span>
+                                                )}
+                                            </div>
+                                            <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
+                                                <span>Latest: <code className="bg-black/10 dark:bg-white/10 px-1 rounded">{mbdbUpdateInfo.latestTag}</code></span>
+                                                {mbdbUpdateInfo.lastImportTag && (
+                                                    <span>Installed: <code className="bg-black/10 dark:bg-white/10 px-1 rounded">{mbdbUpdateInfo.lastImportTag}</code></span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+                                    
+                                    {/* Last Import Summary */}
+                                    {(mbdbProgress.lastImport || mbdbUpdateInfo?.lastImport) && (
+                                        <div className="bg-black/5 dark:bg-white/5 rounded-lg p-3 space-y-1 mt-2">
+                                            <div className="text-xs text-[var(--color-text-muted)] uppercase tracking-wide text-center">Last Import</div>
+                                            <div className="flex items-center justify-center gap-4 text-sm">
+                                                <span className="flex items-center gap-1">
+                                                    <Clock size={14} className="text-[var(--color-text-muted)]" />
+                                                    {Math.round(((mbdbProgress.lastImport || mbdbUpdateInfo?.lastImport)?.duration ?? 0) / 60)}min
+                                                </span>
+                                                <span>{(mbdbProgress.lastImport || mbdbUpdateInfo?.lastImport)?.counts.genres.toLocaleString()} genres</span>
+                                                <span>{(mbdbProgress.lastImport || mbdbUpdateInfo?.lastImport)?.counts.aliases.toLocaleString()} aliases</span>
+                                            </div>
+                                        </div>
                                     )}
                                 </div>
                             ) : (
-                                <div className="border border-[var(--glass-border)] rounded-lg p-4 bg-black/5 dark:bg-white/5 relative overflow-hidden">
-                                    <div className="absolute top-0 left-0 h-1 bg-[var(--color-primary)] animate-pulse w-full"></div>
-                                    <div className="flex items-center gap-3 mb-2">
-                                        <div className="w-5 h-5 border-2 border-[var(--color-primary)]/30 border-t-[var(--color-primary)] rounded-full animate-spin flex-shrink-0" />
-                                        <span className="font-semibold text-[var(--color-text-primary)] capitalize">{mbdbProgress.phase}</span>
+                                <div className="space-y-4">
+                                    {/* Pulsing Bar */}
+                                    <div className="h-1 bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
+                                        <div className="h-full bg-[var(--color-primary)] animate-pulse rounded-full" />
                                     </div>
-                                    <p className="text-sm text-[var(--color-text-secondary)] break-all">{mbdbProgress.message}</p>
+                                    
+                                    {/* Phase List */}
+                                    <div className="space-y-2">
+                                        {mbdbProgress.completedPhases?.map((phase, i) => (
+                                            <div key={i} className="flex items-center gap-2 text-sm text-green-500">
+                                                <Check size={14} className="flex-shrink-0" /> 
+                                                <span className="break-all">{phase}</span>
+                                            </div>
+                                        ))}
+                                        
+                                        {/* Current Phase */}
+                                        {mbdbProgress.phase !== 'complete' && mbdbProgress.phase !== 'error' && (
+                                            <div className="flex items-center gap-2 text-sm">
+                                                <ArrowRight size={14} className="animate-pulse flex-shrink-0 text-[var(--color-primary)]" /> 
+                                                <span className="break-all text-[var(--color-text-primary)]">{mbdbProgress.message}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                    
+                                    {/* Cancel Button */}
+                                    <button 
+                                        onClick={handleMbdbCancel}
+                                        className="btn btn-danger w-full"
+                                    >
+                                        <X size={16} /> Cancel Import
+                                    </button>
                                 </div>
                             )}
                         </div>
 
                         <div className="flex gap-4 mt-6">
-                            <button disabled={mbdbProgress.isImporting} onClick={() => setStep(4)} className="flex-1 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white font-semibold py-4 rounded-xl shadow-lg transition-transform active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-50">
+                            <button disabled={mbdbProgress.isImporting} onClick={() => setStep(4)} className="flex-1 py-2.5 rounded-xl bg-aurora-gradient hover:brightness-110 text-white font-semibold shadow-lg transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                                 {mbdbProgress.phase === 'complete' ? 'Next Step' : 'Skip MBDB Import'} <ChevronRight className="w-5 h-5" />
                             </button>
                         </div>
@@ -505,7 +611,7 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
                             </div>
                         </div>
 
-                        <button onClick={handleFinish} className="w-full mt-6 bg-gradient-to-r from-[var(--color-primary)] to-purple-600 hover:from-[var(--color-primary-dark)] hover:to-purple-700 text-white font-bold py-4 rounded-xl shadow-lg transition-transform active:scale-[0.98] flex items-center justify-center gap-2">
+                        <button onClick={handleFinish} className="w-full mt-6 bg-aurora-gradient hover:brightness-110 text-white font-bold py-4 rounded-xl shadow-lg transition-transform active:scale-[0.98] flex items-center justify-center gap-2">
                             <CheckCircle2 className="w-5 h-5" /> Finish Setup & Launch
                         </button>
                     </div>

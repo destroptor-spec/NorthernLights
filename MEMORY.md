@@ -1,20 +1,33 @@
 # Project Memory / Changelog
 
-## [2026-04-04] V18: Hierarchical Genre Taxonomy & Dynamic Hop-Cost Engine
+## [2026-04-08] v1.0.0-beta.1: Hierarchical Genre Taxonomy & 21D Recommendation Engine
 - **Hierarchical Genre Migration**: Successfully replaced the static 39-macro-genre matrix with a dynamic hierarchy imported from **MusicBrainz** (~2,000 genres).
-- **Materialized Tree Paths**: Created `genre_tree_paths` materialized view in PostgreSQL using recursive CTEs to calculate path strings (e.g. `electronic.house.deep house`).
-- **Dynamic Hop-Cost Calculation**: Replaced the matrix lookup with string-splitting LCA (Lowest Common Ancestor) distance math in `genreMatrix.service.ts`.
-- **MusicBrainz High-Performance Importer**: `mbdb.service.ts` implements streaming download + extraction (`tar -xjf`) + bulk insertion (`INSERT ... VALUES (...)`) of `genre`, `genre_alias`, and `l_genre_genre` TSVs.
+- **Materialized Tree Paths & CTE Optimization**: Created `genre_tree_paths` view using recursive CTEs. Optimized for **Root-to-Leaf** traversal, reducing generation from 38+ minutes to under 5 seconds. Fixed "stuck" status loop bug.
+- **Dynamic Hop-Cost Calculation**: Replaced the matrix lookup with path-based LCA (Lowest Common Ancestor) distance math.
+- **MusicBrainz High-Performance Importer**: `mbdb.service.ts` implements streaming download + extraction (`tar -xjf`) + bulk insertion of TSV data. Now records version `tag` for accurate update checking.
 - **3-Step Categorization Pipeline**:
   - **SQL Match**: Direct identifier/alias lookup in MBDB.
-  - **LLM Batch**: Grouped tag categorization (20 tags/batch) with strict array validation (2-3 tags) and 45s timeout.
+  - **LLM Batch**: Grouped tag categorization (20 tags/batch) with strict array validation.
   - **KNN Fallback**: Weighted timbre/acoustic similarity mapping if no metadata is available.
-- **Resilience Overhaul**: Added disk space pre-checks (statfs for /tmp), detailed boolean parsing logic (`t`/`f` normalization), and SSE-based real-time progress syncing in `broadcastMbdbStatus`.
+- **8D Acoustic Vector Upgrade**: Migrated audio analysis from 7D to **8D acoustic vectors**. Recommendation ranking now uses **21 dimensions** (8D acoustic + 13D MFCC timbre).
+- **Audio Analysis Hardening & Performance Audit**:
+  - **SQL-Side Statistics**: Migrated `getVectorStats` to SQL-based `AVG`/`STDDEV` calculation, eliminating massive JS JSON-parsing overhead.
+  - **MFCC Performance**: Pre-computed Hanning window coefficients and implemented buffer reuse, eliminating millions of redundant trig calls.
+  - **NaN & Dimension Guards**: Hardened recommendation engine with `NaN` guards and vector slicing for seamless 7D/8D interoperability.
+  - **is_simulated**: Added persistence for tracks analyzed with fake PCM (when ffmpeg missing) to enable future re-analysis.
+  - **UX/UI**: Added phase-aware status indicators to analysis guards and scanner indicators.
+- **Backward Compatibility**: Implemented vector slicing in `database/index.ts` to maintain legacy 7D data support while populating the new 8D `acoustic_vector_8d` column.
+- **Resilience & Infrastructure Hardening**: Added disk space pre-checks (statfs for /tmp), fixed health-check 500 crashes during DB downtime, and stabilized container connectivity with forced IPv4 (127.0.0.1).
+- **Library Removal Stability**: Implemented `purgeOrphanedTracks` and `purgeOrphanedEntities` in `database/index.ts`. This ensures that when a folder is removed, not only are the tracks deleted (with a safety net for path-encoding mismatches), but the associated albums, artists, and genres with zero remaining tracks are also purged, preventing "ghost" entries in the UI. Fixed 403 Forbidden errors for cover art and streaming on tracks orphaned by manual directory removal.
 - **UI/UX Polishing**:
   - **SetupWizard Stability**: Added `localStorage` persistence for current setup step. Added "Skip MBDB Import" option to Step 3.
-  - **Settings Modal**: New "MBDB" tab for database management, status monitoring, and re-imports.
 
-## [2026-04-03] V17: Provider Reliability & Integration Overhaul (Part 2)
+  - **Modular Settings Architecture**: Deconstructed monolithic `SettingsModal.tsx` into domain-specific components under `src/components/settings/` (Account, Appearance, Library, Playback, System, GenAi, GenreMatrix, Database).
+  - **Settings Performance**: Encapsulated polling hooks for Genre Matrix and MBDB status within their respective tabs to eliminate root-level re-render overhead when the modal is closed.
+  - **Reactive Scanner UI**: Fixed `App.tsx` scanning indicator to use reactive Zustand subscriptions for `scanPhase` and progress counts, ensuring smooth visual transitions across walk/metadata/analysis phases.
+  - **Accessibility & UI Hardening**: Standardized settings navigation with semantic ARIA tab roles. Fixed transparency and styling issues in light mode for all modal components (Prompt, Confirm, DatabaseControl).
+
+## [2026-04-03] v0.9.0: Provider Reliability & Integration Overhaul (Part 2)
 - **Artist Library Lazy Loading Fix**: Artist images now load on scroll via IntersectionObserver (`useInView` hook with 200px rootMargin). Added 200ms debounce in `useArtistData` to prevent API storms during rapid scrolling.
 - **Backend Modularization**: Split monolithic `externalMetadata.service.ts` into `server/services/metadata/` directory:
   - `errors.ts` — `RateLimitError` and `ProviderError` classes with type guards
@@ -33,7 +46,7 @@
 - **Graceful Degradation**: Every 20D query guards with `WHERE tf.mfcc_vector IS NOT NULL`. If zero MFCC-enriched tracks exist (fresh install, pre-migration), all engines transparently fall back to 7D-only queries so recommendations continue to work immediately.
 - **Weighted Decay MFCC Centroid (Infinity Mode)**: Infinity Mode computes a parallel 13D weighted-decay centroid (lambda=0.8) matching the existing 7D centroid logic, so timbre drift tracking follows the same momentum model as the acoustic vector.
 
-## [2026-03-31] V15: Antigravity Context — Three-Phase Scanner & Worker Thread Analysis
+## [2026-03-31] v0.7.0: Antigravity Context — Three-Phase Scanner & Worker Thread Analysis
 - **Server Modularization (Phase 0)**: Split monolithic `server/index.ts` (1625 lines) into 12 route modules under `server/routes/`. Created `server/state.ts` for shared mutable state. New structure: auth, admin, library, playback, settings, hub, playlists, artists, albums, genres, media routes.
 - **Real Audio Decoding (Phase 1)**: Replaced simulated Essentia data with actual ffmpeg subprocess decoding. Implemented smart seeking: ffmpeg seeks to ~35% into track (past intro) and decodes 15 seconds for representative chorus/verse analysis. Added `ffprobe` duration detection with fallback to file start.
 - **Three-Phase Scanner Architecture**: Separated library scan into distinct phases:
@@ -47,7 +60,7 @@
 - **Concurrency Control**: Connected `audioAnalysisCpu` setting (Background=1, Balanced=4, Maximum=6 workers) to analysis worker pool size. Added per-file 90-second timeout to prevent hung files from blocking batch.
 - **Scan Status Improvements**: Metadata and analysis phases now show `"Artist - Title"` format in scanning indicator instead of just filename. Added new "Audio Analysis" section in Settings → Library with "Analyze Missing" and "Re-analyze All" buttons plus library-wide coverage progress bar.
 
-## [2026-03-29] LLM Deduplication Fix, Tunable Settings & Button Unification
+## [2026-03-29] v0.6.0: LLM Deduplication Fix, Tunable Settings & Button Unification
 - **LLM Playlist Deduplication Bug Fix**: Fixed `getHubCollections()` in `recommendation.service.ts` where 5 LLM playlists could contain identical songs. Root cause: each concept queried the database independently with no shared exclusion set. Fix accumulates an exclusion set of already-assigned track IDs across the concept loop, with a `WHERE t.id NOT IN (...)` clause.
 - **New Tunable Settings**: Added 4 user-facing settings to the Playback tab (LLM Playlists sub-tab):
   - *Playlist Diversity* (0–100%): Wander factor — weighted randomization vs deterministic top-N selection.
@@ -58,7 +71,7 @@
 - **Unified Button System**: Replaced 27+ inline Tailwind button strings in SettingsModal.tsx with global CSS classes in `index.css`. New variant system: `.btn`, `.btn-primary`, `.btn-danger`, `.btn-danger-fill`, `.btn-ghost`, `.btn-lg`, `.btn-sm`, `.btn-tab`, `.btn-dashed`, `.btn-icon`. Removed old `.btn-small`, `.remove-btn`, `.icon-btn`.
 - **Nav Button Fix**: Fixed asymmetric padding on Hub/Playlists/Artists/Albums/Genres navigation buttons caused by `pb-0` on the container.
 
-## [2026-03-23] AI Playlists, Queue Architecture & System Resilience
+## [2026-03-23] v0.5.0: AI Playlists, Queue Architecture & System Resilience
 - **Database Resilience**: App now boots even if PostgreSQL is unreachable, displaying a full-page graceful error UI that polls for health recovery.
 - **Robust LLM Integration**: Rewrote `llm.service` response parsing to handle unpredictable local LLM outputs (LM Studio, Ollama). SetupWizard now includes a dedicated LLM configuration step with token usage estimation and live connection testing. Added manual custom playlist generation via a prompt modal.
 - **Recommendation Engine Upgrades**: Engine-driven playlists now use advanced math:
@@ -67,7 +80,7 @@
 - **Global Track Context Menu**: Engineered a React Portal-based context menu (`TrackContextMenu`) accessible via a `⋯` button anywhere a track is rendered (Album, Search, Queue). Supports "Play Next" and "Add to Playlist" globally.
 - **Drag-and-Drop Play Queue**: Refactored the `PlaylistSidebar` to support smooth drag-and-drop track reordering with visual drop indicators, hover drag handles, and transparent drag ghosts.
 
-## [2026-03-13] Glassy UI Phase 2 & Audio Waveforms
+## [2026-03-13] v0.4.0: Glassy UI Phase 2 & Audio Waveforms
 - **Waveform Progress Bar**: Implemented a canvas-based `WaveformProgressBar` using the Web Audio API to decode audio files on-the-fly and render amplitude peaks as interactive bars.
 - **Glassy Design System**: Refined the theme with a "premium glass" aesthetic:
   - **Player Controls**: Dark-on-light (light mode) and white-on-dark (dark mode) frosted glass buttons with purple gradient accents.
@@ -76,14 +89,14 @@
 - **Artist Credits**: Added "Also Appears On" logic to the Artist Detail view to surface guest features separate from primary releases.
 - **Light Mode Parity**: Optimized all new glassy components for visibility and accessibility in Light Mode using theme-aware CSS variables.
 
-## [2026-03-12] Security, Integrations & Onboarding
+## [2026-03-12] v0.3.0: Security, Integrations & Onboarding
 - **External Imagery APIs**: Integrated Last.fm and Genius APIs to fetch artist bios, fallback album art, and artist hero images dynamically on the frontend with caching.
 - **Backend Security**: Implemented path traversal sanitization and Express Basic Authentication middleware (`requireAuth`) to safely host the application on the public web.
 - **First-Time Setup Wizard**: Built a glassmorphic onboarding UI (`SetupWizard.tsx`) that bypasses auth on the very first boot to dynamically write admin credentials to the server's `.env` file natively.
 - **Basic Auth URL Params**: Restructured frontend streaming and image rendering to append a base64 encoded auth `?token=` parameter to bypass stringent browser subresource credential stripping.
 
 
-## [2026-03-12] UI Polish & Background Refactor
+## [2026-03-12] v0.2.0: UI Polish & Background Refactor
 - **Matte Glass Background**: Replaced resource-heavy `HeroWave` canvas with a CSS-based Matte Glass background.
   - Implemented multi-point radial gradients on the `body` selector.
   - Added a `noise.svg` turbulence filter overlay for a textured "matte" finish.
@@ -91,7 +104,7 @@
   - Restored rounded corners (`2xl`), soft shadows, and `backdrop-blur` across all components.
   - Simplified typography to standard sentence-cased font weights.
 
-## [2026-03-11] Library-Centric Architecture (The Big Shift)
+## [2026-03-11] v0.1.0: Library-Centric Architecture (The Big Shift)
 - **Backend Infrastructure**: Launched Node.js + Express server to handle file system operations.
   - Integrated SQLite for library persistence.
   - Implemented `/api/library` and `/api/stream` endpoints.
@@ -99,7 +112,7 @@
   - Added `AlbumDetail`, `ArtistDetail`, and `GenreDetail` sub-views.
 - **Theme System**: Implemented Tailwind-based dark mode (`.dark`) with persistent user preference in Zustand.
 
-## [2026-03-10] Core Player & Audio Engine
+## [2026-03-10] v0.0.1: Core Player & Audio Engine
 - **PlaybackManager**: Developed a singleton class for consistent audio handling.
 - **Zustand Store**: Reorganized state to handle playlists, volume, and scanning states.
 - **UI Base**: Implemented `PlayerControls`, `ProgressBar`, and `PlaylistSidebar`.

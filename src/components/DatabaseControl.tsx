@@ -26,6 +26,11 @@ interface DatabaseStats {
   albums: number;
   genres: number;
   playlists: number;
+  pool?: {
+    total: number;
+    idle: number;
+    waiting: number;
+  };
 }
 
 interface DatabaseControlProps {
@@ -255,23 +260,45 @@ export function DatabaseControl({ onReady, inline = false, variant = 'full' }: D
 
         {/* Stats Grid - New for 'stats' variant */}
         {variant === 'stats' && status === 'running' && dbStats && (
-            <div className="grid grid-cols-2 gap-3 mt-4">
-                <StatCard label="Tables" value={dbStats.tables} icon={Database} />
-                <StatCard label="Indexes" value={dbStats.indexes} icon={RotateCcw} colorClass="text-purple-400" />
-                <div className="col-span-2 grid grid-cols-3 gap-2 mt-2">
-                    <div className="text-center p-2 rounded-lg bg-black/5 border border-white/5">
+            <div className="space-y-3 mt-4">
+                <div className="grid grid-cols-2 gap-3">
+                    <StatCard label="Tables" value={dbStats.tables} icon={Database} />
+                    <StatCard label="Indexes" value={dbStats.indexes} icon={RotateCcw} colorClass="text-[var(--color-primary)]" />
+                </div>
+                <div className="grid grid-cols-4 gap-2">
+                    <div className="text-center p-2 rounded-lg bg-[var(--color-surface)] border border-[var(--glass-border)]">
                         <p className="text-[9px] uppercase text-[var(--color-text-muted)]">Tracks</p>
-                        <p className="text-sm font-bold text-green-400">{dbStats.tracks}</p>
+                        <p className="text-sm font-bold text-green-500">{dbStats.tracks}</p>
                     </div>
-                    <div className="text-center p-2 rounded-lg bg-black/5 border border-white/5">
+                    <div className="text-center p-2 rounded-lg bg-[var(--color-surface)] border border-[var(--glass-border)]">
                         <p className="text-[9px] uppercase text-[var(--color-text-muted)]">Artists</p>
-                        <p className="text-sm font-bold text-blue-400">{dbStats.artists}</p>
+                        <p className="text-sm font-bold text-blue-500">{dbStats.artists}</p>
                     </div>
-                    <div className="text-center p-2 rounded-lg bg-black/5 border border-white/5">
-                        <p className="text-[9px] uppercase text-[var(--color-text-muted)]">Playlists</p>
-                        <p className="text-sm font-bold text-amber-400">{dbStats.playlists}</p>
+                    <div className="text-center p-2 rounded-lg bg-[var(--color-surface)] border border-[var(--glass-border)]">
+                        <p className="text-[9px] uppercase text-[var(--color-text-muted)]">Albums</p>
+                        <p className="text-sm font-bold text-purple-500">{dbStats.albums}</p>
+                    </div>
+                    <div className="text-center p-2 rounded-lg bg-[var(--color-surface)] border border-[var(--glass-border)]">
+                        <p className="text-[9px] uppercase text-[var(--color-text-muted)]">Genres</p>
+                        <p className="text-sm font-bold text-amber-500">{dbStats.genres}</p>
                     </div>
                 </div>
+                {dbStats.pool && (
+                    <div className="grid grid-cols-3 gap-2">
+                        <div className="text-center p-2 rounded-lg bg-[var(--color-surface)] border border-[var(--glass-border)]">
+                            <p className="text-[9px] uppercase text-[var(--color-text-muted)]">Pool Total</p>
+                            <p className="text-sm font-bold text-[var(--color-primary)]">{dbStats.pool.total}</p>
+                        </div>
+                        <div className="text-center p-2 rounded-lg bg-[var(--color-surface)] border border-[var(--glass-border)]">
+                            <p className="text-[9px] uppercase text-[var(--color-text-muted)]">Idle</p>
+                            <p className="text-sm font-bold text-green-500">{dbStats.pool.idle}</p>
+                        </div>
+                        <div className="text-center p-2 rounded-lg bg-[var(--color-surface)] border border-[var(--glass-border)]">
+                            <p className="text-[9px] uppercase text-[var(--color-text-muted)]">Waiting</p>
+                            <p className={`text-sm font-bold ${dbStats.pool.waiting > 0 ? 'text-red-500' : 'text-green-500'}`}>{dbStats.pool.waiting}</p>
+                        </div>
+                    </div>
+                )}
             </div>
         )}
 
@@ -355,7 +382,7 @@ export function DatabaseControl({ onReady, inline = false, variant = 'full' }: D
 
   if (inline) {
     return (
-      <div className="bg-[var(--color-surface)]/40 backdrop-blur-md rounded-2xl p-6 border border-[var(--glass-border)] shadow-xl relative overflow-hidden group">
+      <div className="bg-[var(--color-background)] rounded-2xl p-6 border border-[var(--glass-border)] shadow-xl relative overflow-hidden group">
         <div className="absolute inset-0 bg-gradient-to-br from-[var(--color-primary)]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
         <div className="relative z-10">
           {renderContent()}

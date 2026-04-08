@@ -17,7 +17,7 @@ export interface ColorPalette {
   success: string;
   auroraGreen: string;
   auroraBlue: string;
-  auroraPurple: string;
+  auroraExtraGlow: string;
   auroraPink: string;
 }
 
@@ -49,23 +49,23 @@ export interface Theme {
 export const glassmorphismTheme: Theme = {
   name: 'glassmorphism',
   colors: {
-    primary: '#8B5CF6', // Violet
-    primaryDark: '#7C3AED',
-    secondary: '#10B981', // Emerald
+    primary: '#22C983', // Oxygen Green
+    primaryDark: '#10B981',
+    secondary: '#0ea5e9', // Sky Blue
     background: '#050311', // Near-black for deep aurora visibility
     surface: 'rgba(8, 6, 22, 0.7)', // Dark semi-transparent surface
     surfaceVariant: 'rgba(18, 15, 40, 0.45)',
     textPrimary: '#f0f0f9',
     textSecondary: '#c7c7d1',
     textMuted: '#8a8a9b',
-    border: 'rgba(139, 92, 246, 0.3)', // Aurora violet border
-    accent: '#03dac6',
+    border: 'rgba(34, 201, 131, 0.3)', // Aurora green border
+    accent: '#f43f5e',
     error: '#ffcccc',
-    success: '#03dac6',
-    auroraGreen: '#34d399',
-    auroraBlue: '#60a5fa',
-    auroraPurple: '#8b5cf6',
-    auroraPink: '#f472b6',
+    success: '#34d399',
+    auroraGreen: '#22c983',
+    auroraBlue: '#0ea5e9',
+    auroraExtraGlow: '#10b981',
+    auroraPink: '#f43f5e',
   },
   borderRadius: 16,
   spacing: {
@@ -91,23 +91,23 @@ export const glassmorphismTheme: Theme = {
 export const darkTheme: Theme = {
   name: 'dark',
   colors: {
-    primary: '#6750a4',
-    primaryDark: '#524783',
-    secondary: '#6d5c7a',
+    primary: '#10B981',
+    primaryDark: '#059669',
+    secondary: '#0ea5e9',
     background: '#1c1b1f',
     surface: '#2d2b31',
     surfaceVariant: '#49474e',
     textPrimary: '#e7e1e9',
     textSecondary: '#c4bfd7',
     textMuted: '#8d8994',
-    border: '#8d8994',
-    accent: '#03dac6',
+    border: '#34d399',
+    accent: '#f43f5e',
     error: '#ffcccc',
-    success: '#03dac6',
-    auroraGreen: '#34d399',
-    auroraBlue: '#60a5fa',
-    auroraPurple: '#8b5cf6',
-    auroraPink: '#f472b6',
+    success: '#34d399',
+    auroraGreen: '#22c983',
+    auroraBlue: '#0ea5e9',
+    auroraExtraGlow: '#10b981',
+    auroraPink: '#f43f5e',
   },
   borderRadius: 8,
   spacing: {
@@ -133,9 +133,9 @@ export const darkTheme: Theme = {
 export const lightTheme: Theme = {
   name: 'light',
   colors: {
-    primary: '#6750a4',
-    primaryDark: '#4e3d8c',
-    secondary: '#6d5c7a',
+    primary: '#059669',
+    primaryDark: '#047857',
+    secondary: '#0ea5e9',
     background: '#fdfbf7',
     surface: '#ffffff',
     surfaceVariant: '#f2edeb',
@@ -143,13 +143,13 @@ export const lightTheme: Theme = {
     textSecondary: '#58545e',
     textMuted: '#736e77',
     border: '#d0cdc7',
-    accent: '#03dac6',
+    accent: '#e11d48',
     error: '#930000',
-    success: '#4caf50',
-    auroraGreen: '#34d399',
-    auroraBlue: '#60a5fa',
-    auroraPurple: '#8b5cf6',
-    auroraPink: '#f472b6',
+    success: '#059669',
+    auroraGreen: '#10b981',
+    auroraBlue: '#0ea5e9',
+    auroraExtraGlow: '#10b981',
+    auroraPink: '#f43f5e',
   },
   borderRadius: 8,
   spacing: {

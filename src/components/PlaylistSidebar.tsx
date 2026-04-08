@@ -1,216 +1,175 @@
-import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useRef, useMemo, useCallback } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+  DragStartEvent
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
 import { usePlayerStore } from '../store';
-import { Home, Library, Settings as SettingsIcon, Search as SearchIcon, X, PlusCircle, GripVertical, MoreHorizontal, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ListMusic } from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { parseArtists } from '../utils/artistUtils';
-import { AlbumArt } from './AlbumArt';
-import { formatTime } from '../utils/formatTime';
+import { PlaylistItem } from './PlaylistItem';
 
 export const PlaylistSidebar: React.FC = () => {
-  const [draggingIndex, setDraggingIndex] = React.useState<number | null>(null);
-  const [dragOverIndex, setDragOverIndex] = React.useState<number | null>(null);
-
   const playlist = usePlayerStore(state => state.playlist);
   const removeFromPlaylist = usePlayerStore(state => state.removeFromPlaylist);
   const moveInPlaylist = usePlayerStore(state => state.moveInPlaylist);
   const playAtIndex = usePlayerStore(state => state.playAtIndex);
   const currentIndex = usePlayerStore(state => state.currentIndex);
   const openContextMenu = usePlayerStore(state => state.openContextMenu);
+  
   const isSidebarCollapsed = usePlayerStore(state => state.isSidebarCollapsed);
   const setIsSidebarCollapsed = usePlayerStore(state => state.setIsSidebarCollapsed);
 
-  // Build artist name -> ID lookup from entity list
-  const artists = usePlayerStore(state => state.artists);
-  const getArtistLink = (artistName: string): string | null => {
-    const entity = artists.find((a: any) => a.name?.toLowerCase() === artistName.toLowerCase());
+  const getArtistLink = usePlayerStore(state => (artistName: string) => {
+    const entity = state.artists.find((a: any) => a.name?.toLowerCase() === artistName.toLowerCase());
     return entity ? `/library/artist/${entity.id}` : null;
-  };
+  });
 
-  const handleDragStart = (e: React.DragEvent<HTMLLIElement>, index: number) => {
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', index.toString());
-    setTimeout(() => setDraggingIndex(index), 0);
-  };
+  const parentRef = useRef<HTMLDivElement>(null);
 
-  const handleDragEnd = () => {
-    setDraggingIndex(null);
-    setDragOverIndex(null);
-  };
+  // Maintain stability of item heights using estimateSize
+  const virtualizer = useVirtualizer({
+    count: playlist.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => isSidebarCollapsed ? 80 : 70, 
+    overscan: 10,
+  });
 
-  const handleDragEnter = (e: React.DragEvent<HTMLLIElement>, index: number) => {
-    e.preventDefault();
-    setDragOverIndex(index);
-  };
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-  };
+  // We map IDs to track IDs, using an index modifier to ensure duplicates don't conflict
+  const sortableItems = useMemo(() => playlist.map((t, idx) => `${t.id}-${idx}`), [playlist]);
 
-  const handleDrop = (e: React.DragEvent<HTMLLIElement>, toIndex: number) => {
-    e.preventDefault();
-    const fromIndex = parseInt(e.dataTransfer.getData('text/plain'), 10);
-    if (!isNaN(fromIndex) && fromIndex !== toIndex) {
-      moveInPlaylist(fromIndex, toIndex);
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      const activeStr = active.id as string;
+      const overStr = over.id as string;
+      
+      const oldIndex = sortableItems.indexOf(activeStr);
+      const newIndex = sortableItems.indexOf(overStr);
+      
+      if (oldIndex !== -1 && newIndex !== -1) {
+        moveInPlaylist(oldIndex, newIndex);
+      }
     }
-    setDraggingIndex(null);
-    setDragOverIndex(null);
-  };
+  }, [sortableItems,  moveInPlaylist]);
 
-  const handleDelete = (index: number) => {
-    removeFromPlaylist(index);
-  };
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    // Optionally handle any visual lock-ins or z-index updates during drag sequence manually
+    // The PlaylistItem useSortable handles styling and opacity for us
+  }, []);
 
   return (
     <>
-      <div className="w-full border-r border-[var(--glass-border)] flex flex-col h-full relative group/sidebar">
-            <div className={`flex items-center py-3 mt-4 ${isSidebarCollapsed ? 'justify-center px-2' : 'justify-between pl-4 pr-8'}`}>
-              {!isSidebarCollapsed ? (
-                <>
-                  <h3 className="text-xs font-bold text-[var(--color-text-secondary)] uppercase tracking-wider">Play Queue ({playlist.length})</h3>
-                  <button 
-                    onClick={() => setIsSidebarCollapsed(true)}
-                    className="hidden md:flex p-1.5 rounded-lg hover:bg-[var(--glass-bg-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-all"
-                    title="Collapse Queue"
-                  >
-                    <ChevronRight size={16} />
-                  </button>
-                </>
-              ) : (
-                <button 
-                  onClick={() => setIsSidebarCollapsed(false)}
-                  className="p-2 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)] text-[var(--color-primary)] transition-all shadow-sm flex items-center justify-center"
-                  title={`Expand Queue (${playlist.length})`}
-                >
-                  <ChevronLeft size={20} />
-                </button>
-              )}
-            </div>
-            <div className="flex-1 overflow-y-auto overflow-x-hidden hide-scrollbar">
-              <div className={`${isSidebarCollapsed ? 'px-2' : 'pl-4 pr-8'} py-2 space-y-1`}>
-            <ul className="playlist-list">
-              {playlist.map((t, idx) => (
-                <li
-                  key={t.id + idx}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, idx)}
-                  onDragEnd={handleDragEnd}
-                  onDragEnter={(e) => handleDragEnter(e, idx)}
-                  onDragOver={handleDragOver}
-                  onDrop={(e) => handleDrop(e, idx)}
-                  onClick={() => playAtIndex(idx)}
-                  className={`playlist-item group ${currentIndex === idx ? 'active' : ''} ${draggingIndex === idx ? 'dragging' : ''} ${isSidebarCollapsed ? 'justify-center p-2' : ''}`}
+      <div className="w-full border-r border-black/5 dark:border-white/5 flex flex-col h-full relative group/sidebar bg-white/40 dark:bg-black/20 backdrop-blur-3xl">
+        <div className={`flex items-center py-3 mt-4 ${isSidebarCollapsed ? 'justify-center px-2' : 'justify-between pl-4 pr-8'}`}>
+          {!isSidebarCollapsed ? (
+            <>
+              <h3 className="text-xs font-bold text-[var(--color-text-secondary)] uppercase tracking-wider">Play Queue ({playlist.length})</h3>
+              <button 
+                onClick={() => setIsSidebarCollapsed(true)}
+                className="hidden md:flex p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-all"
+                title="Collapse Queue"
+                aria-label="Collapse Queue"
+              >
+                <ChevronRight size={16} />
+              </button>
+            </>
+          ) : (
+            <button 
+              onClick={() => setIsSidebarCollapsed(false)}
+              className="p-2 rounded-xl bg-white/50 dark:bg-black/30 border border-black/5 dark:border-white/5 hover:bg-black/5 dark:hover:bg-white/10 text-[var(--color-primary)] transition-all shadow-sm flex items-center justify-center"
+              title={`Expand Queue (${playlist.length})`}
+              aria-label="Expand Queue"
+            >
+              <ChevronLeft size={20} />
+            </button>
+          )}
+        </div>
+
+        <div 
+          ref={parentRef}
+          className="flex-1 overflow-y-auto overflow-x-hidden hide-scrollbar"
+        >
+          <div className={`${isSidebarCollapsed ? 'px-2' : 'pl-4 pr-8'} py-2 space-y-1`}>
+            <DndContext 
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext 
+                items={sortableItems}
+                strategy={verticalListSortingStrategy}
+              >
+                <ul 
                   style={{
-                    opacity: draggingIndex === idx ? 0.35 : (t.isInfinity && (currentIndex === null || idx > currentIndex)) ? 0.6 : 1,
-                    transition: 'opacity 0.15s ease, border-color 0.1s ease',
-                    borderTop: dragOverIndex === idx && draggingIndex !== idx
-                      ? '2px solid var(--color-primary)'
-                      : '2px solid transparent',
-                    boxShadow: dragOverIndex === idx && draggingIndex !== idx
-                      ? '0 -1px 0 0 var(--color-primary)'
-                      : 'none',
+                    height: `${virtualizer.getTotalSize()}px`,
+                    width: '100%',
+                    position: 'relative',
                   }}
+                  className="list-none p-0 m-0"
                 >
-                  {/* Drag handle — desktop only */}
-                  {!isSidebarCollapsed && (
-                    <span
-                      className="shrink-0 cursor-grab active:cursor-grabbing text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 pl-1 pr-0.5 select-none hidden md:inline-flex"
-                      style={{ fontSize: '1rem', lineHeight: 1 }}
-                      title="Drag to reorder"
-                    >
-                      <GripVertical size={14} />
-                    </span>
-                  )}
-
-                  {/* Mobile reorder arrows */}
-                  {!isSidebarCollapsed && (
-                    <span className="shrink-0 flex flex-col md:hidden text-[var(--color-text-muted)]">
-                      <button
-                        aria-label="Move up"
-                        onClick={(e) => { e.stopPropagation(); if (idx > 0) moveInPlaylist(idx, idx - 1); }}
-                        className="leading-none p-0.5 hover:text-[var(--color-text-primary)] active:scale-90 transition-transform disabled:opacity-20"
-                        disabled={idx === 0}
+                  {virtualizer.getVirtualItems().map((virtualRow) => {
+                    const idx = virtualRow.index;
+                    const t = playlist[idx];
+                    const itemId = sortableItems[idx];
+                    
+                    return (
+                      <div
+                        key={itemId}
+                        data-index={idx}
+                        ref={virtualizer.measureElement}
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          width: '100%',
+                          transform: `translateY(${virtualRow.start}px)`,
+                        }}
                       >
-                        <ChevronUp size={14} />
-                      </button>
-                      <button
-                        aria-label="Move down"
-                        onClick={(e) => { e.stopPropagation(); if (idx < playlist.length - 1) moveInPlaylist(idx, idx + 1); }}
-                        className="leading-none p-0.5 hover:text-[var(--color-text-primary)] active:scale-90 transition-transform disabled:opacity-20"
-                        disabled={idx === playlist.length - 1}
-                      >
-                        <ChevronDown size={14} />
-                      </button>
-                    </span>
-                  )}
-
-                  <AlbumArt
-                    artUrl={t.artUrl}
-                    artist={t.artist}
-                    size={isSidebarCollapsed ? 56 : 48}
-                    className={`playlist-item-art ${isSidebarCollapsed ? 'm-0' : ''}`}
-                  />
-
-                  {!isSidebarCollapsed && (
-                    <>
-                      <div className="playlist-item-info">
-                        <div className="playlist-item-title">{t.title ?? t.path.split(/[\\\/]/).pop()}</div>
-                        {t.artist && (
-                          <div className="playlist-item-artist">
-                            {parseArtists(t.artist).map((a, i) => {
-                              const link = getArtistLink(a);
-                              return (
-                                <React.Fragment key={a}>
-                                  {i > 0 && ', '}
-                                  {link ? (
-                                    <Link
-                                      to={link}
-                                      onClick={(e) => e.stopPropagation()}
-                                      className="hover:text-[var(--color-primary)] transition-colors no-underline text-inherit"
-                                    >{a}</Link>
-                                  ) : (
-                                    <span>{a}</span>
-                                  )}
-                                </React.Fragment>
-                              );
-                            })}
-                          </div>
-                        )}
-                        {t.duration !== undefined && <div className="playlist-item-duration">{formatTime(t.duration)}</div>}
+                        <PlaylistItem
+                          id={itemId}
+                          track={t}
+                          index={idx}
+                          isActive={currentIndex === idx}
+                          isSidebarCollapsed={isSidebarCollapsed}
+                          totalTracks={playlist.length}
+                          onPlay={playAtIndex}
+                          onRemove={removeFromPlaylist}
+                          onMove={moveInPlaylist}
+                          onContextMenu={openContextMenu}
+                          getArtistLink={getArtistLink}
+                          parseArtists={parseArtists}
+                          opacity={(t.isInfinity && (currentIndex === null || idx > currentIndex)) ? 0.6 : 1}
+                        />
                       </div>
-                      
-                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          aria-label="More options"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openContextMenu(t, e.clientX, e.clientY);
-                          }}
-                          className="player-control-btn hover:text-[var(--color-primary)]"
-                          style={{ width: 28, height: 28, padding: 0, background: 'transparent', border: 'none', color: 'var(--color-text-muted)' }}
-                        >
-                          <MoreHorizontal size={16} />
-                        </button>
-                        <button
-                          aria-label={`Remove track ${t.title ?? t.path}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDelete(idx);
-                          }}
-                          className="player-control-btn hover:text-red-400"
-                          style={{ width: 28, height: 28, padding: 0, fontSize: '0.8rem', background: 'transparent', border: 'none', color: 'var(--color-text-muted)' }}
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </li>
-              ))}
-            </ul>
+                    );
+                  })}
+                </ul>
+              </SortableContext>
+            </DndContext>
           </div>
         </div>
       </div>
     </>
   );
 };
+

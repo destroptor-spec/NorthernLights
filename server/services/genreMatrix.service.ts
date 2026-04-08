@@ -9,6 +9,7 @@ import {
   initDB
 } from '../database';
 import { categorizeSubGenres } from './llm.service';
+import { queryWithRetry } from '../utils/db';
 
 export class GenreMatrixService {
   private subGenreMap: Record<string, string> | null = null;
@@ -18,8 +19,7 @@ export class GenreMatrixService {
     this.subGenreMap = await getSubGenreMappings();
 
     // Sanitize progress on startup
-    const db = await initDB();
-    const progRes = await db.query("SELECT value FROM system_settings WHERE key = 'genreMatrixProgress'");
+    const progRes = await queryWithRetry("SELECT value FROM system_settings WHERE key = 'genreMatrixProgress'");
     const progress = progRes.rows[0]?.value ? JSON.parse(progRes.rows[0].value) : null;
     
     if (progress && progress !== 'Complete' && !progress.startsWith('Error') && !progress.startsWith('Interrupted')) {
@@ -77,10 +77,11 @@ export class GenreMatrixService {
     return cost;
   }
 
-  async runDiffAndGenerate() {
+  async runDiffAndGenerate(resume = true) {
     if (this.isGenerating) return;
     this.isGenerating = true;
     try {
+      const db = await initDB();
       const tracks = await getAllTracks();
       const mappings = await getSubGenreMappings();
       this.subGenreMap = mappings;
@@ -88,26 +89,20 @@ export class GenreMatrixService {
       const itemsToCategorize: { subGenre?: string, artist?: string, originalTag: string }[] = [];
       const newMappings: Record<string, string> = {};
 
-      const db = await initDB();
-
       for (const track of tracks) {
         const subGenre = this.sanitize(track.genre || '');
         if (!subGenre) {
           // Tier 1 & 2: Missing Genre Fallback
-          // Try artist deduction first
           if (track.artist && !mappings[this.sanitize(track.artist)] && !newMappings[this.sanitize(track.artist)]) {
             itemsToCategorize.push({ artist: track.artist, originalTag: this.sanitize(track.artist) });
           } else if (!track.artist) {
             // Tier 2: KNN
-            const tfRes = await db.query('SELECT acoustic_vector FROM track_features WHERE track_id = $1', [track.id]);
+            const tfRes = await queryWithRetry('SELECT acoustic_vector FROM track_features WHERE track_id = $1', [track.id]);
             if (tfRes.rows.length > 0) {
               const vector = JSON.parse(tfRes.rows[0].acoustic_vector);
               const knnMacro = await getMacroGenreFromKNN(vector);
               if (knnMacro) {
-                  // Fallback for KNN: Don't globally cache this as a general mapping,
-                  // just return it dynamically or maybe save it for UI purposes later.
-                  // For now, this just passes over it since we are looking for topological subgenres anyway.
-                  // We removed the `newMappings[\`knn_\${track.id}\`]` pollution here.
+                  // Pass
               }
             }
           }
@@ -116,27 +111,47 @@ export class GenreMatrixService {
 
         if (!mappings[subGenre] && !newMappings[subGenre]) {
             // STEP 1: Direct SQL Match against MBDB Taxonomy
-            const res = await db.query(
-                `SELECT path FROM genre_tree_paths 
-                 WHERE LOWER(genre_name) = $1 OR genre_id IN (
-                    SELECT genre FROM genre_alias WHERE LOWER(name) = $1
-                 ) LIMIT 1`, 
+            const res = await queryWithRetry(
+                `(SELECT path FROM genre_tree_paths WHERE LOWER(genre_name) = $1 LIMIT 1)
+                 UNION ALL
+                 (SELECT gtp.path FROM genre_tree_paths gtp 
+                  JOIN genre_alias ga ON gtp.genre_id = ga.genre 
+                  WHERE LOWER(ga.name) = $1 LIMIT 1)
+                 LIMIT 1`, 
                 [subGenre]
             );
             if (res.rows.length > 0) {
                 const path = res.rows[0].path;
                 await upsertSubGenreMapping(subGenre, path);
                 newMappings[subGenre] = path;
-                mappings[subGenre] = path; // Mutate mapping to prevent re-checking
+                mappings[subGenre] = path; 
             } else {
-                itemsToCategorize.push({ subGenre, originalTag: subGenre });
-                // We add a dummy map to prevent pushing duplicate items into itemsToCategorize
-                newMappings[subGenre] = 'pending';
+                // STEP 1.5: Fuzzy SQL Match (similarity threshold 0.8)
+                const fuzzyRes = await queryWithRetry(
+                    `SELECT path FROM (
+                        SELECT path, similarity(LOWER(genre_name), $1) as sim FROM genre_tree_paths
+                        UNION ALL
+                        SELECT gtp.path, similarity(LOWER(ga.name), $1) as sim 
+                        FROM genre_tree_paths gtp 
+                        JOIN genre_alias ga ON gtp.genre_id = ga.genre
+                    ) sub WHERE sim > 0.8 ORDER BY sim DESC LIMIT 1`,
+                    [subGenre]
+                );
+                
+                if (fuzzyRes.rows.length > 0) {
+                    const path = fuzzyRes.rows[0].path;
+                    console.log(`[GenreMatrix] Fuzzy SQL Match: "${subGenre}" -> "${path}"`);
+                    await upsertSubGenreMapping(subGenre, path);
+                    newMappings[subGenre] = path;
+                    mappings[subGenre] = path;
+                } else {
+                    itemsToCategorize.push({ subGenre, originalTag: subGenre });
+                    newMappings[subGenre] = 'pending';
+                }
             }
         }
       }
 
-      // Filter out 'pending' from newMappings before reporting length
       for (const key of Object.keys(newMappings)) {
          if (newMappings[key] === 'pending') delete newMappings[key];
       }
@@ -144,20 +159,31 @@ export class GenreMatrixService {
       if (itemsToCategorize.length === 0) {
         await setSystemSetting('genreMatrixLastRun', Date.now());
         await setSystemSetting('genreMatrixLastResult', 'All genres already mapped natively.');
+        await setSystemSetting('genreMatrixProgress', 'Complete');
         return;
       }
 
       // STEP 2: LLM Batch Processing
-      // Batch size reduced to 20 to ensure strict JSON output and prevent context overflow
       const BATCH_SIZE = 20;
+      let startIdx = 0;
+      
+      if (resume) {
+          const cpRes = await queryWithRetry("SELECT value FROM system_settings WHERE key = 'genreMatrixCheckpoint'");
+          const value = cpRes.rows[0]?.value;
+          startIdx = value ? parseInt(JSON.parse(value)) : 0;
+          if (isNaN(startIdx) || startIdx >= itemsToCategorize.length) startIdx = 0;
+          if (startIdx > 0) console.log(`[GenreMatrix] Resuming from checkpoint index ${startIdx}`);
+      }
+
       const totalBatches = Math.ceil(itemsToCategorize.length / BATCH_SIZE);
-      let matchCount = Object.keys(newMappings).length; // Keep track of DB matches + LLM matches
+      let matchCount = Object.keys(newMappings).length; 
       let failureCount = 0;
 
-      for (let i = 0; i < itemsToCategorize.length; i += BATCH_SIZE) {
+      for (let i = startIdx; i < itemsToCategorize.length; i += BATCH_SIZE) {
         const batchNum = Math.floor(i / BATCH_SIZE) + 1;
         const progressMsg = `Categorizing batch ${batchNum}/${totalBatches} with LLM...`;
         await setSystemSetting('genreMatrixProgress', progressMsg);
+        await setSystemSetting('genreMatrixCheckpoint', JSON.stringify(i)); 
         
         const batch = itemsToCategorize.slice(i, i + BATCH_SIZE);
         console.log(`[GenreMatrix] ${progressMsg}`);
@@ -171,7 +197,7 @@ export class GenreMatrixService {
            if (generatedGenres && Array.isArray(generatedGenres)) {
                for (const g of generatedGenres) {
                    const cleanG = this.sanitize(g);
-                   const res = await db.query(
+                   const res = await queryWithRetry(
                         `SELECT path FROM genre_tree_paths 
                          WHERE LOWER(genre_name) = $1 OR genre_id IN (
                             SELECT genre FROM genre_alias WHERE LOWER(name) = $1
@@ -201,6 +227,7 @@ export class GenreMatrixService {
       await setSystemSetting('genreMatrixLastRun', Date.now());
       await setSystemSetting('genreMatrixLastResult', `Categorized ${matchCount} total (${matchCount - Object.keys(newMappings).length + failureCount} LLM requests. Failures: ${failureCount}).`);
       await setSystemSetting('genreMatrixProgress', 'Complete');
+      await setSystemSetting('genreMatrixCheckpoint', '0'); 
     } catch (e: any) {
       console.error('Failed to run genre matrix categorization:', e);
       await setSystemSetting('genreMatrixLastRun', Date.now());
@@ -213,15 +240,10 @@ export class GenreMatrixService {
   async remapAll() {
     if (this.isGenerating) return;
     console.log('[GenreMatrix] FORCED REMAP: Clearing all existing mappings and re-running pipeline...');
-    
-    // 1. Clear DB
     await clearSubGenreMappings();
-    
-    // 2. Clear local cache
     this.subGenreMap = {};
-    
-    // 3. Trigger full categorization
-    this.runDiffAndGenerate();
+    await setSystemSetting('genreMatrixCheckpoint', '0');
+    this.runDiffAndGenerate(false);
   }
 }
 

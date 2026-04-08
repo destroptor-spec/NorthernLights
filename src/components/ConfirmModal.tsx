@@ -32,7 +32,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
     >
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
       <div
-        className="relative z-10 w-full max-w-md bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-2xl p-6 shadow-2xl backdrop-blur-2xl space-y-4 animate-slide-up"
+        className="relative z-10 w-full max-w-md bg-[var(--color-background)] border border-[var(--glass-border)] rounded-2xl p-6 shadow-2xl space-y-4 animate-slide-up"
         onClick={e => e.stopPropagation()}
       >
         <button

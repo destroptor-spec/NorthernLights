@@ -1,5 +1,6 @@
 import { getSystemSetting, initDB } from '../database';
 import { mbFetch } from './musicbrainz.service';
+import { queryWithRetry } from '../utils/db';
 
 // ─── Types ──────────────────────────────────────────────────────────
 export interface ArtistData {
@@ -105,15 +106,13 @@ function isCacheFresh(lastUpdated: number): boolean {
 
 // ─── Database Cache ─────────────────────────────────────────────────
 async function getCachedArtist(name: string): Promise<any | null> {
-  const db = await initDB();
-  const res = await db.query('SELECT * FROM artists WHERE name = $1', [name]);
+  const res = await queryWithRetry('SELECT * FROM artists WHERE name = $1', [name]);
   return res.rows[0] || null;
 }
 
 async function upsertArtistCache(name: string, imageUrl: string | null, bio: string | null, mbid: string | null): Promise<void> {
-  const db = await initDB();
   const now = Math.floor(Date.now() / 1000);
-  await db.query(
+  await queryWithRetry(
     `INSERT INTO artists (id, name, image_url, bio, mbid, last_updated)
      VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)
      ON CONFLICT (name) DO UPDATE SET
@@ -126,15 +125,13 @@ async function upsertArtistCache(name: string, imageUrl: string | null, bio: str
 }
 
 async function getCachedAlbum(title: string, artistName: string): Promise<any | null> {
-  const db = await initDB();
-  const res = await db.query('SELECT * FROM albums WHERE title = $1 AND artist_name = $2', [title, artistName]);
+  const res = await queryWithRetry('SELECT * FROM albums WHERE title = $1 AND artist_name = $2', [title, artistName]);
   return res.rows[0] || null;
 }
 
 async function upsertAlbumCache(title: string, artistName: string, imageUrl: string | null, mbid: string | null): Promise<void> {
-  const db = await initDB();
   const now = Math.floor(Date.now() / 1000);
-  await db.query(
+  await queryWithRetry(
     `INSERT INTO albums (id, title, artist_name, image_url, mbid, last_updated)
      VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)
      ON CONFLICT (title, artist_name) DO UPDATE SET
@@ -146,15 +143,13 @@ async function upsertAlbumCache(title: string, artistName: string, imageUrl: str
 }
 
 async function getCachedGenre(name: string): Promise<any | null> {
-  const db = await initDB();
-  const res = await db.query('SELECT * FROM genres WHERE name = $1', [name]);
+  const res = await queryWithRetry('SELECT * FROM genres WHERE name = $1', [name]);
   return res.rows[0] || null;
 }
 
 async function upsertGenreCache(name: string, imageUrl: string | null, description: string | null): Promise<void> {
-  const db = await initDB();
   const now = Math.floor(Date.now() / 1000);
-  await db.query(
+  await queryWithRetry(
     `INSERT INTO genres (id, name, image_url, description, last_updated)
      VALUES (gen_random_uuid(), $1, $2, $3, $4)
      ON CONFLICT (name) DO UPDATE SET
@@ -703,9 +698,7 @@ export async function testLastFm(): Promise<{ status: string; error?: string; us
  * Clear all external metadata cache (force re-fetch on next access).
  */
 export async function clearExternalCache(): Promise<void> {
-  const db = await initDB();
-  const now = 0;
-  await db.query('UPDATE artists SET last_updated = 0 WHERE last_updated > 0');
-  await db.query('UPDATE albums SET last_updated = 0 WHERE last_updated > 0');
-  await db.query('UPDATE genres SET last_updated = 0 WHERE last_updated > 0');
+  await queryWithRetry('UPDATE artists SET last_updated = 0 WHERE last_updated > 0');
+  await queryWithRetry('UPDATE albums SET last_updated = 0 WHERE last_updated > 0');
+  await queryWithRetry('UPDATE genres SET last_updated = 0 WHERE last_updated > 0');
 }

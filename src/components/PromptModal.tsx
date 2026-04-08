@@ -48,7 +48,7 @@ export const PromptModal: React.FC<PromptModalProps> = ({
     >
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
       <div
-        className="relative z-10 w-full max-w-md bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-2xl p-6 shadow-2xl backdrop-blur-2xl space-y-4 animate-slide-up"
+        className="relative z-10 w-full max-w-md bg-[var(--color-background)] border border-[var(--glass-border)] rounded-2xl p-6 shadow-2xl space-y-4 animate-slide-up"
         onClick={e => e.stopPropagation()}
       >
         <button
@@ -77,7 +77,7 @@ export const PromptModal: React.FC<PromptModalProps> = ({
             <button
               type="submit"
               disabled={!value.trim()}
-              className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-semibold shadow-lg transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+              className="btn btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Confirm
             </button>

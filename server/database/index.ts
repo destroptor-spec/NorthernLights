@@ -4,6 +4,21 @@ import path from 'path';
 let pool: Pool | null = null;
 let initPromise: Promise<Pool> | null = null;
 
+// Reference-counted leak detection control - allows nested long-running operations
+let leakDetectionDisabledCount = 0;
+
+export function disableLeakDetection() {
+  leakDetectionDisabledCount++;
+}
+
+export function enableLeakDetection() {
+  leakDetectionDisabledCount = Math.max(0, leakDetectionDisabledCount - 1);
+}
+
+export function isLeakDetectionActive(): boolean {
+  return leakDetectionDisabledCount === 0;
+}
+
 export async function initDB(): Promise<Pool> {
   if (pool) return pool;
   if (initPromise) return initPromise;
@@ -20,6 +35,44 @@ export async function initDB(): Promise<Pool> {
         max: 20,
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 5000,
+        statement_timeout: 30000,
+        keepAlive: true,
+      });
+
+      instance.on('connect', () => {
+        console.log('[DB] New client connected to database pool');
+      });
+
+      instance.on('error', (err) => {
+        console.error('[DB] Unexpected error on idle client:', err);
+      });
+
+      instance.on('remove', (client) => {
+        if (client && (client as any)._leakTimeout) {
+          clearTimeout((client as any)._leakTimeout);
+          delete (client as any)._leakTimeout;
+        }
+        console.log('[DB] Client removed from database pool');
+      });
+
+      instance.on('acquire', (client) => {
+        if (!client) return;
+        
+        // Skip leak detection during long-running operations (e.g., MBDB import)
+        if (!isLeakDetectionActive()) return;
+        
+        const stack = new Error().stack;
+        (client as any)._leakTimeout = setTimeout(() => {
+          console.warn('[DB] CONNECTION LEAK DETECTED: Client held for > 2 minutes.');
+          if (stack) console.warn('[DB] Leak origin stack trace:', stack);
+        }, 2 * 60 * 1000);
+      });
+
+      instance.on('release', (err, client) => {
+        if (client && (client as any)._leakTimeout) {
+          clearTimeout((client as any)._leakTimeout);
+          delete (client as any)._leakTimeout;
+        }
       });
 
       // Test connection and initialize schema
@@ -27,23 +80,24 @@ export async function initDB(): Promise<Pool> {
 
       await client.query(`
         CREATE EXTENSION IF NOT EXISTS vector;
+        CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
         CREATE TABLE IF NOT EXISTS tracks (
           id TEXT PRIMARY KEY,
           title TEXT,
           artist TEXT,
-          albumArtist TEXT,
+          album_artist TEXT,
           artists TEXT,
           album TEXT,
           genre TEXT,
           duration REAL,
-          trackNumber INTEGER,
+          track_number INTEGER,
           year INTEGER,
-          releaseType TEXT,
-          isCompilation INTEGER,
+          release_type TEXT,
+          is_compilation BOOLEAN,
           path TEXT UNIQUE,
-          playCount INTEGER DEFAULT 0,
-          lastPlayedAt BIGINT DEFAULT 0,
+          play_count INTEGER DEFAULT 0,
+          last_played_at TIMESTAMPTZ,
           rating INTEGER DEFAULT 0,
           bitrate INTEGER,
           format TEXT
@@ -51,8 +105,8 @@ export async function initDB(): Promise<Pool> {
 
         DO $$ 
         BEGIN 
-          ALTER TABLE tracks ADD COLUMN IF NOT EXISTS playCount INTEGER DEFAULT 0;
-          ALTER TABLE tracks ADD COLUMN IF NOT EXISTS lastPlayedAt BIGINT DEFAULT 0;
+          ALTER TABLE tracks ADD COLUMN IF NOT EXISTS play_count INTEGER DEFAULT 0;
+          ALTER TABLE tracks ADD COLUMN IF NOT EXISTS last_played_at TIMESTAMPTZ;
           ALTER TABLE tracks ADD COLUMN IF NOT EXISTS rating INTEGER DEFAULT 0;
         EXCEPTION 
           WHEN OTHERS THEN null; 
@@ -87,6 +141,28 @@ export async function initDB(): Promise<Pool> {
           acoustic_vector VECTOR(7)
         );
 
+        -- Migration: Add 8D acoustic_vector column (VECTOR(8))
+        DO $$
+        BEGIN
+          ALTER TABLE track_features ADD COLUMN IF NOT EXISTS acoustic_vector_8d VECTOR(8);
+        EXCEPTION WHEN OTHERS THEN null;
+        END $$;
+
+        -- Create HNSW index for 8D vectors
+        DO $$
+        BEGIN
+          CREATE INDEX IF NOT EXISTS track_features_vector_8d_idx 
+          ON track_features USING hnsw (acoustic_vector_8d vector_l2_ops);
+        EXCEPTION WHEN OTHERS THEN null;
+        END $$;
+
+        -- Migration: Add is_simulated flag for tracks analyzed without real ffmpeg audio
+        DO $$
+        BEGIN
+          ALTER TABLE track_features ADD COLUMN IF NOT EXISTS is_simulated BOOLEAN NOT NULL DEFAULT FALSE;
+        EXCEPTION WHEN OTHERS THEN null;
+        END $$;
+
         CREATE TABLE IF NOT EXISTS directories (
           id TEXT PRIMARY KEY,
           path TEXT UNIQUE
@@ -119,23 +195,24 @@ export async function initDB(): Promise<Pool> {
           id TEXT PRIMARY KEY,
           title TEXT NOT NULL,
           description TEXT,
-          createdAt BIGINT NOT NULL,
-          isLlmGenerated INTEGER NOT NULL DEFAULT 0
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          is_llm_generated BOOLEAN NOT NULL DEFAULT FALSE
         );
 
         DO $$ 
         BEGIN 
-          ALTER TABLE playlists ALTER COLUMN createdAt TYPE BIGINT; 
+          ALTER TABLE playlists ALTER COLUMN created_at TYPE TIMESTAMPTZ; 
         EXCEPTION 
           WHEN OTHERS THEN null; 
         END $$;
 
         CREATE TABLE IF NOT EXISTS playlist_tracks (
-          playlistId TEXT REFERENCES playlists(id) ON DELETE CASCADE,
-          trackId TEXT REFERENCES tracks(id) ON DELETE CASCADE,
-          sortOrder INTEGER NOT NULL,
-          PRIMARY KEY (playlistId, trackId)
+          playlist_id TEXT REFERENCES playlists(id) ON DELETE CASCADE,
+          track_id TEXT REFERENCES tracks(id) ON DELETE CASCADE,
+          sort_order INTEGER NOT NULL,
+          PRIMARY KEY (playlist_id, track_id)
         );
+        CREATE INDEX IF NOT EXISTS playlist_tracks_track_id_idx ON playlist_tracks(track_id);
 
         DROP TABLE IF EXISTS subgenre_mappings CASCADE;
         CREATE TABLE subgenre_mappings (
@@ -172,6 +249,9 @@ export async function initDB(): Promise<Pool> {
           primary_for_locale BOOLEAN,
           ended BOOLEAN
         );
+        CREATE INDEX IF NOT EXISTS genre_alias_genre_idx ON genre_alias (genre);
+        CREATE INDEX IF NOT EXISTS genre_alias_name_lower_idx ON genre_alias (LOWER(name));
+        CREATE INDEX IF NOT EXISTS genre_alias_name_trgm_idx ON genre_alias USING gin (LOWER(name) gin_trgm_ops);
 
         CREATE TABLE IF NOT EXISTS l_genre_genre (
           id INTEGER PRIMARY KEY,
@@ -184,6 +264,12 @@ export async function initDB(): Promise<Pool> {
           entity0_credit TEXT,
           entity1_credit TEXT
         );
+
+        -- Indexes for l_genre_genre to speed up materialized view refresh
+        CREATE INDEX IF NOT EXISTS l_genre_genre_entity0_idx ON l_genre_genre (entity0);
+        CREATE INDEX IF NOT EXISTS l_genre_genre_entity1_idx ON l_genre_genre (entity1);
+        CREATE INDEX IF NOT EXISTS l_genre_genre_link_idx ON l_genre_genre (link);
+        CREATE INDEX IF NOT EXISTS l_genre_genre_link_subgenre_idx ON l_genre_genre (entity0, entity1) WHERE link = 944810;
 
         -- Note: We can only create the materialized view after l_genre_genre and genre are created.
         -- We will recreate it inside a DO block to catch if tables are empty.
@@ -207,29 +293,33 @@ export async function initDB(): Promise<Pool> {
         BEGIN 
             CREATE MATERIALIZED VIEW IF NOT EXISTS genre_tree_paths AS
             WITH RECURSIVE genre_tree AS (
+                -- Base cases: top-level genres (genres that have no parents)
+                -- These are genres that appear as an entity1 (parent) but NEVER as entity0 (child)
                 SELECT 
-                    entity1 AS genre_id, 
+                    g.id AS genre_id, 
                     g.name::TEXT AS genre_name,
                     g.name::TEXT AS path,
                     1 AS level,
-                    ARRAY[entity1] AS visited
-                FROM l_genre_genre lgg
-                JOIN genre g ON lgg.entity1 = g.id
-                WHERE lgg.entity0 NOT IN (SELECT entity1 FROM l_genre_genre) 
+                    ARRAY[g.id] AS visited
+                FROM genre g
+                WHERE EXISTS (SELECT 1 FROM l_genre_genre lgg WHERE lgg.link = 944810 AND lgg.entity1 = g.id)
+                AND NOT EXISTS (SELECT 1 FROM l_genre_genre lgg WHERE lgg.link = 944810 AND lgg.entity0 = g.id)
                 
                 UNION ALL
                 
+                -- Recursive step: traverse DOWN to children
                 SELECT 
-                    child.entity1, 
+                    child.entity0, -- The subgenre
                     g.name::TEXT AS genre_name,
                     (parent.path || '.' || g.name)::TEXT,
                     parent.level + 1,
-                    parent.visited || child.entity1
+                    parent.visited || child.entity0
                 FROM l_genre_genre child
-                JOIN genre_tree parent ON child.entity0 = parent.genre_id
-                JOIN genre g ON child.entity1 = g.id
-                WHERE child.entity1 != ALL(parent.visited)  -- cycle protection
-                AND parent.level < 20                        -- max depth guard
+                JOIN genre_tree parent ON child.entity1 = parent.genre_id
+                JOIN genre g ON child.entity0 = g.id
+                WHERE child.link = 944810
+                AND child.entity0 != ALL(parent.visited)  -- cycle protection
+                AND parent.level < 20                     -- max depth guard
             )
             SELECT genre_id, genre_name, path, level FROM genre_tree;
         EXCEPTION 
@@ -239,6 +329,12 @@ export async function initDB(): Promise<Pool> {
 
         -- Enhance lookups on the materialized view
         CREATE INDEX IF NOT EXISTS genre_tree_paths_name_idx ON genre_tree_paths (LOWER(genre_name));
+        CREATE INDEX IF NOT EXISTS genre_tree_paths_name_trgm_idx ON genre_tree_paths USING gin (LOWER(genre_name) gin_trgm_ops);
+        DO $$ 
+        BEGIN 
+            CREATE UNIQUE INDEX IF NOT EXISTS genre_tree_paths_genre_path_idx ON genre_tree_paths (genre_id, path);
+        EXCEPTION WHEN OTHERS THEN null; 
+        END $$;
 
         -- Entity tables for UUID-based navigation
         CREATE EXTENSION IF NOT EXISTS "pgcrypto";
@@ -246,21 +342,21 @@ export async function initDB(): Promise<Pool> {
         CREATE TABLE IF NOT EXISTS artists (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           name TEXT NOT NULL UNIQUE,
-          created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+          created_at TIMESTAMPTZ DEFAULT NOW()
         );
 
         CREATE TABLE IF NOT EXISTS albums (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           title TEXT NOT NULL,
           artist_name TEXT,
-          created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
           UNIQUE(title, artist_name)
         );
 
         CREATE TABLE IF NOT EXISTS genres (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           name TEXT NOT NULL UNIQUE,
-          created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+          created_at TIMESTAMPTZ DEFAULT NOW()
         );
 
         -- Add FK columns to tracks (nullable, backfilled by migration)
@@ -302,8 +398,8 @@ export async function initDB(): Promise<Pool> {
           username TEXT UNIQUE NOT NULL,
           password_hash TEXT NOT NULL,
           role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
-          created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT,
-          last_login_at BIGINT DEFAULT 0
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          last_login_at TIMESTAMPTZ
         );
 
         CREATE TABLE IF NOT EXISTS invites (
@@ -312,8 +408,8 @@ export async function initDB(): Promise<Pool> {
           role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
           max_uses INTEGER DEFAULT 1,
           uses INTEGER DEFAULT 0,
-          expires_at BIGINT,
-          created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
+          expires_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
 
         CREATE TABLE IF NOT EXISTS user_playback_stats (
@@ -321,7 +417,7 @@ export async function initDB(): Promise<Pool> {
           track_id TEXT REFERENCES tracks(id) ON DELETE CASCADE,
           play_count INTEGER NOT NULL DEFAULT 0,
           rating INTEGER NOT NULL DEFAULT 0,
-          last_played_at BIGINT NOT NULL DEFAULT 0,
+          last_played_at TIMESTAMPTZ,
           PRIMARY KEY (user_id, track_id)
         );
         CREATE INDEX IF NOT EXISTS ups_user_id_idx ON user_playback_stats(user_id);
@@ -345,7 +441,7 @@ export async function initDB(): Promise<Pool> {
         -- Add pinned column to playlists
         DO $$
         BEGIN
-          ALTER TABLE playlists ADD COLUMN IF NOT EXISTS pinned INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE playlists ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT FALSE;
         EXCEPTION WHEN OTHERS THEN null;
         END $$;
       `);
@@ -394,16 +490,21 @@ export async function getDatabaseStats() {
   }
 }
 
-// Graceful shutdown
-async function closeDB() {
+export async function closeDB() {
   if (pool) {
-    try {
-      console.log('Shutting down PostgreSQL pool gracefully...');
-      await pool.end();
-    } catch (e) {
-      console.error('Error closing pool:', e);
-    }
+    await pool.end();
+    pool = null;
+    initPromise = null;
   }
+}
+
+export async function getPoolStats() {
+  if (!pool) return null;
+  return {
+    total: pool.totalCount,
+    idle: pool.idleCount,
+    waiting: pool.waitingCount,
+  };
 }
 
 // Ensure the local dev server gracefully cleans up the database lock on restarts or exits.
@@ -427,12 +528,12 @@ process.once('SIGUSR2', () => handleShutdown('SIGUSR2'));
 function mapTrackRow(row: any) {
   return {
     ...row,
-    albumArtist: row.albumartist,
-    trackNumber: row.tracknumber,
-    releaseType: row.releasetype,
-    isCompilation: !!row.iscompilation,
-    playCount: row.playcount,
-    lastPlayedAt: row.lastplayedat,
+    albumArtist: row.album_artist,
+    trackNumber: row.track_number,
+    releaseType: row.release_type,
+    isCompilation: !!row.is_compilation,
+    playCount: row.play_count,
+    lastPlayedAt: row.last_played_at ? new Date(row.last_played_at).getTime() : 0,
     bitrate: row.bitrate,
     format: row.format,
     artistId: row.artist_id,
@@ -464,27 +565,27 @@ export async function addTrack(track: any) {
   const sanitizeArray = (arr: any) => Array.isArray(arr) ? arr.map(sanitize) : arr;
 
   await db.query(`
-    INSERT INTO tracks (id, title, artist, albumArtist, artists, album, genre, duration, trackNumber, year, releaseType, isCompilation, path, bitrate, format, artist_id, album_id, genre_id, genres, isrc, mb_recording_id, mb_track_id, mb_album_id, mb_artist_id, mb_album_artist_id, mb_release_group_id, mb_work_id)
+    INSERT INTO tracks (id, title, artist, album_artist, artists, album, genre, duration, track_number, year, release_type, is_compilation, path, bitrate, format, artist_id, album_id, genre_id, genres, isrc, mb_recording_id, mb_track_id, mb_album_id, mb_artist_id, mb_album_artist_id, mb_release_group_id, mb_work_id)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
     ON CONFLICT (id) DO UPDATE SET
       title = EXCLUDED.title,
       artist = EXCLUDED.artist,
-      albumArtist = EXCLUDED.albumArtist,
+      album_artist = EXCLUDED.album_artist,
       artists = EXCLUDED.artists,
       album = EXCLUDED.album,
       genre = EXCLUDED.genre,
       duration = EXCLUDED.duration,
-      trackNumber = EXCLUDED.trackNumber,
+      track_number = EXCLUDED.track_number,
       year = EXCLUDED.year,
-      releaseType = EXCLUDED.releaseType,
-      isCompilation = EXCLUDED.isCompilation,
+      release_type = EXCLUDED.release_type,
+      is_compilation = EXCLUDED.is_compilation,
       path = EXCLUDED.path,
       bitrate = EXCLUDED.bitrate,
       format = EXCLUDED.format,
       artist_id = EXCLUDED.artist_id,
       album_id = EXCLUDED.album_id,
       genre_id = EXCLUDED.genre_id,
-    genres = EXCLUDED.genres,
+      genres = EXCLUDED.genres,
       isrc = EXCLUDED.isrc,
       mb_recording_id = EXCLUDED.mb_recording_id,
       mb_track_id = EXCLUDED.mb_track_id,
@@ -493,6 +594,33 @@ export async function addTrack(track: any) {
       mb_album_artist_id = EXCLUDED.mb_album_artist_id,
       mb_release_group_id = EXCLUDED.mb_release_group_id,
       mb_work_id = EXCLUDED.mb_work_id
+    WHERE 
+      tracks.title IS DISTINCT FROM EXCLUDED.title OR
+      tracks.artist IS DISTINCT FROM EXCLUDED.artist OR
+      tracks.album_artist IS DISTINCT FROM EXCLUDED.album_artist OR
+      tracks.artists IS DISTINCT FROM EXCLUDED.artists OR
+      tracks.album IS DISTINCT FROM EXCLUDED.album OR
+      tracks.genre IS DISTINCT FROM EXCLUDED.genre OR
+      tracks.duration IS DISTINCT FROM EXCLUDED.duration OR
+      tracks.track_number IS DISTINCT FROM EXCLUDED.track_number OR
+      tracks.year IS DISTINCT FROM EXCLUDED.year OR
+      tracks.release_type IS DISTINCT FROM EXCLUDED.release_type OR
+      tracks.is_compilation IS DISTINCT FROM EXCLUDED.is_compilation OR
+      tracks.path IS DISTINCT FROM EXCLUDED.path OR
+      tracks.bitrate IS DISTINCT FROM EXCLUDED.bitrate OR
+      tracks.format IS DISTINCT FROM EXCLUDED.format OR
+      tracks.artist_id IS DISTINCT FROM EXCLUDED.artist_id OR
+      tracks.album_id IS DISTINCT FROM EXCLUDED.album_id OR
+      tracks.genre_id IS DISTINCT FROM EXCLUDED.genre_id OR
+      tracks.genres IS DISTINCT FROM EXCLUDED.genres OR
+      tracks.isrc IS DISTINCT FROM EXCLUDED.isrc OR
+      tracks.mb_recording_id IS DISTINCT FROM EXCLUDED.mb_recording_id OR
+      tracks.mb_track_id IS DISTINCT FROM EXCLUDED.mb_track_id OR
+      tracks.mb_album_id IS DISTINCT FROM EXCLUDED.mb_album_id OR
+      tracks.mb_artist_id IS DISTINCT FROM EXCLUDED.mb_artist_id OR
+      tracks.mb_album_artist_id IS DISTINCT FROM EXCLUDED.mb_album_artist_id OR
+      tracks.mb_release_group_id IS DISTINCT FROM EXCLUDED.mb_release_group_id OR
+      tracks.mb_work_id IS DISTINCT FROM EXCLUDED.mb_work_id
   `, [
     id,
     sanitize(track.title) || path.basename(track.path),
@@ -505,7 +633,7 @@ export async function addTrack(track: any) {
     track.trackNumber || null,
     track.year || null,
     track.releaseType || null,
-    track.isCompilation ? 1 : 0,
+    !!track.isCompilation,
     track.path,
     track.bitrate || null,
     track.format || null,
@@ -524,14 +652,17 @@ export async function addTrack(track: any) {
   ]);
 
   if (track.audioFeatures) {
-    const vectorStr = `[${track.audioFeatures.acoustic_vector.join(',')}]`;
+    const vector7dStr = `[${track.audioFeatures.acoustic_vector.slice(0, 7).join(',')}]`;
+    const vector8dStr = `[${track.audioFeatures.acoustic_vector.join(',')}]`;
     await db.query(`
-      INSERT INTO track_features (track_id, bpm, acoustic_vector)
-      VALUES ($1, $2, $3)
+      INSERT INTO track_features (track_id, bpm, acoustic_vector, acoustic_vector_8d)
+      VALUES ($1, $2, $3, $4)
       ON CONFLICT (track_id) DO UPDATE SET
         bpm = EXCLUDED.bpm,
-        acoustic_vector = EXCLUDED.acoustic_vector
-    `, [id, track.audioFeatures.bpm, vectorStr]);
+        acoustic_vector = EXCLUDED.acoustic_vector,
+        acoustic_vector_8d = EXCLUDED.acoustic_vector_8d
+      WHERE track_features.bpm IS DISTINCT FROM EXCLUDED.bpm OR track_features.acoustic_vector IS DISTINCT FROM EXCLUDED.acoustic_vector
+    `, [id, track.audioFeatures.bpm, vector7dStr, vector8dStr]);
   }
 }
 
@@ -540,27 +671,37 @@ export async function clearTracks() {
   await db.query('DELETE FROM tracks');
 }
 
-export async function addTrackFeatures(trackId: string, audioFeatures: { bpm: number; acoustic_vector: number[]; mfcc_vector?: number[] }) {
+export async function addTrackFeatures(trackId: string, audioFeatures: { bpm: number; acoustic_vector: number[]; mfcc_vector?: number[]; is_simulated?: boolean }) {
   const db = await initDB();
-  const vectorStr = `[${audioFeatures.acoustic_vector.join(',')}]`;
+  // Legacy column expects 7D, new column expects 8D
+  const vector7dStr = `[${audioFeatures.acoustic_vector.slice(0, 7).join(',')}]`;
+  const vector8dStr = `[${audioFeatures.acoustic_vector.join(',')}]`;
+  const simulated = audioFeatures.is_simulated ?? false;
+
   if (audioFeatures.mfcc_vector && audioFeatures.mfcc_vector.length === 13) {
     const mfccStr = `[${audioFeatures.mfcc_vector.join(',')}]`;
     await db.query(`
-      INSERT INTO track_features (track_id, bpm, acoustic_vector, mfcc_vector)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO track_features (track_id, bpm, acoustic_vector, acoustic_vector_8d, mfcc_vector, is_simulated)
+      VALUES ($1, $2, $3, $4, $5, $6)
       ON CONFLICT (track_id) DO UPDATE SET
         bpm = EXCLUDED.bpm,
         acoustic_vector = EXCLUDED.acoustic_vector,
-        mfcc_vector = EXCLUDED.mfcc_vector
-    `, [trackId, audioFeatures.bpm, vectorStr, mfccStr]);
+        acoustic_vector_8d = EXCLUDED.acoustic_vector_8d,
+        mfcc_vector = EXCLUDED.mfcc_vector,
+        is_simulated = EXCLUDED.is_simulated
+      WHERE track_features.bpm IS DISTINCT FROM EXCLUDED.bpm OR track_features.acoustic_vector IS DISTINCT FROM EXCLUDED.acoustic_vector OR track_features.mfcc_vector IS DISTINCT FROM EXCLUDED.mfcc_vector
+    `, [trackId, audioFeatures.bpm, vector7dStr, vector8dStr, mfccStr, simulated]);
   } else {
     await db.query(`
-      INSERT INTO track_features (track_id, bpm, acoustic_vector)
-      VALUES ($1, $2, $3)
+      INSERT INTO track_features (track_id, bpm, acoustic_vector, acoustic_vector_8d, is_simulated)
+      VALUES ($1, $2, $3, $4, $5)
       ON CONFLICT (track_id) DO UPDATE SET
         bpm = EXCLUDED.bpm,
-        acoustic_vector = EXCLUDED.acoustic_vector
-    `, [trackId, audioFeatures.bpm, vectorStr]);
+        acoustic_vector = EXCLUDED.acoustic_vector,
+        acoustic_vector_8d = EXCLUDED.acoustic_vector_8d,
+        is_simulated = EXCLUDED.is_simulated
+      WHERE track_features.bpm IS DISTINCT FROM EXCLUDED.bpm OR track_features.acoustic_vector IS DISTINCT FROM EXCLUDED.acoustic_vector
+    `, [trackId, audioFeatures.bpm, vector7dStr, vector8dStr, simulated]);
   }
 }
 
@@ -672,16 +813,97 @@ export async function deleteTracksByIds(ids: string[]): Promise<void> {
   }
 }
 
+/**
+ * Safety-net: removes tracks whose decoded file path no longer belongs to any
+ * registered directory in the directories table.
+ *
+ * This catches the edge case where removeTracksByDirectory() found 0 matches
+ * due to a subtle path encoding mismatch, leaving stale tracks in the DB even
+ * after a directory was correctly de-registered.
+ */
+export async function purgeOrphanedTracks(): Promise<number> {
+  const db = await initDB();
+
+  const [tracksRes, dirsRes] = await Promise.all([
+    db.query('SELECT id, path FROM tracks'),
+    db.query('SELECT path FROM directories'),
+  ]);
+
+  const dirs: Buffer[] = dirsRes.rows.map((r: any) => Buffer.from(r.path as string, 'utf8'));
+
+  const staleIds: string[] = [];
+  for (const row of tracksRes.rows) {
+    const fileBuf = Buffer.from(row.path as string, 'base64');
+    const belongs = dirs.some(dirBuf => {
+      const prefixMatches =
+        fileBuf.length >= dirBuf.length &&
+        fileBuf.slice(0, dirBuf.length).equals(dirBuf);
+      const atBoundary =
+        fileBuf.length === dirBuf.length ||
+        fileBuf[dirBuf.length] === 0x2f; // '/'
+      return prefixMatches && atBoundary;
+    });
+    if (!belongs) staleIds.push(row.id as string);
+  }
+
+  if (staleIds.length > 0) {
+    console.log(`[DB] purgeOrphanedTracks: removing ${staleIds.length} tracks with no registered directory`);
+    for (let i = 0; i < staleIds.length; i += 100) {
+      const chunk = staleIds.slice(i, i + 100);
+      const placeholders = chunk.map((_, idx) => `$${idx + 1}`).join(',');
+      await db.query(`DELETE FROM tracks WHERE id IN (${placeholders})`, chunk);
+    }
+  }
+
+  return staleIds.length;
+}
+
+/**
+ * Remove albums, artists, and genres that have zero tracks still referencing them.
+ * Call this after any bulk track deletion (folder removal, sync-walk pruning) to prevent
+ * ghost entries appearing in the library UI.
+ */
+export async function purgeOrphanedEntities(): Promise<{ albums: number; artists: number; genres: number }> {
+  const db = await initDB();
+
+  const [albumRes, artistRes, genreRes] = await Promise.all([
+    db.query(`
+      DELETE FROM albums
+      WHERE id NOT IN (SELECT DISTINCT album_id FROM tracks WHERE album_id IS NOT NULL)
+      RETURNING id
+    `),
+    db.query(`
+      DELETE FROM artists
+      WHERE id NOT IN (SELECT DISTINCT artist_id FROM tracks WHERE artist_id IS NOT NULL)
+      RETURNING id
+    `),
+    db.query(`
+      DELETE FROM genres
+      WHERE id NOT IN (SELECT DISTINCT genre_id FROM tracks WHERE genre_id IS NOT NULL)
+      RETURNING id
+    `),
+  ]);
+
+  // Clear in-memory caches so subsequent getOrCreate* calls re-fetch from DB
+  clearEntityCaches();
+
+  return {
+    albums: albumRes.rowCount ?? 0,
+    artists: artistRes.rowCount ?? 0,
+    genres: genreRes.rowCount ?? 0,
+  };
+}
+
 export async function recordPlayback(trackId: string) {
   const db = await initDB();
   // Increment playCount, update lastPlayedAt, and passively give a small rating bump
   await db.query(`
     UPDATE tracks 
-    SET playCount = playCount + 1,
-        lastPlayedAt = $1,
+    SET play_count = play_count + 1,
+        last_played_at = NOW(),
         rating = LEAST(rating + 1, 5)
-    WHERE id = $2
-  `, [Date.now(), trackId]);
+    WHERE id = $1
+  `, [trackId]);
 }
 
 export async function recordSkip(trackId: string) {
@@ -847,7 +1069,7 @@ export async function getTracksByArtist(artistId: string) {
 
 export async function getTracksByAlbum(albumId: string) {
   const db = await initDB();
-  const res = await db.query('SELECT * FROM tracks WHERE album_id = $1 ORDER BY tracknumber ASC NULLS LAST', [albumId]);
+  const res = await db.query('SELECT * FROM tracks WHERE album_id = $1 ORDER BY track_number ASC NULLS LAST', [albumId]);
   return res.rows.map(mapTrackRow);
 }
 
@@ -912,7 +1134,7 @@ export async function migrateEntityIds() {
   }
 
   const res = await db.query(
-    'SELECT id, artist, albumartist, artists, album, genre, genres FROM tracks WHERE artist_id IS NULL OR album_id IS NULL OR genre_id IS NULL OR genres IS NULL'
+    'SELECT id, artist, album_artist, artists, album, genre, genres FROM tracks WHERE artist_id IS NULL OR album_id IS NULL OR genre_id IS NULL OR genres IS NULL'
   );
 
   if (res.rows.length === 0) return;
@@ -923,7 +1145,7 @@ export async function migrateEntityIds() {
   for (const row of res.rows) {
     const trackId = (row as any).id;
     const rawArtist = (row as any).artist;
-    const rawAlbumArtist = (row as any).albumartist;
+    const rawAlbumArtist = (row as any).album_artist;
     const albumArtistName = rawAlbumArtist || rawArtist;
     const albumTitle = (row as any).album;
     const rawGenre = (row as any).genre;
@@ -979,10 +1201,10 @@ export async function migrateEntityIds() {
 export async function createPlaylist(id: string, title: string, description: string | null = null, isLlmGenerated: boolean = false, userId: string | null = null) {
   const db = await initDB();
   await db.query(`
-    INSERT INTO playlists (id, title, description, createdAt, isLlmGenerated, user_id)
-    VALUES ($1, $2, $3, $4, $5, $6)
+    INSERT INTO playlists (id, title, description, created_at, is_llm_generated, user_id)
+    VALUES ($1, $2, $3, NOW(), $4, $5)
     ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, description = EXCLUDED.description
-  `, [id, title, description, Date.now(), isLlmGenerated ? 1 : 0, userId]);
+  `, [id, title, description, isLlmGenerated, userId]);
 }
 
 export async function addTracksToPlaylist(playlistId: string, trackIds: string[]) {
@@ -990,13 +1212,22 @@ export async function addTracksToPlaylist(playlistId: string, trackIds: string[]
   // Clear existing tracks for a clean overwrite or handle deduplication depending on logic.
   // We'll wipe and re-insert for LLM generated ones, or append for user playlists.
   // For simplicity here, we clear and reinsert.
-  await db.query(`DELETE FROM playlist_tracks WHERE playlistId = $1`, [playlistId]);
+  await db.query(`DELETE FROM playlist_tracks WHERE playlist_id = $1`, [playlistId]);
   
-  for (let i = 0; i < trackIds.length; i++) {
+  if (trackIds.length > 0) {
+    const values: any[] = [];
+    const placeholders: string[] = [];
+    let paramCount = 1;
+
+    for (let i = 0; i < trackIds.length; i++) {
+      placeholders.push(`($${paramCount++}, $${paramCount++}, $${paramCount++})`);
+      values.push(playlistId, trackIds[i], i);
+    }
+
     await db.query(`
-      INSERT INTO playlist_tracks (playlistId, trackId, sortOrder)
-      VALUES ($1, $2, $3)
-    `, [playlistId, trackIds[i], i]);
+      INSERT INTO playlist_tracks (playlist_id, track_id, sort_order)
+      VALUES ${placeholders.join(', ')}
+    `, values);
   }
 }
 
@@ -1010,24 +1241,24 @@ export async function deleteOldLlmPlaylists(maxAgeMs: number, userId: string | n
     // User-scoped cleanup
     await db.query(`
       DELETE FROM playlist_tracks
-      WHERE playlistId IN (SELECT id FROM playlists WHERE isLlmGenerated = 1 AND pinned = 0 AND createdAt < $1 AND user_id = $2)
+      WHERE playlist_id IN (SELECT id FROM playlists WHERE is_llm_generated = TRUE AND pinned = FALSE AND created_at < to_timestamp($1 / 1000.0) AND user_id = $2)
     `, [threshold, userId]);
 
     const res = await db.query(`
       DELETE FROM playlists
-      WHERE isLlmGenerated = 1 AND pinned = 0 AND createdAt < $1 AND user_id = $2
+      WHERE is_llm_generated = TRUE AND pinned = FALSE AND created_at < to_timestamp($1 / 1000.0) AND user_id = $2
     `, [threshold, userId]);
     return res.rowCount;
   } else {
     // Global cleanup (backward compat)
     await db.query(`
       DELETE FROM playlist_tracks
-      WHERE playlistId IN (SELECT id FROM playlists WHERE isLlmGenerated = 1 AND pinned = 0 AND createdAt < $1)
+      WHERE playlist_id IN (SELECT id FROM playlists WHERE is_llm_generated = TRUE AND pinned = FALSE AND created_at < to_timestamp($1 / 1000.0))
     `, [threshold]);
 
     const res = await db.query(`
       DELETE FROM playlists
-      WHERE isLlmGenerated = 1 AND pinned = 0 AND createdAt < $1
+      WHERE is_llm_generated = TRUE AND pinned = FALSE AND created_at < to_timestamp($1 / 1000.0)
     `, [threshold]);
     return res.rowCount;
   }
@@ -1037,14 +1268,15 @@ export async function getPlaylists(userId: string | null = null) {
   const db = await initDB();
   let res;
   if (userId) {
-    res = await db.query('SELECT * FROM playlists WHERE user_id = $1 ORDER BY createdAt DESC', [userId]);
+    res = await db.query('SELECT * FROM playlists WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
   } else {
-    res = await db.query('SELECT * FROM playlists ORDER BY createdAt DESC');
+    res = await db.query('SELECT * FROM playlists ORDER BY created_at DESC');
   }
   return res.rows.map((row: any) => ({
     ...row,
-    isLlmGenerated: row.isllmgenerated === 1,
-    pinned: row.pinned === 1
+    isLlmGenerated: row.is_llm_generated,
+    pinned: row.pinned,
+    createdAt: new Date(row.created_at).getTime(),
   }));
 }
 
@@ -1052,9 +1284,9 @@ export async function getPlaylistTracks(playlistId: string) {
   const db = await initDB();
   const res = await db.query(`
     SELECT t.* FROM tracks t
-    JOIN playlist_tracks pt ON t.id = pt.trackId
-    WHERE pt.playlistId = $1
-    ORDER BY pt.sortOrder ASC
+    JOIN playlist_tracks pt ON t.id = pt.track_id
+    WHERE pt.playlist_id = $1
+    ORDER BY pt.sort_order ASC
   `, [playlistId]);
   return res.rows.map(mapTrackRow);
 }
@@ -1063,11 +1295,11 @@ export async function deletePlaylist(playlistId: string, userId: string | null =
   const db = await initDB();
   if (userId) {
     // Only delete if user owns the playlist
-    await db.query('DELETE FROM playlist_tracks WHERE playlistId = $1', [playlistId]);
+    await db.query('DELETE FROM playlist_tracks WHERE playlist_id = $1', [playlistId]);
     await db.query('DELETE FROM playlists WHERE id = $1 AND user_id = $2', [playlistId, userId]);
   } else {
     // Admin/global delete
-    await db.query('DELETE FROM playlist_tracks WHERE playlistId = $1', [playlistId]);
+    await db.query('DELETE FROM playlist_tracks WHERE playlist_id = $1', [playlistId]);
     await db.query('DELETE FROM playlists WHERE id = $1', [playlistId]);
   }
 }
@@ -1092,36 +1324,42 @@ export async function togglePlaylistPin(playlistId: string, userId: string, pinn
   const db = await initDB();
   const res = await db.query(
     'UPDATE playlists SET pinned = $1 WHERE id = $2 AND user_id = $3 RETURNING *',
-    [pinned ? 1 : 0, playlistId, userId]
+    [!!pinned, playlistId, userId]
   );
   return res.rows.length > 0;
 }
 
 export async function getVectorStats() {
   const db = await initDB();
-  const res = await db.query('SELECT acoustic_vector FROM track_features');
   
-  if (res.rows.length === 0) {
+  // Compute means and stddevs in SQL by casting vector to float array.
+  // This is significantly faster than fetching all rows and parsing in JS.
+  const DIM = 8;
+  const selectors = [];
+  for (let i = 1; i <= DIM; i++) {
+    selectors.push(`AVG((acoustic_vector_8d::text::float8[])[${i}]) as m${i}`);
+    selectors.push(`STDDEV((acoustic_vector_8d::text::float8[])[${i}]) as s${i}`);
+  }
+
+  const res = await db.query(`
+    SELECT ${selectors.join(', ')}
+    FROM track_features 
+    WHERE acoustic_vector_8d IS NOT NULL
+  `);
+  
+  if (!res.rows[0] || res.rows[0].m1 === null) {
     return null;
   }
 
-  const sums = [0,0,0,0,0,0,0];
-  const sqSums = [0,0,0,0,0,0,0];
-  const count = res.rows.length;
+  const row = res.rows[0];
+  const means = [];
+  const stddevs = [];
 
-  for (const row of res.rows as any[]) {
-    const vec = JSON.parse(row.acoustic_vector);
-    for (let i = 0; i < 7; i++) {
-       sums[i] += vec[i];
-       sqSums[i] += vec[i] * vec[i];
-    }
+  for (let i = 1; i <= DIM; i++) {
+    means.push(Number(row[`m${i}`]) || 0);
+    // Standard deviation can be null or 0; fallback to 1 to prevent division by zero in normalization
+    stddevs.push(Number(row[`s${i}`]) || 1);
   }
-
-  const means = sums.map(s => s / count);
-  const stddevs = sums.map((_, i) => {
-     const variance = (sqSums[i] / count) - (means[i] * means[i]);
-     return Math.sqrt(Math.max(0, variance)) || 1; // prevent div by zero
-  });
 
   return { means, stddevs };
 }
@@ -1272,7 +1510,7 @@ export async function updateUser(id: string, fields: { username?: string; passwo
 
 export async function updateLastLogin(id: string) {
   const db = await initDB();
-  await db.query('UPDATE users SET last_login_at = $1 WHERE id = $2', [Date.now(), id]);
+  await db.query('UPDATE users SET last_login_at = NOW() WHERE id = $1', [id]);
 }
 
 export async function deleteUser(id: string) {
@@ -1364,38 +1602,27 @@ export async function recordPlaybackForUser(userId: string, trackId: string) {
   const db = await initDB();
   await db.query(`
     INSERT INTO user_playback_stats (user_id, track_id, play_count, last_played_at, rating)
-    VALUES ($1, $2, 1, $3, LEAST(1, 5))
+    VALUES ($1, $2, 1, NOW(), LEAST(1, 5))
     ON CONFLICT (user_id, track_id) DO UPDATE SET
       play_count = user_playback_stats.play_count + 1,
-      last_played_at = $3,
+      last_played_at = NOW(),
       rating = LEAST(user_playback_stats.rating + 1, 5)
-  `, [userId, trackId, Date.now()]);
+  `, [userId, trackId]);
 
-  // Also update the legacy tracks table for backward compat during migration
-  await db.query(`
-    UPDATE tracks
-    SET playCount = playCount + 1,
-        lastPlayedAt = $1,
-        rating = LEAST(rating + 1, 5)
-    WHERE id = $2
-  `, [Date.now(), trackId]);
+  // Removed legacy tracks table update to prevent write amplification bloat.
+  // The frontend should rely on user_playback_stats for user-specific telemetry.
 }
 
 export async function recordSkipForUser(userId: string, trackId: string) {
   const db = await initDB();
   await db.query(`
     INSERT INTO user_playback_stats (user_id, track_id, play_count, last_played_at, rating)
-    VALUES ($1, $2, 0, 0, GREATEST(-1, 0))
+    VALUES ($1, $2, 0, NULL, GREATEST(-1, 0))
     ON CONFLICT (user_id, track_id) DO UPDATE SET
       rating = GREATEST(user_playback_stats.rating - 1, 0)
   `, [userId, trackId]);
 
-  // Also update the legacy tracks table
-  await db.query(`
-    UPDATE tracks
-    SET rating = GREATEST(rating - 1, 0)
-    WHERE id = $1
-  `, [trackId]);
+  // Removed legacy tracks table update to prevent write amplification bloat.
 }
 
 export async function getUserPlaybackStats(userId: string) {
@@ -1423,7 +1650,7 @@ export async function getUserRecentTracks(userId: string, limit: number = 5) {
     SELECT t.*, ups.play_count, ups.rating as user_rating, ups.last_played_at as user_last_played
     FROM user_playback_stats ups
     JOIN tracks t ON ups.track_id = t.id
-    WHERE ups.user_id = $1 AND ups.last_played_at > 0
+    WHERE ups.user_id = $1 AND ups.last_played_at IS NOT NULL
     ORDER BY ups.last_played_at DESC
     LIMIT $2
   `, [userId, limit]);

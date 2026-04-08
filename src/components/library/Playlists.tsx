@@ -32,7 +32,7 @@ const PlaylistListItem: React.FC<{ playlist: Playlist; onPlay: () => void; onDel
         <p className="text-white/80 text-sm font-medium drop-shadow-sm flex items-center gap-2">
           {playlist.tracks.length} tracks
           {playlist.isLlmGenerated && (
-            <span className="px-2 py-0.5 rounded-full bg-indigo-500/50 border border-indigo-400/50 text-xs">AI</span>
+            <span className="px-2 py-0.5 rounded-full bg-[var(--color-primary)]/20 border border-[var(--color-primary)]/30 text-xs text-[var(--color-primary)]">AI</span>
           )}
         </p>
         {playlist.pinned && (
@@ -147,8 +147,8 @@ const GeneratePlaylistModal: React.FC<{ onClose: () => void; onGenerated: () => 
 
         <div>
           <div className="flex items-center gap-3 mb-1">
-            <div className="w-9 h-9 rounded-full bg-indigo-500/20 flex items-center justify-center">
-              <Sparkles className="w-5 h-5 text-indigo-400" />
+            <div className="w-9 h-9 rounded-full bg-[var(--color-primary)]/10 flex items-center justify-center">
+              <Sparkles className="w-5 h-5 text-[var(--color-primary)]" />
             </div>
             <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Generate a Playlist</h2>
           </div>
@@ -186,7 +186,7 @@ const GeneratePlaylistModal: React.FC<{ onClose: () => void; onGenerated: () => 
           <button
             onClick={handleGenerate}
             disabled={!prompt.trim() || isGenerating}
-            className="flex-1 py-3 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-semibold shadow-lg transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            className="flex-1 py-3 rounded-xl bg-aurora-gradient hover:brightness-110 text-white font-semibold shadow-lg transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {isGenerating ? (
               <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</>
@@ -235,7 +235,7 @@ export const Playlists: React.FC = () => {
         <div className="flex items-center gap-3">
           <button
             onClick={() => setIsGenerating(true)}
-            className="px-4 py-2 rounded-lg bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 text-indigo-400 font-medium flex items-center gap-2 hover:from-indigo-500/30 hover:to-purple-500/30 transition-all"
+            className="px-4 py-2 rounded-lg bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/20 text-[var(--color-primary)] font-medium flex items-center gap-2 hover:bg-[var(--color-primary)]/20 transition-all"
           >
             <Sparkles size={16} />
             Generate a Playlist

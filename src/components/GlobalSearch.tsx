@@ -165,7 +165,7 @@ export const GlobalSearch: React.FC = () => {
             <div className={`
                 flex items-center rounded-full border backdrop-blur-md transition-all duration-300 overflow-hidden
                 ${isExpanded 
-                    ? 'w-64 sm:w-80 bg-[var(--glass-bg)] border-[var(--color-primary)] shadow-[0_0_12px_rgba(139,92,246,0.2)]' 
+                    ? 'w-64 sm:w-80 bg-[var(--glass-bg)] border-[var(--color-primary)] shadow-[0_0_12px_rgba(34,201,131,0.2)]' 
                     : 'w-[104px] bg-black/5 dark:bg-white/[0.06] border-[var(--color-border)] hover:bg-black/10 dark:hover:bg-white/[0.12] hover:border-[var(--glass-border-hover)] cursor-pointer'
                 }
             `}

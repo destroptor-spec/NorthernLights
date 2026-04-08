@@ -64,9 +64,9 @@ function drawWaveform(
 
         if (isPlayed) {
             const grad = ctx.createLinearGradient(0, midY - barH / 2, 0, midY + barH / 2);
-            grad.addColorStop(0, 'rgba(167, 139, 250, 0.9)');
-            grad.addColorStop(0.5, 'rgba(139, 92, 246, 1.0)');
-            grad.addColorStop(1, 'rgba(109, 40, 217, 0.8)');
+            grad.addColorStop(0, 'rgba(52, 211, 153, 0.9)'); // Emerald/Green
+            grad.addColorStop(0.5, 'rgba(34, 197, 94, 1.0)');
+            grad.addColorStop(1, 'rgba(21, 128, 61, 0.8)');
             ctx.fillStyle = grad;
         } else {
             ctx.fillStyle = unplayedColor;
@@ -170,8 +170,8 @@ export const WaveformProgressBar: React.FC<WaveformProgressBarProps> = ({
             ctx.fill();
             if (progress > 0) {
                 const grad = ctx.createLinearGradient(0, 0, progressX, 0);
-                grad.addColorStop(0, 'rgba(139, 92, 246, 0.9)');
-                grad.addColorStop(1, 'rgba(167, 139, 250, 1)');
+                grad.addColorStop(0, 'rgba(34, 197, 94, 0.9)');
+                grad.addColorStop(1, 'rgba(52, 211, 153, 1)');
                 ctx.fillStyle = grad;
                 ctx.beginPath();
                 ctx.roundRect(0, midY - 1.5, progressX, 3, 2);
