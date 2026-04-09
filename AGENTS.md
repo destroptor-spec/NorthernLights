@@ -160,6 +160,7 @@ Library scanning operates in three distinct phases:
 **API Endpoints:**
 - `POST /api/library/scan` — Full three-phase scan
 - `POST /api/library/analyze` — Analysis phase only (tracks without features)
+- `POST /api/library/remove` — Removes a directory and all associated tracks. Also triggers `purgeOrphanedTracks` (safety net) and `purgeOrphanedEntities` to prevent ghost albums/artists.
 - `GET /api/library/stats` — Per-directory coverage statistics
 - `GET /api/library/status` — SSE stream for real-time scan progress.
 - `GET /api/library/scan/status` — SSE stream for real-time scan progress (aliased).
