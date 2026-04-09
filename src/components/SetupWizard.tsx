@@ -363,8 +363,8 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
                                                     <Clock size={14} className="text-[var(--color-text-muted)]" />
                                                     {Math.round(((mbdbProgress.lastImport || mbdbUpdateInfo?.lastImport)?.duration ?? 0) / 60)}min
                                                 </span>
-                                                <span>{(mbdbProgress.lastImport || mbdbUpdateInfo?.lastImport)?.counts.genres.toLocaleString()} genres</span>
-                                                <span>{(mbdbProgress.lastImport || mbdbUpdateInfo?.lastImport)?.counts.aliases.toLocaleString()} aliases</span>
+                                                <span>{((mbdbProgress.lastImport || mbdbUpdateInfo?.lastImport)?.counts?.genres ?? 0).toLocaleString()} genres</span>
+                                                <span>{((mbdbProgress.lastImport || mbdbUpdateInfo?.lastImport)?.counts?.aliases ?? 0).toLocaleString()} aliases</span>
                                             </div>
                                         </div>
                                     )}

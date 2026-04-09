@@ -216,7 +216,7 @@ export const DatabaseTab: React.FC = () => {
                                                 <Clock size={14} className="text-[var(--color-text-muted)]" />
                                                 {Math.round(((mbdbProgress.lastImport || mbdbUpdateInfo?.lastImport)?.duration ?? 0) / 60)}min
                                             </span>
-                                            <span>{(mbdbProgress.lastImport || mbdbUpdateInfo?.lastImport)?.counts.genres.toLocaleString()} genres</span>
+                                            <span>{((mbdbProgress.lastImport || mbdbUpdateInfo?.lastImport)?.counts?.genres ?? 0).toLocaleString()} genres</span>
                                         </div>
                                     </div>
                                 )}

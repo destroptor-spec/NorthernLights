@@ -303,12 +303,18 @@ router.get('/mbdb/check-update', requireAdmin, async (req, res) => {
       }
     } catch (e) {}
     
+    // Ensure lastImport has a consistent structure for the frontend
+    const serializedLastImport = lastImport ? {
+      ...lastImport,
+      counts: lastImport.counts || { genres: 0, aliases: 0, links: 0 }
+    } : null;
+    
     res.json({
       latestTag,
       lastImportTag: lastImport?.tag || null,
       lastImportTimestamp: lastImport?.timestamp || null,
       updateAvailable: lastImport ? latestTag !== lastImport.tag : true,
-      lastImport
+      lastImport: serializedLastImport
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

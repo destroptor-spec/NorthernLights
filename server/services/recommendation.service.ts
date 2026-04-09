@@ -6,6 +6,37 @@ import { queryWithRetry } from '../utils/db';
 // for simplicity we assume vectors are already [0,1] normalized.
 // Distance query uses native PGLite `<->` vector L2 distance operator.
 
+function normalizeTitle(title: string): string {
+  if (!title) return '';
+  let t = title.toLowerCase();
+
+  // 1. Strip known "noise" tags in parentheses or brackets
+  // Matches things like (Remastered), [2012 Remaster], (Deluxe Edition), etc.
+  const noiseRegex = /[\(\[]\s*(?:(?:\d{4}\s*)?remaster(?:ed)?|deluxe|special|expanded|anniversary|digital|mono|stereo|explicit|edition)\s*[\)\]]/gi;
+  t = t.replace(noiseRegex, '');
+
+  // 2. Also strip plain "Remastered" text not in parentheses
+  t = t.replace(/(?:\d{4}\s*)?remaster(?:ed)?/gi, '');
+
+  // 3. Clean up leading/trailing punctuation and double spaces
+  return t.replace(/\s+/g, ' ')
+          .replace(/[\s\-\:\.\(\)\[\]]+$/, '')
+          .trim();
+}
+
+function isSameSong(a: { title: string, artist: string, mb_recording_id?: string }, b: { title: string, artist: string, mb_recording_id?: string }) {
+  if (a.mb_recording_id && b.mb_recording_id && a.mb_recording_id !== '') {
+    return a.mb_recording_id === b.mb_recording_id;
+  }
+  const artistA = (a.artist || '').toLowerCase().trim();
+  const artistB = (b.artist || '').toLowerCase().trim();
+  if (artistA !== artistB) return false;
+
+  const titleA = normalizeTitle(a.title);
+  const titleB = normalizeTitle(b.title);
+  return titleA === titleB;
+}
+
 export async function getHubCollections(
   llmConcepts: { section: string, title?: string, description: string, target_vector: number[] }[],
   userId: string | null = null,
@@ -646,6 +677,17 @@ export async function calculateNextInfinityTrack(
     }
   }
 
+  // Deduplication: Fetch metadata for the last 50 tracks to prevent duplicate songs from different albums
+  const dedupeHistoryIds = sessionHistoryTrackIds.slice(-50);
+  let historyMetadata: any[] = [];
+  if (dedupeHistoryIds.length > 0) {
+    const metaPlaceholders = dedupeHistoryIds.map((_, i) => `$${i + 1}`).join(',');
+    const metaRes = await queryWithRetry(`
+      SELECT id, title, artist, mb_recording_id FROM tracks WHERE id IN (${metaPlaceholders})
+    `, dedupeHistoryIds);
+    historyMetadata = metaRes.rows;
+  }
+
   const vectorStr = `[${targetVector.join(',')}]`;
 
   // Compute MFCC timbre centroid (weighted decay, same lambda) for the last-10 window
@@ -740,13 +782,24 @@ export async function calculateNextInfinityTrack(
         return { ...row, hopCost, originalDistance: row.distance, finalScore };
       });
 
+      // Step 4.2b: Filter out "Same Song" duplicates (different albums/remasters)
+      const uniqueScored = scored.filter(candidate => {
+        const matchingHistory = historyMetadata.find(h => isSameSong(h, candidate));
+        if (matchingHistory) {
+          // If the candidate IS the exact same track ID, it's already excluded by SQL
+          // But if it's a sibling (same recording, different album), we drop it here.
+          return false;
+        }
+        return true;
+      });
+
       // Filter and sort by the dynamically weighted score
-      scored.sort((a, b) => a.finalScore - b.finalScore);
+      uniqueScored.sort((a, b) => a.finalScore - b.finalScore);
       
       // Ensure we have candidates within an acceptable boundary
       // We become less strict on absolute bounds as attempts increase
-      const acceptable = scored.filter(c => c.finalScore < (constraints.distanceThreshold * (1 + attempt)));
-      const pool = acceptable.length > 0 ? acceptable : scored; // fallback to best available if none acceptable
+      const acceptable = uniqueScored.filter(c => c.finalScore < (constraints.distanceThreshold * (1 + attempt)));
+      const pool = acceptable.length > 0 ? acceptable : uniqueScored; // fallback to best available if none acceptable
 
       finalCandidates = pool.slice(0, poolSize);
       if (finalCandidates.length > 0) {
