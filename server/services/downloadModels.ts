@@ -5,8 +5,8 @@ import { EventEmitter } from 'events';
 
 export const MODELS_DIR = path.join(__dirname, '..', 'models');
 
-const MUSICNN_URL = 'https://essentia.upf.edu/models/musicnn/msd-musicnn-1.pb';
-const EFFNET_URL = 'https://essentia.upf.edu/models/genre_discogs_effnet/discogs-effnet-bs64-1.pb';
+const MUSICNN_URL = 'https://essentia.upf.edu/models/feature-extractors/musicnn/msd-musicnn-1.pb';
+const EFFNET_URL = 'https://essentia.upf.edu/models/feature-extractors/discogs-effnet/discogs-effnet-bs64-1.pb';
 
 const MODELS = [
   { name: 'MusiCNN', filename: 'msd-musicnn-1.pb', url: MUSICNN_URL },
