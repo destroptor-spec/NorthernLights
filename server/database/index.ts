@@ -163,6 +163,58 @@ export async function initDB(): Promise<Pool> {
         EXCEPTION WHEN OTHERS THEN null;
         END $$;
 
+        -- Migration: Add 8D acoustic vector (named column for 10D expansion)
+        DO $$
+        BEGIN
+          ALTER TABLE track_features ADD COLUMN IF NOT EXISTS acoustic_vector VECTOR(10);
+        EXCEPTION WHEN OTHERS THEN null;
+        END $$;
+
+        -- Migration: Add/resize Discogs-EffNet embedding column to 1280D
+        -- EffNet produces 1280D embeddings (bs64 refers to batch size, not dims)
+        DO $$
+        BEGIN
+          -- If the column exists as VECTOR(128) (wrong size), drop and recreate it
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'track_features'
+              AND column_name = 'embedding_vector'
+          ) THEN
+            DECLARE
+              col_dims INTEGER;
+            BEGIN
+              SELECT atttypmod INTO col_dims
+              FROM pg_attribute a
+              JOIN pg_class c ON a.attrelid = c.oid
+              WHERE c.relname = 'track_features' AND a.attname = 'embedding_vector';
+              IF col_dims != 1280 THEN
+                DROP INDEX IF EXISTS track_features_embedding_idx;
+                ALTER TABLE track_features DROP COLUMN embedding_vector;
+                ALTER TABLE track_features ADD COLUMN embedding_vector VECTOR(1280);
+              END IF;
+            END;
+          ELSE
+            ALTER TABLE track_features ADD COLUMN embedding_vector VECTOR(1280);
+          END IF;
+        EXCEPTION WHEN OTHERS THEN null;
+        END $$;
+
+        -- HNSW index for 10D acoustic vectors (L2 distance)
+        DO $$
+        BEGIN
+          CREATE INDEX IF NOT EXISTS track_features_acoustic_idx 
+          ON track_features USING hnsw (acoustic_vector vector_l2_ops);
+        EXCEPTION WHEN OTHERS THEN null;
+        END $$;
+
+        -- HNSW index for 1280D EffNet embeddings (Cosine distance)
+        DO $$
+        BEGIN
+          CREATE INDEX IF NOT EXISTS track_features_embedding_idx 
+          ON track_features USING hnsw (embedding_vector vector_cosine_ops);
+        EXCEPTION WHEN OTHERS THEN null;
+        END $$;
+
         CREATE TABLE IF NOT EXISTS directories (
           id TEXT PRIMARY KEY,
           path TEXT UNIQUE
@@ -294,7 +346,7 @@ export async function initDB(): Promise<Pool> {
             CREATE MATERIALIZED VIEW IF NOT EXISTS genre_tree_paths AS
             WITH RECURSIVE genre_tree AS (
                 -- Base cases: top-level genres (genres that have no parents)
-                -- These are genres that appear as an entity1 (parent) but NEVER as entity0 (child)
+                -- In the MBDB link data, entity0 is the broader genre and entity1 is the specific subgenre
                 SELECT 
                     g.id AS genre_id, 
                     g.name::TEXT AS genre_name,
@@ -302,23 +354,23 @@ export async function initDB(): Promise<Pool> {
                     1 AS level,
                     ARRAY[g.id] AS visited
                 FROM genre g
-                WHERE EXISTS (SELECT 1 FROM l_genre_genre lgg WHERE lgg.link = 944810 AND lgg.entity1 = g.id)
-                AND NOT EXISTS (SELECT 1 FROM l_genre_genre lgg WHERE lgg.link = 944810 AND lgg.entity0 = g.id)
+                WHERE EXISTS (SELECT 1 FROM l_genre_genre lgg WHERE lgg.link = 944810 AND lgg.entity0 = g.id)
+                AND NOT EXISTS (SELECT 1 FROM l_genre_genre lgg WHERE lgg.link = 944810 AND lgg.entity1 = g.id)
                 
                 UNION ALL
                 
-                -- Recursive step: traverse DOWN to children
+                -- Recursive step: traverse entity0 (broad) → entity1 (specific)
                 SELECT 
-                    child.entity0, -- The subgenre
+                    child.entity1, -- The specific subgenre
                     g.name::TEXT AS genre_name,
                     (parent.path || '.' || g.name)::TEXT,
                     parent.level + 1,
-                    parent.visited || child.entity0
+                    parent.visited || child.entity1
                 FROM l_genre_genre child
-                JOIN genre_tree parent ON child.entity1 = parent.genre_id
-                JOIN genre g ON child.entity0 = g.id
+                JOIN genre_tree parent ON child.entity0 = parent.genre_id
+                JOIN genre g ON child.entity1 = g.id
                 WHERE child.link = 944810
-                AND child.entity0 != ALL(parent.visited)  -- cycle protection
+                AND child.entity1 != ALL(parent.visited)  -- cycle protection
                 AND parent.level < 20                     -- max depth guard
             )
             SELECT genre_id, genre_name, path, level FROM genre_tree;
@@ -556,13 +608,31 @@ export async function getExistingPaths(): Promise<Set<string>> {
   return new Set(res.rows.map((r: any) => r.path));
 }
 
+// Returns a Buffer array of decoded UTF-8 paths matching a specific directory prefix
+export async function getPathsForDirectory(dirPath: string): Promise<Buffer[]> {
+  const db = await initDB();
+  const res = await db.query('SELECT path FROM tracks');
+  const dirBuf = Buffer.from(dirPath, 'utf8');
+  const fileBufs: Buffer[] = [];
+  
+  for (const row of res.rows) {
+    if (!row.path) continue;
+    const fileBuf = Buffer.from(row.path, 'base64');
+    const prefixMatches = fileBuf.length >= dirBuf.length && fileBuf.slice(0, dirBuf.length).equals(dirBuf);
+    const atBoundary = fileBuf.length === dirBuf.length || fileBuf[dirBuf.length] === 0x2F;
+    if (prefixMatches && atBoundary) {
+      fileBufs.push(fileBuf);
+    }
+  }
+  return fileBufs;
+}
+
 export async function addTrack(track: any) {
   const db = await initDB();
   const id = Buffer.from(track.path).toString('base64');
   
   // Sanitize strings to remove null bytes which crash Postgres
-  const sanitize = (str: any) => typeof str === 'string' ? str.replace(/\x00/g, '') : str;
-  const sanitizeArray = (arr: any) => Array.isArray(arr) ? arr.map(sanitize) : arr;
+  const sanitizeArray = (arr: any) => Array.isArray(arr) ? arr.map(sanitizeString) : arr;
 
   await db.query(`
     INSERT INTO tracks (id, title, artist, album_artist, artists, album, genre, duration, track_number, year, release_type, is_compilation, path, bitrate, format, artist_id, album_id, genre_id, genres, isrc, mb_recording_id, mb_track_id, mb_album_id, mb_artist_id, mb_album_artist_id, mb_release_group_id, mb_work_id)
@@ -623,12 +693,12 @@ export async function addTrack(track: any) {
       tracks.mb_work_id IS DISTINCT FROM EXCLUDED.mb_work_id
   `, [
     id,
-    sanitize(track.title) || path.basename(track.path),
-    sanitize(track.artist) || null,
-    sanitize(track.albumArtist) || null,
+    sanitizeString(track.title) || path.basename(track.path),
+    sanitizeString(track.artist) || null,
+    sanitizeString(track.albumArtist) || null,
     track.artists ? JSON.stringify(sanitizeArray(track.artists)) : null,
-    sanitize(track.album) || null,
-    sanitize(track.genre) || null,
+    sanitizeString(track.album) || null,
+    sanitizeString(track.genre) || null,
     track.duration || 0,
     track.trackNumber || null,
     track.year || null,
@@ -671,38 +741,30 @@ export async function clearTracks() {
   await db.query('DELETE FROM tracks');
 }
 
-export async function addTrackFeatures(trackId: string, audioFeatures: { bpm: number; acoustic_vector: number[]; mfcc_vector?: number[]; is_simulated?: boolean }) {
+export async function addTrackFeatures(trackId: string, audioFeatures: { bpm: number; acoustic_vector: number[]; embedding_vector?: number[]; mfcc_vector?: number[]; is_simulated?: boolean }) {
   const db = await initDB();
-  // Legacy column expects 7D, new column expects 8D
+  // Legacy column expects 7D, old column expects 8D, new column expects 8-10D
   const vector7dStr = `[${audioFeatures.acoustic_vector.slice(0, 7).join(',')}]`;
-  const vector8dStr = `[${audioFeatures.acoustic_vector.join(',')}]`;
+  const vector8dStr = `[${audioFeatures.acoustic_vector.slice(0, 8).join(',')}]`;
+  const vectorStr = `[${audioFeatures.acoustic_vector.join(',')}]`;
   const simulated = audioFeatures.is_simulated ?? false;
+  const embStr = audioFeatures.embedding_vector && audioFeatures.embedding_vector.length > 0
+    ? `[${audioFeatures.embedding_vector.join(',')}]`
+    : null;
+  // mfcc_vector is fully deprecated in favour of 1280D EffNet embeddings
+  const mfccStr = null;
 
-  if (audioFeatures.mfcc_vector && audioFeatures.mfcc_vector.length === 13) {
-    const mfccStr = `[${audioFeatures.mfcc_vector.join(',')}]`;
-    await db.query(`
-      INSERT INTO track_features (track_id, bpm, acoustic_vector, acoustic_vector_8d, mfcc_vector, is_simulated)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      ON CONFLICT (track_id) DO UPDATE SET
-        bpm = EXCLUDED.bpm,
-        acoustic_vector = EXCLUDED.acoustic_vector,
-        acoustic_vector_8d = EXCLUDED.acoustic_vector_8d,
-        mfcc_vector = EXCLUDED.mfcc_vector,
-        is_simulated = EXCLUDED.is_simulated
-      WHERE track_features.bpm IS DISTINCT FROM EXCLUDED.bpm OR track_features.acoustic_vector IS DISTINCT FROM EXCLUDED.acoustic_vector OR track_features.mfcc_vector IS DISTINCT FROM EXCLUDED.mfcc_vector
-    `, [trackId, audioFeatures.bpm, vector7dStr, vector8dStr, mfccStr, simulated]);
-  } else {
-    await db.query(`
-      INSERT INTO track_features (track_id, bpm, acoustic_vector, acoustic_vector_8d, is_simulated)
-      VALUES ($1, $2, $3, $4, $5)
-      ON CONFLICT (track_id) DO UPDATE SET
-        bpm = EXCLUDED.bpm,
-        acoustic_vector = EXCLUDED.acoustic_vector,
-        acoustic_vector_8d = EXCLUDED.acoustic_vector_8d,
-        is_simulated = EXCLUDED.is_simulated
-      WHERE track_features.bpm IS DISTINCT FROM EXCLUDED.bpm OR track_features.acoustic_vector IS DISTINCT FROM EXCLUDED.acoustic_vector
-    `, [trackId, audioFeatures.bpm, vector7dStr, vector8dStr, simulated]);
-  }
+  await db.query(`
+    INSERT INTO track_features (track_id, bpm, acoustic_vector, acoustic_vector_8d, mfcc_vector, embedding_vector, is_simulated)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    ON CONFLICT (track_id) DO UPDATE SET
+      bpm = EXCLUDED.bpm,
+      acoustic_vector = EXCLUDED.acoustic_vector,
+      acoustic_vector_8d = EXCLUDED.acoustic_vector_8d,
+      mfcc_vector = EXCLUDED.mfcc_vector,
+      embedding_vector = EXCLUDED.embedding_vector,
+      is_simulated = EXCLUDED.is_simulated
+  `, [trackId, audioFeatures.bpm, vector7dStr, vector8dStr, mfccStr, embStr, simulated]);
 }
 
 export async function getTracksWithoutFeatures(): Promise<{ id: string; filePath: Buffer; title: string; artist: string | null }[]> {
@@ -935,7 +997,9 @@ export function splitArtistNames(artistStr: string | null | undefined): string[]
 // Utility for splitting multiple genres (e.g., "Folk, Country, Rock")
 export function splitGenreNames(genreStr: string | null | undefined): string[] {
   if (!genreStr) return [];
-  const parts = genreStr.split(/[,;/&]/).map(s => s.trim()).filter(Boolean);
+  // Only split on comma or semicolon. Do NOT split on slash or ampersand
+  // as this breaks genres like 'Pop/Rock', 'Dance/Electronic', and 'R&B'.
+  const parts = genreStr.split(/[,;]/).map(s => s.trim()).filter(Boolean);
   return parts.length > 0 ? parts : [];
 }
 
@@ -950,8 +1014,11 @@ function clearEntityCaches() {
   genreCache.clear();
 }
 
+// Sanitize strings to remove null bytes which crash Postgres
+const sanitizeString = (str: any) => typeof str === 'string' ? str.replace(/\x00/g, '') : str;
+
 export async function getOrCreateArtist(name?: string | null): Promise<string> {
-  const safeName = name?.trim() || UNKNOWN_ARTIST;
+  const safeName = sanitizeString(name)?.trim() || UNKNOWN_ARTIST;
   const lowerName = safeName.toLowerCase();
   
   const cached = artistCache.get(lowerName);
@@ -975,8 +1042,8 @@ export async function getOrCreateArtist(name?: string | null): Promise<string> {
 }
 
 export async function getOrCreateAlbum(title?: string | null, artistName?: string | null): Promise<string> {
-  const safeTitle = title?.trim() || UNKNOWN_ALBUM;
-  const safeArtist = artistName?.trim() || UNKNOWN_ARTIST;
+  const safeTitle = sanitizeString(title)?.trim() || UNKNOWN_ALBUM;
+  const safeArtist = sanitizeString(artistName)?.trim() || UNKNOWN_ARTIST;
   const lowerTitle = safeTitle.toLowerCase();
   const lowerArtist = safeArtist.toLowerCase();
   const key = `${lowerTitle}::::${lowerArtist}`;
@@ -1002,7 +1069,7 @@ export async function getOrCreateAlbum(title?: string | null, artistName?: strin
 }
 
 export async function getOrCreateGenre(name?: string | null): Promise<string> {
-  const safeName = name?.trim() || UNKNOWN_GENRE;
+  const safeName = sanitizeString(name)?.trim() || UNKNOWN_GENRE;
   const lowerName = safeName.toLowerCase();
 
   const cached = genreCache.get(lowerName);
@@ -1427,26 +1494,57 @@ export async function getSubGenreMappings(): Promise<Record<string, string>> {
   return mappings;
 }
 
-export async function getMacroGenreFromKNN(vector: number[]): Promise<string | null> {
+export async function getGenrePathFromKNN(acoustic8D: number[], mfcc?: number[]): Promise<string | null> {
+  if (acoustic8D.some(v => !isFinite(v))) return null;
+  if (mfcc && mfcc.some(v => !isFinite(v))) mfcc = undefined;
+
   const db = await initDB();
-  const vectorStr = `[${vector.join(',')}]`;
+  const acousticStr = `[${acoustic8D.join(',')}]`;
+  const mfccStr = mfcc ? `[${mfcc.join(',')}]` : null;
   
-  // Find top 5 mathematically closest tracks that have a known sub-genre
-  // and then look up their macro-genre.
-  // We use Euclidean distance (L2) available via <-> in pgvector.
-  const res = await db.query(`
-    SELECT sm.macro_genre, COUNT(*) as frequency
-    FROM tracks t
-    JOIN track_features tf ON t.id = tf.track_id
-    JOIN subgenre_mappings sm ON lower(trim(t.genre)) = sm.sub_genre
-    WHERE tf.acoustic_vector <-> $1 < 0.5
-    GROUP BY sm.macro_genre
+  // Tier 3: KNN Timbre Fallback. 
+  // Finds the most common hierarchical path among the 10 mathematically 
+  // closest matches using 21D distance (Acoustic 8D + MFCC 13D) or 8D distance fallback.
+  const query = mfccStr 
+    ? `
+    WITH neighbors AS (
+      SELECT sm.path
+      FROM tracks t
+      JOIN track_features tf ON t.id = tf.track_id
+      JOIN subgenre_mappings sm ON lower(trim(t.genre)) = sm.sub_genre
+      WHERE tf.acoustic_vector_8d IS NOT NULL 
+        AND tf.mfcc_vector IS NOT NULL
+      ORDER BY (tf.acoustic_vector_8d <-> $1::vector) + (tf.mfcc_vector <-> $2::vector) ASC
+      LIMIT 10
+    )
+    SELECT path, COUNT(*) as frequency
+    FROM neighbors
+    GROUP BY path
     ORDER BY frequency DESC
     LIMIT 1
-  `, [vectorStr]);
+  `
+    : `
+    WITH neighbors AS (
+      SELECT sm.path
+      FROM tracks t
+      JOIN track_features tf ON t.id = tf.track_id
+      JOIN subgenre_mappings sm ON lower(trim(t.genre)) = sm.sub_genre
+      WHERE tf.acoustic_vector_8d IS NOT NULL 
+      ORDER BY tf.acoustic_vector_8d <-> $1::vector ASC
+      LIMIT 10
+    )
+    SELECT path, COUNT(*) as frequency
+    FROM neighbors
+    GROUP BY path
+    ORDER BY frequency DESC
+    LIMIT 1
+  `;
+
+  const params = mfccStr ? [acousticStr, mfccStr] : [acousticStr];
+  const res = await db.query(query, params);
 
   if (res.rows.length > 0) {
-    return (res.rows[0] as any).macro_genre;
+    return (res.rows[0] as any).path;
   }
   return null;
 }

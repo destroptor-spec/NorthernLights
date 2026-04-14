@@ -37,8 +37,8 @@
   /* Glass - Light Mode */
   --glass-bg: rgba(255, 255, 255, 0.65);
   --glass-bg-hover: rgba(255, 255, 255, 0.8);
-  --glass-border: rgba(255, 255, 255, 0.5);
-  --glass-border-hover: rgba(255, 255, 255, 0.8);
+  --glass-border: rgba(0, 0, 0, 0.1);
+  --glass-border-hover: rgba(0, 0, 0, 0.18);
   --glass-blur: 24px;
   --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.05);
 
@@ -1611,6 +1611,7 @@ body::after {
   margin-top: 2px;
   display: flex;
   justify-content: space-between;
+  padding-right: 20px; /* Aligns with the badge push */
 }
 
 .scan-walk-status {
@@ -1620,7 +1621,7 @@ body::after {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  width: 100%;
+  width: calc(100% - 20px);
 }
 
 .scan-active-files {
@@ -1635,7 +1636,7 @@ body::after {
 }
 
 .scan-active-files-heading {
-  margin-bottom: 4px;
+  margin-bottom: 6px;
   font-weight: 600;
   color: var(--color-text-primary);
 }
@@ -1941,5 +1942,45 @@ body::after {
   .volume-slider::-moz-range-thumb {
     width: 16px;
     height: 16px;
+  }
+}
+
+/* ─── HUB ANIMATIONS (Tailwind can't do these) ─── */
+@keyframes hub-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.hub-card-animate {
+  animation: hub-card-enter 300ms var(--ease-out) backwards;
+}
+
+.hub-card-animate:nth-child(1) { animation-delay: 0ms; }
+.hub-card-animate:nth-child(2) { animation-delay: 50ms; }
+.hub-card-animate:nth-child(3) { animation-delay: 100ms; }
+.hub-card-animate:nth-child(4) { animation-delay: 150ms; }
+.hub-card-animate:nth-child(5) { animation-delay: 200ms; }
+.hub-card-animate:nth-child(6) { animation-delay: 250ms; }
+
+/* Mobile scroll container - needs scroll-padding for snap */
+@media (max-width: 639px) {
+  .hub-scroll-mobile {
+    scroll-padding-left: 1rem;
+    padding-left: 1rem;
+    padding-right: 1rem;
+    margin-left: -1rem;
+    margin-right: -1rem;
+  }
+
+  .hub-scroll-mobile > * {
+    flex: 0 0 85vw;
+    max-width: 320px;
+    scroll-snap-align: start;
   }
 }

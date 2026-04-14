@@ -99,7 +99,7 @@ export const SystemTab: React.FC = () => {
             <div className="mt-8 pt-6 border-t border-[var(--glass-border)]">
                 <div className="flex items-center gap-2 mb-3">
                     <h4 className="text-lg font-semibold text-[var(--color-text-primary)]">Aurora Auto-Start</h4>
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">systemd</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/20 dark:border-amber-500/30">systemd</span>
                 </div>
                 <p className="text-sm text-[var(--color-text-muted)] mb-4 leading-relaxed">
                     Configure Aurora to automatically start when your computer starts. This requires a user-level systemd service.
@@ -108,12 +108,12 @@ export const SystemTab: React.FC = () => {
                 <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--glass-border)] p-4">
                     <div className="flex items-center gap-2 mb-3">
                         <span className="text-sm font-medium text-[var(--color-text-primary)]">Service Status:</span>
-                        <span className="text-xs px-2 py-1 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">Not Configured</span>
+                        <span className="text-xs px-2 py-1 rounded bg-amber-500/10 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/20 dark:border-amber-500/30">Not Configured</span>
                     </div>
-                        <p className="mb-4 text-amber-200/80 italic">
+                        <p className="mb-4 text-amber-700 dark:text-amber-200/80 italic">
                             Note: You must run <b>npm run build</b> once before starting the service.
                         </p>
-                        <div className="bg-black/40 rounded-lg p-3 font-mono text-xs text-green-400 overflow-x-auto">
+                        <div className="bg-gray-950 dark:bg-black/40 rounded-lg p-3 font-mono text-xs text-green-400 overflow-x-auto border border-black/20 dark:border-white/5 shadow-inner">
                             <p className="mb-1">mkdir -p ~/.config/systemd/user</p>
                             <p className="mb-1">cat &gt; ~/.config/systemd/user/aurora.service &lt;&lt; 'EOF'</p>
                             <p className="mb-1">[Unit]</p>

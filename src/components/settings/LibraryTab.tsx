@@ -1,73 +1,52 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { usePlayerStore } from '../../store/index';
-import { useProviderConnectionTest } from '../../hooks/useProviderConnectionTest';
 import { useToast } from '../../hooks/useToast';
-import { Folder, Link, Search, Globe, Trash2 } from 'lucide-react';
+import { Folder, Trash2, Download, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { PromptModal } from '../PromptModal';
 import { ConfirmModal } from '../ConfirmModal';
+
+interface ModelFileStatus {
+    name: string;
+    filename: string;
+    url: string;
+    size: number;
+    cached: boolean;
+    downloading: boolean;
+    error?: string;
+}
+
+function formatBytes(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+}
 
 export const LibraryTab: React.FC = () => {
     const libraryFolders = usePlayerStore(state => state.libraryFolders);
     const addLibraryFolder = usePlayerStore(state => state.addLibraryFolder);
     const removeLibraryFolder = usePlayerStore(state => state.removeLibraryFolder);
-    
-    const lastFmApiKey = usePlayerStore(state => state.lastFmApiKey);
-    const setLastFmApiKey = usePlayerStore(state => state.setLastFmApiKey);
-    const lastFmSharedSecret = usePlayerStore(state => state.lastFmSharedSecret);
-    const setLastFmSharedSecret = usePlayerStore(state => state.setLastFmSharedSecret);
-    const lastFmScrobbleEnabled = usePlayerStore(state => state.lastFmScrobbleEnabled);
-    const setLastFmScrobbleEnabled = usePlayerStore(state => state.setLastFmScrobbleEnabled);
-    const lastFmConnected = usePlayerStore(state => state.lastFmConnected);
-    const setLastFmConnected = usePlayerStore(state => state.setLastFmConnected);
-    const lastFmUsername = usePlayerStore(state => state.lastFmUsername);
-    const setLastFmUsername = usePlayerStore(state => state.setLastFmUsername);
-    
-    const geniusApiKey = usePlayerStore(state => state.geniusApiKey);
-    const setGeniusApiKey = usePlayerStore(state => state.setGeniusApiKey);
-    
-    const musicBrainzEnabled = usePlayerStore(state => state.musicBrainzEnabled);
-    const setMusicBrainzEnabled = usePlayerStore(state => state.setMusicBrainzEnabled);
-    const musicBrainzClientId = usePlayerStore(state => state.musicBrainzClientId);
-    const setMusicBrainzClientId = usePlayerStore(state => state.setMusicBrainzClientId);
-    const musicBrainzClientSecret = usePlayerStore(state => state.musicBrainzClientSecret);
-    const setMusicBrainzClientSecret = usePlayerStore(state => state.setMusicBrainzClientSecret);
-    const musicBrainzConnected = usePlayerStore(state => state.musicBrainzConnected);
-    const setMusicBrainzConnected = usePlayerStore(state => state.setMusicBrainzConnected);
-    
-    const providerArtistImage = usePlayerStore(state => state.providerArtistImage);
-    const providerArtistBio = usePlayerStore(state => state.providerArtistBio);
-    const providerAlbumArt = usePlayerStore(state => state.providerAlbumArt);
-    
-    const setSettings = usePlayerStore(state => state.setSettings);
     const getAuthHeader = usePlayerStore(state => state.getAuthHeader);
     const fetchLibraryFromServer = usePlayerStore(state => state.fetchLibraryFromServer);
     const isScanning = usePlayerStore(state => state.isScanning);
     const autoFolderWalk = usePlayerStore(state => state.autoFolderWalk);
+    const setSettings = usePlayerStore(state => state.setSettings);
     const authToken = usePlayerStore(state => state.authToken);
 
-    const [libTab, setLibTab] = useState<'folders' | 'lastfm' | 'genius' | 'musicbrainz'>('folders');
-    const [lastFmConfigured, setLastFmConfigured] = useState(false);
-    
     const [dirStats, setDirStats] = useState<Record<string, { totalTracks: number; withMetadata: number; analyzed: number }>>({});
     const [dirStatsLoading, setDirStatsLoading] = useState(false);
+
+    const [modelStatus, setModelStatus] = useState<ModelFileStatus[]>([]);
+    const [modelDownloadProgress, setModelDownloadProgress] = useState<Record<string, { bytes: number; total: number; status: string }>>({});
+    const [isModelDownloading, setIsModelDownloading] = useState(false);
+    const modelSseRef = useRef<EventSource | null>(null);
     
     const [promptDialog, setPromptDialog] = useState<{ title: string; label?: string; placeholder?: string; onSubmit: (value: string) => void } | null>(null);
     const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; confirmLabel?: string; onConfirm: () => void } | null>(null);
     
     const { addToast } = useToast();
     const showToast = useCallback((msg: string, type: 'success' | 'error' | 'info') => addToast(msg, type), [addToast]);
-
-    const {
-        lastFmStatus,
-        lastFmMessage,
-        geniusStatus,
-        geniusMessage,
-        musicBrainzStatus,
-        musicBrainzMessage,
-        testLastFm,
-        testGenius,
-        testMusicBrainz,
-    } = useProviderConnectionTest();
 
     const fetchDirStats = useCallback(async () => {
         try {
@@ -92,6 +71,57 @@ export const LibraryTab: React.FC = () => {
         fetchDirStats();
     }, [fetchDirStats]);
 
+    const fetchModelStatus = useCallback(async () => {
+        try {
+            const res = await fetch('/api/settings/models/status', { headers: getAuthHeader() });
+            if (!res.ok) return;
+            const data = await res.json();
+            const files: ModelFileStatus[] = (data.models || []).flatMap((m: any) => m.files || []);
+            setModelStatus(files);
+            setIsModelDownloading(!!data.isDownloading);
+        } catch {}
+    }, [getAuthHeader]);
+
+    const handleDownloadModels = useCallback(async () => {
+        try {
+            const res = await fetch('/api/settings/models/download', {
+                method: 'POST',
+                headers: getAuthHeader(),
+            });
+            if (!res.ok) return;
+            setIsModelDownloading(true);
+
+            // Open SSE stream for live progress
+            if (modelSseRef.current) modelSseRef.current.close();
+            const sse = new EventSource('/api/settings/models/progress');
+            modelSseRef.current = sse;
+            sse.onmessage = (e) => {
+                try {
+                    const data = JSON.parse(e.data);
+                    if (data.type === 'status') return;
+                    if (data.model && data.file) {
+                        setModelDownloadProgress(prev => ({
+                            ...prev,
+                            [data.file]: { bytes: data.bytesDownloaded, total: data.totalBytes, status: data.status }
+                        }));
+                        if (data.status === 'done' || data.status === 'error') {
+                            fetchModelStatus();
+                        }
+                    }
+                } catch {}
+            };
+            sse.onerror = () => { sse.close(); setIsModelDownloading(false); fetchModelStatus(); };
+        } catch {}
+    }, [getAuthHeader, fetchModelStatus]);
+
+    // Mount model status fetch (after fetchModelStatus is declared)
+    useEffect(() => {
+        fetchModelStatus();
+    }, [fetchModelStatus]);
+
+    // Cleanup SSE on unmount
+    useEffect(() => { return () => { modelSseRef.current?.close(); }; }, []);
+
     const prevIsScanning = useRef(isScanning);
     useEffect(() => {
         if (prevIsScanning.current && !isScanning) {
@@ -100,18 +130,7 @@ export const LibraryTab: React.FC = () => {
         prevIsScanning.current = isScanning;
     }, [isScanning, fetchDirStats]);
 
-    useEffect(() => {
-        const fetchLastFmStatus = async () => {
-            try {
-                const res = await fetch('/api/providers/lastfm/status', { headers: getAuthHeader() });
-                if (res.ok) {
-                    const data = await res.json();
-                    setLastFmConfigured(!!data.hasApiKey);
-                }
-            } catch {}
-        };
-        fetchLastFmStatus();
-    }, [getAuthHeader]);
+
 
     const handleAddFolder = async () => {
         setPromptDialog({
@@ -166,6 +185,41 @@ export const LibraryTab: React.FC = () => {
         }
     };
 
+    const handleRefreshMetadata = useCallback(async (folderPath: string) => {
+        try {
+            const authHeaders = getAuthHeader();
+            let refreshStarted = false;
+            while (!refreshStarted) {
+                const res = await fetch('/api/library/refresh-metadata', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...authHeaders },
+                    body: JSON.stringify({ path: folderPath })
+                });
+                if (res.status === 400) {
+                    const errorData = await res.json().catch(() => ({}));
+                    if (errorData.error === 'Scan already in progress') {
+                        await new Promise(r => setTimeout(r, 1000));
+                    } else {
+                        showToast(`Refresh failed: ${errorData.error}`, 'error');
+                        refreshStarted = true;
+                    }
+                } else {
+                    refreshStarted = true;
+                    if (res.ok) {
+                        showToast(`Metadata refresh commenced in background`, 'success');
+                    } else {
+                        const errData = await res.json().catch(() => ({}));
+                        showToast(`Refresh failed: ${errData.error || res.statusText}`, 'error');
+                    }
+                }
+            }
+            await fetchLibraryFromServer();
+            fetchDirStats();
+        } catch (e) {
+            showToast(`Refresh failed: ${e}`, 'error');
+        }
+    }, [getAuthHeader, showToast, fetchLibraryFromServer, fetchDirStats]);
+
     const handleRemoveFolder = async (folderPath: string) => {
         await removeLibraryFolder(folderPath);
         fetchDirStats();
@@ -213,23 +267,7 @@ export const LibraryTab: React.FC = () => {
 
     return (
         <div className="settings-section mb-8">
-            <div className="flex gap-2 mb-6">
-                <button onClick={() => setLibTab('folders')} className={`btn-tab ${libTab === 'folders' ? 'active' : ''}`}>
-                    <Folder size={16} className="inline mr-1 relative -top-[1px]" /> Folders
-                </button>
-                <button onClick={() => setLibTab('lastfm')} className={`btn-tab ${libTab === 'lastfm' ? 'active' : ''}`}>
-                    <Link size={16} className="inline mr-1 relative -top-[1px]" /> Last.fm
-                </button>
-                <button onClick={() => setLibTab('genius')} className={`btn-tab ${libTab === 'genius' ? 'active' : ''}`}>
-                    <Search size={16} className="inline mr-1 relative -top-[1px]" /> Genius
-                </button>
-                <button onClick={() => setLibTab('musicbrainz')} className={`btn-tab ${libTab === 'musicbrainz' ? 'active' : ''}`}>
-                    <Globe size={16} className="inline mr-1 relative -top-[1px]" /> MusicBrainz
-                </button>
-            </div>
 
-            {libTab === 'folders' && (
-                <>
                     <div className="settings-section-header flex justify-between items-center mb-4">
                         <h3 className="text-lg font-bold text-[var(--color-text-primary)]">Mapped Folders</h3>
                         <button className="btn btn-sm" onClick={handleAddFolder}>+ Map Folder Path</button>
@@ -247,13 +285,14 @@ export const LibraryTab: React.FC = () => {
                                             <span className="text-sm truncate mr-4 text-[var(--color-text-primary)] font-medium flex items-center gap-2"><Folder size={16} className="shrink-0 text-[var(--color-text-muted)]" /> {folderPath}</span>
                                             <div className="flex gap-2 shrink-0">
                                                 <button className="btn btn-primary btn-sm" onClick={() => handleRescanFolder(folderPath)}>Rescan</button>
+                                                <button className="btn btn-ghost btn-sm" onClick={() => handleRefreshMetadata(folderPath)} disabled={isScanning}>Refresh Metadata</button>
                                                 <button className="btn btn-danger-fill btn-sm" onClick={() => handleRemoveFolder(folderPath)}>Remove</button>
                                             </div>
                                         </div>
                                         {stats && stats.totalTracks > 0 && (
                                             <div className="flex gap-4 text-xs text-[var(--color-text-secondary)] pl-1">
                                                 <span>{stats.totalTracks} tracks</span><span>·</span><span>{stats.withMetadata} with metadata</span><span>·</span>
-                                                <span className={stats.analyzed === stats.totalTracks ? 'text-green-500' : 'text-amber-500'}>{stats.analyzed} analyzed</span>
+                                                <span className={stats.analyzed === stats.totalTracks ? 'text-green-600 dark:text-green-500' : 'text-amber-600 dark:text-amber-500'}>{stats.analyzed} analyzed</span>
                                             </div>
                                         )}
                                         {stats && stats.totalTracks === 0 && (<div className="text-xs text-[var(--color-text-muted)] pl-1">No tracks found. Click Rescan to index this folder.</div>)}
@@ -267,7 +306,7 @@ export const LibraryTab: React.FC = () => {
                             <p className="text-sm font-medium text-[var(--color-text-primary)]">Automatic Folder Walk</p>
                             <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Re-walk all folders every 30 minutes to detect renamed or deleted files.</p>
                         </div>
-                        <button onClick={() => setSettings({ autoFolderWalk: !autoFolderWalk })} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ml-4 ${autoFolderWalk ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-bg-tertiary)]'}`}>
+                        <button onClick={() => setSettings({ autoFolderWalk: !autoFolderWalk })} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ml-4 ${autoFolderWalk ? 'bg-[var(--color-primary)]' : 'bg-gray-200 dark:bg-[var(--color-bg-tertiary)]'}`}>
                             <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${autoFolderWalk ? 'translate-x-6' : 'translate-x-1'}`} />
                         </button>
                     </div>
@@ -279,7 +318,7 @@ export const LibraryTab: React.FC = () => {
                                 <button className="btn btn-ghost btn-sm" onClick={handleForceAnalyze} disabled={isScanning}>Re-analyze All</button>
                             </div>
                         </div>
-                        <p className="text-xs text-[var(--color-text-muted)]">Runs Essentia audio feature extraction on tracks that haven't been analyzed yet.</p>
+                        <p className="text-xs text-[var(--color-text-muted)]">Runs native Essentia audio feature extraction on tracks that haven't been analyzed yet. Requires ML models below.</p>
                         {(() => {
                             const totalStats = Object.values(dirStats).reduce((acc, s) => ({ totalTracks: acc.totalTracks + s.totalTracks, withMetadata: acc.withMetadata + s.withMetadata, analyzed: acc.analyzed + s.analyzed }), { totalTracks: 0, withMetadata: 0, analyzed: 0 });
                             if (dirStatsLoading) { return (<div className="mt-2"><div className="flex justify-between text-xs text-[var(--color-text-secondary)] mb-1"><span>Library Coverage</span><span className="animate-pulse">Loading...</span></div><div className="w-full h-2 rounded-full bg-[var(--glass-border)] overflow-hidden" /></div>); }
@@ -288,107 +327,64 @@ export const LibraryTab: React.FC = () => {
                             return (<div className="mt-2"><div className="flex justify-between text-xs text-[var(--color-text-secondary)] mb-1"><span>Library Coverage</span><span>{totalStats.analyzed} / {totalStats.totalTracks} tracks ({pct}%)</span></div><div className="w-full h-2 rounded-full bg-[var(--glass-border)] overflow-hidden"><div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: pct === 100 ? '#22c55e' : pct > 50 ? '#f59e0b' : '#ef4444' }} /></div></div>);
                         })()}
                     </div>
-                </>
-            )}
 
-            {libTab === 'lastfm' && (
-                <div className="flex flex-col gap-5">
-                    <div><h3 className="text-lg font-bold text-[var(--color-text-primary)] mb-1">Last.fm</h3></div>
-                    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 flex flex-col gap-3">
-                        <input type="text" value={lastFmApiKey} onChange={e => setLastFmApiKey(e.target.value)} placeholder="API Key" className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" />
-                        <input type="password" value={lastFmSharedSecret} onChange={e => setLastFmSharedSecret(e.target.value)} placeholder="Shared Secret" className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" />
-                        <div className="flex items-center gap-3">
-                            <button onClick={() => testLastFm(lastFmApiKey)} disabled={lastFmStatus === 'testing' || !lastFmApiKey} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">{lastFmStatus === 'testing' ? 'Testing...' : 'Test'}</button>
-                            {lastFmStatus === 'success' && <span className="text-green-500 font-semibold text-xs">✓ {lastFmMessage}</span>}
-                            {lastFmStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {lastFmMessage}</span>}
-                        </div>
-                    </div>
-                    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5">
-                        <h4 className="text-sm font-semibold text-[var(--color-text-primary)] mb-3">Scrobbling</h4>
-                        {lastFmConnected ? (
-                            <div className="flex flex-col gap-4">
-                                <div className="flex items-center justify-between">
-                                    <span className="text-green-500 font-semibold text-sm">Connected as {lastFmUsername || 'Last.fm'}</span>
-                                    <button onClick={async () => { try { const res = await fetch('/api/providers/lastfm/disconnect', { method: 'POST' }); const data = await res.json(); if (!res.ok || data.error) { showToast(data.error || 'Failed to disconnect', 'error'); } else { setLastFmConnected(false); setLastFmUsername(''); } } catch (e: any) { showToast(e?.message || 'Network error', 'error'); } }} className="btn btn-danger btn-sm">Remove access</button>
-                                </div>
-                                <div className="border-t border-[var(--glass-border)] pt-4 flex items-center justify-between">
-                                    <label className="text-sm text-[var(--color-text-primary)]">Auto-scrobble played tracks</label>
-                                    <button onClick={() => setLastFmScrobbleEnabled(!lastFmScrobbleEnabled)} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${lastFmScrobbleEnabled ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-bg-tertiary)]'}`}><span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${lastFmScrobbleEnabled ? 'translate-x-6' : 'translate-x-1'}`} /></button>
-                                </div>
+                    {/* ML Models */}
+                    <div className="mt-6 pt-4 border-t border-[var(--glass-border)]">
+                        <div className="flex justify-between items-center mb-3">
+                            <div>
+                                <h4 className="text-lg font-semibold text-[var(--color-text-primary)]">ML Models</h4>
+                                <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Discogs-EffNet (1280D) and MusiCNN (.pb) files used by the Python extractor.</p>
                             </div>
-                        ) : (
-                            <div className="flex flex-col gap-3">
-                                <p className="text-sm text-[var(--color-text-muted)]">Link your Last.fm account to scrobble played tracks.</p>
-                                <button onClick={async () => { try { const tokenParam = authToken ? `?token=${authToken}` : ''; window.location.href = `/api/providers/lastfm/authorize${tokenParam}`; } catch (e: any) { showToast(e?.message || 'Network error', 'error'); } }} className="btn btn-primary btn-sm">Connect to Last.fm</button>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
-
-            {libTab === 'genius' && (
-                <div className="flex flex-col gap-5">
-                    <div><h3 className="text-lg font-bold text-[var(--color-text-primary)] mb-1">Genius</h3></div>
-                    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 flex flex-col gap-3">
-                        <div className="flex gap-2">
-                            <input type="text" value={geniusApiKey} onChange={e => setGeniusApiKey(e.target.value)} placeholder="Access Token" className="flex-1 p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" />
-                            <button onClick={() => testGenius(geniusApiKey)} disabled={geniusStatus === 'testing' || !geniusApiKey} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">{geniusStatus === 'testing' ? 'Testing...' : 'Test'}</button>
+                            <button
+                                className="btn btn-primary btn-sm flex items-center gap-1.5"
+                                onClick={handleDownloadModels}
+                                disabled={isModelDownloading}
+                            >
+                                {isModelDownloading
+                                    ? <><Loader2 size={13} className="animate-spin" /> Downloading...</>
+                                    : <><Download size={13} /> {modelStatus.every(m => m.cached) ? 'Re-download' : 'Download Models'}</>
+                                }
+                            </button>
                         </div>
-                        {geniusStatus === 'success' && <span className="text-green-500 font-semibold text-xs">✓ {geniusMessage}</span>}
-                        {geniusStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {geniusMessage}</span>}
+                        <ul className="flex flex-col gap-2">
+                            {modelStatus.length === 0 ? (
+                                <li className="text-xs text-[var(--color-text-muted)] italic">Checking model status...</li>
+                            ) : modelStatus.map(m => {
+                                const prog = modelDownloadProgress[m.filename];
+                                const isActive = prog && prog.status === 'downloading';
+                                const pct = isActive && prog.total > 0 ? Math.round((prog.bytes / prog.total) * 100) : null;
+                                return (
+                                    <li key={m.filename} className="flex flex-col gap-1 p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)]">
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                {m.cached
+                                                    ? <CheckCircle2 size={14} className="text-green-500 shrink-0" />
+                                                    : <AlertCircle size={14} className="text-amber-500 shrink-0" />
+                                                }
+                                                <span className="text-sm font-medium text-[var(--color-text-primary)]">{m.name}</span>
+                                                <span className="text-xs text-[var(--color-text-muted)] font-mono">{m.filename}</span>
+                                            </div>
+                                            <span className="text-xs text-[var(--color-text-secondary)] shrink-0 ml-2">
+                                                {m.cached ? formatBytes(m.size) : 'Not downloaded'}
+                                            </span>
+                                        </div>
+                                        {isActive && (
+                                            <div className="mt-1">
+                                                <div className="flex justify-between text-xs text-[var(--color-text-muted)] mb-0.5">
+                                                    <span>Downloading...</span>
+                                                    <span>{pct !== null ? `${pct}%` : `${formatBytes(prog.bytes)}`}</span>
+                                                </div>
+                                                <div className="w-full h-1.5 rounded-full bg-[var(--glass-border)] overflow-hidden">
+                                                    <div className="h-full rounded-full bg-[var(--color-primary)] transition-all duration-300" style={{ width: pct !== null ? `${pct}%` : '0%' }} />
+                                                </div>
+                                            </div>
+                                        )}
+                                    </li>
+                                );
+                            })}
+                        </ul>
                     </div>
-                </div>
-            )}
 
-            {libTab === 'musicbrainz' && (
-                <div className="flex flex-col gap-5">
-                    <div><h3 className="text-lg font-bold text-[var(--color-text-primary)] mb-1">MusicBrainz</h3></div>
-                    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 flex flex-col gap-3">
-                        <div className="flex items-center justify-between">
-                            <label className="text-sm font-medium text-[var(--color-text-primary)]">{musicBrainzEnabled ? 'Enabled' : 'Disabled'}</label>
-                            <button onClick={() => setMusicBrainzEnabled(!musicBrainzEnabled)} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${musicBrainzEnabled ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-bg-tertiary)]'}`}><span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${musicBrainzEnabled ? 'translate-x-6' : 'translate-x-1'}`} /></button>
-                        </div>
-                        {musicBrainzEnabled && (
-                            <div className="flex flex-col gap-3 mt-1">
-                                <input type="text" value={musicBrainzClientId} onChange={e => setMusicBrainzClientId(e.target.value)} placeholder="Client ID" className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" />
-                                <input type="password" value={musicBrainzClientSecret} onChange={e => setMusicBrainzClientSecret(e.target.value)} placeholder="Client Secret" className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" />
-                                <div className="flex gap-2 items-center">
-                                    <button onClick={() => testMusicBrainz()} disabled={musicBrainzStatus === 'testing'} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">{musicBrainzStatus === 'testing' ? 'Testing...' : 'Test'}</button>
-                                    {musicBrainzStatus === 'success' && <span className="text-green-500 font-semibold text-xs">✓ {musicBrainzMessage}</span>}
-                                    {musicBrainzStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {musicBrainzMessage}</span>}
-                                    {musicBrainzConnected ? (<><span className="text-green-500 font-semibold text-xs ml-auto">Connected</span><button onClick={async () => { await fetch('/api/providers/musicbrainz/disconnect', { method: 'POST' }); setMusicBrainzConnected(false); }} className="btn btn-danger btn-sm">Remove access</button></>) : (<button onClick={async () => { try { const tokenParam = authToken ? `?token=${authToken}` : ''; window.location.href = `/api/providers/musicbrainz/authorize${tokenParam}`; } catch (e: any) { showToast(e?.message || 'Network error', 'error'); } }} disabled={!musicBrainzClientId || !musicBrainzClientSecret} className="btn btn-primary btn-sm disabled:opacity-50 ml-auto">Connect</button>)}
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
-
-            {/* Default Provider Configuration */}
-            <div className="mt-6 pt-6 border-t border-[var(--glass-border)]">
-                <h4 className="text-sm font-semibold text-[var(--color-text-primary)] mb-3">Default Provider per Service</h4>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-                    <div>
-                        <label className="block text-xs text-[var(--color-text-muted)] mb-1">Artist Images</label>
-                        <select value={providerArtistImage} onChange={e => setSettings({ providerArtistImage: e.target.value as 'lastfm' | 'genius' | 'musicbrainz' })} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors">
-                            <option value="lastfm">Last.fm</option><option value="genius">Genius</option>{musicBrainzEnabled && <option value="musicbrainz">MusicBrainz</option>}
-                        </select>
-                    </div>
-                    <div>
-                        <label className="block text-xs text-[var(--color-text-muted)] mb-1">Artist Bios</label>
-                        <select value={providerArtistBio} onChange={e => setSettings({ providerArtistBio: e.target.value as 'lastfm' | 'genius' })} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors">
-                            <option value="lastfm">Last.fm</option><option value="genius">Genius</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label className="block text-xs text-[var(--color-text-muted)] mb-1">Album Art</label>
-                        <select value={providerAlbumArt} onChange={e => setSettings({ providerAlbumArt: e.target.value as 'lastfm' | 'genius' | 'musicbrainz' })} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors">
-                            <option value="lastfm">Last.fm</option><option value="genius">Genius</option>{musicBrainzEnabled && <option value="musicbrainz">MusicBrainz</option>}
-                        </select>
-                    </div>
-                </div>
-                <button onClick={async () => { try { const authHeaders = getAuthHeader(); const res = await fetch('/api/providers/external/refresh', { method: 'POST', headers: authHeaders }); const data = await res.json(); if (!res.ok || data.error) { showToast(data.error || 'Failed to clear cache', 'error'); } else { showToast('Provider image & bio cache cleared', 'success'); } } catch (e: any) { showToast(e?.message || 'Network error', 'error'); } }} className="btn btn-ghost btn-sm gap-2"><Trash2 size={14} /> Clear cached images &amp; bios</button>
-            </div>
             
             {promptDialog && (
                 <PromptModal

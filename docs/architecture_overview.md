@@ -32,7 +32,7 @@ graph TD
 
 ### 3. Backend Infrastructure
 - **Node.js + Express**: Manages local file scanning, ID3/Vorbis/ASF metadata extraction, audio serving, and LLM integration.
-- **PostgreSQL + pgvector**: Persistent storage for library tracks, mapped directories, playback history, and 7-dimensional acoustic feature vectors for similarity search.
+- **PostgreSQL + pgvector**: Persistent storage for library tracks, mapped directories, playback history, and **1288-dimensional** acoustic feature vectors (**8D acoustic semantic** + **1280D Discogs-EffNet** embeddings) for similarity search.
 - **HTTP Streaming**: Efficient server-side streaming via `Range` headers to support large HQ audio files (FLAC, MP3, WMA, etc.).
 - **Container Orchestration**: Podman/Docker support for PostgreSQL container management via `containerControl.service.ts`.
 
@@ -49,8 +49,9 @@ The library scanner operates in three distinct phases for transparency and relia
 
 ### 5. Audio Analysis Pipeline
 - **ffmpeg**: Decodes 15 seconds of audio from 35% seek point to raw float32 PCM
-- **Essentia.js**: WASM-based audio analysis extracting 7-dimensional feature vectors:
-  - Energy, Brightness (spectral centroid), Percussiveness, Chromagram (pitch), Instrumentalness, Acousticness, Danceability
+- **Essentia.js + Tensorflow**: WASM-based audio analysis extracting 1288-dimensional feature vectors:
+  - **8D Acoustic**: Energy, Brightness, Percussiveness, Chromagram, Instrumentalness, Acousticness, Danceability, Tempo
+  - **1280D EffNet**: Discogs-EffNet embeddings for high-fidelity instrument and production texture identification.
 - **Z-Score Normalization**: Features normalized against rolling library statistics for consistent similarity search
 
 ### 6. File System Integration
@@ -59,10 +60,11 @@ The library scanner operates in three distinct phases for transparency and relia
 - **Background Scanning**: Non-blocking worker threads for deep directory traversal, metadata parsing, and audio analysis.
 
 ### 7. Recommendation Engine
-- **pgvector + HNSW**: Fast approximate nearest neighbor search on 7D acoustic vectors
-- **Macro-Genre Ontology**: 39-genre classification system with LLM-assisted categorization
-- **Infinity Mode**: Real-time playlist generation based on acoustic similarity and user preferences
-- **Hop Costs**: Genre transition penalties for coherent playlist flow
+- **pgvector + HNSW**: Fast approximate nearest neighbor search on **1288D** vectors (8D acoustic + 1280D EffNet)
+- **Two-Pool CTE Query**: CTE-based retrieval that balances **Pool A (Genre-Constrained)** and **Pool B (Serendipitous/Texture-based)** discovery.
+- **MusicBrainz Taxonomy**: Hierarchical genre classification with LCA-based hop-cost calculation
+- **Infinity Mode**: Real-time playlist generation with exponential genre penalty and hybrid 1288D similarity.
+- **LLM Playlists**: Vocabulary-guided Creative Director with **EffNet Imputation** (centroid synthesis from acoustic neighbors).
 
 ### 8. Utilities & Testing
 - **Metadata Parser**: Integrated support for FLAC (Vorbis), MP3 (ID3), M4A, AAC, WMA via `music-metadata`.

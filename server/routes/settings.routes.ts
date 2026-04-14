@@ -12,14 +12,14 @@ router.get('/settings', async (req, res) => {
     const userId = req.user?.userId;
 
     // System-level (server-wide) settings
-    const serverKeys = ['audioAnalysisCpu', 'scannerConcurrency', 'hubGenerationSchedule', 'llmBaseUrl', 'llmApiKey', 'llmModelName', 'genreMatrixLastRun', 'genreMatrixLastResult', 'genreMatrixProgress', 'geniusApiKey', 'lastFmApiKey', 'lastFmSharedSecret', 'musicBrainzEnabled', 'musicBrainzClientId', 'musicBrainzClientSecret', 'musicBrainzConnected', 'providerArtistImage', 'providerArtistBio', 'providerAlbumArt', 'autoFolderWalk'];
+    const serverKeys = ['audioAnalysisCpu', 'scannerConcurrency', 'hubGenerationSchedule', 'llmBaseUrl', 'llmApiKey', 'llmModelName', 'genreMatrixLastRun', 'genreMatrixLastResult', 'genreMatrixProgress', 'geniusApiKey', 'lastFmApiKey', 'lastFmSharedSecret', 'musicBrainzEnabled', 'musicBrainzClientId', 'musicBrainzClientSecret', 'musicBrainzConnected', 'providerArtistImage', 'providerArtistBio', 'providerAlbumArt', 'autoFolderWalk', 'mbdbLastImport'];
     const settings: Record<string, any> = {};
     for (const k of serverKeys) {
       settings[k] = await getSystemSetting(k);
     }
 
     // User-level settings (includes Last.fm which is per-user)
-    const allUserKeys = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'llmPlaylistDiversity', 'genreBlendWeight', 'llmTracksPerPlaylist', 'llmPlaylistCount', 'lastFmScrobbleEnabled', 'lastFmConnected', 'lastFmUsername'];
+    const allUserKeys = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'llmPlaylistDiversity', 'genreBlendWeight', 'genrePenaltyCurve', 'llmTracksPerPlaylist', 'llmPlaylistCount', 'lastFmScrobbleEnabled', 'lastFmConnected', 'lastFmUsername'];
     if (userId) {
       for (const k of allUserKeys) {
         const userVal = await getUserSetting(userId, k);
@@ -31,7 +31,7 @@ router.get('/settings', async (req, res) => {
         }
       }
     } else {
-      const fallbackKeys = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'llmPlaylistDiversity', 'genreBlendWeight', 'llmTracksPerPlaylist', 'llmPlaylistCount'];
+      const fallbackKeys = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'llmPlaylistDiversity', 'genreBlendWeight', 'genrePenaltyCurve', 'llmTracksPerPlaylist', 'llmPlaylistCount'];
       for (const k of fallbackKeys) {
         settings[k] = await getSystemSetting(k);
       }
@@ -49,7 +49,7 @@ router.post('/settings', async (req, res) => {
     const userId = req.user?.userId;
     const settings = req.body;
 
-    const userKeys = new Set(['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'llmPlaylistDiversity', 'genreBlendWeight', 'llmTracksPerPlaylist', 'llmPlaylistCount', 'lastFmScrobbleEnabled']);
+    const userKeys = new Set(['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'llmPlaylistDiversity', 'genreBlendWeight', 'genrePenaltyCurve', 'llmTracksPerPlaylist', 'llmPlaylistCount', 'lastFmScrobbleEnabled']);
     const serverKeys = new Set(['llmBaseUrl', 'llmApiKey', 'llmModelName', 'hubGenerationSchedule', 'audioAnalysisCpu', 'scannerConcurrency', 'geniusApiKey', 'lastFmApiKey', 'lastFmSharedSecret', 'musicBrainzEnabled', 'musicBrainzClientId', 'musicBrainzClientSecret', 'providerArtistImage', 'providerArtistBio', 'providerAlbumArt', 'autoFolderWalk']);
     // Keys that are written by OAuth2 flows server-side, not exposed to frontend
     const protectedKeys = new Set(['musicBrainzAccessToken', 'musicBrainzRefreshToken', 'musicBrainzTokenExpiresAt', 'musicBrainzConnected', 'musicBrainzUsername', 'lastFmSessionKey', 'lastFmUsername', 'lastFmConnected']);
@@ -126,6 +126,60 @@ router.post('/genre-matrix/regenerate', requireAdmin, async (req, res) => {
     console.error('Genre matrix regeneration error:', error);
     res.status(500).json({ error: 'Failed to regenerate genre matrix' });
   }
+});
+
+// ─── ML Model Management ──────────────────────────────────────────────────
+import { getModelStatus, clearAndRedownloadModels, modelProgressEmitter, isDownloadInProgress } from '../services/downloadModels';
+
+// Get model download status
+router.get('/settings/models/status', requireAdmin, async (_req, res) => {
+  try {
+    const models = await getModelStatus();
+    res.json({ models, isDownloading: isDownloadInProgress() });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get model status' });
+  }
+});
+
+// Trigger model redownload
+router.post('/settings/models/download', requireAdmin, async (_req, res) => {
+  try {
+    if (isDownloadInProgress()) {
+      res.json({ status: 'already_downloading' });
+      return;
+    }
+    // Start download in background
+    clearAndRedownloadModels().catch(err => {
+      console.error('[Models] Redownload failed:', err.message);
+    });
+    res.json({ status: 'started' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to start model download' });
+  }
+});
+
+// SSE stream for real-time download progress
+router.get('/settings/models/progress', requireAdmin, (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+  });
+
+  const onProgress = (progress: any) => {
+    res.write(`data: ${JSON.stringify(progress)}\n\n`);
+  };
+
+  modelProgressEmitter.on('progress', onProgress);
+
+  // Send current status immediately
+  getModelStatus().then(models => {
+    res.write(`data: ${JSON.stringify({ type: 'status', models })}\n\n`);
+  }).catch(() => {});
+
+  req.on('close', () => {
+    modelProgressEmitter.off('progress', onProgress);
+  });
 });
 
 export default router;

@@ -28,3 +28,12 @@ coverage/
 
 # Production test files
 test-*.js
+
+# ML Models (downloaded at runtime)
+server/models/*.pb
+server/models/effnet
+server/models/musicnn
+
+# Scratch/temp directories
+scratch/
+server/scratch/

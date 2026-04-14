@@ -24,7 +24,12 @@ Just want the raw commands to get the app running immediately in production?
 
 ```bash
 git clone https://github.com/destroptor-spec/NorthernLights.git
+cd NorthernLights
 npm install
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env
+uv venv --python 3.11 .venv
+uv pip install essentia-tensorflow
 cp .env.example .env
 npm run build
 pm2 start "npx tsx server/index.ts" --name northernlights
@@ -38,7 +43,7 @@ pm2 start "npx tsx server/index.ts" --name northernlights
 - **Modular Settings Architecture**: A fully refactored settings interface deconstructed into domain-specific modules (Account, Library, Database, Playback, AI). Features encapsulated polling and logic instantiation per-tab for optimized performance and a snappier user experience.
 - **Reactive Scanner UI**: Real-time library scanning feedback with reactive phase transitions (Walk → Metadata → Analysis). Monitor exactly what the server is processing with zero UI lag, powered by a dedicated SSE status stream.
 - **Gapless Playback**: Custom `PlaybackManager` supporting HTTP range requests to seamlessly stream high-quality audio files from your server to your browser.
-- **AI-Driven Playlists & Vector Recommendations**: Connect to local or cloud LLMs (like LM Studio or OpenAI) to generate hyper-personalized playlists via natural language. Uses rigorous **21-Dimensional PGVector** similarity searches (**8D acoustic semantic** + 13D Timbre MFCC) and a **Dynamic Hierarchical Genre Taxonomy** imported from **MusicBrainz**. Hierarchical "Hop-Costs" are calculated using Lowest Common Ancestor (LCA) tree traversal for natural sonic progression. Optimized with SQL-side aggregation and BPM-aware rhythm extraction. Fully tunable — adjust playlist diversity, genre coherence, track count, and number of playlists per cycle in Settings.
+- **AI-Driven Playlists & Vector Recommendations**: Connect to local or cloud LLMs (like LM Studio or OpenAI) to generate hyper-personalized playlists via natural language. Uses a hybrid **1288-Dimensional** similarity search (**8D acoustic semantic** + **1280D Discogs-EffNet** embeddings) and a **Dynamic Hierarchical Genre Taxonomy** imported from **MusicBrainz**. Features a **Two-Pool Recommendation Engine** that balances genre-constrained discovery with serendipitous embedding-space "sonic siblings". Hierarchical "Hop-Costs" are calculated using Lowest Common Ancestor (LCA) tree traversal for natural sonic progression. Optimized with SQL-side aggregation and BPM-aware rhythm extraction. Fully tunable — adjust playlist diversity, genre coherence, track count, and number of playlists per cycle in Settings.
 - **MusicBrainz Integration**: Native support for importing the official MusicBrainz genre ontology (~2,000+ genres). Includes a 3-step categorization pipeline (Direct SQL Match, LLM Batch Processing, and KNN/Artist Fallback) to map your library's tags to a standardized global hierarchy with zero token cost for core traversal.
 - **Playlist Management**: Create and delete playlists manually or via AI generation. Drag-and-drop track reordering with persistent queue state. **Pin** AI-generated playlists to protect them from auto-cleanup.
 - **Self-Cleaning Library**: Folder removal automatically purges orphaned album, artist, and genre entities. Includes a safety-net for path-encoding mismatches to ensure no "ghost" tracks or forbidden paths remain in the database.
@@ -86,7 +91,8 @@ pm2 start "npx tsx server/index.ts" --name northernlights
 ### Prerequisites
 - Node.js (v18+ recommended)
 - `npm` or `yarn`
-- **FFmpeg** (v4.0+ recommended) — *Required for on-the-fly transcoding of non-native formats like WMA.*
+- **uv** (Optional but highly recommended) — *A fast Python package manager. Automatically fetched during setup to provide an isolated Python 3.11 environment since the ML models require specific Python versions.*
+- **FFmpeg** (v4.0+ recommended) — *Required for on-the-fly transcoding of non-native formats and ML audio extraction.*
 - **Podman** or **Docker** — *Required for the automatic PostgreSQL database container. The app auto-detects which is available (Podman preferred).*
 
 ### Setup
@@ -102,9 +108,13 @@ pm2 start "npx tsx server/index.ts" --name northernlights
    - No manual setup is required; the server will attempt to connect and start the container automatically on boot. 
    - If the container does not exist, you can create it with a single click in the UI Setup Wizard.
 
-3. **Install dependencies:**
+3. **Install dependencies and ML Environment:**
    ```bash
    npm install
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   source $HOME/.local/bin/env
+   uv venv --python 3.11 .venv
+   uv pip install essentia-tensorflow
    ```
 
 4. **Configure Environment Variables:**

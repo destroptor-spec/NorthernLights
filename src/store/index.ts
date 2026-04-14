@@ -47,6 +47,7 @@ export interface PlayerState {
   // Library State
   library: TrackInfo[];
   libraryFolders: string[];
+  isLibraryLoading: boolean;
   playlists: Playlist[];
 
   // Entity State (for navigation)
@@ -75,6 +76,7 @@ export interface PlayerState {
   playbackState: PlaybackState;
   currentTime: number;
   duration: number;
+  castConnected: boolean;
 
   // Settings State (Persisted)
   volume: number;
@@ -109,6 +111,7 @@ export interface PlayerState {
   artistAmnesiaLimit: number;
   llmPlaylistDiversity: number;
   genreBlendWeight: number;
+  genrePenaltyCurve: number;
   llmTracksPerPlaylist: number;
   llmPlaylistCount: number;
   audioAnalysisCpu: string;
@@ -117,6 +120,8 @@ export interface PlayerState {
   llmBaseUrl: string;
   llmApiKey: string;
   llmModelName: string;
+  llmConnected: boolean; // Live connection status
+  mbdbLastImported: { timestamp: number; duration: number; counts: { genres: number; aliases: number; links: number } } | null;
   genreMatrixLastRun: number | null;
   genreMatrixLastResult: string | null;
   genreMatrixProgress: string | null;
@@ -188,6 +193,7 @@ export interface PlayerState {
   setVolume: (v: number) => void;
   toggleShuffle: () => void;
   cycleRepeat: () => void;
+  setCastConnected: (connected: boolean) => void;
   setTheme: (theme: 'light' | 'dark') => void;
   setLastFmApiKey: (key: string) => void;
   setLastFmSharedSecret: (secret: string) => void;
@@ -202,6 +208,7 @@ export interface PlayerState {
   setProviderArtistImage: (provider: 'lastfm' | 'genius' | 'musicbrainz') => void;
   setProviderArtistBio: (provider: 'lastfm' | 'genius') => void;
   setProviderAlbumArt: (provider: 'lastfm' | 'genius' | 'musicbrainz') => void;
+  setLlmConnected: (connected: boolean) => void;
 
   // Manager sync callbacks
   syncTimeUpdate: (time: number) => void;
@@ -217,6 +224,10 @@ export interface PlayerState {
   toasts: ToastItem[];
   addToast: (message: string, type: ToastType) => void;
   removeToast: (id: number) => void;
+
+  // PWA update state
+  pendingUpdate: boolean;
+  setPendingUpdate: (val: boolean) => void;
 }
 
 // Remove `PlayerPersist` hack as it was unnecessary and broke inference further
@@ -290,10 +301,18 @@ export const usePlayerStore = create<PlayerState>()(
         }
       });
 
+      // Wire up CastManager state changes to the store
+      import('../utils/CastManager').then(({ castManager: cm }) => {
+        cm.addStateChangeListener((castState) => {
+          set({ castConnected: castState === 'CONNECTED' });
+        });
+      });
+
       return {
         // Initial State
         library: [] as TrackInfo[],
         libraryFolders: [] as string[],
+        isLibraryLoading: false as boolean,
         playlists: [] as Playlist[],
         artists: [] as EntityInfo[],
         albums: [] as EntityInfo[],
@@ -314,6 +333,7 @@ export const usePlayerStore = create<PlayerState>()(
         playbackState: 'stopped' as PlaybackState,
         currentTime: 0,
         duration: 0,
+        castConnected: false as boolean,
         volume: 1,
         shuffle: false as boolean,
         repeat: "none" as "none" | "one" | "all",
@@ -347,14 +367,17 @@ export const usePlayerStore = create<PlayerState>()(
         artistAmnesiaLimit: 50,
         llmPlaylistDiversity: 50,
         genreBlendWeight: 50,
+        genrePenaltyCurve: 50,
         llmTracksPerPlaylist: 10,
         llmPlaylistCount: 3,
         audioAnalysisCpu: 'Balanced',
         scannerConcurrency: 'SSD',
         hubGenerationSchedule: 'Daily',
-        llmBaseUrl: 'https://api.openai.com/v1',
+        llmBaseUrl: '',
         llmApiKey: '',
-        llmModelName: 'gpt-4',
+        llmModelName: '',
+        llmConnected: false,
+        mbdbLastImported: null,
         genreMatrixLastRun: null as number | null,
         genreMatrixLastResult: null as string | null,
         genreMatrixProgress: null as string | null,
@@ -469,14 +492,16 @@ export const usePlayerStore = create<PlayerState>()(
                 artistAmnesiaLimit: data.artistAmnesiaLimit !== undefined ? data.artistAmnesiaLimit : 50,
                 llmPlaylistDiversity: data.llmPlaylistDiversity !== undefined ? data.llmPlaylistDiversity : 50,
                 genreBlendWeight: data.genreBlendWeight !== undefined ? data.genreBlendWeight : 50,
+                genrePenaltyCurve: data.genrePenaltyCurve !== undefined ? data.genrePenaltyCurve : 50,
                 llmTracksPerPlaylist: data.llmTracksPerPlaylist !== undefined ? data.llmTracksPerPlaylist : 10,
                 llmPlaylistCount: data.llmPlaylistCount !== undefined ? data.llmPlaylistCount : 3,
                 audioAnalysisCpu: data.audioAnalysisCpu || 'Balanced',
                 scannerConcurrency: data.scannerConcurrency || 'SSD',
                 hubGenerationSchedule: data.hubGenerationSchedule || 'Daily',
-                llmBaseUrl: data.llmBaseUrl || 'https://api.openai.com/v1',
+                llmBaseUrl: data.llmBaseUrl || '',
                 llmApiKey: data.llmApiKey || '',
-                llmModelName: data.llmModelName || 'gpt-4',
+                llmModelName: data.llmModelName || '',
+                mbdbLastImported: data.mbdbLastImport || null,
                 genreMatrixLastRun: data.genreMatrixLastRun || null,
                 genreMatrixLastResult: data.genreMatrixLastResult || null,
                 genreMatrixProgress: data.genreMatrixProgress || null,
@@ -495,6 +520,21 @@ export const usePlayerStore = create<PlayerState>()(
                 providerAlbumArt: data.providerAlbumArt || 'lastfm',
                 autoFolderWalk: data.autoFolderWalk === 'true' || data.autoFolderWalk === true
               });
+
+              // Auto-validate LLM connection if credentials exist
+              if (data.llmBaseUrl && data.llmModelName) {
+                try {
+                  const healthRes = await fetch('/api/health/llm', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...authHeaders },
+                    body: JSON.stringify({ llmBaseUrl: data.llmBaseUrl, llmApiKey: data.llmApiKey || '' })
+                  });
+                  const healthData = await healthRes.json();
+                  set({ llmConnected: healthRes.ok && healthData.status === 'ok' });
+                } catch {
+                  set({ llmConnected: false });
+                }
+              }
             }
           } catch (e) {
             console.error('Failed to load DB settings', e);
@@ -511,6 +551,7 @@ export const usePlayerStore = create<PlayerState>()(
                 artistAmnesiaLimit: state.artistAmnesiaLimit,
                 llmPlaylistDiversity: state.llmPlaylistDiversity,
                 genreBlendWeight: state.genreBlendWeight,
+                genrePenaltyCurve: state.genrePenaltyCurve,
                 llmTracksPerPlaylist: state.llmTracksPerPlaylist,
                 llmPlaylistCount: state.llmPlaylistCount,
                 audioAnalysisCpu: state.audioAnalysisCpu,
@@ -615,6 +656,7 @@ export const usePlayerStore = create<PlayerState>()(
         },
 
         fetchLibraryFromServer: async () => {
+          set({ isLibraryLoading: true });
           try {
             const authHeaders = (get() as any).getAuthHeader();
             const res = await fetch('/api/library', { headers: authHeaders });
@@ -648,11 +690,15 @@ export const usePlayerStore = create<PlayerState>()(
                 libraryFolders: data.directories,
                 artists: data.artists || [],
                 albums: data.albums || [],
-                genres: data.genres || []
+                genres: data.genres || [],
+                isLibraryLoading: false,
               });
+            } else {
+              set({ isLibraryLoading: false });
             }
           } catch (e) {
             console.error("Failed to fetch library from server", e);
+            set({ isLibraryLoading: false });
           }
         },
 
@@ -1076,6 +1122,8 @@ export const usePlayerStore = create<PlayerState>()(
           return { repeat: nextMode };
         }),
 
+        setCastConnected: (connected: boolean) => set({ castConnected: connected }),
+
         syncTimeUpdate: (time: number) => set({ currentTime: time }),
         syncDuration: (duration: number) => set({ duration }),
         syncPlaybackState: (state: PlaybackState) => set({ playbackState: state }),
@@ -1093,6 +1141,7 @@ export const usePlayerStore = create<PlayerState>()(
         setProviderArtistImage: (provider: 'lastfm' | 'genius' | 'musicbrainz') => set({ providerArtistImage: provider }),
         setProviderArtistBio: (provider: 'lastfm' | 'genius') => set({ providerArtistBio: provider }),
         setProviderAlbumArt: (provider: 'lastfm' | 'genius' | 'musicbrainz') => set({ providerAlbumArt: provider }),
+        setLlmConnected: (connected: boolean) => set({ llmConnected: connected }),
 
         recordPlay: (trackId: string) => {
           // Push trackId to the 50-item rolling session history
@@ -1134,6 +1183,11 @@ export const usePlayerStore = create<PlayerState>()(
             toasts: state.toasts.filter(t => t.id !== id)
           }));
         },
+
+        pendingUpdate: false,
+        setPendingUpdate: (val: boolean) => {
+          set({ pendingUpdate: val } as Partial<PlayerState>);
+        },
       };
     },
     {
@@ -1154,6 +1208,7 @@ export const usePlayerStore = create<PlayerState>()(
         musicBrainzClientId: state.musicBrainzClientId,
         musicBrainzClientSecret: state.musicBrainzClientSecret,
         musicBrainzConnected: state.musicBrainzConnected,
+        llmConnected: state.llmConnected,
         providerArtistImage: state.providerArtistImage,
         providerArtistBio: state.providerArtistBio,
         providerAlbumArt: state.providerAlbumArt,

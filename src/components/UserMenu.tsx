@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { usePlayerStore } from '../store/index';
-import { User, LogOut, ChevronDown, Settings } from 'lucide-react';
+import { User, LogOut, ChevronDown, Settings, Download } from 'lucide-react';
+import { usePWAInstall } from '../hooks/usePWAInstall';
 
 interface UserMenuProps {
   onOpenSettings?: () => void;
@@ -10,6 +11,7 @@ interface UserMenuProps {
 export const UserMenu: React.FC<UserMenuProps> = ({ onOpenSettings }) => {
   const currentUser = usePlayerStore(state => state.currentUser);
   const clearAuthToken = usePlayerStore(state => state.clearAuthToken);
+  const { isInstallable, isInstalled, install } = usePWAInstall();
   const [isOpen, setIsOpen] = useState(false);
   const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -66,6 +68,15 @@ export const UserMenu: React.FC<UserMenuProps> = ({ onOpenSettings }) => {
               className="md:hidden w-full px-4 py-2.5 text-left text-sm text-[var(--color-text-secondary)] hover:bg-white/[0.06] transition-colors flex items-center gap-2"
             >
               <Settings className="w-4 h-4" /> Settings
+            </button>
+          )}
+
+          {isInstallable && !isInstalled && (
+            <button
+              onClick={() => { install(); setIsOpen(false); }}
+              className="w-full px-4 py-2.5 text-left text-sm text-[var(--color-text-secondary)] hover:bg-white/[0.06] transition-colors flex items-center gap-2"
+            >
+              <Download className="w-4 h-4" /> Install App
             </button>
           )}
 

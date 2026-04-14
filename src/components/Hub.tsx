@@ -1,164 +1,266 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { usePlayerStore } from '../store';
-import { Play, Pin, PinOff, Disc3 } from 'lucide-react';
+import { Play, Pin, PinOff, Disc3, Sparkles, Wand2, Compass } from 'lucide-react';
 import type { TrackInfo } from '../utils/fileSystem';
 import type { Playlist } from '../store';
 import { useDominantColor } from '../hooks/useDominantColor';
+import { useExternalImage } from '../hooks/useExternalImage';
+import { useInView } from '../hooks/useInView';
+import { fetchGenreImage } from '../utils/externalImagery';
 
 type HubCollection = Partial<Playlist> & { tracks: TrackInfo[] };
 
-// Inner component to handle color extraction per playlist card
-const PlaylistCard: React.FC<{ collection: HubCollection; onPlay: () => void; onPinToggle?: () => void }> = ({ collection, onPlay, onPinToggle }) => {
-  const { theme } = usePlayerStore();
-  const { artUrls, primaryArt, bgColor } = useDominantColor(collection.tracks);
+const HubCardSkeleton: React.FC = () => (
+  <div className="p-4 sm:p-5 bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-[var(--radius)] animate-pulse">
+    <div className="flex items-center gap-2 mb-3">
+      <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg bg-[var(--color-surface-variant)]" />
+      <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg bg-[var(--color-surface-variant)] -ml-2" />
+      <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg bg-[var(--color-surface-variant)] -ml-2" />
+    </div>
+    <div className="h-5 w-3/4 rounded bg-[var(--color-surface-variant)] mb-2" />
+    <div className="h-4 w-1/2 rounded bg-[var(--color-surface-variant)]" />
+  </div>
+);
+
+interface HubCardProps {
+  collection: HubCollection;
+  onPlay: () => void;
+  onPinToggle?: () => void;
+}
+
+const HubCard: React.FC<HubCardProps> = ({ collection, onPlay, onPinToggle }) => {
+  const { artUrls, bgColor } = useDominantColor(collection.tracks);
+  const hasCovers = artUrls.length > 0;
 
   return (
     <div
-      className="relative group overflow-hidden rounded-[2rem] p-6 sm:p-8 w-[80vw] sm:w-[28rem] h-64 sm:h-80 flex-none snap-start flex flex-col justify-between transition-transform duration-300 hover:scale-[1.02] cursor-pointer"
+      className="relative p-4 sm:p-5 cursor-pointer group rounded-[var(--radius)] bg-[var(--glass-bg)] border border-[var(--glass-border)] backdrop-blur-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98] hub-card-animate"
       onClick={onPlay}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onPlay();
+        }
+      }}
+      aria-label={`Play ${collection.title || 'Untitled playlist'}`}
     >
-      {/* Matte Glass Background */}
-      <div 
-        className="absolute inset-0 z-0 transition-all duration-300"
-        style={{
-          backgroundImage: `
-            linear-gradient(135deg, ${bgColor}dd 0%, ${bgColor}44 100%),
-            url("${primaryArt}")
-          `,
-          backgroundSize: 'cover',
-          backgroundPosition: 'center',
-          filter: theme === 'dark' ? 'brightness(0.7) blur(16px)' : 'brightness(1.1) blur(16px)',
-          transform: 'scale(1.1)' // Prevent blurred edges from leaking
-        }}
-      />
-      
-      {/* Additional Glow on Hover */}
-      <div 
-        className="absolute inset-0 z-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 Mix-blend-overlay"
-        style={{
-          backgroundImage: `radial-gradient(circle at 50% 50%, ${bgColor} 0%, transparent 70%)`,
-          filter: 'blur(32px)'
-        }}
+      <div
+        className="absolute inset-0 rounded-[inherit] opacity-[0.04] group-hover:opacity-[0.08] transition-opacity pointer-events-none"
+        style={{ background: `linear-gradient(135deg, ${bgColor}, transparent 60%)` }}
       />
 
-      {/* Content - Z-Index 10 */}
-      <div className="relative z-10 space-y-3 drop-shadow-md">
-        <div className="flex items-start justify-between">
-          <h3 className="text-xl sm:text-3xl font-bold text-white tracking-tight leading-tight">
+      <div className="relative flex items-center mb-3">
+        <div className="flex items-center">
+          {hasCovers ? (
+            artUrls.slice(0, 4).map((url, i) => (
+              <img
+                key={i}
+                src={url}
+                alt=""
+                className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg shadow-sm object-cover transition-transform duration-200 group-hover:translate-x-1"
+                style={{
+                  marginLeft: i > 0 ? '-8px' : 0,
+                  zIndex: 10 - i,
+                }}
+              />
+            ))
+          ) : (
+            <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg bg-[var(--color-surface-variant)] flex items-center justify-center">
+              <Disc3 className="w-6 h-6 text-[var(--color-text-muted)] opacity-40" />
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="relative z-10">
+        <div className="flex items-start justify-between gap-2">
+          <h3 className="font-semibold text-base sm:text-lg text-[var(--color-text-primary)] line-clamp-1 group-hover:text-[var(--color-primary)] transition-colors">
             {collection.title || 'Untitled Playlist'}
           </h3>
           {onPinToggle && (
             <button
-              onClick={(e) => { e.stopPropagation(); onPinToggle(); }}
-              className={`p-2 rounded-full transition-all duration-200 ${collection.pinned ? 'bg-white/30 text-white' : 'bg-white/10 text-white/50 opacity-0 group-hover:opacity-100'} hover:bg-white/30 hover:text-white`}
-              title={collection.pinned ? 'Unpin' : 'Pin'}
+              onClick={(e) => {
+                e.stopPropagation();
+                onPinToggle();
+              }}
+              className="min-w-11 min-h-11 flex items-center justify-center rounded-lg p-2 -m-2 hover:bg-white/10 dark:hover:bg-white/5 transition-colors"
+              aria-label={collection.pinned ? 'Unpin playlist' : 'Pin playlist'}
             >
-              {collection.pinned ? <Pin className="w-4 h-4" /> : <PinOff className="w-4 h-4" />}
+              {collection.pinned ? (
+                <Pin className="w-4 h-4 text-[var(--color-primary)]" />
+              ) : (
+                <PinOff className="w-4 h-4 text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity" />
+              )}
             </button>
           )}
         </div>
+
         {collection.description && (
-          <p className="text-white/80 text-sm line-clamp-3 leading-relaxed max-w-[85%]">
+          <p className="text-sm text-[var(--color-text-secondary)] line-clamp-2 mt-1">
             {collection.description}
           </p>
         )}
+
+        <p className="text-xs text-[var(--color-text-muted)] mt-2">
+          {collection.tracks.length} {collection.tracks.length === 1 ? 'track' : 'tracks'}
+        </p>
       </div>
 
-      <div className="relative z-10 mt-auto pt-6 flex items-end justify-between">
-        <button 
-          onClick={(e) => { e.stopPropagation(); onPlay(); }}
-          className="hidden sm:flex px-6 py-3 rounded-full bg-white/20 hover:bg-white/30 border border-white/30 backdrop-blur-md text-white font-medium items-center space-x-2 transition-all duration-300 hover:shadow-[0_0_20px_rgba(255,255,255,0.3)] group/btn"
-        >
-          <span>Start Listening</span>
-        </button>
-        
-        {/* Collage of covers */}
-        <div className="flex -space-x-3 drop-shadow-lg">
-          {artUrls.map((url, i) => (
-             <img 
-               key={i} 
-               src={url} 
-               alt="" 
-               className={`w-12 h-12 rounded-full border-2 border-white/20 object-cover ${i === 0 ? 'z-40' : i === 1 ? 'z-30' : i === 2 ? 'z-20' : 'z-10'}`} 
-             />
-          ))}
-        </div>
-      </div>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onPlay();
+        }}
+        className="absolute bottom-4 right-4 w-11 h-11 rounded-full bg-[var(--color-primary)] text-white flex items-center justify-center shadow-lg shadow-emerald-500/30 opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 group-focus-within:opacity-100 group-focus-within:translate-y-0 transition-all duration-200 hover:bg-[var(--color-primary-dark)] hover:scale-110 active:scale-95"
+        aria-label="Play"
+      >
+        <Play className="w-5 h-5 ml-0.5" fill="currentColor" />
+      </button>
     </div>
   );
 };
 
-// Inner component for Non-LLM Collections (Cascading Cover-Flow)
-const NonLlmPlaylistCard: React.FC<{ collection: HubCollection; onPlay: () => void }> = ({ collection, onPlay }) => {
-  const { theme } = usePlayerStore();
-  const { artUrls, primaryArt, bgColor } = useDominantColor(collection.tracks);
+interface DiscoverCardProps {
+  collection: HubCollection;
+  onPlay: () => void;
+}
+
+const DiscoverCard: React.FC<DiscoverCardProps> = ({ collection, onPlay }) => {
+  const { artUrls } = useDominantColor(collection.tracks);
+  const covers = artUrls.slice(0, 4);
+  const hasCovers = covers.length > 0;
 
   return (
     <div
-      className="relative group overflow-hidden rounded-[2rem] p-6 sm:p-8 w-[80vw] sm:w-[28rem] h-64 sm:h-80 flex-none snap-start flex flex-col transition-transform duration-300 hover:scale-[1.02] bg-[var(--glass-bg)] border border-[var(--glass-border)] shadow-[var(--shadow-md)] cursor-pointer"
+      className="relative flex flex-col sm:flex-row gap-4 p-4 cursor-pointer group rounded-[var(--radius)] bg-[var(--glass-bg)] border border-[var(--glass-border)] backdrop-blur-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98] hub-card-animate"
       onClick={onPlay}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onPlay();
+        }
+      }}
+      aria-label={`Play ${collection.title || 'Untitled playlist'}`}
     >
-      
-      {/* Background Soft Glow */}
-      <div 
-        className="absolute inset-0 z-0 opacity-10 pointer-events-none transition-opacity duration-500 group-hover:opacity-20 mix-blend-screen"
-        style={{
-          background: `radial-gradient(circle at 0% 50%, ${bgColor}, transparent 80%)`,
-        }}
-      />
-
-      {/* Cascading Covers (Left aligned) */}
-      <div className="relative z-10 flex items-center h-[120px] sm:h-[140px] w-full mb-4">
-        {artUrls.map((url, i) => {
-           const leftOffset = i * 60;
-           return (
-             <div 
-               key={i} 
-               className="absolute rounded-2xl overflow-hidden shadow-2xl border border-white/20 transition-all duration-500 ease-out group-hover:translate-x-3 group-hover:rotate-1 hub-discover-cover"
-               style={{
-                 left: `${leftOffset}px`,
-                 zIndex: 10 - i,
-                 transformOrigin: 'left center',
-               }}
-             >
-                <img src={url} alt="" className="w-full h-full object-cover" />
-             </div>
-           );
-        })}
-        {artUrls.length === 0 && (
-          <div className="w-[80px] h-[80px] sm:w-[120px] sm:h-[120px] rounded-2xl bg-[var(--color-surface)] border border-[var(--glass-border)] flex items-center justify-center absolute z-10">
-            <Disc3 size={48} className="text-[var(--color-text-muted)] opacity-30" />
+      {/* Left: 2x2 Cover Grid */}
+      <div className="grid grid-cols-2 gap-1.5 shrink-0 w-full sm:w-36 lg:w-40">
+        {hasCovers ? (
+          covers.map((url, i) => (
+            <img
+              key={i}
+              src={url}
+              alt=""
+              className="aspect-square rounded-lg object-cover shadow-sm"
+            />
+          ))
+        ) : (
+          <div className="col-span-2 aspect-square rounded-lg bg-[var(--color-surface-variant)] flex items-center justify-center">
+            <Disc3 className="w-8 h-8 text-[var(--color-text-muted)] opacity-40" />
           </div>
         )}
       </div>
 
-      {/* Content */}
-      <div className="relative z-10 flex flex-col items-start gap-1 flex-1 justify-end pb-2">
-        <h3 className="text-xl sm:text-2xl font-bold tracking-tight text-[var(--color-primary)] drop-shadow-sm">
+      {/* Right: Content */}
+      <div className="flex flex-col justify-center min-w-0">
+        <h3 className="font-semibold text-base sm:text-lg text-[var(--color-text-primary)] line-clamp-1 group-hover:text-[var(--color-primary)] transition-colors">
           {collection.title || 'Untitled Playlist'}
         </h3>
         {collection.description && (
-          <p className="text-[var(--color-text-secondary)] text-xs sm:text-sm line-clamp-2 mb-2 font-medium">
+          <p className="text-sm text-[var(--color-text-secondary)] line-clamp-2 mt-1">
             {collection.description}
           </p>
         )}
+        <p className="text-xs text-[var(--color-text-muted)] mt-2">
+          {collection.tracks.length} {collection.tracks.length === 1 ? 'track' : 'tracks'}
+        </p>
       </div>
 
-      <div className="relative z-10 pt-2 hidden sm:flex items-center mt-auto border-t border-[var(--glass-border)]">
-        <button 
-          onClick={(e) => { e.stopPropagation(); onPlay(); }}
-          className="mt-4 px-6 py-2.5 rounded-full bg-[var(--color-primary)] hover:brightness-110 text-white font-semibold shadow-lg shadow-[var(--color-primary)]/30 transition-all duration-300 transform active:scale-95 inline-flex items-center gap-2"
-        >
-          <Play className="w-4 h-4" />
-          <span>{collection.title === 'Up next' || collection.title === 'Jump back in' ? 'Resume' : 'Play'}</span>
-        </button>
-      </div>
+      {/* Floating Play Button (hover reveal) */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onPlay();
+        }}
+        className="absolute bottom-4 right-4 w-11 h-11 rounded-full bg-[var(--color-primary)] text-white flex items-center justify-center shadow-lg shadow-emerald-500/30 opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 group-focus-within:opacity-100 group-focus-within:translate-y-0 transition-all duration-200 hover:bg-[var(--color-primary-dark)] hover:scale-110 active:scale-95"
+        aria-label="Play"
+      >
+        <Play className="w-5 h-5 ml-0.5" fill="currentColor" />
+      </button>
     </div>
   );
 };
 
+interface ExploreCardProps {
+  genre: string;
+  trackCount: number;
+  entity?: { id: string; name?: string };
+}
+
+const ExploreCard: React.FC<ExploreCardProps> = ({ genre, trackCount, entity }) => {
+  const [ref, inView] = useInView();
+  const { imageUrl } = useExternalImage(() => fetchGenreImage(genre), [genre], { enabled: inView });
+
+  const CardContent = (
+    <div
+      ref={ref}
+      className="relative overflow-hidden rounded-[var(--radius)] cursor-pointer group aspect-[2/1] sm:aspect-[3/2] hub-card-animate"
+    >
+      {imageUrl ? (
+        <div className="absolute inset-0 z-0">
+          <img
+            src={imageUrl}
+            alt={genre}
+            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-black/10" />
+        </div>
+      ) : (
+        <div className="absolute inset-0 z-0 bg-[var(--color-surface)]">
+          <div className="absolute inset-0 bg-gradient-to-br from-[var(--color-primary)]/[0.15] to-transparent" />
+        </div>
+      )}
+
+      <div className="relative z-10 h-full flex flex-col justify-end p-4 sm:p-5">
+        <h3
+          className={`font-bold text-xl sm:text-2xl tracking-tight leading-tight transition-colors duration-200 ${
+            imageUrl
+              ? 'text-white drop-shadow-lg'
+              : 'text-[var(--color-text-primary)] group-hover:text-[var(--color-primary)]'
+          }`}
+        >
+          {genre}
+        </h3>
+        <p
+          className={`text-xs mt-1 ${
+            imageUrl
+              ? 'text-white/70'
+              : 'text-[var(--color-text-muted)]'
+          }`}
+        >
+          {trackCount} {trackCount === 1 ? 'track' : 'tracks'}
+        </p>
+      </div>
+    </div>
+  );
+
+  if (entity) {
+    return (
+      <Link to={`/library/genre/${entity.id}`} className="no-underline">
+        {CardContent}
+      </Link>
+    );
+  }
+
+  return CardContent;
+};
+
 export const Hub: React.FC = () => {
-  const { library, setPlaylist, getAuthHeader, togglePin } = usePlayerStore();
+  const { library, setPlaylist, getAuthHeader, togglePin, currentUser, genres: genreEntities } = usePlayerStore();
   const [collections, setCollections] = useState<HubCollection[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -166,22 +268,22 @@ export const Hub: React.FC = () => {
   const fetchHubData = async () => {
     setIsLoading(true);
     try {
-      // GET-only: reads engine-driven + cached LLM playlists from the server.
-      // LLM generation is triggered separately after scans and on a 4h schedule.
       const res = await fetch('/api/hub', { headers: getAuthHeader() });
-      
+
       if (res.ok) {
         const data = await res.json();
-        const mappedCollections = data.collections.map((col: any) => ({
-           ...col,
-           tracks: col.tracks.map((t: any) => {
-             // For LLM playlists, fall back to the raw server track data
-             // so they still render even if library lookup fails
-             const libTrack = library.find(lt => lt.id === t.id);
-             return libTrack || (col.isLlmGenerated ? t : null);
-           }).filter(Boolean)
-        })).filter((col: any) => col.tracks.length > 0);
-        
+        const mappedCollections = data.collections
+          .map((col: any) => ({
+            ...col,
+            tracks: col.tracks
+              .map((t: any) => {
+                const libTrack = library.find((lt) => lt.id === t.id);
+                return libTrack || (col.isLlmGenerated ? t : null);
+              })
+              .filter(Boolean),
+          }))
+          .filter((col: any) => col.tracks.length > 0);
+
         setCollections(mappedCollections);
       }
     } catch (e) {
@@ -204,7 +306,7 @@ export const Hub: React.FC = () => {
       await fetch('/api/hub/regenerate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders },
-        body: JSON.stringify({ force: true })
+        body: JSON.stringify({ force: true }),
       });
       await fetchHubData();
     } catch (e) {
@@ -216,91 +318,171 @@ export const Hub: React.FC = () => {
 
   const handleTogglePin = (collectionId: string, pinned: boolean) => {
     togglePin(collectionId, pinned);
-    setCollections(prev => prev.map(c => c.id === collectionId ? { ...c, pinned } : c));
+    setCollections((prev) =>
+      prev.map((c) => (c.id === collectionId ? { ...c, pinned } : c))
+    );
   };
 
   const handlePlayCollection = (tracks: TrackInfo[]) => {
     setPlaylist(tracks, 0);
   };
 
+  const aiPlaylists = collections.filter((c) => c.isLlmGenerated);
+  const otherCollections = collections.filter((c) => !c.isLlmGenerated);
+
+  // Derive top 6 genres by track count
+  const topGenres = useMemo(() => {
+    const genreCounts = new Map<string, number>();
+    library.forEach((track) => {
+      const genre = (track as any).genre;
+      if (genre) {
+        genreCounts.set(genre, (genreCounts.get(genre) || 0) + 1);
+      }
+    });
+
+    return Array.from(genreCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([genre, count]) => ({
+        genre,
+        count,
+        entity: genreEntities.find((g: any) => g.name?.toLowerCase() === genre.toLowerCase()),
+      }));
+  }, [library, genreEntities]);
+
   if (isLoading) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[var(--color-primary)]"></div>
+      <div className="page-container space-y-8">
+        <header>
+          <div className="h-8 w-24 rounded bg-[var(--color-surface-variant)] animate-pulse" />
+          <div className="h-4 w-48 rounded bg-[var(--color-surface-variant)] animate-pulse mt-2" />
+        </header>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5 lg:gap-6">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <HubCardSkeleton key={i} />
+          ))}
+        </div>
       </div>
     );
   }
 
-  // Separate AI Playlists from User Playlists (or Up Next queues)
-  const aiPlaylists = collections.filter(c => c.isLlmGenerated);
-  const otherCollections = collections.filter(c => !c.isLlmGenerated);
-
   return (
-    <div className="page-container space-y-12">
-      <h1 className="text-4xl font-bold tracking-tight text-[var(--color-text-primary)]">Home</h1>
-      
+    <div className="page-container space-y-8">
+      <header className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-[var(--color-text-primary)]">
+            Home
+          </h1>
+          <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+            Your personalized music experience
+          </p>
+        </div>
+        {aiPlaylists.length > 0 && (
+          <button
+            onClick={handleGeneratePlaylists}
+            disabled={isGenerating}
+            className="btn btn-ghost btn-sm"
+            aria-label="Refresh AI playlists"
+          >
+            <Wand2 className="w-4 h-4" />
+            <span className="hidden sm:inline">Refresh</span>
+          </button>
+        )}
+      </header>
+
       {aiPlaylists.length > 0 && (
-        <section className="space-y-6">
-          <div>
-            <h2 className="text-2xl font-bold text-[var(--color-text-primary)]">For You</h2>
-            <p className="text-[var(--color-text-secondary)]">Curated intelligently for your current vibe.</p>
-          </div>
-          <div className="flex overflow-x-auto pb-6 space-x-6 hide-scrollbar snap-x snap-mandatory">
-            {aiPlaylists.map((collection, idx) => (
-               <PlaylistCard 
-                 key={collection.id || idx} 
-                 collection={collection} 
-                 onPlay={() => handlePlayCollection(collection.tracks)} 
-                 onPinToggle={() => collection.id && handleTogglePin(collection.id, !collection.pinned)}
-               />
+        <section>
+          <h2 className="text-xl sm:text-2xl font-bold text-[var(--color-text-primary)] mb-1">
+            For you, {currentUser?.username || 'there'}
+          </h2>
+          <p className="text-sm text-[var(--color-text-secondary)] mb-5">
+            Curated intelligently for your current vibe
+          </p>
+          <div className="flex sm:grid sm:grid-cols-2 lg:grid-cols-3 overflow-x-auto snap-x snap-mandatory gap-4 sm:gap-5 lg:gap-6 hub-scroll-mobile">
+            {aiPlaylists.map((collection) => (
+              <HubCard
+                key={collection.id}
+                collection={collection}
+                onPlay={() => handlePlayCollection(collection.tracks)}
+                onPinToggle={() =>
+                  collection.id && handleTogglePin(collection.id, !collection.pinned)
+                }
+              />
             ))}
           </div>
         </section>
       )}
 
       {otherCollections.length > 0 && (
-         <section className="space-y-6">
-           <div>
-             <h2 className="text-2xl font-bold text-[var(--color-text-primary)]">Discover</h2>
-           </div>
-           <div className="flex overflow-x-auto pb-6 space-x-6 hide-scrollbar snap-x snap-mandatory">
-             {otherCollections.map((collection, idx) => (
-                <NonLlmPlaylistCard 
-                  key={collection.id || idx} 
-                  collection={collection} 
-                  onPlay={() => handlePlayCollection(collection.tracks)} 
-                />
-             ))}
-           </div>
-         </section>
+        <section>
+          <h2 className="text-lg font-semibold text-[var(--color-text-secondary)] mb-4">
+            Discover
+          </h2>
+          <div className="flex flex-col gap-4">
+            {otherCollections.map((collection) => (
+              <DiscoverCard
+                key={collection.id}
+                collection={collection}
+                onPlay={() => handlePlayCollection(collection.tracks)}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {topGenres.length > 0 && (
+        <section>
+          <div className="flex items-center gap-2 mb-4">
+            <Compass className="w-5 h-5 text-[var(--color-text-muted)]" />
+            <h2 className="text-lg font-semibold text-[var(--color-text-secondary)]">
+              Explore
+            </h2>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
+            {topGenres.map(({ genre, count, entity }) => (
+              <ExploreCard
+                key={genre}
+                genre={genre}
+                trackCount={count}
+                entity={entity}
+              />
+            ))}
+          </div>
+        </section>
       )}
 
       {aiPlaylists.length === 0 && (
-         <div className="flex flex-col items-center justify-center text-[var(--color-text-secondary)] py-16">
-           <p className="mb-4 text-lg font-semibold text-[var(--color-text-primary)]">No AI Playlists Yet</p>
-           <p className="text-sm mb-8 text-center max-w-md">
-             Connect an LLM (e.g. LM Studio) in <strong>Settings → Providers</strong>, then generate your first personalised playlists.
-           </p>
-           
-           <button 
-             onClick={handleGeneratePlaylists}
-             disabled={isGenerating || library.length === 0}
-             className="px-8 py-3 rounded-full bg-[var(--color-primary)] hover:brightness-110 text-white font-semibold shadow-lg shadow-[var(--color-primary)]/30 transition-all duration-300 transform active:scale-95 inline-flex items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
-           >
-             {isGenerating ? (
-               <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-             ) : (
-               <span className="text-xl leading-none -mt-1">✨</span>
-             )}
-             <span>{isGenerating ? 'Generating Playlists...' : 'Generate AI Playlists Now'}</span>
-           </button>
-           
-           {library.length === 0 && (
-             <p className="text-xs text-[var(--color-error)] mt-4 font-medium backdrop-blur-md bg-[var(--color-surface)] px-4 py-2 rounded-full border border-[var(--glass-border)]">
-               You must scan music into your library first
-             </p>
-           )}
-         </div>
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <div className="w-16 h-16 rounded-full bg-[var(--color-surface-variant)] flex items-center justify-center mb-4">
+            <Sparkles className="w-8 h-8 text-[var(--color-primary)]" />
+          </div>
+          <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-2">
+            No AI Playlists Yet
+          </h3>
+          <p className="text-sm text-[var(--color-text-secondary)] max-w-sm mb-6">
+            Connect an LLM in{' '}
+            <strong className="text-[var(--color-text-primary)]">Settings → Providers</strong>,
+            then generate your first personalized playlists.
+          </p>
+          <button
+            onClick={handleGeneratePlaylists}
+            disabled={isGenerating || library.length === 0}
+            className="btn btn-primary btn-lg"
+            aria-label="Generate AI playlists"
+          >
+            {isGenerating ? (
+              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            ) : (
+              <Sparkles className="w-5 h-5" />
+            )}
+            <span>{isGenerating ? 'Generating...' : 'Generate Playlists'}</span>
+          </button>
+          {library.length === 0 && (
+            <p className="text-xs text-[var(--color-error)] mt-4 font-medium">
+              Scan music into your library first
+            </p>
+          )}
+        </div>
       )}
     </div>
   );

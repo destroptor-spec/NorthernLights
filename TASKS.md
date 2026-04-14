@@ -52,11 +52,34 @@ The core music player architecture has transitioned to a client-server model usi
   - **Reactive Scanner UI Implementation**: Migrated the global scanning indicator to use reactive Zustand subscriptions, enabling real-time phase and progress updates without root-level re-render dependencies.
   - **Audio Analysis Consistency & Optimization**: Finalized the v1.0.0 audio stack with SQL-side vector stats, MFCC Hanning pre-computation, and robust NaN/dimension handling for the 21D recommendation engine.
   - **Library Removal & Orphan Cleanup Stability**: Hardened folder removal logic by implementing `purgeOrphanedTracks` (safety net for path-encoding mismatches) and `purgeOrphanedEntities` (automatic cleanup of albums/artists/genres with zero tracks). Resolved 403 Forbidden errors for art and stream caused by stale tracks referencing removed directories.
+- [x] **V18.1: Genre Pipeline Hardening & Tuneable Penalty System** (2026-04-10):
+  - **CTE Traversal Direction Fix**: Reversed `genre_tree_paths` materialized view CTE from entity1→entity0 to entity0→entity1 to match inverted MBDB link data. Rock, country, folk and other root genres now correctly appear in the tree.
+  - **Vocabulary-Guided LLM Classification**: `categorizeSubGenres` now accepts a vocabulary array; LLM constrained to MBDB genre names. Library-scoped: < 300 genres uses actual library genres, ≥ 300 uses MBDB hierarchy. Both `generateHubConcepts` and `generateCustomPlaylist` prompts now receive vocabulary.
+  - **Expanded Tier 2 SQL**: 6 UNION ALL branches with standalone genre parent fallback, GIN-indexed fuzzy matching (`%` operator), parenthesized `LIMIT 1` branches.
+  - **KNN 8D Fallback**: `getGenrePathFromKNN` works with 8D-only tracks when MFCC is missing.
+  - **Batch Tier 3 Feature Fetch**: Single query instead of N sequential queries.
+  - **NaN/Invalid Vector Guards**: `isFinite()` checks on all vector values in both genreMatrix and database layers.
+  - **Hop Cost Tiers Updated**: Deep sibling 0.05, cousin 0.20, share root 0.50, alien 2.0, unknown 2.0.
+  - **Exponential Penalty Formula**: `distance * Math.pow(1 + hopCost, weight * curve)` replacing additive model.
+  - **`genrePenaltyCurve` Setting**: New user slider (0-100, default 50) with live penalty preview table in PlaybackTab.
+  - **Infinity Mode Multiplicative**: Switched from additive to multiplicative penalty for consistency.
+  - **Negative Space Prompting**: `banned_genres` in LLM schemas — full-path veto (banning "dance" catches entire `electronic.dance.*` subtree). `genreMatrixService.getGenrePath()` exposed for path lookup.
+  - **Timbre-Weighted MFCC**: 3× MFCC weight for electronic/synthetic playlists (acousticness < 0.3).
+  - **MFCC Imputation Safeguard**: Strict distance threshold (< 0.25) and minimum 5 seeds. Prevents timbre poisoning from wrong-genre centroids.
+  - **SQL-Level Acousticness Dealbreaker**: +5.0 distance penalty for acoustic tracks in electronic playlists.
+  - **Hard Vector Clamping**: SQL WHERE-level exclusions for energy/danceability bounds. Chill playlists ban high-energy tracks; high-energy playlists ban ambient tracks.
+  - **Explicit `::vector` Casts**: All 17 pgvector `<->` parameters use explicit type casts. Resolved `vector <-> numeric` operator errors.
+  - **LLM Timeout**: Increased from 45s to 120s for local LLMs.
+  - **Custom Playlist 8D Fix**: Vector dimension mismatch (7D→8D) resolved.
+  - **Documentation Overhaul**: Updated all docs/ files to reflect 21D engine, MBDB taxonomy, and penalty system.
 
 
 ---
 
 ## Technical Debt & Remaining Items
+
+### Architecture & Refactoring
+- [ ] Refactor `LibraryTab.tsx` and other monolithic UI components to isolate API layers into a `features/api` structure and adopt `React.Suspense` driven fetching according to the frontend-dev-guidelines.
 
 ### Core Features
 - [x] Create App entrypoint - wire up store initialization from IndexedDB on load

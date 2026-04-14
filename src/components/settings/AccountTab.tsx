@@ -12,6 +12,13 @@ export const AccountTab: React.FC<AccountTabProps> = ({ onClose }) => {
     const currentUser = usePlayerStore(state => state.currentUser);
     const getAuthHeader = usePlayerStore(state => state.getAuthHeader);
     const clearAuthToken = usePlayerStore(state => state.clearAuthToken);
+    const authToken = usePlayerStore(state => state.authToken);
+    const lastFmConnected = usePlayerStore(state => state.lastFmConnected);
+    const lastFmUsername = usePlayerStore(state => state.lastFmUsername);
+    const lastFmScrobbleEnabled = usePlayerStore(state => state.lastFmScrobbleEnabled);
+    const setLastFmConnected = usePlayerStore(state => state.setLastFmConnected);
+    const setLastFmUsername = usePlayerStore(state => state.setLastFmUsername);
+    const setLastFmScrobbleEnabled = usePlayerStore(state => state.setLastFmScrobbleEnabled);
     
     const { addToast } = useToast();
     
@@ -87,9 +94,61 @@ export const AccountTab: React.FC<AccountTabProps> = ({ onClose }) => {
                 </form>
             </div>
 
+            {/* Last.fm User Integration */}
+            <div className="mt-6 bg-[var(--color-surface)] rounded-2xl p-5 border border-[var(--glass-border)]">
+                <h4 className="font-semibold text-[var(--color-text-primary)] mb-1">Last.fm Scrobbling</h4>
+                <p className="text-sm text-[var(--color-text-muted)] mb-4">Link your personal Last.fm account to automatically scrobble your played tracks from Aurora.</p>
+                {lastFmConnected ? (
+                    <div className="flex flex-col gap-4">
+                        <div className="flex items-center justify-between">
+                            <span className="text-green-500 font-semibold text-sm drop-shadow-sm">✓ Connected as {lastFmUsername || 'Last.fm User'}</span>
+                            <button onClick={async () => { 
+                                try { 
+                                    const res = await fetch('/api/providers/lastfm/disconnect', { method: 'POST', headers: getAuthHeader() }); 
+                                    const data = await res.json(); 
+                                    if (!res.ok || data.error) { 
+                                        showToast(data.error || 'Failed to disconnect', 'error'); 
+                                    } else { 
+                                        setLastFmConnected(false); 
+                                        setLastFmUsername(''); 
+                                        showToast('Last.fm account disconnected', 'success');
+                                    } 
+                                } catch (e: any) { 
+                                    showToast(e?.message || 'Network error', 'error'); 
+                                } 
+                            }} className="btn btn-ghost btn-sm">Disconnect</button>
+                        </div>
+                        <div className="border-t border-[var(--glass-border)] pt-4 flex items-center justify-between">
+                            <label className="text-sm font-medium text-[var(--color-text-primary)]">Auto-scrobble played tracks</label>
+                            <button onClick={() => setLastFmScrobbleEnabled(!lastFmScrobbleEnabled)} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${lastFmScrobbleEnabled ? 'bg-[#d51007]' : 'bg-gray-200 dark:bg-[var(--color-bg-tertiary)]'}`}>
+                                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow-sm ${lastFmScrobbleEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                            </button>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="flex items-center justify-between">
+                        <p className="text-sm text-[var(--color-text-secondary)]">Not connected.</p>
+                        <button 
+                            onClick={async () => { 
+                                try { 
+                                    const tokenParam = authToken ? `?token=${authToken}` : ''; 
+                                    window.location.href = `/api/providers/lastfm/authorize${tokenParam}`; 
+                                } catch (e: any) { 
+                                    showToast(e?.message || 'Network error', 'error'); 
+                                } 
+                            }} 
+                            className="btn btn-primary btn-sm flex items-center gap-1.5"
+                        >
+                            <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path d="M11.96 0C5.36 0 0 5.36 0 11.96c0 6.6 5.36 11.96 11.96 11.96 6.6 0 11.96-5.36 11.96-11.96C23.92 5.36 18.56 0 11.96 0zm-2.07 16.71c-2.18 0-3.95-1.77-3.95-3.95 0-2.18 1.77-3.95 3.95-3.95 2.18 0 3.95 1.77 3.95 3.95 0 2.18-1.77 3.95-3.95 3.95zM17 12.76c0 .87-.71 1.58-1.58 1.58-.87 0-1.58-.71-1.58-1.58 0-.87.71-1.58 1.58-1.58.87 0 1.58.71 1.58 1.58zm3.64-5.39c-1.32 0-2.4-1.08-2.4-2.4 0-1.32 1.08-2.4 2.4-2.4 1.32 0 2.4 1.08 2.4 2.4.01 1.32-1.07 2.4-2.39 2.4" /></svg>
+                            Connect to Last.fm
+                        </button>
+                    </div>
+                )}
+            </div>
+
             {/* Delete Account */}
             <div className="mt-6 bg-red-500/5 rounded-2xl p-5 border border-red-500/20">
-                <h4 className="font-semibold text-red-400 mb-2">Danger Zone</h4>
+                <h4 className="font-semibold text-red-600 dark:text-red-400 mb-2">Danger Zone</h4>
                 <p className="text-sm text-[var(--color-text-muted)] mb-4">Permanently delete your account and all associated data. This cannot be undone.</p>
                 <button
                     onClick={() => {

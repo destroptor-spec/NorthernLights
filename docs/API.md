@@ -455,7 +455,7 @@ Get the user's AI-generated hub collections.
         "section": "Time-of-Day",
         "title": "Morning Coffee",
         "description": "Warm acoustic tracks for your morning.",
-        "target_vector": [0.3, 0.6, 0.2, 0.8, 0.4, 0.9, 0.4]
+        "target_vector": [0.3, 0.6, 0.2, 0.8, 0.4, 0.9, 0.4, 0.5]
       }
     ]
   }

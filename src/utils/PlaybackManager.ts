@@ -12,6 +12,8 @@ class PlaybackManager {
     private currentTitle: string | null = null;
     private currentArtist: string | null = null;
     private currentArtUrl: string | null = null;
+    private currentAlbum: string | null = null;
+    private currentFormat: string | null = null;
 
     // Store callbacks for Zustand to update its state
     private onTimeUpdateCallback?: (time: number) => void;
@@ -98,6 +100,8 @@ class PlaybackManager {
         this.currentTitle = title || 'Unknown Title';
         this.currentArtist = artist || 'Unknown Artist';
         this.currentArtUrl = artUrl || null;
+        this.currentAlbum = album || null;
+        this.currentFormat = format || null;
 
         try {
             if (castManager.isConnected()) {
@@ -216,6 +220,22 @@ class PlaybackManager {
 
     public getCurrentTime(): number {
         return this.audio.currentTime || 0;
+    }
+
+    public getCurrentTrackInfo() {
+        if (!this.currentUrl) return null;
+        return {
+            url: this.currentUrl,
+            title: this.currentTitle || 'Unknown Title',
+            artist: this.currentArtist || 'Unknown Artist',
+            artUrl: this.currentArtUrl || undefined,
+            album: this.currentAlbum || undefined,
+            format: this.currentFormat || undefined,
+        };
+    }
+
+    public getLocalAudioElement(): HTMLAudioElement {
+        return this.audio;
     }
 
     public destroy(): void {

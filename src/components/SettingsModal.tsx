@@ -11,6 +11,7 @@ import { SystemTab } from './settings/SystemTab';
 import { GenAiTab } from './settings/GenAiTab';
 import { GenreMatrixTab } from './settings/GenreMatrixTab';
 import { DatabaseTab } from './settings/DatabaseTab';
+import { MetadataTab } from './settings/MetadataTab';
 import { AdminDashboard } from './settings/AdminDashboard';
 
 interface SettingsModalProps {
@@ -52,6 +53,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         { id: 'My Account', label: 'My Account', category: 'User Settings' },
         { id: 'Appearance', label: 'Appearance', category: 'App Settings' },
         { id: 'Library', label: 'Library', category: 'App Settings' },
+        { id: 'Metadata', label: 'Metadata', category: 'App Settings' },
         { id: 'Playback', label: 'Playback', category: 'App Settings' },
         ...(isAdmin ? [
             { id: 'System', label: 'System', category: 'Server Settings' },
@@ -68,9 +70,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         
         // Also search within common setting labels for this tab
         if (tab.id === 'Appearance') return 'light dark theme'.includes(query);
-        if (tab.id === 'Library') return 'folder path scan library lastfm scrobble connect genius musicbrainz'.includes(query);
+        if (tab.id === 'Library') return 'folder path scan library stats analysis'.includes(query);
+        if (tab.id === 'Metadata') return 'genius musicbrainz lastfm provider album bio image api mapping keys'.includes(query);
         if (tab.id === 'Playback') return 'infinity discovery genre artist amnesia matrix llm playlist diversity blend tracks wander'.includes(query);
-        if (tab.id === 'System') return 'cpu audio analysis scanner concurrency hub schedule'.includes(query);
+        if (tab.id === 'System') return 'cpu audio analysis hub schedule auto-start'.includes(query);
         if (tab.id === 'GenAI') return 'llm api host model key'.includes(query);
         if (tab.id === 'Genre Matrix') return 'genre matrix transition hop cost mapping'.includes(query);
         if (tab.id === 'Database') return 'database postgres container podman start stop status'.includes(query);
@@ -105,6 +108,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                 const Icon = tab.id === 'My Account' ? User : 
                                     tab.id === 'Appearance' ? Palette :
                                     tab.id === 'Library' ? Folder :
+                                    tab.id === 'Metadata' ? Globe :
                                     tab.id === 'Playback' ? Play :
                                     tab.id === 'System' ? Cpu :
                                     tab.id === 'Users' ? Users :
@@ -116,6 +120,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                         key={tab.id}
                                         role="tab"
                                         aria-selected={activeTab === tab.id}
+                                        data-settings-tab={tab.id === 'GenAI' ? 'genai' : tab.id === 'Database' ? 'database' : tab.id === 'Genre Matrix' ? 'genre-matrix' : ''}
                                         onClick={() => setActiveTab(tab.id)}
                                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors flex-shrink-0 ${
                                             activeTab === tab.id
@@ -172,6 +177,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                 const Icon = tab.id === 'My Account' ? User : 
                                                             tab.id === 'Appearance' ? Palette :
                                                             tab.id === 'Library' ? Folder :
+                                                            tab.id === 'Metadata' ? Globe :
                                                             tab.id === 'Playback' ? Play :
                                                             tab.id === 'System' ? Cpu :
                                                             tab.id === 'Users' ? Users :
@@ -184,6 +190,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                                         key={tab.id}
                                                         role="tab"
                                                         aria-selected={activeTab === tab.id}
+                                                        data-settings-tab={tab.id === 'GenAI' ? 'genai' : tab.id === 'Database' ? 'database' : tab.id === 'Genre Matrix' ? 'genre-matrix' : ''}
                                                         className={`w-full flex items-center px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 ${
                                                             activeTab === tab.id 
                                                             ? 'bg-[var(--color-primary)] text-white shadow-md' 
@@ -227,6 +234,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                             {activeTab === 'My Account' && <AccountTab onClose={handleClose} />}
                             {activeTab === 'Appearance' && <AppearanceTab />}
                             {activeTab === 'Library' && <LibraryTab />}
+                            {activeTab === 'Metadata' && <MetadataTab />}
                             {activeTab === 'Playback' && <PlaybackTab />}
                             
                             {isAdmin && (

@@ -65,6 +65,74 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
     // Token estimate
     const [trackCount, setTrackCount] = useState(1000);
     const [isSaving, setIsSaving] = useState(false);
+
+    // Step 4: ML Models state
+    const [modelStatus, setModelStatus] = useState<{ name: string; files: { filename: string; size: number; cached: boolean }[] }[]>([]);
+    const [modelDownloading, setModelDownloading] = useState(false);
+    const [modelProgress, setModelProgress] = useState<Map<string, { bytes: number; total: number; status: string }>>(new Map());
+
+    const fetchModelStatus = useCallback(async () => {
+        try {
+            const token = usePlayerStore.getState().authToken;
+            if (!token) return;
+            const res = await fetch('/api/settings/models/status', { headers: { Authorization: `Bearer ${token}` } });
+            if (res.ok) {
+                const data = await res.json();
+                setModelStatus(data.models);
+                setModelDownloading(data.isDownloading);
+            }
+        } catch {}
+    }, []);
+
+    React.useEffect(() => {
+        if (step === 4) fetchModelStatus();
+    }, [step, fetchModelStatus]);
+
+    // SSE for model download progress in setup wizard
+    React.useEffect(() => {
+        if (step !== 4 || !modelDownloading) return;
+        const token = usePlayerStore.getState().authToken;
+        if (!token) return;
+        const es = new EventSource('/api/settings/models/progress?token=' + token);
+        es.onmessage = (e) => {
+            try {
+                const data = JSON.parse(e.data);
+                if (data.type === 'status') {
+                    if (data.models) setModelStatus(data.models);
+                    return;
+                }
+                setModelProgress(prev => {
+                    const next = new Map(prev);
+                    next.set(`${data.model}/${data.file}`, { bytes: data.bytesDownloaded, total: data.totalBytes, status: data.status });
+                    return next;
+                });
+                if (data.status === 'done' || data.status === 'error') {
+                    setTimeout(fetchModelStatus, 500);
+                }
+            } catch {}
+        };
+        es.onerror = () => { es.close(); setModelDownloading(false); fetchModelStatus(); };
+        return () => es.close();
+    }, [step, modelDownloading, fetchModelStatus]);
+
+    const handleDownloadModels = async () => {
+        try {
+            const token = usePlayerStore.getState().authToken;
+            const res = await fetch('/api/settings/models/download', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            });
+            if (res.ok) setModelDownloading(true);
+        } catch {}
+    };
+
+    const formatBytes = (bytes: number) => {
+        if (bytes < 1024) return `${bytes}B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}KB`;
+        return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+    };
+
+    const allModelsCached = modelStatus.length > 0 && modelStatus.every(m => m.files.every(f => f.cached));
     const [mbdbProgress, setMbdbProgress] = useState<{
         isImporting: boolean,
         phase: string,
@@ -117,7 +185,7 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
         }
     }, [step, fetchMbdbUpdateInfo]);
 
-    const TOTAL_STEPS = 5;
+    const TOTAL_STEPS = 6;
 
     const handleMbdbImport = async () => {
         try {
@@ -242,7 +310,7 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
 
                 {/* Step Indicators */}
                 <div className="flex items-center justify-center gap-2 mb-10">
-                    {[1, 2, 3, 4, 5].map(i => (
+                    {[1, 2, 3, 4, 5, 6].map(i => (
                         <div key={i} className="flex items-center">
                             <div className={stepDotClass(i)}>
                                 {step > i ? <CheckCircle2 className="w-4 h-4" /> : i}
@@ -413,7 +481,72 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
                     </div>
                 )}
 
-                {/* Step 4: LLM Provider */}
+                {/* Step 4: ML Models */}
+                {step === 4 && (
+                    <div className="space-y-6 animate-in slide-in-from-right-8 fade-in duration-500 fill-mode-both">
+                        <div className="text-center mb-6">
+                            <h2 className="text-xl font-bold flex justify-center items-center gap-2"><Cpu className="w-5 h-5 text-[var(--color-primary)]"/> Audio Analysis Models</h2>
+                            <p className="text-sm text-[var(--color-text-secondary)] mt-1">Download MusiCNN (ML danceability/acousticness classification) and Discogs-EffNet (128D neural genre embeddings) for state-of-the-art playlist generation.</p>
+                        </div>
+
+                        <div className="bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl p-5 space-y-3">
+                            {modelStatus.map(model => (
+                                <div key={model.name}>
+                                    <div className="flex items-center justify-between mb-1">
+                                        <span className="text-sm font-medium text-[var(--color-text-primary)]">{model.name}</span>
+                                        <span className={`text-xs px-2 py-0.5 rounded-full ${
+                                            model.files.every(f => f.cached) ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                        }`}>
+                                            {model.files.every(f => f.cached) ? 'Ready' : 'Not Downloaded'}
+                                        </span>
+                                    </div>
+                                    {model.files.map(file => {
+                                        const key = `${model.name}/${file.filename}`;
+                                        const p = modelProgress.get(key);
+                                        const isDL = p?.status === 'downloading';
+                                        return (
+                                            <div key={file.filename} className="flex items-center justify-between text-xs pl-2">
+                                                <span className="text-[var(--color-text-muted)] font-mono">{file.filename}</span>
+                                                <span className={isDL ? 'text-blue-400' : file.cached ? 'text-green-400' : 'text-amber-400'}>
+                                                    {isDL && p ? `${formatBytes(p.bytes)} / ${p.total > 0 ? formatBytes(p.total) : '?'}` : file.cached ? formatBytes(file.size) : 'Waiting...'}
+                                                </span>
+                                            </div>
+                                        );
+                                    })}
+                                    {model.files.some(f => { const p = modelProgress.get(`${model.name}/${f.filename}`); return p?.status === 'downloading' && p.total > 0; }) && (
+                                        <div className="mt-1.5 h-1.5 bg-[var(--glass-border)] rounded-full overflow-hidden">
+                                            {model.files.map(f => {
+                                                const p = modelProgress.get(`${model.name}/${f.filename}`);
+                                                if (!p || p.status !== 'downloading' || p.total <= 0) return null;
+                                                return <div key={f.filename} className="h-full bg-blue-500 rounded-full transition-all duration-300" style={{ width: `${(p.bytes / p.total) * 100}%` }} />;
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+
+                            {!allModelsCached && !modelDownloading && (
+                                <button onClick={handleDownloadModels} className="w-full mt-2 bg-[var(--color-bg)] hover:bg-[var(--glass-bg)] text-[var(--color-text-primary)] border border-[var(--color-primary)] font-semibold py-3 rounded-lg shadow-sm transition-transform active:scale-[0.98]">
+                                    Download Models (~40MB)
+                                </button>
+                            )}
+                            {modelDownloading && (
+                                <div className="text-center text-sm text-blue-400 animate-pulse mt-2">Downloading...</div>
+                            )}
+                            {allModelsCached && (
+                                <div className="text-center text-sm text-green-500 font-medium mt-2">✓ All models downloaded and verified.</div>
+                            )}
+                        </div>
+
+                        <div className="flex gap-4 mt-6">
+                            <button onClick={() => setStep(5)} className="flex-1 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white font-semibold py-4 rounded-xl shadow-lg transition-transform active:scale-[0.98] flex items-center justify-center gap-2">
+                                {allModelsCached ? 'Next Step' : 'Skip for Now'} <ChevronRight className="w-5 h-5" />
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Step 5: LLM Provider */}
                 {step === 4 && (
                     <div className="space-y-5 animate-in slide-in-from-right-8 fade-in duration-500 fill-mode-both">
                         <div className="text-center mb-4">
@@ -537,18 +670,18 @@ export const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }
                         </div>
 
                         <div className="flex gap-4 mt-2">
-                            <button onClick={() => { handleSaveLlm(); setStep(5); }} className="flex-1 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white font-semibold py-4 rounded-xl shadow-lg transition-transform active:scale-[0.98] flex items-center justify-center gap-2">
+                            <button onClick={() => { handleSaveLlm(); setStep(6); }} className="flex-1 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white font-semibold py-4 rounded-xl shadow-lg transition-transform active:scale-[0.98] flex items-center justify-center gap-2">
                                 Save & Continue <ChevronRight className="w-5 h-5" />
                             </button>
-                            <button onClick={() => setStep(5)} className="px-6 bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] border border-[var(--glass-border)] text-[var(--color-text-primary)] font-semibold rounded-xl transition-all">
+                            <button onClick={() => setStep(6)} className="px-6 bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] border border-[var(--glass-border)] text-[var(--color-text-primary)] font-semibold rounded-xl transition-all">
                                 Skip
                             </button>
                         </div>
                     </div>
                 )}
 
-                {/* Step 5: External APIs */}
-                {step === 5 && (
+                {/* Step 6: External APIs */}
+                {step === 6 && (
                     <div className="space-y-6 animate-in slide-in-from-right-8 fade-in duration-500 fill-mode-both">
                         <div className="text-center mb-6">
                             <h2 className="text-xl font-bold flex justify-center items-center gap-2"><Settings className="w-5 h-5 text-[var(--color-primary)]"/> External Enablers</h2>

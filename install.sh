@@ -92,6 +92,16 @@ else
   $SUDO apt-get install -y ffmpeg
 fi
 
+# uv (Fast Python package manager for reliable ML environments)
+export PATH="$HOME/.local/bin:$PATH"
+if has uv; then
+  ok "uv already installed"
+else
+  info "Installing uv..."
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="$HOME/.local/bin:$PATH"
+fi
+
 # curl (required by MBDB service)
 if has curl; then
   ok "curl already installed"
@@ -178,6 +188,11 @@ fi
 info "Installing dependencies..."
 npm install
 ok "Dependencies installed"
+
+info "Setting up Python virtual environment for ML Extractor..."
+uv venv --python 3.11 .venv
+uv pip install essentia-tensorflow
+ok "Python ML environment configured via uv"
 
 info "Building application..."
 npm run build

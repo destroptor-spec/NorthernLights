@@ -20,10 +20,12 @@ import { GlobalSearch } from './components/GlobalSearch';
 import { SettingsModal } from './components/SettingsModal';
 import { InviteRegister } from './components/InviteRegister';
 import { UserMenu } from './components/UserMenu';
-import { Settings as SettingsIcon, AudioWaveform, X } from 'lucide-react';
+import { Settings as SettingsIcon, AudioWaveform, X, RefreshCw } from 'lucide-react';
 import { TrackContextMenu } from './components/library/TrackContextMenu';
 import { DatabaseControl } from './components/DatabaseControl';
 import { ToastContainer } from './components/ToastContainer';
+import { useOnlineStatus } from './hooks/useOnlineStatus';
+import { useToast } from './hooks/useToast';
 
 const TAB_CONFIG = [
   { path: '/library', label: 'Hub', end: true },
@@ -44,6 +46,7 @@ const App: React.FC = () => {
   }, []);
   const [isDatabaseStarting, setIsDatabaseStarting] = React.useState(false);
   const library = usePlayerStore(state => state.library);
+  const isLibraryLoading = usePlayerStore(state => state.isLibraryLoading);
   const needsSetup = usePlayerStore(state => state.needsSetup);
   const checkSetupStatus = usePlayerStore(state => state.checkSetupStatus);
   const authToken = usePlayerStore(state => state.authToken);
@@ -163,6 +166,23 @@ const App: React.FC = () => {
 
     return () => eventSource.close();
   }, [authToken, needsSetup]);
+
+  // Offline detection
+  const isOnline = useOnlineStatus();
+  const { addToast } = useToast();
+  const prevOnlineRef = React.useRef(isOnline);
+  const pendingUpdate = usePlayerStore(state => state.pendingUpdate);
+
+  React.useEffect(() => {
+    if (prevOnlineRef.current !== isOnline) {
+      if (!isOnline) {
+        addToast('You are offline. Some features may be unavailable.', 'info');
+      } else {
+        addToast('Back online.', 'success');
+      }
+      prevOnlineRef.current = isOnline;
+    }
+  }, [isOnline, addToast]);
 
   const [folderPathInput, setFolderPathInput] = React.useState('');
 
@@ -457,6 +477,23 @@ const App: React.FC = () => {
           <div className="flex-1 flex overflow-hidden">
             <div className={`flex-1 overflow-y-auto ${playlist.length > 0 ? 'pb-32 md:pb-48' : 'pb-16 md:pb-4'}`}>
               {library.length === 0 ? (
+                isLibraryLoading ? (
+                  <div className="page-container">
+                    <div className="h-8 w-32 rounded bg-[var(--color-surface-variant)] animate-pulse mb-2" />
+                    <div className="h-4 w-48 rounded bg-[var(--color-surface-variant)] animate-pulse mb-8" />
+                    <div className="album-grid">
+                      {Array.from({ length: 12 }).map((_, i) => (
+                        <div key={i} className="flex flex-col animate-pulse">
+                          <div className="aspect-square w-full mb-3 rounded-2xl bg-[var(--color-surface-variant)]" />
+                          <div className="px-1 space-y-1.5">
+                            <div className="h-4 w-3/4 rounded bg-[var(--color-surface-variant)]" />
+                            <div className="h-3 w-1/2 rounded bg-[var(--color-surface-variant)]" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
                 <Routes>
                   <Route path="/invite/:token" element={<InviteRegister />} />
                   <Route path="*" element={
@@ -491,6 +528,7 @@ const App: React.FC = () => {
                     </div>
                   } />
                 </Routes>
+                )
               ) : (
                 <Routes>
                   <Route path="/" element={<Navigate to="/library" replace />} />
@@ -534,6 +572,23 @@ const App: React.FC = () => {
         )}
 
         <ToastContainer />
+
+        {/* PWA Update Available Banner */}
+        {pendingUpdate && (
+          <div className="fixed bottom-6 left-6 z-[10001] flex items-center gap-3 px-5 py-3.5 rounded-2xl border shadow-2xl backdrop-blur-xl bg-[var(--glass-bg)] border-[var(--color-primary)]/30 max-w-[360px]">
+            <div className="flex-1">
+              <p className="text-sm font-medium text-[var(--color-text-primary)]">Update Available</p>
+              <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">Reload to get the latest version.</p>
+            </div>
+            <button
+              onClick={() => window.location.reload()}
+              className="btn btn-primary btn-sm flex items-center gap-1.5"
+            >
+              <RefreshCw size={14} />
+              Reload
+            </button>
+          </div>
+        )}
 
         {/* Mobile Sidebar Overlay Backdrop */}
         {isSidebarOpen && (

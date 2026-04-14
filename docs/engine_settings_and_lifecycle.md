@@ -14,9 +14,14 @@ The UI must expose human-readable tuning parameters that map directly to the bac
 - **Discovery Level (The Wander Factor):** Slider (1-100). Maps to the `limit` (over-fetch pool) and the randomizer weight. 
   - *Low:* Fetch top 5, heavily weight index 0. 
   - *High:* Fetch top 50, distribute weight evenly.
-- **Genre Strictness:** Slider (0-100). Maps to the `genreWeight` multiplier.
+- **Genre Strictness:** Slider (0-100). Maps to the `genreWeight` multiplier for Infinity Mode.
   - *0:* `genreWeight = 0.0` (Ignore genre, pure math).
   - *100:* `genreWeight = 3.0` (Heavily penalizes jumping outside the current genre cluster).
+- **Genre Penalty Curve:** Slider (0-100). Controls the steepness of the exponential penalty curve for Hub playlists.
+  - *0:* Lenient (curve=0.5) — aliens can win with modest acoustic advantage.
+  - *100:* Strict (curve=2.0) — aliens need 2.2×+ closer acoustically.
+  - Shows live penalty preview table (deep siblings, cousins, share root, alien multipliers).
+- **Genre Blend Weight:** Slider (0-100). Overall genre influence strength for Hub playlists.
 - **Artist Amnesia:** Dropdown ("Allow Repeats", "Standard", "Strict"). Maps to the length of the `recently_played_artist_ids` array passed to the Postgres `NOT IN (...)` query.
 
 **1.2 The "System & Processing" Tab**
@@ -62,9 +67,9 @@ The library scanner operates in three distinct phases for transparency and relia
 - CPU-intensive feature extraction offloaded from main thread
 - Each worker spawns a persistent `tsx` child process
 - Smart seeking: ffmpeg seeks to ~35% into track (past intro)
-- Decodes 15 seconds for Essentia.js WASM analysis
-- 7-dimensional acoustic vectors stored in `track_features` table
-- Powers Infinity Mode and Hub similarity search
+- Decodes 15 seconds for Essentia.js WASM and Tensorflow analysis
+- 1288-dimensional feature vectors stored in `track_features` table (8D acoustic + 1280D EffNet embedding)
+- Powers Infinity Mode and Two-Pool Hub similarity search
 
 **API Endpoints:**
 - `POST /api/library/scan` — Full three-phase scan (walk → metadata → analysis)

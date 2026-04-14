@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { getSystemSetting } from '../database';
+import { getGenreVocabulary } from './genreMatrix.service';
 
 async function getLlmConfig() {
   const apiKey = (await getSystemSetting('llmApiKey')) || process.env.LLM_API_KEY || 'dummy-key';
@@ -55,16 +56,23 @@ export async function generateHubConcepts(
 
   const conceptCount = context.count ?? 3;
 
+  // Fetch MBDB vocabulary to constrain LLM genre choices
+  const vocabulary = await getGenreVocabulary();
+  const vocabStr = vocabulary.length > 0
+    ? `\nYou MUST only use genre names from this vocabulary for "target_genres" and "banned_genres":\n${vocabulary.join(', ')}\n`
+    : '';
+
   const prompt = `
 You are a Creative Director for a music application.
 The user's current time is ${context.timeOfDay}. 
 A brief summary of their recent listening history: ${context.historySummary}.
-
+${vocabStr}
 Using this context, generate ${conceptCount} Hub playlist concepts. Each concept must output optimal acoustic target values between 0.0 and 1.0.
 IMPORTANT: Each concept must be DIVERSE from the others. Vary the energy, mood, and acoustic profile significantly between concepts. Do not create similar-sounding playlists.
 The vector array must precisely match this order: [energy, brightness, percussiveness, chromagram, instrumentalness, acousticness, danceability, tempo].
 - tempo: normalized BPM where 0.0 = 60 BPM (slow), 0.5 = 120 BPM (moderate), 1.0 = 200+ BPM (fast)
-You must also include "target_genres": an array of 2-3 standard broad genre keywords (e.g., "electronic", "rock", "pop", "jazz", "hip-hop") that best match the playlist's mood and concept.
+You must also include "target_genres": an array of 2-3 standard broad genre keywords that best match the playlist's mood and concept.
+You must also include "banned_genres": an array of 2-5 genre keywords that should be ABSOLUTELY EXCLUDED from this playlist. These are genres that clash with the playlist's mood (e.g., a "Club Fever" playlist should ban "rock", "country", "classical").
 Only output valid JSON matching this schema:
 {
   "hub_collections": [
@@ -73,6 +81,7 @@ Only output valid JSON matching this schema:
       "title": "Deep Work Coding",
       "description": "Driving electronic beats with zero vocals.",
       "target_genres": ["electronic", "ambient", "techno"],
+      "banned_genres": ["rock", "metal", "country", "classical"],
       "target_vector": [0.6, 0.3, 0.8, 0.5, 0.9, 0.1, 0.8, 0.7] 
     }
   ]
@@ -100,7 +109,7 @@ Only output valid JSON matching this schema:
   }
 }
 
-export async function categorizeSubGenres(inputs: { subGenre?: string, artist?: string }[]): Promise<Record<string, string[]>> {
+export async function categorizeSubGenres(inputs: { subGenre?: string, artist?: string }[], vocabulary?: string[]): Promise<Record<string, string[]>> {
   const { apiKey, baseUrl, modelName } = await getLlmConfig();
   if (baseUrl.includes('api.openai.com') && apiKey === 'dummy-key') return {};
 
@@ -109,16 +118,21 @@ export async function categorizeSubGenres(inputs: { subGenre?: string, artist?: 
     apiKey: apiKey,
   });
 
-  const prompt = `
-Act as an expert musicologist. I am building a genre ontology and need to map specific artists or obscure sub-genres to standard top-level genres.
+  const hasVocabulary = vocabulary && vocabulary.length > 0;
+  const vocabularyStr = hasVocabulary
+    ? `\nYou MUST ONLY return genre names from the following vocabulary list. Pick the closest 2-3 matches for each input. Do not invent genre names outside this list.\nVocabulary:\n${vocabulary.join(', ')}\n`
+    : '';
 
+  const prompt = `
+Act as an expert musicologist. I am building a genre ontology and need to map specific artists or obscure sub-genres to genres in my database.
+${vocabularyStr}
 Inputs to categorize:
 ${inputs.map((inp, i) => `${i + 1}. ${inp.subGenre ? `Sub-Genre: ${inp.subGenre}` : `Artist: ${inp.artist}`}`).join('\n')}
 
 Rules:
 1. Return ONLY a JSON object where each key is the original input string (the sub-genre or artist name).
-2. The value for each key MUST be an array of EXACTLY 2 OR 3 standard top-level genre keywords (e.g., "electronic", "alternative rock", "jazz", "hip-hop", "contemporary r&b") that best encompass the input.
-3. Order the array from most relevant to least relevant.
+2. The value for each key MUST be an array of EXACTLY 2 OR 3 genre keywords that best encompass the input.
+${hasVocabulary ? `3. You MUST NOT return genre names that do not appear in the vocabulary above. If no exact match exists, return the closest vocabulary terms.\n4. Order the array from most relevant to least relevant.` : `3. Order the array from most relevant to least relevant.`}
 
 Return ONLY valid JSON exactly matching this schema:
 {
@@ -133,7 +147,7 @@ Return ONLY valid JSON exactly matching this schema:
     const response = await openai.chat.completions.create({
       model: modelName,
       messages: [{ role: 'user', content: prompt }]
-    }, { timeout: 45000 }); // 45 second timeout
+    }, { timeout: 120000 }); // 120 second timeout (local LLMs need more time with vocabulary)
 
     const content = response.choices[0].message.content;
     if (!content) {
@@ -176,12 +190,18 @@ export async function generateCustomPlaylist(userPrompt: string): Promise<HubCol
 
   const openai = new OpenAI({ baseURL: baseUrl, apiKey });
 
+  // Fetch MBDB vocabulary to constrain LLM genre choices
+  const vocabulary = await getGenreVocabulary();
+  const vocabStr = vocabulary.length > 0
+    ? `\nYou MUST only use genre names from this vocabulary for "target_genres" and "banned_genres":\n${vocabulary.join(', ')}\n`
+    : '';
+
   const prompt = `
 You are a Creative Director for a music application.
 The user has asked you to create a playlist with the following description:
 "${userPrompt}"
-
-The vector array is a 7-dimensional fingerprint: [energy, brightness, percussiveness, chromagram, instrumentalness, acousticness, danceability].
+${vocabStr}
+The vector array is an 8-dimensional fingerprint: [energy, brightness, percussiveness, chromagram, instrumentalness, acousticness, danceability, tempo].
 - energy: 0 = completely silent/ambient, 1 = explosive/intense
 - brightness: 0 = dark/bass-heavy, 1 = bright/trebly
 - percussiveness: 0 = no drums, 1 = heavy drumming
@@ -189,11 +209,13 @@ The vector array is a 7-dimensional fingerprint: [energy, brightness, percussive
 - instrumentalness: 0 = pure vocals, 1 = fully instrumental
 - acousticness: 0 = fully electronic, 1 = fully acoustic
 - danceability: 0 = not danceable (ambient/slow), 1 = highly danceable
+- tempo: normalized BPM where 0.0 = 60 BPM (slow), 0.5 = 120 BPM (moderate), 1.0 = 200+ BPM (fast)
 
 Choose values that PRECISELY match the mood of the user's description. 
 For example: "chill" or "wind-down" → low energy (0.1-0.3), high acousticness (0.6-0.9), low percussiveness (0.1-0.3), low danceability (0.1-0.3).
 
 You must also include "target_genres": an array of 2-3 standard broad genre keywords that best match the user's request.
+You must also include "banned_genres": an array of 2-5 genre keywords that should be ABSOLUTELY EXCLUDED from this playlist. These are genres that clash with the playlist's mood.
 
 Only output valid JSON matching this schema exactly:
 {
@@ -201,6 +223,7 @@ Only output valid JSON matching this schema exactly:
   "title": "A short, catchy title for the playlist",
   "description": "A very short description matching the mood.",
   "target_genres": ["rock", "indie", "alternative"],
+  "banned_genres": ["classical", "opera", "country"],
   "target_vector": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
 }
 `;

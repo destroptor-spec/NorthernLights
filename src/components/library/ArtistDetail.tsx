@@ -1,15 +1,15 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { usePlayerStore } from '../../store/index';
 import { TrackInfo } from '../../utils/fileSystem';
 import { trackMatchesArtist } from '../../utils/artistUtils';
 import { useArtistData } from '../../hooks/useArtistData';
 import { AlbumArt } from '../AlbumArt';
-import { AlbumCard } from './AlbumCard';
+import { AlbumCard, AlbumCardSkeleton } from './AlbumCard';
 import { BackButton } from './BackButton';
 import { FadedHeroImage } from './FadedHeroImage';
 import { ArtistInitial } from './ArtistInitial';
-import { ExternalLink, Globe, Users, Mic2, Calendar } from 'lucide-react';
+import { ExternalLink, Globe, Users, Mic2, Calendar, Sparkles } from 'lucide-react';
 
 export const ArtistDetail: React.FC = () => {
     const { artistId } = useParams<{ artistId: string }>();
@@ -28,6 +28,7 @@ export const ArtistDetail: React.FC = () => {
     }, [library, artistId]);
 
     const { imageUrl, bio, disambiguation, area, type, lifeSpan, links, genres, isLoading: artistLoading } = useArtistData(artistName, mbArtistId);
+    const [bioExpanded, setBioExpanded] = useState(false);
 
     // Tracks where this artist is the PRIMARY / album artist
     const primaryTracks = useMemo(() => {
@@ -89,7 +90,13 @@ export const ArtistDetail: React.FC = () => {
 
     const hasAnyContent = primaryTracks.length > 0 || featuredTracks.length > 0;
 
-    if (!artistName || !hasAnyContent) return <div>Artist not found.</div>;
+    if (!artistName || !hasAnyContent) return (
+        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+            <Users className="w-12 h-12 text-[var(--color-text-muted)] opacity-30 mb-4" />
+            <p className="text-lg font-medium text-[var(--color-text-secondary)]">Artist not found</p>
+            <p className="text-sm text-[var(--color-text-muted)] mt-1">This artist may not have any tracks in your library.</p>
+        </div>
+    );
 
     return (
         <div className="artist-detail page-container relative">
@@ -103,7 +110,7 @@ export const ArtistDetail: React.FC = () => {
                             <img src={imageUrl} alt={artistName} className="w-full h-full object-cover" />
                         </div>
                     ) : (
-                        <div className={`w-48 h-48 md:w-64 md:h-64 rounded-full overflow-hidden shrink-0 shadow-[var(--shadow-md)] border-4 border-[var(--glass-border)] bg-[var(--glass-bg)] flex items-center justify-center ${artistLoading ? 'animate-pulse' : ''}`}>
+                        <div className={`w-48 h-48 md:w-64 md:h-64 rounded-full overflow-hidden shrink-0 shadow-[var(--shadow-md)] border-4 border-[var(--glass-border)] bg-[var(--glass-bg)] flex items-center justify-center ${artistLoading ? 'animate-pulse motion-reduce:animate-none' : ''}`}>
                             <ArtistInitial name={artistName} />
                         </div>
                     )}
@@ -149,9 +156,24 @@ export const ArtistDetail: React.FC = () => {
                             </div>
                         )}
                         {bio && (
-                            <p className="text-sm md:text-base text-[var(--color-text-secondary)] leading-relaxed max-w-3xl line-clamp-4 hover:line-clamp-none transition-all duration-300">
-                                {bio}
-                            </p>
+                            <div className="mt-1">
+                                <p className={`text-sm md:text-base text-[var(--color-text-secondary)] leading-relaxed max-w-3xl ${bioExpanded ? '' : 'line-clamp-4'}`}>
+                                    {bio}
+                                </p>
+                                <button
+                                    onClick={() => setBioExpanded(!bioExpanded)}
+                                    className="text-xs font-medium text-[var(--color-primary)] hover:text-[var(--color-primary-dark)] mt-1 transition-colors motion-reduce:transition-none"
+                                >
+                                    {bioExpanded ? 'Show less' : 'Read more'}
+                                </button>
+                            </div>
+                        )}
+                        {artistLoading && !bio && (
+                            <div className="mt-1 space-y-2 max-w-3xl">
+                                <div className="h-4 w-full rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
+                                <div className="h-4 w-5/6 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
+                                <div className="h-4 w-2/3 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
+                            </div>
                         )}
                         {/* Official links */}
                         {links && links.length > 0 && (
@@ -165,7 +187,7 @@ export const ArtistDetail: React.FC = () => {
                                             href={link.url}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-[var(--color-text-muted)] hover:text-[var(--color-primary)] bg-[var(--color-bg-tertiary)]/50 hover:bg-[var(--color-primary)]/10 border border-[var(--color-border)]/50 transition-colors"
+                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-[var(--color-text-muted)] hover:text-[var(--color-primary)] bg-[var(--color-bg-tertiary)]/50 hover:bg-[var(--color-primary)]/10 border border-[var(--color-border)]/50 transition-colors motion-reduce:transition-none"
                                         >
                                             <ExternalLink className="w-3 h-3" />
                                             {link.type === 'official homepage' ? 'Official Site' :
@@ -217,7 +239,7 @@ export const ArtistDetail: React.FC = () => {
             ].length > 0 && (
                 <div className="mb-12">
                     <h3 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2 flex items-center gap-2">
-                        <span className="text-[var(--color-primary)] opacity-60">✦</span> Also appears on
+                        <Sparkles className="w-4 h-4 text-[var(--color-primary)] opacity-60" /> Also appears on
                     </h3>
                     <div className="album-grid">
                         {[

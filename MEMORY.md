@@ -1,5 +1,20 @@
 # Project Memory / Changelog
 
+## [2026-04-10] V1.0.0-beta.2: Genre Pipeline Hardening & Tuneable Penalty System
+- **CTE Traversal Direction Fix**: Discovered and fixed inverted MBDB link data. `genre_tree_paths` CTE reversed from entity1→entity0 to entity0→entity1. Rock, country, folk and other root genres now appear in the materialized view (1544→1651 rows).
+- **Vocabulary-Guided LLM**: All LLM prompts (Genre Matrix, Hub, Custom Playlist) now receive a 300-genre vocabulary from MBDB. Library-scoped: < 300 library genres returns actual library genres; ≥ 300 returns top 300 from MBDB hierarchy. Eliminated 91%→100% LLM failure rate.
+- **Expanded Tier 2 SQL**: 6 UNION ALL branches with standalone genre parent fallback (`COALESCE(gtp.path, parent.name || '.' || g.name)`), GIN-indexed fuzzy matching (`%` operator), proper parentheses on `LIMIT 1` branches.
+- **KNN 8D Fallback**: `getGenrePathFromKNN` now works with tracks missing MFCC data via 8D-only neighbor search.
+- **Batch Tier 3**: Single feature fetch query replacing N sequential queries for KNN timbre fallback.
+- **Hop Cost Tiers**: Deep sibling 0.05, cousin 0.20, share root 0.50, alien 2.0, unknown 2.0. Unknown genres get same penalty as alien hops.
+- **Exponential Penalty Formula**: Replaced additive `distance + hopCost * weight` with multiplicative `distance * Math.pow(1 + hopCost, weight * curve)`. Wrong-genre tracks must be 2×+ closer acoustically to overcome penalty.
+- **`genrePenaltyCurve` Setting**: New user slider (0-100, default 50) with live penalty preview table showing multipliers for each hop tier. Controls curve exponent from 0.5 to 2.0.
+- **Infinity Mode Multiplicative**: Switched from additive to multiplicative penalty for consistency with Hub playlists.
+- **Negative Space Prompting**: `banned_genres` in LLM prompt schemas. Tracks matching banned genres get `combined: Infinity` — absolute veto regardless of acoustic proximity.
+- **Timbre-Weighted MFCC**: 3× MFCC weight in SQL for electronic/synthetic playlists (target acousticness < 0.3). Prioritizes instrument texture over rhythm.
+- **SQL-Level Acousticness Dealbreaker**: `CASE WHEN $3::real < 0.2 AND (tf.acoustic_vector_8d::text::real[])[6] > 0.5 THEN 5.0 ELSE 0 END`. Acoustic tracks get +5.0 distance spike in electronic playlists.
+- **Bug Fixes**: LLM timeout 45s→120s; custom playlist 7D→8D vector fix; `DISTINCT ON` ordering for vocabulary SQL; `LIMIT 1` parentheses in UNION ALL branches.
+
 ## [2026-04-08] v1.0.0-beta.1: Hierarchical Genre Taxonomy & 21D Recommendation Engine
 - **Hierarchical Genre Migration**: Successfully replaced the static 39-macro-genre matrix with a dynamic hierarchy imported from **MusicBrainz** (~2,000 genres).
 - **Materialized Tree Paths & CTE Optimization**: Created `genre_tree_paths` view using recursive CTEs. Optimized for **Root-to-Leaf** traversal, reducing generation from 38+ minutes to under 5 seconds. Fixed "stuck" status loop bug.

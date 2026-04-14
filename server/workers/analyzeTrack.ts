@@ -23,8 +23,10 @@ process.stdin.on('data', async (chunk: string) => {
     }
 
     try {
-      const filePathBuf = Buffer.from(msg.filePathBase64, 'base64');
-      const audioFeatures = await extractAudioFeatures(filePathBuf, msg.vectorStats);
+      // Decode the base64 path back into a standard string path
+      const utf8Path = Buffer.from(msg.filePathBase64, 'base64').toString('utf8');
+      
+      const audioFeatures = await extractAudioFeatures(utf8Path);
       process.stdout.write(JSON.stringify({ id: msg.id, audioFeatures }) + '\n');
     } catch (err: any) {
       process.stdout.write(JSON.stringify({ id: msg.id, error: err?.message || String(err) }) + '\n');

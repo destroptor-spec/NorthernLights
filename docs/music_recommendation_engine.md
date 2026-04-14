@@ -1,114 +1,122 @@
-# Antigravity Context: Smart Music Recommendation Engine
+# Smart Music Recommendation Engine
 
-## System Overview
-This document outlines the architecture and constraints for building a precise, non-repetitive music recommendation engine. The engine leverages mathematical Audio Feature Extraction stored as vector embeddings, combined with an LLM-driven "Creative Director" to generate dynamic, scheduled Hub playlists.
+The recommendation engine utilizes a hybrid multi-vector architecture:
+- **8D Acoustic Semantic Vectors**: Representing high-level rhythmic and stylistic features.
+- **1280D Discogs-EffNet Embeddings**: High-fidelity instrument and timbre identification.
+- **Two-Pool Logic**: A CTE-based retrieval system that balances genre strictness with serendipitous embedding-based discovery.
+- **pgvector Integration**: Uses HNSW indexing for approximate nearest neighbor search across both vector spaces.
 
-## 1. Database Migration & Schema (PostgreSQL + pgvector)
-**Migration Requirement:** The system must be migrated from the current SQLite setup to PostgreSQL. We use PostgreSQL with the `pgvector` extension enabled. This allows us to store audio features as native vector arrays and perform lightning-fast similarity searches at the database level.
+## 1. Database Schema (PostgreSQL + pgvector)
 
-**Table 1: `tracks`**
-- `id` (SERIAL PRIMARY KEY)
-- `title`, `artist`, `album`, `file_path` (VARCHAR)
-- `duration_seconds` (INTEGER)
-- `analysis_status` (VARCHAR) - e.g., 'pending', 'processing', 'completed', 'failed'
+**Table: `track_features`**
+- `track_id` TEXT REFERENCES tracks(id) ON DELETE CASCADE PRIMARY KEY
+- `bpm` NUMERIC
+- `acoustic_vector_8d` VECTOR(8) — Acoustic semantic features (L2 distance `<->`)
+- `embedding_vector` VECTOR(1280) — Discogs-EffNet timbre/texture embeddings (Cosine distance `<=>`)
+- `mfcc_vector` (legacy) — 13D vector replaced by 1280D EffNet.
+- `acoustic_vector_7d` (legacy) — Vector(7) for backward compatibility.
 
-**Table 2: `track_features`**
-Audio analysis data linked via foreign key. The 7 core features are stored in a single `VECTOR(7)` column to allow for native Euclidean distance queries.
-- `track_id` (INTEGER REFERENCES tracks(id) ON DELETE CASCADE)
-- `bpm` (NUMERIC) - Kept separate from the vector as it operates on a different scale.
-- `acoustic_vector` (VECTOR(7)) - An array containing normalized (0.0 to 1.0) values in this strict order:
-  `[energy, brightness, percussiveness, chromagram, instrumentalness, acousticness, danceability]`
+**8D Acoustic Semantic Features** (in order):
+`[energy, brightness, percussiveness, chromagram, instrumentalness, acousticness, danceability, tempo]`
 
-*Index:* Apply an HNSW (Hierarchical Navigable Small World) index to the `acoustic_vector` column to ensure query times remain performant even with 100,000+ tracks.
+**13D MFCC Timbre Features**: Mel-frequency cepstral coefficients capturing instrument texture and harmonic characteristics.
 
-## 2. Background Worker Architecture (Job Queue)
-Audio extraction is CPU-bound. Antigravity, you MUST implement these audio analysis scanning jobs within our **existing asynchronous background worker queue** (if possible) rather than introducing a new queueing architecture.
-- **Concurrency Limits:** Restrict simultaneous processing based on server CPU cores (e.g., `os.cpus().length - 1`).
-- **Error Handling:** Catch exceptions on corrupted tracks, set `analysis_status = 'failed'`, and move to the next job without crashing the worker process.
-
-## 3. Server-Side Normalization & Vector Construction
-Upon extraction, apply Z-score normalization to each feature so no single attribute dominates the vector distance. Construct the 7-dimensional array and insert it into the `acoustic_vector` column.
-
-## 4. Querying & Mathematical Distance
-Do NOT perform distance math in TypeScript. Leverage `pgvector`'s native Euclidean distance operator (`<->`) directly in the SQL query.
-
-*Example Query Strategy:*
+**Indexes:**
 ```sql
-SELECT track_id, acoustic_vector <-> '[0.8, 0.4, 0.9, 0.2, 0.1, 0.0, 0.8]' AS distance
-FROM track_features
-ORDER BY distance ASC
-LIMIT 50;
+CREATE INDEX track_features_idx ON track_features USING hnsw (acoustic_vector_8d vector_cosine_ops);
+CREATE INDEX track_features_effnet_idx ON track_features USING hnsw (embedding_vector vector_cosine_ops);
 ```
-## 5. "Anti-Repetition" Application Logic
-1. **The Wander Factor:** Query the top N nearest neighbors using Postgres, then use a weighted randomizer in TypeScript to pick the final track.
-2. **History Penalty:** Pass a session array of recently_played_artist_ids into the Postgres query (WHERE artist_id NOT IN (...)) to enforce library exploration.
-3. **Dynamic Feature Targeting:** To shift feature weights dynamically, construct a modified target vector in TypeScript before querying Postgres.
-4. **Behavioral Telemetry:** Apply negative weights to target vectors based on skipped tracks.
 
-## 6. Dynamic Constraint Scaling
+## 2. Background Worker Architecture
+Audio extraction runs in worker thread pools (1-6 concurrent workers) via `tsx` child processes:
+- Smart seeking: ffmpeg seeks to ~35% into track (past intro)
+- 15-second decode window for representative analysis
+- Non-ASCII filenames handled via temp symlinks in `/tmp/am-*/`
+- NaN guards and dimension validation on all extracted vectors
 
-Constraints MUST scale based on total indexed tracks (SELECT COUNT(*) FROM tracks).
+## 3. Normalization
+Features are normalized using native SQL aggregation:
+```sql
+SELECT AVG(acoustic_vector_8d), STDDEV(acoustic_vector_8d) FROM track_features
+```
+Z-score normalization applied per-dimension, then sigmoid to [0,1] range.
 
-- **Small (< 500):** Loosen distance thresholds, reduce history penalty.
-- **Medium (500 - 5,000):** 10-track History Penalty, 20-track randomizer pool.
-- **Large (> 5,000):** Strict constraints: 50+ track pool, strict artist/album bans.
+## 4. Querying (The Two-Pool Architecture)
+The engine utilizes a Common Table Expression (CTE) to fetch tracks from two distinct pools, blending them based on the `genreBlendWeight` setting.
 
-## 7. The "Hub" & Scheduled Generation Pipeline
+### Pool A: Genre-Constrained Discovery
+- **Logic**: Filters strictly by hierarchical genre path (e.g., `electronic.dance.%`).
+- **Distance**: Calculated primarily via the **8D Acoustic Vector** using L2 distance (`<->`).
+- **Goal**: Ensures thematic consistency within the target genre.
 
-The Hub is the primary discovery dashboard. This will be our primary library tab, to the left of the "artist" library. Collections are pre-generated by background jobs on a schedule (e.g., nightly) for instant UI load times.
+### Pool B: Serendipity (Embedding-Space)
+- **Logic**: Genre-blind search across the entire library.
+- **Distance**: Hybrid score blending **8D Acoustic Distance** + (**1280D EffNet Distance** * `effnetWeight`).
+- **Operator**: Uses Cosine Distance (`<=>`) for the 1280D embeddings.
+- **Goal**: Finds "sonically similar" tracks that might belong to different genres.
 
-### 7.1 Hub Categories
+### Pool Balancing
+The relative size of each pool is determined by `genreBlendWeight`:
+- **limitA** = `fetchSize * genreBlend`
+- **limitB** = `fetchSize - limitA`
 
-- **Up Next:** (Engine-Driven). Nearest neighbors to recent history.
-- **Jump Back In:** (Engine-Driven). Highly-rated tracks not played in > 6 months.
-- **The Vault:** (Engine-Driven). 0-play tracks with high vector similarity to the user's top tracks.
-- **LLM Curated:** (LLM-Driven). Prompt-based thematic and time-of-day collections.
+### 4.1 EffNet Imputation
+The LLM typically generates an 8D target vector. Since there is no 1280D target from the LLM, the engine **imputes** a 1280D centroid:
+1. Fetch 20 closest 8D neighbors to the target.
+2. **Relative Cliff Check**: If the 5th neighbor's distance is > 0.5 further than the 1st, the neighborhood is considered sparse/poisoned and imputation is aborted.
+3. Average and L2-normalize the 1280D embeddings of valid neighbors to create the target centroid.
 
-### 7.2 LLM Configuration
+## 5. Genre Penalty (Post-SQL Re-ranking)
+After SQL fetch, tracks are re-ranked with an exponential genre penalty:
 
-- Leverage Existing UI: Utilize the existing "External Providers" section in the app's settings.
-- Ensure the pipeline reads from these existing fields: API Base URL (defaults to OpenAI, configurable for Ollama/LM Studio), API Key, and Model Name.
+```typescript
+const combined = distance * Math.pow(1 + hopCost, weight * curve);
+```
 
-### 7.3 The LLM Prompt-to-Query Pipeline
+Where `hopCost` comes from the LCA-based genre adjacency system and `curve = 0.5 + (genrePenaltyCurve / 100) * 1.5`.
 
-1. **Context:** A cron job summarizes user listening history and time-context.
-2. **The Prompt:** Instruct the LLM to act as a Creative Director and request 3-5 Hub playlist concepts with optimal acoustic target values (0.0 to 1.0).
-3. **Expected JSON Output Schema:**
-  ```json
-  {
-    "hub_collections": [
-      {
-        "section": "Time-of-Day",
-        "title": "Deep Work Coding",
-        "description": "Driving electronic beats with zero vocals.",
-        "target_vectors": [0.6, 0.3, 0.8, 0.5, 0.9, 0.1, 0.8] 
-      }
-    ]
-  }
-  ```
-4. **Resolution & Caching:** The backend queries Postgres using the target_vectors array, retrieving the top 50 local tracks, and caches the results in a hub_cache table.
+**Hard Veto**: `banned_genres` from the LLM are applied as absolute exclusions — matching tracks get `combined: Infinity`. The veto checks against the full hierarchical path (e.g., banning "dance" catches `electronic.dance.trance`, `electronic.dance.dubstep`, etc.).
 
-## 8. Tech Stack & Approved Dependencies
+## 6. Anti-Repetition & Deduplication
+- **Wander Factor**: A rank-weighted randomizer that selects from the top candidates to ensure serendipity.
+- **History Penalty**: Excludes recently played Track IDs via `NOT IN` clauses.
+- **Same-Song Deduplication**: 
+  - Uses `mb_recording_id` for perfect identity matching.
+  - Fallback: Uses **Normalized Title** matching (stripping "Remastered", years, and edition markers) and exact Artist matching.
+  - Prevents the engine from suggesting the same song from a different album or a "Best Of" compilation.
+- **Cross-playlist Deduplication**: Assigned track IDs are tracked across a Hub generation session.
 
-- **Audio Feature Extraction:** essentia.js (preferred for deep acoustic/MFCC analysis) or meyda.
-- **Background Queue:** Utilize the app's existing background worker queue setup.
-- **Database:** PostgreSQL (v15+) with the pgvector extension.
-- **ORM / Query Builder:** drizzle-orm or prisma (ensure the chosen tool has standard pgvector support) or raw pg queries.
-- **LLM Integration:** Official openai Node SDK with configurable baseURL pulling from the existing settings store.
+## 7. The Hub (LLM-Driven Playlists)
 
-## 9. Future Roadmap: "Don't Stop the Music" (Infinity Mode)
-When a user enables "Don't Stop the Music," the engine will automatically append tracks once the current queue/playlist ends. To maintain the overarching context of the listening session, the engine MUST NOT rely solely on the final track's vector. 
+### 7.1 Generation Pipeline
+1. **Context**: Cron job summarizes listening history + time-of-day
+2. **LLM Prompt**: Creative Director role, generates 3 playlist concepts with:
+   - `target_vector` (8D acoustic profile)
+   - `target_genres` (2-3 genre keywords from 300-genre vocabulary)
+   - `banned_genres` (2-5 excluded genres)
+3. **SQL Query**: 21D distance search with timbre weighting
+4. **Re-ranking**: Genre penalty + hard veto + wander selection
+5. **Persistence**: Saved as playlists with cross-playlist deduplication
 
-Antigravity, implement the following multi-track context logic for Infinity Mode:
+### 7.2 Vocabulary-Guided LLM
+Both Hub and custom playlist prompts are constrained to a vocabulary of actual genres:
+- Library-scoped: < 300 genres → all library genres
+- MBDB-capped: ≥ 300 genres → top 300 from MBDB hierarchy
+- Prevents hallucinated genre names that don't match DB entries
 
-**9.1 The Weighted Decay Centroid**
-Calculate the target vector by taking a weighted average of the last 10 played tracks. Apply an exponential decay factor (e.g., `lambda = 0.8`) so the most recent track heavily influences the immediate vibe, while the previous 9 tracks anchor the overall genre and acoustic signature.
-- This prevents a single outlier track at the end of a playlist from derailing the entire radio session.
+## 8. Infinity Mode
 
-**9.2 Momentum & Trajectory Tracking**
-Before querying Postgres, analyze the delta (rate of change) of the `energy` and `danceability` vectors across the last 3 tracks. 
-- If the trend is strictly positive (a build-up), apply a slight positive multiplier (e.g., +10%) to the target vector's energy before executing the Euclidean distance search.
-- If the trend is negative (a wind-down), apply a slight negative multiplier.
+### 8.1 Weighted Decay Centroid
+Target vector computed from last 10 tracks with exponential decay (lambda=0.8). Applies to both 8D acoustic and 13D MFCC vectors.
 
-**9.3 Extended History Penalties**
-Because Infinity Mode can run for hours, the standard session history penalty must be expanded. Maintain a rolling queue of the last 50 played `track_id`s and `artist_id`s. Pass these into the Postgres query (`WHERE track_id NOT IN (...)`) to guarantee zero track repetition and minimal artist clustering during marathon sessions.
+### 8.2 Momentum Tracking
+Energy/danceability delta across last 3 tracks. Positive trend → slight positive multiplier on target energy.
+
+### 8.3 Penalty Formula
+```typescript
+const finalScore = row.distance * Math.pow(1 + hopCost, genreWeight / 3.0);
+```
+Multiplicative model consistent with Hub playlists. `genreWeight = (genreStrictness / 100) * 3.0`.
+
+### 8.4 Relaxation Loop
+If fewer candidates than target, expand pool size and relax `genreWeight *= 0.75` per iteration.

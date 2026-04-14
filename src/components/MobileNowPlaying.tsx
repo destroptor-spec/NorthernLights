@@ -29,7 +29,10 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose }) => {
   const [castConnected, setCastConnected] = useState(castManager.isConnected());
   const [showLyrics, setShowLyrics] = useState(false);
   useEffect(() => {
-    castManager.onStateChange = (state) => setCastConnected(state === 'CONNECTED');
+    const unsubscribe = castManager.addStateChangeListener((state) => {
+      setCastConnected(state === 'CONNECTED');
+    });
+    return unsubscribe;
   }, []);
 
   const currentTrack = currentIndex !== null ? playlist[currentIndex] : null;
@@ -202,13 +205,13 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose }) => {
           </button>
 
           <button
-            onClick={() => castManager.requestSession()}
+            onClick={() => castConnected ? castManager.disconnect() : castManager.requestSession()}
             className="w-10 h-10 flex items-center justify-center rounded-full active:scale-90 transition-all"
             style={{
               color: castConnected ? 'var(--color-primary)' : 'var(--color-text-muted)',
               filter: castConnected ? 'drop-shadow(0 0 4px var(--color-primary))' : 'none',
             }}
-            title={castConnected ? 'Casting' : 'Cast to device'}
+            title={castConnected ? 'Disconnect from cast' : 'Cast to device'}
           >
             <Cast size={22} />
           </button>

@@ -96,23 +96,16 @@ export const PlayerControls: React.FC = () => {
   useVolumeSync();
 
   const [castAvailable, setCastAvailable] = useState(false);
-  const [castConnected, setCastConnected] = useState(false);
+  const castConnected = usePlayerStore((s) => s.castConnected);
   const [showLyrics, setShowLyrics] = useState(false);
 
   useEffect(() => {
-    const handleCastReady = () => {
-      setCastAvailable(true);
-      setCastConnected(castManager.isConnected());
-    };
-    // Window interface extension avoided using 'any' by moving to standard TS interface check logic or ignoring local
+    const handleCastReady = () => setCastAvailable(true);
     if ((window as any).cast?.framework) {
       handleCastReady();
     } else {
       window.addEventListener('castApiAvailable', handleCastReady);
     }
-    castManager.onStateChange = (state) => {
-      setCastConnected(state === 'CONNECTED');
-    };
     return () => window.removeEventListener('castApiAvailable', handleCastReady);
   }, []);
 
@@ -124,11 +117,11 @@ export const PlayerControls: React.FC = () => {
       <div className="flex-1 flex justify-start items-center pl-2 gap-2 relative">
         {castAvailable && (
           <button
-            onClick={() => castManager.requestSession()}
+            onClick={() => castConnected ? castManager.disconnect() : castManager.requestSession()}
             className="transition-colors hover:scale-105"
             style={{ color: castConnected ? 'var(--color-primary)' : 'var(--color-text-muted)', filter: castConnected ? 'drop-shadow(0 0 4px var(--color-primary))' : 'none' }}
-            title={castConnected ? 'Casting' : 'Cast to device'}
-            aria-label={castConnected ? 'Casting' : 'Cast to device'}
+            title={castConnected ? 'Disconnect from cast' : 'Cast to device'}
+            aria-label={castConnected ? 'Disconnect from cast' : 'Cast to device'}
           >
             <Cast size={20} />
           </button>

@@ -8,6 +8,21 @@ import { BackButton } from './BackButton';
 
 import { MoreHorizontal, Play } from 'lucide-react';
 
+const TrackRowSkeleton: React.FC = () => (
+    <div className="grid grid-cols-[30px_1fr_40px] md:grid-cols-[40px_1fr_100px] gap-2 px-2 md:px-4 py-2.5 animate-pulse">
+        <div className="flex justify-center md:justify-start">
+            <div className="h-4 w-4 rounded bg-[var(--color-surface-variant)]" />
+        </div>
+        <div className="space-y-1.5">
+            <div className="h-4 w-3/4 rounded bg-[var(--color-surface-variant)]" />
+            <div className="h-3 w-1/2 rounded bg-[var(--color-surface-variant)] md:hidden" />
+        </div>
+        <div className="hidden md:flex justify-end">
+            <div className="h-4 w-10 rounded bg-[var(--color-surface-variant)]" />
+        </div>
+    </div>
+);
+
 export const AlbumDetail: React.FC = () => {
     const { albumId } = useParams<{ albumId: string }>();
     const navigate = useNavigate();
@@ -41,7 +56,27 @@ export const AlbumDetail: React.FC = () => {
     }, [albumTracks]);
 
 
-    if (!albumId || albumTracks.length === 0) {
+    if (!albumId) {
+        return (
+            <div className="flex flex-col overflow-hidden p-4 md:p-8 lg:p-12 flex-1">
+                <div className="shrink-0 mb-6"><BackButton onClick={() => navigate(-1)} /></div>
+                <div className="flex flex-col md:flex-row gap-6 md:gap-8 mb-8 md:mb-12">
+                    <div className="w-48 h-48 md:w-60 md:h-60 shrink-0 rounded-2xl bg-[var(--color-surface-variant)] animate-pulse" />
+                    <div className="flex-1 space-y-3">
+                        <div className="h-4 w-16 rounded bg-[var(--color-surface-variant)] animate-pulse" />
+                        <div className="h-10 w-3/4 rounded bg-[var(--color-surface-variant)] animate-pulse" />
+                        <div className="h-5 w-1/2 rounded bg-[var(--color-surface-variant)] animate-pulse" />
+                        <div className="h-10 w-32 rounded-full bg-[var(--color-surface-variant)] animate-pulse mt-4" />
+                    </div>
+                </div>
+                <div className="space-y-0.5">
+                    {Array.from({ length: 8 }).map((_, i) => <TrackRowSkeleton key={i} />)}
+                </div>
+            </div>
+        );
+    }
+
+    if (albumTracks.length === 0) {
         return <div className="flex-1 flex justify-center items-center text-[var(--color-text-muted)]">Album not found.</div>;
     }
 
@@ -84,7 +119,7 @@ export const AlbumDetail: React.FC = () => {
                 </div>
                 <div className="flex flex-col justify-end items-center md:items-start max-w-full">
                     <div className="font-semibold text-sm tracking-wider uppercase text-[var(--color-primary)]">Album</div>
-                    <h1 className="font-bold text-4xl md:text-5xl lg:text-6xl tracking-tight my-2 leading-tight text-[var(--color-text-primary)] truncate w-full" title={albumTitle}>{albumTitle}</h1>
+                    <h1 className="font-bold text-4xl md:text-5xl lg:text-6xl tracking-tight my-2 leading-tight text-[var(--color-text-primary)] line-clamp-2" title={albumTitle}>{albumTitle}</h1>
                     <h2 className="text-xl text-[var(--color-text-secondary)] flex flex-wrap justify-center md:justify-start items-center gap-2 mb-2 w-full truncate">
                         <span className="truncate">
                         {headerArtists.map((a, i) => {
@@ -120,7 +155,7 @@ export const AlbumDetail: React.FC = () => {
                     <div className="mt-4 flex justify-center md:justify-start w-full md:w-auto">
                         <button
                             onClick={handlePlayAll}
-                            className="flex items-center justify-center gap-2 px-8 py-3.5 bg-emerald-500/90 hover:bg-emerald-400 text-white font-bold text-sm tracking-widest uppercase rounded-full shadow-[0_4px_24px_rgba(16,185,129,0.3)] hover:shadow-[0_8px_32px_rgba(16,185,129,0.4)] hover:scale-105 active:scale-95 transition-all duration-300 w-full md:w-auto"
+                            className="flex items-center justify-center gap-2 px-8 py-3.5 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white font-bold text-sm tracking-widest uppercase rounded-full shadow-[0_4px_24px_rgba(16,185,129,0.3)] hover:shadow-[0_8px_32px_rgba(16,185,129,0.4)] hover:scale-105 active:scale-95 motion-reduce:transition-none motion-reduce:hover:scale-100 transition-all duration-300 w-full md:w-auto"
                         >
                             <Play size={18} fill="currentColor" className="ml-1" />
                             PLAY ALBUM
@@ -184,7 +219,7 @@ export const AlbumDetail: React.FC = () => {
                                     e.stopPropagation();
                                     openContextMenu(track, e.clientX, e.clientY);
                                 }}
-                                className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-primary)] hover:bg-black/5 dark:hover:bg-white/10 rounded-md transition-all p-1.5 focus:opacity-100"
+                                className="opacity-50 md:opacity-0 md:group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-primary)] hover:bg-black/5 dark:hover:bg-white/10 rounded-md transition-all p-1.5 focus:opacity-100"
                             >
                                 <MoreHorizontal size={18} />
                             </button>

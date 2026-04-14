@@ -153,9 +153,9 @@ Library scanning operates in three distinct phases:
    - **Results**: 21-dimensional feature vectors (**8D acoustic semantic** + 13D MFCC) stored in `track_features` table. Supports slicing for legacy 7D compatibility. Uses native SQL aggregation (`AVG`/`STDDEV`) for ultra-fast library-wide vector normalization.
 
 4. **Taxonomic Categorization Phase**: After analysis, the system runs a 3-step pipeline to map local tags to the MusicBrainz hierarchical taxonomy:
-   - **Step 1: Direct SQL Match** — Exact match against MusicBrainz Genres or Aliases.
-   - **Step 2: LLM Batch Processing** — Grouping unmapped tags for bulk AI translation into standard keywords.
-   - **Step 3: Fallback Logic** — Artist-based deduction or KNN-based acoustic similarity mapping if no metadata exists.
+   - **Step 1: Direct SQL Match** — 6 UNION ALL branches against `genre_tree_paths`: tree path, alias, standalone genre with parent fallback, standalone alias, fuzzy tree (GIN indexed via `%` operator, threshold 0.7), fuzzy alias.
+   - **Step 2: Vocabulary-Guided LLM Batch** — Unmapped tags batched with a 300-genre vocabulary constraint. Library-scoped: if library < 300 genres, returns actual library genres; if ≥ 300, returns top 300 from MBDB hierarchy.
+   - **Step 3: KNN Fallback** — Full 21D KNN (8D + 13D MFCC) when vectors available; 8D-only fallback when MFCC missing. NaN guards on all vector operations.
 
 **API Endpoints:**
 - `POST /api/library/scan` — Full three-phase scan
@@ -178,9 +178,9 @@ The scanner indicator in `App.tsx` must use reactive Zustand subscriptions for `
 
 ## Server Services (server/services/)
 - `audioExtraction.service.ts` — ffmpeg subprocess decoding + Essentia.js WASM analysis. Smart seeking (35% into track), 15-second decode, non-ASCII filename symlink workaround, safe Essentia with individual algorithm error handling. Feature extraction optimized with **Hanning Window pre-computation** and **WASM buffer reuse**.
-- `recommendation.service.ts` — Infinity Mode and Hub playlist generation using **21-dimensional** pgvector HNSW similarity search (8D acoustic + 13D MFCC) and genre hop-cost adjacency logic on MBDB. Hardened with `NaN` guards and cross-dimension compatibility (7D/8D).
-- `llm.service.ts` — LLM integration for natural language playlist generation. Supports local providers (LM Studio, Ollama) and cloud (OpenAI).
-- `genreMatrix.service.ts` — LLM-assisted 3nd-gen hierarchical ontology classification using MusicBrainz tree-paths and Lowest Common Ancestor (LCA) hop-cost math.
+- `recommendation.service.ts` — Infinity Mode and Hub playlist generation using **21-dimensional** pgvector HNSW similarity search (8D acoustic + 13D MFCC) and genre hop-cost adjacency logic on MBDB. Exponential penalty formula: `distance * Math.pow(1 + hopCost, weight * curve)`. Timbre-weighted MFCC (3× for electronic/synthetic). SQL-level acousticness dealbreaker. Hard vector clamping (energy/danceability bounds). `banned_genres` full-path veto. MFCC imputation safeguard (threshold < 0.25, min 5 seeds). All `<->` parameters use explicit `::vector` casts. Hardened with `NaN` guards and cross-dimension compatibility (7D/8D).
+- `llm.service.ts` — LLM integration for natural language playlist generation. Supports local providers (LM Studio, Ollama) and cloud (OpenAI). 300-genre vocabulary injection and `banned_genres` in prompt schemas. Library-scoped vocabulary logic. 120-second timeout for local LLMs.
+- `genreMatrix.service.ts` — MusicBrainz hierarchical taxonomy classification using tree-path LCA (Lowest Common Ancestor) hop-cost math. 3-step pipeline: direct SQL (6 UNION ALL branches), vocabulary-guided LLM batch, KNN fallback (21D/8D). Standalone `getGenreVocabulary()` export for library-scoped vocabulary.
 - `mbdb.service.ts` — High-performance streaming importer for MusicBrainz database dumps. Handles downloading, TSV extraction, and bulk PostgreSQL insertion.
 - `metadata/` — Modularized external metadata service:
   - `errors.ts` — `RateLimitError`, `ProviderError` classes for typed error handling

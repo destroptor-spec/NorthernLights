@@ -13,6 +13,16 @@ interface AlbumCardProps {
     linkTo?: string;
 }
 
+export const AlbumCardSkeleton: React.FC = () => (
+    <div className="flex flex-col animate-pulse">
+        <div className="aspect-square w-full mb-3 rounded-2xl bg-[var(--color-surface-variant)]" />
+        <div className="px-1 space-y-1.5">
+            <div className="h-4 w-3/4 rounded bg-[var(--color-surface-variant)]" />
+            <div className="h-3 w-1/2 rounded bg-[var(--color-surface-variant)]" />
+        </div>
+    </div>
+);
+
 export const AlbumCard: React.FC<AlbumCardProps> = memo(({ title, artist, artUrl, subtitle, onPlay, onOpen, linkTo }) => {
     return (
         <div
@@ -37,7 +47,7 @@ export const AlbumCard: React.FC<AlbumCardProps> = memo(({ title, artist, artUrl
             )}
             
             {/* Art container */}
-            <div className="relative aspect-square w-full mb-3 rounded-2xl border border-black/5 dark:border-white/5 bg-white/5 dark:bg-black/20 shadow-md overflow-hidden transition-transform duration-300 group-hover:scale-[1.02]">
+            <div className="relative aspect-square w-full mb-3 rounded-2xl border border-black/5 dark:border-white/5 bg-white/5 dark:bg-black/20 shadow-md overflow-hidden transition-transform duration-300 group-hover:scale-[1.02] motion-reduce:transition-none motion-reduce:group-hover:scale-100">
                 <AlbumArt
                     artUrl={artUrl}
                     artist={artist}
@@ -59,11 +69,12 @@ export const AlbumCard: React.FC<AlbumCardProps> = memo(({ title, artist, artUrl
                             z-20 pointer-events-auto
                             w-14 h-14 rounded-full
                             flex items-center justify-center
-                            opacity-0 scale-75
-                            group-hover:opacity-100 group-hover:scale-100
+                            opacity-60 md:opacity-0 md:scale-75
+                            md:group-hover:opacity-100 md:group-hover:scale-100
                             transition-all duration-300 ease-out
                             hover:scale-110 active:scale-95
-                            bg-emerald-500/90 hover:bg-emerald-400 text-white backdrop-blur-sm
+                            motion-reduce:transition-none
+                            bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white backdrop-blur-sm
                             shadow-[0_4px_24px_rgba(16,185,129,0.3)] hover:shadow-[0_8px_32px_rgba(16,185,129,0.5)]
                             focus-visible:opacity-100 focus-visible:scale-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white
                         "
@@ -75,7 +86,7 @@ export const AlbumCard: React.FC<AlbumCardProps> = memo(({ title, artist, artUrl
 
             {/* Text */}
             <div className="flex flex-col px-1 relative z-10 pointer-events-none">
-                <div className="font-semibold text-sm md:text-base tracking-wide truncate text-[var(--color-text-primary)] group-hover:text-[var(--color-primary)] transition-colors">
+                <div className="font-semibold text-sm md:text-base tracking-wide truncate text-[var(--color-text-primary)] group-hover:text-[var(--color-primary)] transition-colors motion-reduce:transition-none">
                     {title}
                 </div>
                 {subtitle && (

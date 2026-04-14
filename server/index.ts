@@ -194,6 +194,11 @@ app.listen(port, () => {
   console.log(`Aurora Media Server listening at http://localhost:${port}`);
 });
 
+// Download ML models in background (non-blocking) — skips if already cached
+import('./services/downloadModels').then(({ downloadModels }) => {
+  downloadModels().catch(err => console.warn('[Models] Initial download failed:', err.message));
+});
+
 // Initial DB connection attempt
 initDatabaseConnection();
 

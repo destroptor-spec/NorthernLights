@@ -3,7 +3,8 @@ import { usePlayerStore } from '../../store/index';
 import { useToast } from '../../hooks/useToast';
 import { DatabaseControl } from '../DatabaseControl';
 import { ConfirmModal } from '../ConfirmModal';
-import { BarChart2, Wrench, Globe, AlertCircle, Clock, Database, Check, ArrowRight, Trash2, X } from 'lucide-react';
+import { DependencyBadge, DependencyGroup, DependencyInfoBox } from '../DependencyBadge';
+import { BarChart2, Wrench, Globe, AlertCircle, Clock, Database, Check, ArrowRight, Trash2, X, Sparkles } from 'lucide-react';
 
 export const DatabaseTab: React.FC = () => {
     const authToken = usePlayerStore(state => state.authToken);
@@ -167,6 +168,13 @@ export const DatabaseTab: React.FC = () => {
 
             {dbTab === 'mbdb' && (
                 <div className="space-y-4">
+                    {/* Impact on Genre Matrix */}
+                    <DependencyInfoBox
+                        title="Enhances Genre Matrix"
+                        description="The MusicBrainz database provides a hierarchical genre taxonomy that improves Genre Matrix accuracy. Without it, genre mapping falls back to LLM-only categorization, which may be less precise."
+                        icon={<Sparkles className="w-5 h-5" />}
+                    />
+                    
                     <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--glass-border)] p-4">
                         <div className="flex justify-between items-center mb-4">
                             <div>

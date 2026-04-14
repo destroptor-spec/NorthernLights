@@ -10,3 +10,8 @@
 
 ## Audio Streaming
 - **Partial Content**: The server serves audio files via an `/api/stream` endpoint with full support for HTTP `Range` headers, enabling efficient browser-side buffering and random-access seeking.
+
+## Path Encoding & Database Safety
+- **Base64 Storage**: File paths are strictly stored in the PostgreSQL `tracks` table database (`path` column) as **Base64 strings** rather than raw UTF-8 text. 
+- **Rationale**: Audio collections frequently contain malformed character encodings, unexpected null-bytes (`\x00`), or non-ASCII characters that can crash the PostgreSQL driver or clip the string silently.
+- **Querying Implications**: Because paths are Base64 encoded inside the database, you cannot inherently perform native SQL string validations like `LIKE '/home/music%'`. Features needing path-prefix matching (like metadata refreshes) must pull the `path` column into Node.js, decode the row into a raw Node memory Buffer, and perform buffer slicing/matching natively to remain perfectly safe against corruption.

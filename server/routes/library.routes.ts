@@ -83,7 +83,7 @@ async function processMetadataBatch(fileBufs: Buffer[], concurrency: number): Pr
   let errorCount = 0;
   const { settingsEmitter } = await import('../state');
   let index = 0;
-  const activeSet = new Set<string>();
+  const activeMap = new Map<number, string>();
   const total = fileBufs.length;
 
   let currentConcurrency = Math.min(concurrency, total);
@@ -118,8 +118,8 @@ async function processMetadataBatch(fileBufs: Buffer[], concurrency: number): Pr
         const nameStr = path.basename(utf8StringPath);
         let activeLabel = nameStr; 
 
-        activeSet.add(activeLabel);
-        scanStatus.activeFiles = Array.from(activeSet);
+        activeMap.set(i, activeLabel);
+        scanStatus.activeFiles = Array.from(activeMap.values());
         scanStatus.currentFile = activeLabel;
         scanStatus.scannedFiles++;
         try {
@@ -143,9 +143,8 @@ async function processMetadataBatch(fileBufs: Buffer[], concurrency: number): Pr
             const displayTitle = metadata.title || nameStr;
             activeLabel = displayArtist ? `${displayArtist} - ${displayTitle}` : nameStr;
             
-            activeSet.delete(nameStr);
-            activeSet.add(activeLabel);
-            scanStatus.activeFiles = Array.from(activeSet);
+            activeMap.set(i, activeLabel);
+            scanStatus.activeFiles = Array.from(activeMap.values());
             scanStatus.currentFile = activeLabel;
             broadcastScanStatus();
 
@@ -240,8 +239,8 @@ async function processMetadataBatch(fileBufs: Buffer[], concurrency: number): Pr
           errorCount++;
           await addTrack({ path: dbPath, title: nameStr, bitrate: null, format: null });
         } finally {
-          activeSet.delete(activeLabel);
-          scanStatus.activeFiles = Array.from(activeSet);
+          activeMap.delete(i);
+          scanStatus.activeFiles = Array.from(activeMap.values());
           scanStatus.activeWorkers = pool.getActiveCount();
           broadcastScanStatus();
         }
@@ -317,7 +316,6 @@ async function processAnalysisBatch(tracks: { id: string; filePath: Buffer; titl
   const { getVectorStats } = await import('../database');
   let index = 0;
   const total = tracks.length;
-  const activeSet = new Set<string>();
 
   // Fetch vector stats once for the entire batch instead of per-track
   let vectorStats: any = null;
@@ -335,6 +333,7 @@ async function processAnalysisBatch(tracks: { id: string; filePath: Buffer; titl
   let activeLoops = 0;
   let orchestrationActive = true;
   const activePromises = new Set<Promise<void>>();
+  const activeMap = new Map<number, string>();
 
   const runWorkerLoop = async () => {
     activeLoops++;
@@ -346,8 +345,8 @@ async function processAnalysisBatch(tracks: { id: string; filePath: Buffer; titl
         const track = tracks[i];
         const displayName = track.artist ? `${track.artist} - ${track.title}` : track.title;
         
-        activeSet.add(displayName);
-        scanStatus.activeFiles = Array.from(activeSet);
+        activeMap.set(i, displayName);
+        scanStatus.activeFiles = Array.from(activeMap.values());
         scanStatus.currentFile = displayName;
         scanStatus.scannedFiles++;
         try {
@@ -379,8 +378,8 @@ async function processAnalysisBatch(tracks: { id: string; filePath: Buffer; titl
           console.error(`[Analysis] Job failed for "${track.title}":`, err);
           errorCount++;
         } finally {
-          activeSet.delete(displayName);
-          scanStatus.activeFiles = Array.from(activeSet);
+          activeMap.delete(i);
+          scanStatus.activeFiles = Array.from(activeMap.values());
           scanStatus.activeWorkers = pool.getWorkerCount();
           broadcastScanStatus();
         }
@@ -598,6 +597,64 @@ export async function runSyncWalk(dirPath: string): Promise<{ removed: number; a
 }
 
 // Trigger standalone analysis (no scan — analyzes tracks missing features)
+router.post('/refresh-metadata', async (req, res) => {
+  const dirPath = req.body.path;
+
+  if (!dirPath || typeof dirPath !== 'string') {
+    return res.status(400).json({ error: 'Folder path is required' });
+  }
+
+  if (scanStatus.isScanning) {
+    return res.status(400).json({ error: 'Scan already in progress' });
+  }
+
+  // Run the refresh logic asynchronously to prevent blocking the HTTP response
+  // and correctly trigger the UI scanning indicator via SSE.
+  (async () => {
+    scanStatus.isScanning = true;
+    scanStatus.phase = 'metadata';
+    broadcastScanStatus(true);
+
+    try {
+      const { getPathsForDirectory } = await import('../database');
+      const fileBufs = await getPathsForDirectory(dirPath);
+
+      if (fileBufs.length === 0) {
+        scanStatus.isScanning = false;
+        broadcastScanStatus(true);
+        return;
+      }
+
+      scanStatus.totalFiles = fileBufs.length;
+      scanStatus.scannedFiles = 0;
+      scanStatus.currentFile = '';
+      
+      const metadataConcurrency = await getScannerConcurrency();
+      
+      await processMetadataBatch(fileBufs, metadataConcurrency);
+      
+      const purged = await purgeOrphanedEntities();
+      console.log(`[Scanner] Purged orphaned entities after refresh: ${purged.artists} artists, ${purged.albums} albums, ${purged.genres} genres`);
+
+      scanStatus.isScanning = false;
+      broadcastScanStatus(true);
+
+      const { genreMatrixService } = await import('../services/genreMatrix.service');
+      setImmediate(() => {
+        genreMatrixService.runDiffAndGenerate().catch(e => console.error('[Genre Matrix]', e));
+      });
+
+    } catch (error: any) {
+      scanStatus.isScanning = false;
+      broadcastScanStatus(true);
+      console.error('[Refresh Metadata Error]', error);
+    }
+  })();
+
+  return res.status(202).json({ message: 'Refresh metadata accepted' });
+});
+
+// Trigger standalone analysis (no scan — analyzes tracks missing features)
 router.post('/analyze', async (req, res) => {
   if (scanStatus.isScanning) {
     return res.status(400).json({ 
@@ -719,72 +776,48 @@ router.get('/stats', async (req, res) => {
       return res.json({ directories: [] });
     }
 
-    // Build a safe base64 LIKE prefix for a directory path.
-    //
-    // Base64 encodes 3 input bytes → 4 output chars. If the directory path is
-    // NOT a multiple of 3 bytes, the last partial group gets encoded differently
-    // depending on what follows it (i.e. the rest of the file path), so the
-    // directory's base64 and a child file's base64 will DIVERGE for any chars
-    // past the last complete 3-byte boundary.
-    //
-    // Fix: only base64-encode the first floor(len/3)×3 bytes. This produces a
-    // prefix that is always a substring of every child file's base64 encoding.
-    // The precise byte-level check below (prefixMatches + atBoundary) handles
-    // the accurate filtering within the pre-filtered rows.
-    const toLikePrefix = (dirPath: string) => {
-      const bytes = Buffer.from(dirPath, 'utf8');
-      const safeLen = Math.floor(bytes.length / 3) * 3; // last complete 3-byte group
-      if (safeLen === 0) return ''; // path < 3 bytes — skip LIKE pre-filter
-      return bytes.slice(0, safeLen).toString('base64') // no padding chars ever
-        .replace(/%/g, '\\%')
-        .replace(/_/g, '\\_');
-    };
+    // path is stored as base64 in the tracks table.
+    // Fetch all tracks once and decode them for fast accurate matching.
+    const tracksRes = await db.query(`
+      SELECT t.path,
+             t.artist IS NOT NULL AND t.artist != '' AS has_artist,
+             t.album IS NOT NULL AND t.album != '' AS has_album,
+             tf.embedding_vector IS NOT NULL AS has_features
+      FROM tracks t
+      LEFT JOIN track_features tf ON t.id = tf.track_id
+    `);
+
+    // Pre-decode all paths
+    const tracks = tracksRes.rows.map(row => ({
+      decodedPath: Buffer.from(row.path, 'base64').toString('utf8'),
+      has_metadata: row.has_artist || row.has_album,
+      has_features: row.has_features
+    }));
 
     const result = [];
 
-    for (const dir of dirs) {
-      const dirBuf = Buffer.from(dir, 'utf8');
-      const likePrefix = toLikePrefix(dir);
-
-      // SQL pre-filter using the safe base64 prefix (guaranteed to align to a
-      // 3-byte base64 group boundary, so it reliably matches all child paths).
-      // Falls back to a full scan when the prefix is too short to be useful.
-      const tracksRes = likePrefix
-        ? await db.query(`
-            SELECT t.path,
-                   t.artist IS NOT NULL AND t.artist != '' AS has_artist,
-                   t.album IS NOT NULL AND t.album != '' AS has_album,
-                   tf.track_id IS NOT NULL AS has_features
-            FROM tracks t
-            LEFT JOIN track_features tf ON t.id = tf.track_id
-            WHERE t.path LIKE $1 || '%'
-          `, [likePrefix])
-        : await db.query(`
-            SELECT t.path,
-                   t.artist IS NOT NULL AND t.artist != '' AS has_artist,
-                   t.album IS NOT NULL AND t.album != '' AS has_album,
-                   tf.track_id IS NOT NULL AS has_features
-            FROM tracks t
-            LEFT JOIN track_features tf ON t.id = tf.track_id
-          `);
-
+    for (const rawDir of dirs) {
+      // Ensure trailing slash for accurate prefix matching
+      const prefix = rawDir.endsWith('/') ? rawDir : rawDir + '/';
+      
       let total = 0;
       let withMetadata = 0;
       let analyzed = 0;
 
-      for (const row of tracksRes.rows) {
-        const fileBuf = Buffer.from(row.path, 'base64');
-        // Precise byte-level check: prefix must match and fall on a path separator boundary
-        const prefixMatches = fileBuf.length >= dirBuf.length && fileBuf.slice(0, dirBuf.length).equals(dirBuf);
-        const atBoundary = fileBuf.length === dirBuf.length || fileBuf[dirBuf.length] === 0x2F; // '/'
-        if (prefixMatches && atBoundary) {
+      for (const t of tracks) {
+        if (t.decodedPath.startsWith(prefix)) {
           total++;
-          if (row.has_artist || row.has_album) withMetadata++;
-          if (row.has_features) analyzed++;
+          if (t.has_metadata) withMetadata++;
+          if (t.has_features) analyzed++;
         }
       }
 
-      result.push({ path: dir, totalTracks: total, withMetadata, analyzed });
+      result.push({
+        path: rawDir,
+        totalTracks: total,
+        withMetadata,
+        analyzed
+      });
     }
 
     res.json({ directories: result });

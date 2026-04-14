@@ -40,11 +40,13 @@ async function runLlmHubRegeneration(userId: string, opts: { force?: boolean } =
   const llmPlaylistCount = llmPlaylistCountRaw ? Number(llmPlaylistCountRaw) : 3;
 
   const genreBlendRaw = await getUserSetting(userId, 'genreBlendWeight');
+  const penaltyCurveRaw = await getUserSetting(userId, 'genrePenaltyCurve');
   const tracksPerRaw = await getUserSetting(userId, 'llmTracksPerPlaylist');
   const diversityRaw = await getUserSetting(userId, 'llmPlaylistDiversity');
 
   const hubSettings = {
     genreBlendWeight: genreBlendRaw !== null ? Number(genreBlendRaw) : 50,
+    genrePenaltyCurve: penaltyCurveRaw !== null ? Number(penaltyCurveRaw) : 50,
     llmTracksPerPlaylist: tracksPerRaw !== null ? Number(tracksPerRaw) : 10,
     llmPlaylistDiversity: diversityRaw !== null ? Number(diversityRaw) : 50,
   };
@@ -114,10 +116,12 @@ router.post('/generate-custom', async (req, res) => {
       return res.status(400).json({ error: 'A prompt is required' });
     }
     const genreBlendRaw = userId ? await getUserSetting(userId, 'genreBlendWeight') : null;
+    const penaltyCurveRaw = userId ? await getUserSetting(userId, 'genrePenaltyCurve') : null;
     const tracksPerRaw = userId ? await getUserSetting(userId, 'llmTracksPerPlaylist') : null;
     const diversityRaw = userId ? await getUserSetting(userId, 'llmPlaylistDiversity') : null;
     const hubSettings = {
       genreBlendWeight: genreBlendRaw !== null ? Number(genreBlendRaw) : 50,
+      genrePenaltyCurve: penaltyCurveRaw !== null ? Number(penaltyCurveRaw) : 50,
       llmTracksPerPlaylist: tracksPerRaw !== null ? Number(tracksPerRaw) : 10,
       llmPlaylistDiversity: diversityRaw !== null ? Number(diversityRaw) : 50,
     };
