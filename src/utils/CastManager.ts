@@ -560,11 +560,8 @@ export class CastManager {
             // Stop the cast media first
             this.stop();
 
-            // End the cast session
-            const session = this.castContext.getCurrentSession();
-            if (session) {
-                await session.end(true);
-            }
+            // End the cast session using the CastContext API
+            this.castContext.endSession();
         } catch (e) {
             console.error('[Cast] Error during disconnect:', e);
         }
