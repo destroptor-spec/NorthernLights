@@ -13,29 +13,37 @@ export type CastState = 'NO_DEVICES_AVAILABLE' | 'NOT_CONNECTED' | 'CONNECTING' 
 
 const SESSION_STORAGE_KEY = 'cast_session_id';
 
-// Client-side format/extension to MIME type mapping (mirrors server MIME_TYPES)
-const FORMAT_TO_MIME: Record<string, string> = {
-    mp3: 'audio/mpeg',
-    mpeg: 'audio/mpeg',
-    flac: 'audio/flac',
-    ogg: 'audio/ogg',
-    m4a: 'audio/mp4',
-    mp4: 'audio/mp4',
-    aac: 'audio/aac',
-    wav: 'audio/wav',
-    wma: 'audio/x-ms-wma',
-};
+// Maps audio format strings (from music-metadata and file extensions) to MIME types.
+// Keys must be lowercase. Covers: MPEG, FLAC, OGG, MP4/M4A, WAV/WAVE, WMA, AAC.
+const FORMAT_MIME_MAP = new Map<string, string>([
+    ['mp3', 'audio/mpeg'],
+    ['mpeg', 'audio/mpeg'],
+    ['flac', 'audio/flac'],
+    ['ogg', 'audio/ogg'],
+    ['m4a', 'audio/mp4'],
+    ['mp4', 'audio/mp4'],
+    ['mp4/m4a', 'audio/mp4'],  // music-metadata compound format
+    ['aac', 'audio/aac'],
+    ['wav', 'audio/wav'],
+    ['wave', 'audio/wav'],  // music-metadata sometimes returns 'WAVE'
+    ['wma', 'audio/x-ms-wma'],
+    ['adts', 'audio/aac'],
+]);
 
 function inferContentType(url: string, format?: string): string {
+    // 1. Try the format string from music-metadata (e.g. 'MPEG', 'FLAC', 'MP4/M4A')
     if (format) {
-        const key = format.toLowerCase().replace('mpeg', 'mp3');
-        if (FORMAT_TO_MIME[key]) return FORMAT_TO_MIME[key];
+        const mime = FORMAT_MIME_MAP.get(format.toLowerCase());
+        if (mime) return mime;
     }
-    // Try extracting extension from the URL path (before query params)
+    // 2. Try extracting extension from the URL path (before query params)
     try {
         const pathname = new URL(url).pathname;
         const ext = pathname.split('.').pop()?.toLowerCase();
-        if (ext && FORMAT_TO_MIME[ext]) return FORMAT_TO_MIME[ext];
+        if (ext) {
+            const mime = FORMAT_MIME_MAP.get(ext);
+            if (mime) return mime;
+        }
     } catch { /* ignore */ }
     return 'audio/mpeg';
 }
@@ -373,52 +381,15 @@ export class CastManager {
         return '';
     }
 
-    /**
-     * Forces AAC transcode quality for cast compatibility.
-     * Returns a URL with quality=128k set, ensuring the Chromecast receives AAC audio.
-     */
-    public getCastUrl(url: string): string {
-        try {
-            const u = new URL(url);
-            u.searchParams.set('quality', '128k');
-            return u.toString();
-        } catch {
-            return url;
-        }
-    }
-
-    /**
-     * Infer the correct content type for Cast based on the URL.
-     * HLS streams (.m3u8) MUST use application/x-mpegurl, not audio/mp4.
-     */
-    private getCastContentType(url: string): string {
-        try {
-            const u = new URL(url);
-            if (u.pathname.endsWith('.m3u8')) {
-                return 'application/x-mpegurl';
-            }
-        } catch { /* fall through */ }
-        return 'audio/mp4';
-    }
-
     public async castMedia(url: string, title: string, artist: string, artUrl?: string, album?: string, format?: string) {
         if (!this.isConnected()) return;
 
         const castSession = this.castContext.getCurrentSession();
         if (!castSession) return;
 
-        // Force AAC transcode for cast compatibility — override quality parameter to 128k
-        // The Default Media Receiver may not support FLAC/OGG/WMA, so we always transcode
-        let castUrl = url;
-        try {
-            const u = new URL(url);
-            u.searchParams.set('quality', '128k');
-            castUrl = u.toString();
-        } catch { /* use original url */ }
-
         // Warn if the Chromecast can't reach the server (localhost / 127.0.0.1)
         try {
-            const host = new URL(castUrl).hostname;
+            const host = new URL(url).hostname;
             if (host === 'localhost' || host === '127.0.0.1') {
                 console.warn('[Cast] Server URL is localhost — the Chromecast device cannot reach it. Access the app via your LAN IP or domain to cast.');
                 toast.error('Cannot cast: server is at localhost. Access the app via your LAN IP address to cast.');
@@ -426,9 +397,8 @@ export class CastManager {
             }
         } catch { /* ignore */ }
 
-        // Always use audio/mp4 content type since we're forcing AAC transcoding
-        const contentType = this.getCastContentType(castUrl);
-        const mediaInfo = new chrome.cast.media.MediaInfo(castUrl, contentType);
+        const contentType = inferContentType(url, format);
+        const mediaInfo = new chrome.cast.media.MediaInfo(url, contentType);
         mediaInfo.metadata = new chrome.cast.media.MusicTrackMediaMetadata();
         mediaInfo.metadata.title = title;
         mediaInfo.metadata.artist = artist;
@@ -468,7 +438,7 @@ export class CastManager {
      * @param startIndex Which track to start playing (0-based)
      * @param repeat 'none' | 'one' | 'all' — repeat mode
      */
-    public async castQueue(tracks: { url: string; title: string; artist: string; artUrl?: string; album?: string; format?: string; duration?: number }[], startIndex: number = 0, repeat: 'none' | 'one' | 'all' = 'none') {
+    public async castQueue(tracks: { url: string; rawUrl?: string; title: string; artist: string; artUrl?: string; album?: string; format?: string; duration?: number }[], startIndex: number = 0, repeat: 'none' | 'one' | 'all' = 'none') {
         if (!this.isConnected()) return;
 
         const castSession = this.castContext.getCurrentSession();
@@ -477,7 +447,7 @@ export class CastManager {
         // repeat='one': use single loadMedia with loop instead of queue
         if (repeat === 'one' && tracks[startIndex]) {
             const t = tracks[startIndex];
-            await this.castMedia(t.url, t.title, t.artist, t.artUrl, t.album, t.format);
+            await this.castMedia(t.rawUrl || t.url, t.title, t.artist, t.artUrl, t.album, t.format);
             // Set the media to loop via the queue repeat mode API
             const media = castSession.getMediaSession();
             if (media) {
@@ -492,9 +462,9 @@ export class CastManager {
 
         // Build QueueItems from playlist
         const queueItems: any[] = tracks.map((t, i) => {
-            const castUrl = this.getCastUrl(t.url);
-            const contentType = this.getCastContentType(castUrl);
-            const mediaInfo = new chrome.cast.media.MediaInfo(castUrl, contentType);
+            const mediaUrl = t.rawUrl || t.url;
+            const contentType = inferContentType(mediaUrl, t.format);
+            const mediaInfo = new chrome.cast.media.MediaInfo(mediaUrl, contentType);
             mediaInfo.metadata = new chrome.cast.media.MusicTrackMediaMetadata();
             mediaInfo.metadata.title = t.title || 'Unknown Title';
             mediaInfo.metadata.artist = t.artist || 'Unknown Artist';

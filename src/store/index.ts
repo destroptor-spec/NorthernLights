@@ -1074,9 +1074,9 @@ export const usePlayerStore = create<PlayerState>()(
             playbackManager.setVolume(volume);
 
             if (castManager.isConnected()) {
-              // Cast the current track to the device
+              // Use rawUrl (direct file) for cast — the Default Media Receiver cannot play HLS
               await castManager.castMedia(
-                track.url || '',
+                track.rawUrl || track.url || '',
                 track.title || 'Unknown Title',
                 track.artist || ((track.artists as string[])?.join(', ')) || 'Unknown Artist',
                 track.artUrl,
