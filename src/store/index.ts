@@ -338,6 +338,9 @@ export const usePlayerStore = create<PlayerState>()(
               _scrobbleEligible: false,
             });
           }
+        },
+        onBufferingChange: (isBuffering) => {
+          set({ isBuffering });
         }
       });
 

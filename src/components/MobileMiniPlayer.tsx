@@ -8,6 +8,7 @@ const MobileMiniPlayer = () => {
   const playlist = usePlayerStore((s) => s.playlist);
   const currentIndex = usePlayerStore((s) => s.currentIndex);
   const playbackState = usePlayerStore((s) => s.playbackState);
+  const isBuffering = usePlayerStore((s) => s.isBuffering);
   const pause = usePlayerStore((s) => s.pause);
   const resume = usePlayerStore((s) => s.resume);
   const nextTrack = usePlayerStore((s) => s.nextTrack);
@@ -103,10 +104,16 @@ const MobileMiniPlayer = () => {
           <div className="flex items-center gap-1 flex-shrink-0">
             <button
               onClick={handlePlayPause}
-              aria-label={isPlaying ? 'Pause' : 'Play'}
+              aria-label={isBuffering ? 'Loading' : isPlaying ? 'Pause' : 'Play'}
               className="w-10 h-10 flex items-center justify-center rounded-full text-[var(--color-text-primary)] active:scale-90 transition-transform"
+              disabled={isBuffering}
             >
-              {isPlaying ? <Pause size={22} /> : <Play size={22} fill="currentColor" />}
+              {isBuffering ? (
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style={{ animation: 'spin 0.8s linear infinite' }}>
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" opacity="0.25" />
+                  <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+                </svg>
+              ) : isPlaying ? <Pause size={22} /> : <Play size={22} fill="currentColor" />}
             </button>
             <button
               onClick={handleNext}

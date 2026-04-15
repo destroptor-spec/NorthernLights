@@ -25,6 +25,7 @@ class PlaybackManager {
     private onVolumeChangeCallback?: (volume: number) => void;
     private onMuteChangeCallback?: (muted: boolean) => void;
     private onTrackChangeCallback?: (index: number) => void;
+    private onBufferingChangeCallback?: (isBuffering: boolean) => void;
 
     private constructor() {
         this.audio = new Audio();
@@ -56,6 +57,24 @@ class PlaybackManager {
             if (!castManager.isConnected()) {
                 this.onPlayStateChangeCallback?.('stopped');
                 this.onEndedCallback?.();
+            }
+        });
+
+        this.audio.addEventListener('waiting', () => {
+            if (!castManager.isConnected()) {
+                this.onBufferingChangeCallback?.(true);
+            }
+        });
+
+        this.audio.addEventListener('playing', () => {
+            if (!castManager.isConnected()) {
+                this.onBufferingChangeCallback?.(false);
+            }
+        });
+
+        this.audio.addEventListener('canplay', () => {
+            if (!castManager.isConnected()) {
+                this.onBufferingChangeCallback?.(false);
             }
         });
 
@@ -111,6 +130,7 @@ class PlaybackManager {
         onVolumeChange?: (volume: number) => void;
         onMuteChange?: (muted: boolean) => void;
         onTrackChange?: (index: number) => void;
+        onBufferingChange?: (isBuffering: boolean) => void;
     }) {
         this.onTimeUpdateCallback = callbacks.onTimeUpdate;
         this.onDurationCallback = callbacks.onDuration;
@@ -119,6 +139,7 @@ class PlaybackManager {
         this.onVolumeChangeCallback = callbacks.onVolumeChange;
         this.onMuteChangeCallback = callbacks.onMuteChange;
         this.onTrackChangeCallback = callbacks.onTrackChange;
+        this.onBufferingChangeCallback = callbacks.onBufferingChange;
     }
 
     // --- Core Playback Controls ---
