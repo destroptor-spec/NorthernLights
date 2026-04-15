@@ -304,35 +304,49 @@ export class CastManager {
 
     /**
      * Called when cast state transitions to CONNECTED.
-     * Automatically takes the currently playing track and starts casting it.
+     * Automatically takes the current playlist and starts casting from the active track.
      */
     private async handleCastConnected() {
+        // Read current playback state from the store — this gives us the full
+        // playlist, current index, and repeat mode (consistent with playAtIndex).
+        const state = usePlayerStore.getState();
+        const { playlist, currentIndex, repeat } = state;
 
-        const trackInfo = playbackManager.getCurrentTrackInfo();
-        if (!trackInfo) {
-            console.log('[Cast] Connected but no track is playing — nothing to auto-cast.');
+        if (!playlist.length || currentIndex === null) {
+            console.log('[Cast] Connected but no playlist is active — nothing to auto-cast.');
             return;
         }
 
+        const track = playlist[currentIndex];
         // Get current playback position before we pause local audio
         const currentTime = playbackManager.getCurrentTime();
 
-        console.log(`[Cast] Auto-casting: "${trackInfo.title}" by ${trackInfo.artist} (position: ${currentTime.toFixed(1)}s)`);
+        console.log(`[Cast] Auto-casting playlist (${playlist.length} tracks, index ${currentIndex}): "${track.title}" by ${track.artist} (position: ${currentTime.toFixed(1)}s)`);
 
         this.autoCastInProgress = true;
         try {
-            // Pause local audio immediately to prevent double playback
-            playbackManager.pause();
+            // Pause local audio DIRECTLY on the HTMLAudioElement.
+            // We cannot use playbackManager.pause() because it checks
+            // castManager.isConnected() — which is now true — and routes to
+            // castManager.pause(), which is a no-op since no media is loaded
+            // on the Cast device yet. This would leave local audio playing.
+            playbackManager.getLocalAudioElement().pause();
 
-            // Cast the current track to the device
-            await this.castMedia(
-                trackInfo.url,
-                trackInfo.title,
-                trackInfo.artist,
-                trackInfo.artUrl,
-                trackInfo.album,
-                trackInfo.format
-            );
+            // Build the same cast track list that the store's playAtIndex uses
+            const castTracks = playlist.map(t => ({
+                url: t.url || '',
+                title: t.title || 'Unknown Title',
+                artist: t.artist || ((t.artists as string[])?.join(', ')) || 'Unknown Artist',
+                artUrl: t.artUrl,
+                album: t.album,
+                format: t.format,
+                duration: t.duration,
+            })).filter(t => t.url);
+
+            if (castTracks.length > 0) {
+                const castIndex = castTracks.findIndex(ct => ct.url === (track.url || ''));
+                await this.castQueue(castTracks, castIndex >= 0 ? castIndex : 0, repeat);
+            }
 
             // Seek to where we left off locally (with a small delay to let the media load)
             if (currentTime > 1) {
