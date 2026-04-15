@@ -55,6 +55,7 @@ export interface TrackInfo {
   // Legacy / UI fields
   fileHandle?: FileSystemFileHandle;
   url?: string;
+  rawUrl?: string;
   artUrl?: string;
   _pictureData?: { data: string; format: string };
   _format?: string;

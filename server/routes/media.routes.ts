@@ -4,6 +4,14 @@ import path from 'path';
 import { spawn } from 'child_process';
 import * as mm from 'music-metadata';
 import { isPathAllowed, pathToBuffer } from '../state';
+import { initDB } from '../database';
+import {
+  getOrCreateHlsSession,
+  touchSession,
+  getSessionOutputDir,
+  findSessionByTrackId,
+  cleanupSession,
+} from '../services/hlsStream.service';
 
 const router = Router();
 
@@ -13,6 +21,115 @@ const MIME_TYPES: Record<string, string> = {
   m4a: 'audio/mp4', aac: 'audio/aac', wav: 'audio/wav',
   wma: 'audio/x-ms-wma',
 };
+
+// ─── HLS Streaming ─────────────────────────────────────────────────────
+
+// Serve HLS playlist for a track
+router.get('/stream/:trackId/playlist.m3u8', async (req, res) => {
+  const { trackId } = req.params;
+  const quality = (req.query.quality as string) || '128k';
+
+  try {
+    let fileBuf: Buffer;
+    let bitrate: number | null = null;
+    
+    // Check if the trackId is a valid UUID
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    
+    if (uuidRegex.test(trackId)) {
+      // Look up the track from the database
+      const db = await initDB();
+      const result = await db.query('SELECT path, bitrate FROM tracks WHERE id = $1', [trackId]);
+      if (result.rows.length === 0) {
+        return res.status(404).send('Track not found');
+      }
+      fileBuf = pathToBuffer(result.rows[0].path);
+      bitrate = result.rows[0].bitrate;
+    } else {
+      // trackId is base64(dbPath), where dbPath is itself base64(filesystemPath).
+      // decodeURIComponent undoes URL encoding, then we decode one layer of base64
+      // to recover the DB path string, which pathToBuffer decodes to the raw file path.
+      const dbPath = Buffer.from(decodeURIComponent(trackId), 'base64').toString();
+      fileBuf = pathToBuffer(dbPath);
+    }
+
+    if (!fs.existsSync(fileBuf)) {
+      return res.status(404).send('Audio file not found on disk');
+    }
+
+    const allowed = await isPathAllowed(fileBuf);
+    if (!allowed) {
+      return res.status(403).send('Forbidden: Path is outside allowed library directories');
+    }
+
+    // Get or create the HLS session (waits for first segment to be ready)
+    const session = await getOrCreateHlsSession(trackId, fileBuf, quality, bitrate);
+
+    if (!fs.existsSync(session.playlistPath)) {
+      return res.status(500).send('HLS playlist generation failed');
+    }
+
+    // Clean up session when client disconnects
+    req.on('close', () => {
+      // Don't immediately clean up — other clients may be using the same session
+      // The TTL cleanup will handle it
+    });
+
+    res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+    res.setHeader('Cache-Control', 'no-cache'); // Playlist should always be fresh
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    fs.createReadStream(session.playlistPath).pipe(res);
+  } catch (err: any) {
+    console.error('[HLS] Playlist error:', err?.message || err);
+    if (!res.headersSent) {
+      if (err?.code === 'ENOENT' || err?.message?.includes('ENOENT')) {
+        res.status(501).send('FFmpeg not installed — HLS streaming unavailable');
+      } else {
+        res.status(500).send('HLS streaming error');
+      }
+    }
+  }
+});
+
+// Serve individual HLS segments (.ts files)
+router.get('/stream/:trackId/:segment', async (req, res) => {
+  const { trackId, segment } = req.params;
+  const quality = (req.query.quality as string) || '128k';
+
+  // Only serve .ts segment files
+  if (!segment.endsWith('.ts')) {
+    return res.status(400).send('Invalid segment request');
+  }
+
+  // Try exact quality match first, then fallback to any session for this trackId.
+  // hls.js doesn't forward query params on segment requests, so quality may be missing.
+  let outputDir = getSessionOutputDir(trackId, quality);
+  if (!outputDir) {
+    const found = findSessionByTrackId(trackId);
+    if (found) {
+      outputDir = found.outputDir;
+    }
+  }
+
+  if (!outputDir) {
+    return res.status(404).send('No active HLS session for this track');
+  }
+
+  const segmentPath = path.join(outputDir, segment);
+  if (!fs.existsSync(segmentPath)) {
+    return res.status(404).send('Segment not found');
+  }
+
+  // Touch the session to keep it alive
+  touchSession(trackId, quality);
+
+  res.setHeader('Content-Type', 'video/MP2T');
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable'); // Chunks never change
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  fs.createReadStream(segmentPath).pipe(res);
+});
+
+// ─── Legacy Streaming ──────────────────────────────────────────────────
 
 // Stream audio (supports Range requests)
 router.get('/stream', async (req, res) => {

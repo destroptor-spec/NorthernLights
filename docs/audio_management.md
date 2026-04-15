@@ -1,20 +1,111 @@
 # Audio Management
 
 ## Playback Engine
-- **HTML5 Audio**: Uses a single `HTMLAudioElement` wrapped by a `PlaybackManager` singleton.
-- **Source Handling**: Audio is served via the `/api/stream?path=...` endpoint.
-- **HTTP Streaming**: Implements partial content support (`Range` headers) on the Node.js server for efficient buffering and seeking of large lossless files (FLAC).
+- **HTML5 Audio + hls.js**: Uses a single `HTMLAudioElement` wrapped by a `PlaybackManager` singleton. Audio is delivered via HLS (HTTP Live Streaming) using `hls.js` on desktop browsers and native HLS on iOS Safari.
+- **Source Handling**: Audio is served via the `/api/stream/:trackId/playlist.m3u8?quality=<quality>` endpoint. Individual `.ts` transport stream segments are served from `/api/stream/:trackId/<segment>.ts`.
+- **Seeking**: HLS segments are individually addressable — scrubbing/seeking loads only the relevant chunk without re-downloading the entire stream.
+- **AudioContext**: Initialized on the very first user interaction (click/touch in `App.tsx`) to comply with Safari's autoplay policy. The `PlaybackManager.ensureAudioContext()` method creates the context in a suspended state and connects the `MediaElementAudioSourceNode`.
+
+## HLS Streaming Architecture
+
+### Overview
+Audio files are sliced into 10-second HLS chunks on-the-fly by FFmpeg on the backend. The frontend consumes these via `hls.js` (or native HLS on iOS Safari). The Service Worker caches individual `.ts` chunks for offline playback.
+
+### Backend: On-the-Fly HLS Generation
+
+**Service**: `server/services/hlsStream.service.ts`
+**Route**: `server/routes/media.routes.ts`
+
+```
+Client Request → /api/stream/:trackId/playlist.m3u8?quality=128k
+                    ↓
+          Track lookup from PostgreSQL (path, bitrate)
+                    ↓
+          Security check (isPathAllowed)
+                    ↓
+          getOrCreateHlsSession()
+                    ↓
+          FFmpeg spawns → writes to os.tmpdir()/nl-hls-streams/<trackId>-<quality>/
+                    ↓
+          Serves playlist.m3u8 once first segment is ready
+```
+
+### The Source Rule (Remux vs Transcode)
+
+The backend evaluates the requested quality against the source file's bitrate (stored in the `tracks.bitrate` column during library scan):
+
+| Condition | Action | FFmpeg Flag |
+|-----------|--------|-------------|
+| `quality === 'source'` | **Remux** — change container only | `-c:a copy` |
+| `requestedBitrate >= sourceBitrate` | **Remux** — no upsampling | `-c:a copy` |
+| `requestedBitrate < sourceBitrate` | **Transcode** to AAC | `-c:a aac -b:a <quality>` |
+
+Remuxing uses zero CPU and preserves original quality.
+
+### Quality Tiers
+
+| Setting | Bitrate | Description |
+|---------|---------|-------------|
+| `auto` | 128 kbps | Default — always uses Normal quality |
+| `64k` | 64 kbps | Low quality, saves bandwidth |
+| `128k` | 128 kbps | Normal — good balance |
+| `160k` | 160 kbps | High quality |
+| `320k` | 320 kbps | Very High — near-lossless |
+| `source` | Original | No conversion, direct file remux |
+
+Quality is persisted in the Zustand store (`streamingQuality`) and applied when building track URLs.
+
+### Session Lifecycle
+
+- Sessions are keyed by `trackId::quality`
+- Reused if an identical session exists (no duplicate FFmpeg processes)
+- Auto-reaped after 30 minutes of inactivity
+- All sessions cleaned up on server shutdown (SIGINT/SIGTERM)
+- Output directory: `os.tmpdir()/nl-hls-streams/`
+
+### FFmpeg Command
+
+```bash
+ffmpeg -i <input> -vn -map 0:a:0 \
+  [-c:a copy | -c:a aac -b:a 128k] \
+  -hls_time 10 -hls_list_size 0 \
+  -hls_segment_filename <dir>/segment%03d.ts \
+  -hls_flags independent_segments \
+  -f hls <dir>/playlist.m3u8
+```
+
+### Frontend: hls.js Integration
+
+**File**: `src/utils/PlaybackManager.ts`
+
+- `playUrl()` detects `.m3u8` URLs and routes to `playHls()`
+- `playHls()` creates an `Hls` instance with `maxBufferLength: 60` (buffers 60s ahead)
+- Waits for `MANIFEST_PARSED` event before calling `safePlay()`
+- iOS Safari fallback: uses native `<audio>` element with HLS src directly
+- `safePlay()` handles `NotAllowedError` (autoplay blocked) gracefully
+
+### Client-Side Caching (Service Worker)
+
+Configured via Workbox in `vite.config.ts`:
+
+| Pattern | Strategy | Cache Name | TTL |
+|---------|----------|------------|-----|
+| `*.ts` segments | CacheFirst | `nl-audio-chunks-v1` | 7 days, 2000 entries |
+| `*.m3u8` playlists | NetworkFirst | `nl-audio-playlists-v1` | 1 day, 200 entries |
+| `/api/art` | CacheFirst | `media-cache` | 30 days, 500 entries |
+
+Segments are immutable (cache-forever safe). Playlists use NetworkFirst so they're always fresh, with cache fallback for offline.
 
 ## Audio Analysis Pipeline
 
 ### Overview
 The application extracts acoustic features from audio files to power the recommendation engine (Infinity Mode, Hub playlists). This is implemented as a **three-phase process**:
 
-1. **Metadata Phase** (Library Scan): ID3/Vorbis tags extracted and stored in PostgreSQL.
-2. **Analysis Phase** (Worker Threads): ffmpeg + Essentia WASM + Tensorflow extract high-dimensional feature vectors:
-   - **8D Acoustic Semantic Vector** (rhythm/style)
-   - **1280D Discogs-EffNet Embedding** (instrument/timbre)
-3. **Feature Storage**: Results stored in `track_features` table with pgvector HNSW indexing across both vector spaces.
+1. **Metadata Phase** (Library Scan): ID3/Vorbis/ASF tags extracted and stored in PostgreSQL.
+2. **Analysis Phase** (Worker Threads): ffmpeg + Python + TensorFlow extract high-dimensional feature vectors:
+   - **8D/10D Acoustic Vector** (Rhythm, style, and instrumentation)
+   - **1280D Discogs-EffNet Embedding** (Neural timbre and production fingerprint)
+3. **Feature Storage**: Results stored in `track_features` table with pgvector HNSW indexing for ultra-fast similarity search.
 
 ### Technical Implementation
 
@@ -22,39 +113,41 @@ The application extracts acoustic features from audio files to power the recomme
 ```
 ffmpeg -ss <seek_to_35%> -i <input> -t 15 -f f32le -ac 1 -ar 44100 pipe:1
 ```
-- **Smart Seeking**: Seeks to ~35% into track (past intro, into chorus/verse) for representative analysis
-- **15-Second Window**: Captures enough audio for accurate feature extraction while minimizing memory
-- **Raw PCM Output**: Float32 little-endian mono 44.1kHz for Essentia consumption
+- **Smart Seeking**: Seeks to ~35% into the track (past intros/silence) to capture a representative segment of the chorus or main verse.
+- **15-Second Window**: Captures sufficient audio for the ML models to generate stable embeddings while minimizing memory and CPU overhead.
+- **Raw PCM Output**: Decodes to 16-bit little-endian mono PCM at 44.1kHz for the analysis engine.
 
-#### Essentia.js Analysis
-WASM-based audio analysis running in **worker threads** to prevent blocking the main event loop:
+#### Python ML Engine
+The analysis has transitioned from WASM-based processing to a dedicated **Python 3** engine using the **Essentia Python library** and **TensorFlow** models.
 
-**8D Acoustic Semantic Features** (in order):
-1. **Energy** — Overall loudness/amplitude
-2. **Brightness** (Spectral Centroid) — High-frequency content proxy
-3. **Percussiveness** (Dynamic Complexity) — Rhythmic energy variation
-4. **Chromagram** (Pitch Salience) — Harmonic content detection
-5. **Instrumentalness** (Spectral Flux) — Texture complexity proxy
-6. **Acousticness** (Zero Crossing Rate) — Timbre characteristics
-7. **Danceability** — Essentia's danceability algorithm
-8. **Tempo** — Normalized BPM (0.0 = 60 BPM, 0.5 = 120 BPM, 1.0 = 200+ BPM)
+**MusiCNN (8D/10D Acoustic Features)**:
+Extracted using the MusiCNN classification model and traditional DSP algorithms:
+1. **Energy** — Overall amplitude and loudness.
+2. **Brightness** (Spectral Centroid) — Frequency balance (high-frequency content proxy).
+3. **Percussiveness** (Dynamic Complexity) — Rhythmic energy variation.
+4. **Pitch Salience** — Harmonic clarity/tonality.
+5. **Instrumentalness** (ML-derived) — Probability that the track is instrumental.
+6. **Acousticness** (ML-derived) — Probability of acoustic vs. synthetic instruments.
+7. **Danceability** (ML-derived) — Rhythmic stability and "grid" adherence.
+8. **Tempo** — Normalized BPM estimation.
 
-**1280D Discogs-EffNet Embeddings**:
-The primary timbre/texture extraction model. It generates a 1280-dimensional embedding that captures deep acoustic signatures of instruments, production style, and recording quality. This replaces the legacy 13D MFCC system with a much higher fidelity representation.
-
-**Safety Features:**
-- Individual algorithm error handling — one failing algorithm doesn't kill the whole track
-- Minimum buffer validation (4096 samples) before processing
-- Per-file 90-second timeout to prevent hung files
-- Graceful fallback to 0 for failed dimensions
-- NaN/invalid vector guards on all vector operations
+**Discogs-EffNet (1280D Neural Embedding)**:
+The primary system for timbre and production similarity. It uses a **EfficientNet-based model** (Discogs-EffNet) to generate a high-fidelity **1280-dimensional** embedding.
+- **Neural Timbre**: Captures the "texture" of the audio (e.g., tube saturation, reverb style, specific synthesizer characteristics).
+- **L2 Normalization**: Embeddings are L2-normalized at extraction time to allow for **Cosine Similarity** search in PostgreSQL.
 
 #### Worker Thread Architecture
 ```
 Main Thread (Express Server)
-  ├── Worker 1 → spawn("tsx analyzeTrack.ts") → stdin/stdout JSON
-  ├── Worker 2 → spawn("tsx analyzeTrack.ts") → stdin/stdout JSON
-  ├── Worker 3 → spawn("tsx analyzeTrack.ts") → stdin/stdout JSON
+  ├── Worker 1 → spawn("tsx analyzeTrack.ts")
+  │     └── child_process → extractor.py (Python ML)
+  ├── Worker 2 → spawn("tsx analyzeTrack.ts")
+  │     └── child_process → extractor.py (Python ML)
+  ...
+```
+- **Process Isolation**: Node.js manages a pool of `analyzeTrack.ts` workers. Each worker spawns the Python `extractor.py` script for each file.
+- **Resource Management**: Concurrency is adjusted via the "Audio Analysis Workers" setting in the UI.
+SON
   └── Worker 4 → spawn("tsx analyzeTrack.ts") → stdin/stdout JSON
 ```
 
@@ -102,12 +195,13 @@ For electronic/synthetic playlists (target acousticness < 0.3), MFCC timbre is w
 An asymmetric penalty applied in SQL: if the playlist targets EDM (acousticness < 0.2) but a track is fully acoustic (> 0.5), it receives a +5.0 distance spike at the query level.
 
 ## Audio Processing (Planned)
-- **Web Audio API**: Will wrap the audio element with an `AudioContext` for advanced processing.
-- **Chain**: `MediaElementAudioSourceNode` → `GainNode` (Volume) → `BiquadFilterNodes` (EQ) → `AnalyserNode` (Visualizer) → `destination`.
+- **Web Audio API**: The audio element is wrapped with an `AudioContext` (initialized on first user interaction). Currently routes `MediaElementAudioSourceNode` → `destination`.
+- **Future Chain**: `MediaElementAudioSourceNode` → `GainNode` (Volume) → `BiquadFilterNodes` (EQ) → `AnalyserNode` (Visualizer) → `destination`.
 - **Cross-fade**: Orchestrated by dual gain-node ramps during track transitions.
 - **Gapless**: Leveraging `audioContext.currentTime` and look-ahead buffering to schedule next track starts with micro-second precision.
 
 ## WMA Support
-- **Transcoding**: WMA files are transcoded to MP3 on-the-fly via ffmpeg for browser compatibility
+- **Transcoding**: WMA files are transcoded to AAC on-the-fly via the HLS pipeline (same as other formats when quality < source bitrate)
+- **Legacy fallback**: Direct WMA → MP3 pipe streaming is preserved in the `/api/stream` legacy endpoint
 - **Format Detection**: File extension-based MIME type mapping in `MIME_TYPES` record
-- **Seeking**: Currently limited (no Range request support for transcoded streams)
+

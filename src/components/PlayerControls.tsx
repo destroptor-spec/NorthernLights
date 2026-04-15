@@ -26,6 +26,7 @@ const volumeSliderClass = "w-20 h-1 appearance-none bg-black/5 dark:bg-white/5 r
 
 export const PlayerControls: React.FC = () => {
   const playbackState = usePlayerStore((state) => state.playbackState);
+  const isBuffering = usePlayerStore((state) => state.isBuffering);
   const volume = usePlayerStore((state) => state.volume);
   const shuffle = usePlayerStore((state) => state.shuffle);
   const repeat = usePlayerStore((state) => state.repeat);
@@ -193,8 +194,13 @@ export const PlayerControls: React.FC = () => {
             <IconPrev />
           </button>
 
-          <button onClick={togglePlay} aria-label={isPlaying ? "Pause" : "Play"} className={playBtnClass}>
-            {isPlaying ? <IconPause /> : <IconPlay />}
+          <button onClick={togglePlay} aria-label={isBuffering ? "Loading" : isPlaying ? "Pause" : "Play"} className={playBtnClass} disabled={isBuffering}>
+            {isBuffering ? (
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" style={{ animation: 'spin 0.8s linear infinite' }}>
+                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" opacity="0.25" />
+                <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+              </svg>
+            ) : isPlaying ? <IconPause /> : <IconPlay />}
           </button>
 
           <button onClick={nextTrackAction} aria-label="Next track" className={baseBtnClass}>

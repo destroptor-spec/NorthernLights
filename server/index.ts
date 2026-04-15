@@ -180,6 +180,11 @@ function checkFfmpegAvailability() {
 // Start server
 checkFfmpegAvailability();
 
+// Clean up HLS sessions on shutdown
+import { cleanupAllSessions as cleanupHlsSessions } from './services/hlsStream.service';
+process.on('SIGINT', () => { cleanupHlsSessions(); });
+process.on('SIGTERM', () => { cleanupHlsSessions(); });
+
 // Start container health monitoring (background)
 import { startHealthMonitoring, containerEvents } from './services/containerControl.service';
 startHealthMonitoring();

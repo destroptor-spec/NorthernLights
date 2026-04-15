@@ -413,15 +413,20 @@ Get all server and user configuration settings.
     "artistAmnesiaLimit": 200,
     "llmPlaylistDiversity": 50,
     "genreBlendWeight": 50,
-    "llmTracksPerPlaylist": 10,
-    "llmPlaylistCount": 3
-  }
-  ```
+Get all configuration settings. System keys require **Admin** role for modification.
 
-### [POST] `/api/settings`
-Update settings. User-level keys are saved per-user; system-level keys require Admin role.
-- **Valid System Keys**: `audioAnalysisCpu`, `scannerConcurrency`, `llmBaseUrl`, `llmApiKey`, `llmModelName`, `hubGenerationSchedule`, `geniusApiKey`, `lastFmApiKey`, `lastFmSharedSecret`, `musicBrainzEnabled`, `musicBrainzClientId`, `musicBrainzClientSecret`, `providerArtistImage`, `providerArtistBio`, `providerAlbumArt`, `autoFolderWalk`.
-- **Valid User Keys**: `discoveryLevel`, `genreStrictness`, `artistAmnesiaLimit`, `llmPlaylistDiversity`, `genreBlendWeight`, `llmTracksPerPlaylist`, `llmPlaylistCount`, `lastFmScrobbleEnabled`.
+**Valid System Keys**:
+- `audioAnalysisCpu`: `Background`, `Balanced`, `Performance`, `Intensive`, `Maximum`.
+- `scannerConcurrency`: `HDD`, `SSD`, `NVMe`.
+- `autoFolderWalk`: `true` or `false` (recursive scan every 30 mins).
+- `llmBaseUrl`, `llmApiKey`, `llmModelName`: Core AI configuration.
+- `hubGenerationSchedule`: `Manual Only`, `Daily`, `Weekly`.
+- `geniusApiKey`, `lastFmApiKey`: Provider credentials.
+
+**Valid User Keys**:
+- `discoveryLevel`: `0-100` (Pool A vs Pool B balance).
+- `genreStrictness`: `0-100` (Penalty curve for genre distance).
+- `artistAmnesiaLimit`: Number of recent tracks to avoid repeating.
 
 ### [POST] `/api/settings/health/llm`
 Test LLM connection.
@@ -514,17 +519,27 @@ Get genre details with tracks.
 
 ---
 
-## 📻 Media & Streaming
+## 🎵 Media & Streaming
 
-### [GET] `/api/media/stream`
-Stream audio content. Supports HTTP Range for seeking.
-- **Query Params**: `pathB64` or `path` (base64-encoded file path).
-- **Note**: WMA files auto-transcode to MP3 if FFmpeg is present.
+### [GET] `/api/media/stream/:trackId/playlist.m3u8`
+The primary streaming endpoint using **HLS (HTTP Live Streaming)**.
+- **How to use**: Returns an M3U8 playlist. The backend slices the file into 10s segments on-the-fly.
+- **Query Params**: `quality` (`source`, `320k`, `160k`, `128k`, `64k`). Default: `128k`.
+- **Note**: Requires FFmpeg on the host machine.
+
+### [GET] `/api/media/stream/:trackId/:segment.ts`
+Retrieve a specific HLS transport stream segment.
+- **Cache Policy**: Segments are cached indefinitely (`max-age=31536000, immutable`) as they are immutable for a given track/quality session.
+
+### [GET] `/api/media/stream` (Legacy)
+Classic HTTP streaming for non-HLS clients or direct downloads.
+- **Query Params**: `pathB64` or `path` (Base64-encoded file path).
+- **Features**: Full HTTP `Range` support. WMA files auto-transcode to MP3.
 
 ### [GET] `/api/media/art`
-Retrieve album art image.
+Retrieve embedded album artwork.
 - **Query Params**: `pathB64` or `path`.
-- **Returns**: Binary image blob (JPG/PNG).
+- **Note**: Proxies the binary data from the file's metadata directly.
 
 ---
 
@@ -651,11 +666,9 @@ Clear external metadata cache (admin only).
 ## ✨ Playback & History
 
 ### [POST] `/api/playback/history`
-Record track to session history for Infinity Mode.
-- **Example Request**:
-  ```json
-  { "trackId": "track-v4-id" }
-  ```
+Record a track as "Played" for the current session.
+- **Payload**: `{ "trackId": "uuid" }`
+- **Role**: Influences the the Infinity Mode decay centroid.
 
 ### [POST] `/api/playback/record`
 Record a successful playback (increments play count).
@@ -668,20 +681,15 @@ Record a successful playback (increments play count).
 Record a track skip.
 
 ### [POST] `/api/recommend`
-Get the next track for Infinity Mode based on current session history.
-- **Example Request**:
+Request the next track for Infinity Mode.
+- **Payload**: 
   ```json
   {
-    "sessionHistoryTrackIds": ["track-v4-id-1", "track-v4-id-2"],
-    "settings": { "discoveryLevel": 70 }
+    "sessionHistoryTrackIds": ["id1", "id2"],
+    "settings": { "genreStrictness": 50 }
   }
   ```
-- **Example Response**:
-  ```json
-  {
-    "track": { "id": "next-track-id", "title": "Next Song", ... }
-  }
-  ```
+- **Returns**: `{ "track": { ...track metadata... } }`
 
 ---
 

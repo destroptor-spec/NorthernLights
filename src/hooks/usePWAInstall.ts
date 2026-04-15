@@ -5,10 +5,20 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
 }
 
+function isIOS(): boolean {
+  return /iPhone|iPad|iPod/.test(navigator.userAgent) && !(window as Window & { MSStream?: unknown }).MSStream;
+}
+
+function isAndroid(): boolean {
+  return /Android/.test(navigator.userAgent);
+}
+
+export type InstallPlatform = 'native-prompt' | 'ios-manual' | 'unsupported';
+
 export function usePWAInstall() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
-  const [isInstallable, setIsInstallable] = useState(false);
   const [isInstalled, setIsInstalled] = useState(false);
+  const [platform, setPlatform] = useState<InstallPlatform>('unsupported');
 
   useEffect(() => {
     if (
@@ -19,15 +29,21 @@ export function usePWAInstall() {
       return;
     }
 
+    // iOS Chrome/Safari — no beforeinstallprompt, show manual instructions
+    if (isIOS()) {
+      setPlatform('ios-manual');
+      return;
+    }
+
     const handleBeforeInstall = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e as BeforeInstallPromptEvent);
-      setIsInstallable(true);
+      setPlatform('native-prompt');
     };
 
     const handleInstalled = () => {
       setIsInstalled(true);
-      setIsInstallable(false);
+      setPlatform('unsupported');
       setDeferredPrompt(null);
     };
 
@@ -45,9 +61,11 @@ export function usePWAInstall() {
     deferredPrompt.prompt();
     const { outcome } = await deferredPrompt.userChoice;
     setDeferredPrompt(null);
-    setIsInstallable(false);
+    setPlatform('unsupported');
     return outcome === 'accepted';
   }, [deferredPrompt]);
 
-  return { isInstallable, isInstalled, install };
+  const canInstall = platform === 'native-prompt' || platform === 'ios-manual';
+
+  return { canInstall, isInstalled, platform, install };
 }

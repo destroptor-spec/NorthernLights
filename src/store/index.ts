@@ -16,13 +16,14 @@ export interface ToastItem {
 // Re-entrancy guard: incremented on each playAtIndex call to discard stale callbacks
 let playGeneration = 0;
 
-const buildTrackUrls = (path: string, token: string) => {
+const buildTrackUrls = (trackId: string, path: string, token: string, quality: string = '128k') => {
   const base = `${window.location.protocol}//${window.location.host}`;
   const tokenParam = token ? `&token=${token}` : '';
   // path is already base64 from the DB — just URL-encode for safe transport
   const pathB64 = encodeURIComponent(path);
   return {
-    url: `${base}/api/stream?pathB64=${pathB64}${tokenParam}`,
+    url: `${base}/api/stream/${encodeURIComponent(trackId)}/playlist.m3u8?quality=${quality}${tokenParam}`,
+    rawUrl: `${base}/api/stream?pathB64=${pathB64}${tokenParam}`,
     artUrl: `${base}/api/art?pathB64=${pathB64}${tokenParam}`,
   };
 };
@@ -76,6 +77,7 @@ export interface PlayerState {
   playbackState: PlaybackState;
   currentTime: number;
   duration: number;
+  isBuffering: boolean;
   castConnected: boolean;
 
   // Settings State (Persisted)
@@ -97,6 +99,7 @@ export interface PlayerState {
   providerArtistBio: 'lastfm' | 'genius';
   providerAlbumArt: 'lastfm' | 'genius' | 'musicbrainz';
   authToken: string | null; // JWT token
+  streamingQuality: 'auto' | '64k' | '128k' | '160k' | '320k' | 'source';
 
   // Current User State
   currentUser: { id: string; username: string; role: string } | null;
@@ -249,7 +252,19 @@ export const usePlayerStore = create<PlayerState>()(
             }
           }
         },
-        onDuration: (duration) => set({ duration }),
+        onDuration: (duration) => {
+          // Only accept the player-reported duration if it's valid AND at least
+          // as large as what we currently have. This prevents the early HLS
+          // loadedmetadata (~10s = one segment) from overwriting the DB duration
+          // that was set in playAtIndex. Once hls.js parses the full VOD playlist,
+          // durationchange fires with the real total and we accept it.
+          if (isFinite(duration) && duration > 0) {
+            const current = get().duration;
+            if (duration >= current || current === 0) {
+              set({ duration });
+            }
+          }
+        },
         onPlayStateChange: (state) => set({ playbackState: state }),
         onEnded: () => {
           // Scrobble the completed track if eligible
@@ -333,6 +348,7 @@ export const usePlayerStore = create<PlayerState>()(
         playbackState: 'stopped' as PlaybackState,
         currentTime: 0,
         duration: 0,
+        isBuffering: false as boolean,
         castConnected: false as boolean,
         volume: 1,
         shuffle: false as boolean,
@@ -352,6 +368,7 @@ export const usePlayerStore = create<PlayerState>()(
         providerArtistBio: 'lastfm' as 'lastfm' | 'genius',
         providerAlbumArt: 'lastfm' as 'lastfm' | 'genius' | 'musicbrainz',
         authToken: null as string | null,
+        streamingQuality: 'auto' as 'auto' | '64k' | '128k' | '160k' | '320k' | 'source',
         currentUser: null as { id: string; username: string; role: string } | null,
 
         // Last.fm scrobble state
@@ -628,14 +645,15 @@ export const usePlayerStore = create<PlayerState>()(
             if (res.ok) {
               const data = await res.json();
               if (data.track) {
-                const { authToken } = state;
+                const { authToken, streamingQuality } = state;
                 const token = authToken || '';
+                const quality = streamingQuality === 'auto' ? '128k' : streamingQuality;
 
                 const track = {
                   ...data.track,
                   isInfinity: true,
                   artists: typeof data.track.artists === 'string' ? JSON.parse(data.track.artists) : data.track.artists,
-                  ...buildTrackUrls(data.track.path, token),
+                  ...buildTrackUrls(data.track.id, data.track.path, token, quality),
                 };
                 get().addTrackToPlaylist(track);
                 if (!isPrefetch) {
@@ -663,8 +681,9 @@ export const usePlayerStore = create<PlayerState>()(
             if (res.ok) {
               const data = await res.json();
               
-              const { authToken } = get();
+              const { authToken, streamingQuality } = get();
               const token = authToken || '';
+              const quality = streamingQuality === 'auto' ? '128k' : streamingQuality;
 
               const libraryWithUrls = data.tracks.map((t: any) => {
                 let artistsArray = t.artists;
@@ -681,7 +700,7 @@ export const usePlayerStore = create<PlayerState>()(
                   ...t,
                   artists: artistsArray,
                   genres: genresArray,
-                  ...buildTrackUrls(t.path, token),
+                  ...buildTrackUrls(t.id, t.path, token, quality),
                 };
               });
 
@@ -719,9 +738,10 @@ export const usePlayerStore = create<PlayerState>()(
                        const fullTrack = library.find((lt: TrackInfo) => lt.id === t.id);
                        const track = fullTrack || t;
                        if (!track.path) return null;
+                       const quality = (get().streamingQuality === 'auto' ? '128k' : get().streamingQuality);
                        return {
                          ...track,
-                         ...buildTrackUrls(track.path, token),
+                         ...buildTrackUrls(track.id, track.path, token, quality),
                        };
                     }).filter(Boolean);
                     return { ...pl, tracks: mappedTracks };
@@ -923,8 +943,9 @@ export const usePlayerStore = create<PlayerState>()(
             if (fetchRes.ok) {
               const data = await fetchRes.json();
               
-              const { authToken } = get();
+              const { authToken, streamingQuality } = get();
               const token = authToken || '';
+              const quality = streamingQuality === 'auto' ? '128k' : streamingQuality;
 
                const latestLibrary = data.tracks.map((t: any) => {
                 let artistsArray = t.artists;
@@ -935,7 +956,7 @@ export const usePlayerStore = create<PlayerState>()(
                 return {
                   ...t,
                   artists: artistsArray,
-                  ...buildTrackUrls(t.path, token),
+                  ...buildTrackUrls(t.id, t.path, token, quality),
                 };
               });
               set({
@@ -1016,6 +1037,10 @@ export const usePlayerStore = create<PlayerState>()(
 
           const generation = ++playGeneration;
 
+          // Immediately set the DB-known duration so the UI doesn't flash "0:10"
+          // while waiting for hls.js to parse the full manifest.
+          set({ currentTime: 0, duration: track.duration || 0, isBuffering: true });
+
           try {
             // Set volume before playing
             playbackManager.setVolume(volume);
@@ -1028,7 +1053,7 @@ export const usePlayerStore = create<PlayerState>()(
             }
             // A newer playAtIndex call has taken over — discard this result
             if (generation !== playGeneration) return;
-            set({ currentIndex: index, _scrobbleStartAt: Date.now(), _scrobbleEligible: false });
+            set({ currentIndex: index, isBuffering: false, _scrobbleStartAt: Date.now(), _scrobbleEligible: false });
 
             // Telemetry: record successful playback and push to session history
             get().recordPlay(track.id);
@@ -1056,6 +1081,7 @@ export const usePlayerStore = create<PlayerState>()(
           } catch (e) {
             // A newer playAtIndex call has taken over — don't chain into nextTrack
             if (generation !== playGeneration) return;
+            set({ isBuffering: false });
             console.error("Error playing track", e);
             get().nextTrack();
           }
@@ -1214,6 +1240,7 @@ export const usePlayerStore = create<PlayerState>()(
         providerAlbumArt: state.providerAlbumArt,
         authToken: state.authToken,
         currentUser: state.currentUser,
+        streamingQuality: state.streamingQuality,
       }),
     }
   )

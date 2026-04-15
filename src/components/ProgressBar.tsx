@@ -31,7 +31,7 @@ const ProgressBar = () => {
       <span className="progress-time">{formatTime(currentTime)}</span>
       {currentTrack?.url ? (
         <WaveformProgressBar
-          audioUrl={currentTrack.url}
+          audioUrl={currentTrack.rawUrl || currentTrack.url}
           currentTime={currentTime}
           duration={displayDuration}
           onSeek={handleSeek}

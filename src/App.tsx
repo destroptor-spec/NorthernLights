@@ -26,6 +26,7 @@ import { DatabaseControl } from './components/DatabaseControl';
 import { ToastContainer } from './components/ToastContainer';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { useToast } from './hooks/useToast';
+import { playbackManager } from './utils/PlaybackManager';
 
 const TAB_CONFIG = [
   { path: '/library', label: 'Hub', end: true },
@@ -72,6 +73,19 @@ const App: React.FC = () => {
   React.useEffect(() => {
     if (isScanningGlobal) setScannerVisible(true);
   }, [isScanningGlobal]);
+
+  // Initialize AudioContext on first user interaction (Safari requires this)
+  React.useEffect(() => {
+    const initAudio = () => {
+      playbackManager.ensureAudioContext();
+    };
+    document.addEventListener('click', initAudio, { once: true });
+    document.addEventListener('touchstart', initAudio, { once: true });
+    return () => {
+      document.removeEventListener('click', initAudio);
+      document.removeEventListener('touchstart', initAudio);
+    };
+  }, []);
 
   const location = useLocation();
 
@@ -477,7 +491,7 @@ const App: React.FC = () => {
           <div className="flex-1 flex overflow-hidden">
             <div className={`flex-1 overflow-y-auto ${playlist.length > 0 ? 'pb-32 md:pb-48' : 'pb-16 md:pb-4'}`}>
               {library.length === 0 ? (
-                isLibraryLoading ? (
+                isLibraryLoading && location.pathname !== '/library' ? (
                   <div className="page-container">
                     <div className="h-8 w-32 rounded bg-[var(--color-surface-variant)] animate-pulse mb-2" />
                     <div className="h-4 w-48 rounded bg-[var(--color-surface-variant)] animate-pulse mb-8" />

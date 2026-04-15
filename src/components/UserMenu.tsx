@@ -11,7 +11,7 @@ interface UserMenuProps {
 export const UserMenu: React.FC<UserMenuProps> = ({ onOpenSettings }) => {
   const currentUser = usePlayerStore(state => state.currentUser);
   const clearAuthToken = usePlayerStore(state => state.clearAuthToken);
-  const { isInstallable, isInstalled, install } = usePWAInstall();
+  const { canInstall, isInstalled, platform, install } = usePWAInstall();
   const [isOpen, setIsOpen] = useState(false);
   const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -71,9 +71,23 @@ export const UserMenu: React.FC<UserMenuProps> = ({ onOpenSettings }) => {
             </button>
           )}
 
-          {isInstallable && !isInstalled && (
+          {canInstall && !isInstalled && (
             <button
-              onClick={() => { install(); setIsOpen(false); }}
+              onClick={() => {
+                if (platform === 'native-prompt') {
+                  install();
+                  setIsOpen(false);
+                } else {
+                  // iOS — show instructions in a simple alert
+                  alert(
+                    'To install NorthernLights:\n\n' +
+                    '1. Tap the Share button (square with arrow)\n' +
+                    '2. Scroll down and tap "Add to Home Screen"\n' +
+                    '3. Tap "Add"'
+                  );
+                  setIsOpen(false);
+                }
+              }}
               className="w-full px-4 py-2.5 text-left text-sm text-[var(--color-text-secondary)] hover:bg-white/[0.06] transition-colors flex items-center gap-2"
             >
               <Download className="w-4 h-4" /> Install App

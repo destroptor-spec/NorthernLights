@@ -1,95 +1,47 @@
-# Antigravity Context: Settings UI, LLM Config & Hub Lifecycle
+# Engine Settings & Hub Lifecycle
 
-## System Overview
-This document outlines the architecture for the user-facing Settings menu, how state is passed to the recommendation engine, and **critical architectural corrections** regarding LLM API key storage and the Hub generation lifecycle. 
-
-**CRITICAL APP CONTEXT:** This is a locally-hosted web application. The user brings their own music and their own LLM API keys. DO NOT assume a cloud SaaS environment. DO NOT store user API keys in a `.env` file.
-
----
+This document outlines the architecture for the user-facing Settings menu, how state is passed to the recommendation engine, and the **Aurora Media Server** lifecycle for LLM-driven discovery.
 
 ## 1. Engine Tuning (Settings UI -> Backend Mapping)
-The UI must expose human-readable tuning parameters that map directly to the backend mathematical variables.
 
-**1.1 The "Playback Algorithm" Tab (Live Queue & Infinity Mode)**
-- **Discovery Level (The Wander Factor):** Slider (1-100). Maps to the `limit` (over-fetch pool) and the randomizer weight. 
-  - *Low:* Fetch top 5, heavily weight index 0. 
-  - *High:* Fetch top 50, distribute weight evenly.
-- **Genre Strictness:** Slider (0-100). Maps to the `genreWeight` multiplier for Infinity Mode.
-  - *0:* `genreWeight = 0.0` (Ignore genre, pure math).
-  - *100:* `genreWeight = 3.0` (Heavily penalizes jumping outside the current genre cluster).
-- **Genre Penalty Curve:** Slider (0-100). Controls the steepness of the exponential penalty curve for Hub playlists.
-  - *0:* Lenient (curve=0.5) — aliens can win with modest acoustic advantage.
-  - *100:* Strict (curve=2.0) — aliens need 2.2×+ closer acoustically.
-  - Shows live penalty preview table (deep siblings, cousins, share root, alien multipliers).
-- **Genre Blend Weight:** Slider (0-100). Overall genre influence strength for Hub playlists.
-- **Artist Amnesia:** Dropdown ("Allow Repeats", "Standard", "Strict"). Maps to the length of the `recently_played_artist_ids` array passed to the Postgres `NOT IN (...)` query.
+The UI exposes human-readable parameters that map directly to the backend mathematical search variables.
 
-**1.2 The "System & Processing" Tab**
-- **Audio Analysis CPU Usage:** Dropdown ("Background", "Balanced", "Maximum"). Controls the worker thread pool concurrency for audio feature extraction:
-  - *Background:* 1 worker thread — minimal CPU impact, slowest analysis
-  - *Balanced:* 4 worker threads — default setting
-  - *Maximum:* 6 worker threads — fastest analysis, higher CPU usage
+### 1.1 Playback & Discovery Tab
+- **Discovery Level (The Wander Factor)**: Slider (1-100). Sets a rank-weighted randomizer that selects from the top candidates to ensure serendipity.
+- **Genre Strictness**: Slider (0-100). Maps to `genreWeight` in the recommendation engine.
+  - *0*: Pure acoustic/embedding similarity (ignores genre).
+  - *100*: Absolute genre adherence (penalizes jumping outside the MBDB genre branch).
+- **Genre Penalty Curve**: Slider (0-100). Controls the steepness of the exponential penalty applied to tracks outside the target genre cluster.
+- **Artist Amnesia**: Dropdown ("Standard", "Strict"). Controls how many recent artist identifiers are excluded from the candidate pool to prevent repetition.
+
+### 1.2 System & Processing Tab
+- **Audio Analysis Workers**: Dropdown ("Background", "Balanced", "Maximum"). Controls the worker thread pool for audio feature extraction:
+  - *Background*: 1 worker thread (Minimal impact).
+  - *Balanced*: 4 worker threads (Default).
+  - *Maximum*: Auto-scales to all logical CPU cores via `os.cpus().length`.
   
-  Workers run in separate Node.js processes via `tsx` child processes, keeping the main event loop responsive for HTTP requests.
-  
-- **Hub Generation Schedule:** Dropdown ("Manual Only", "Daily", "Weekly"). Adjusts the cron job frequency for the LLM pipeline. Also create a button on the hub to generate or regenerate.
-
-**1.3 State Management Implementation**
-These settings must be instantly accessible. Store them in a frontend global state manager (Zustand/React Context). When requesting a new track, attach the values to the payload:
-```typescript
-interface PlaybackRequestPayload {
-  targetVector: number[];
-  currentGenre: string;
-  settings: {
-    discoveryLevel: number;
-    genreStrictness: number;
-    artistAmnesiaLimit: number;
-  }
-}
-```
+  Each worker manages a lifecycle that includes an FFmpeg decode step followed by spawning the **Python `extractor.py`** ML engine.
 
 ## 2. Three-Phase Scanner Architecture
 
-The library scanner operates in three distinct phases for transparency and reliability:
+1. **Walk Phase**: Recursive directory traversal using Node.js Buffers to collect raw paths.
+2. **Metadata Phase**: High-speed parallel tag parsing via `music-metadata`. Tracks become visible in the library after this phase.
+3. **Analysis Phase**: Audio feature extraction via the **Python ML Engine**:
+   - ffmpeg seeks to ~35% (the track core).
+   - Python `extractor.py` runs **MusiCNN** and **Discogs-EffNet** models.
+   - Generates **1288-dimensional** feature vectors (**8D acoustic** + **1280D EffNet**).
+   - Features stored in the PostgreSQL `track_features` table.
 
-### Phase 1: Directory Walk
-- Recursive traversal of mapped folders
-- Collects audio file paths (MP3, FLAC, OGG, M4A, AAC, WMA)
-- No database writes during this phase
+## 3. External Providers (LLM & Metadata)
 
-### Phase 2: Metadata Extraction
-- Parallel ID3/Vorbis/ASF tag parsing via `music-metadata`
-- Stores track metadata (title, artist, album, genre, duration, etc.)
-- Creates artist/album/genre entity records
-- Tracks visible in library immediately after this phase
+Aurora uses a "Bring Your Own Key" model. All credentials and external service settings are stored in the PostgreSQL `system_settings` or `user_settings` tables:
 
-### Phase 3: Audio Analysis (Worker Threads)
-- CPU-intensive feature extraction offloaded from main thread
-- Each worker spawns a persistent `tsx` child process
-- Smart seeking: ffmpeg seeks to ~35% into track (past intro)
-- Decodes 15 seconds for Essentia.js WASM and Tensorflow analysis
-- 1288-dimensional feature vectors stored in `track_features` table (8D acoustic + 1280D EffNet embedding)
-- Powers Infinity Mode and Two-Pool Hub similarity search
+- **LLM Configuration**: Supports OpenAI-compatible endpoints (including local providers like Ollama, LocalAI, and LM Studio).
+- **Metadata Providers**: API keys for Genius (Lyrics), Last.fm (Scrobbling), and MusicBrainz (OAuth) are stored encrypted or securely in the database.
 
-**API Endpoints:**
-- `POST /api/library/scan` — Full three-phase scan (walk → metadata → analysis)
-- `POST /api/library/analyze` — Analysis phase only (tracks without features)
-- `GET /api/library/stats` — Per-directory coverage statistics
+## 4. The Hub Lifecycle
 
-## 3. External Providers & API Configuration (CRITICAL)
+To ensure performance, the Hub follows a discrete **Generation vs. Fetching** pattern:
 
-Antigravity, do NOT use .env files for the user's LLM credentials. The user must be able to configure this dynamically via the UI to support local providers like Ollama or LM Studio.
-
-- The UI: The Settings page must have an "External Providers" section with text inputs for API Base URL (defaults to OpenAI), API Key, and Model Name.
-- The Storage: Store these values securely in a local Postgres settings table.
-- The Execution: The Node.js backend must dynamically read these values from the database when instantiating the LLM client (e.g., the OpenAI Node SDK).
-
-## 4. The Hub Generation Lifecycle (Bug Prevention)
-
-Antigravity, you must separate the LLM generation trigger from the data fetching. The Hub MUST NOT trigger the LLM every time the user clicks the "Hub" tab.
-
-- **Route A (The Fetcher):** GET /api/hub
-  This route is called when the frontend component mounts. It MUST ONLY read from the hub_cache database table and return the data instantly. It must never trigger the LLM.
-
-- **Route B (The Generator):** POST /api/hub/generate
-  This route triggers the heavy LLM Prompt-to-Query pipeline, runs the Postgres Euclidean distance queries, overwrites the hub_cache table with the new playlists, and returns a success status. This is ONLY triggered by the background cron job (configured in 1.2) or a manual "Refresh Hub" button in the UI.
+- **Fetching (GET /api/hub)**: Returns immediately from the `playlists` table where `is_llm_generated = true`. It **never** triggers an LLM call.
+- **Generation (POST /api/hub/regenerate)**: Triggers the LLM context processor, runs the similarity search across the 1288D vector space, and saves new playlists to the database. This runs via a background interval (e.g., Daily) or a manual "Refresh" trigger.

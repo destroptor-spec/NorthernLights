@@ -1,3 +1,4 @@
+import Hls from 'hls.js';
 import { castManager } from './CastManager';
 
 export type PlaybackState = 'playing' | 'paused' | 'stopped';
@@ -6,6 +7,7 @@ class PlaybackManager {
     private static instance: PlaybackManager;
     private audio: HTMLAudioElement;
     private audioContext: AudioContext | null = null;
+    private hls: Hls | null = null;
     
     // Internal state to track what's playing in case we switch to Cast mid-stream
     private currentUrl: string | null = null;
@@ -36,6 +38,14 @@ class PlaybackManager {
         this.audio.addEventListener('loadedmetadata', () => {
             if (!castManager.isConnected()) {
                 this.onDurationCallback?.(this.audio.duration || 0);
+            }
+        });
+
+        // hls.js updates the media element's duration asynchronously after manifest parsing.
+        // 'durationchange' fires when that happens, giving us the real VOD duration.
+        this.audio.addEventListener('durationchange', () => {
+            if (!castManager.isConnected() && isFinite(this.audio.duration) && this.audio.duration > 0) {
+                this.onDurationCallback?.(this.audio.duration);
             }
         });
 
@@ -110,6 +120,15 @@ class PlaybackManager {
                 return;
             }
 
+            // Route HLS URLs through hls.js
+            if (url.includes('.m3u8')) {
+                await this.playHls(url);
+                return;
+            }
+
+            // Clean up previous HLS instance if switching away
+            this.destroyHls();
+
             // Clean up previous URL if it exists AND is a blob
             if (this.audio.src && this.audio.src.startsWith('blob:')) {
                 URL.revokeObjectURL(this.audio.src);
@@ -119,11 +138,7 @@ class PlaybackManager {
             this.audio.load();
             await this.audio.play();
 
-            if (!this.audioContext) {
-                this.initAudioContext();
-            } else if (this.audioContext.state === 'suspended') {
-                await this.audioContext.resume();
-            }
+            this.ensureAudioContext();
         } catch (error) {
             // AbortError: play() was interrupted by a new source loading — not a real error
             if (error instanceof DOMException && error.name === 'AbortError') return;
@@ -132,10 +147,112 @@ class PlaybackManager {
         }
     }
 
+    // --- HLS Playback ---
+
+    private async playHls(playlistUrl: string): Promise<void> {
+        // Clean up previous HLS instance
+        this.destroyHls();
+
+        // Extract auth token from the playlist URL so we can pass it to segment requests.
+        // hls.js constructs segment URLs relative to the playlist but drops query params.
+        const urlObj = new URL(playlistUrl, window.location.origin);
+        const authToken = urlObj.searchParams.get('token') || '';
+
+        if (Hls.isSupported()) {
+            this.hls = new Hls({
+                maxBufferLength: 60,         // Buffer up to 60s ahead
+                maxMaxBufferLength: 120,     // Hard cap at 120s
+                startFragPrefetch: true,     // Start fetching immediately
+                xhrSetup: (xhr: XMLHttpRequest, _url: string) => {
+                    // DO NOT call xhr.open() here — hls.js has already opened the request.
+                    // Use setRequestHeader to inject the auth token as a Bearer header.
+                    if (authToken) {
+                        xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
+                    }
+                },
+            });
+
+            this.hls.loadSource(playlistUrl);
+            this.hls.attachMedia(this.audio);
+
+            // Wait for the manifest to be parsed, then play
+            await new Promise<void>((resolve, reject) => {
+                const onParsed = () => {
+                    this.hls?.off(Hls.Events.MANIFEST_PARSED, onParsed);
+                    this.hls?.off(Hls.Events.ERROR, onError);
+                    resolve();
+                };
+
+                const onError = (_event: string, data: any) => {
+                    if (data.fatal) {
+                        this.hls?.off(Hls.Events.MANIFEST_PARSED, onParsed);
+                        this.hls?.off(Hls.Events.ERROR, onError);
+
+                        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                            console.error('[HLS] Fatal network error:', data);
+                            // Try to recover once
+                            this.hls?.startLoad();
+                        } else {
+                            console.error('[HLS] Fatal error:', data);
+                            this.destroyHls();
+                            reject(new Error(`HLS fatal error: ${data.details}`));
+                        }
+                    }
+                };
+
+                this.hls!.on(Hls.Events.MANIFEST_PARSED, onParsed);
+                this.hls!.on(Hls.Events.ERROR, onError);
+            });
+
+            await this.safePlay();
+        }
+        // Fallback for iOS Safari (native HLS support)
+        else if (this.audio.canPlayType('application/vnd.apple.mpegurl')) {
+            this.audio.src = playlistUrl;
+            await new Promise<void>((resolve) => {
+                this.audio.addEventListener('loadedmetadata', () => resolve(), { once: true });
+            });
+            await this.safePlay();
+        }
+        else {
+            throw new Error('HLS is not supported on this browser');
+        }
+    }
+
+    /**
+     * Safely handle AudioContext and play() promises.
+     * Catches NotAllowedError which occurs when autoplay is blocked.
+     */
+    private async safePlay(): Promise<void> {
+        try {
+            await this.audio.play();
+            this.ensureAudioContext();
+        } catch (error) {
+            if (error instanceof DOMException && error.name === 'NotAllowedError') {
+                console.warn('Autoplay blocked. User interaction required.');
+            } else if (error instanceof DOMException && error.name === 'AbortError') {
+                // Play was interrupted by a new load — not an error
+                return;
+            } else {
+                throw error;
+            }
+        }
+    }
+
+    private destroyHls(): void {
+        if (this.hls) {
+            this.hls.destroy();
+            this.hls = null;
+        }
+    }
+
     public async playFile(fileHandle: FileSystemFileHandle): Promise<void> {
         // Cast cannot play files loaded locally directly by default without spinning up a local server inline.
         // We just fallback to local playback.
         try {
+            // Clean up HLS if active
+            this.destroyHls();
+
             const file = await fileHandle.getFile();
             const url = URL.createObjectURL(file);
 
@@ -148,11 +265,7 @@ class PlaybackManager {
             this.audio.load();
             await this.audio.play();
 
-            if (!this.audioContext) {
-                this.initAudioContext();
-            } else if (this.audioContext.state === 'suspended') {
-                await this.audioContext.resume();
-            }
+            this.ensureAudioContext();
 
         } catch (error) {
             if (error instanceof DOMException && error.name === 'AbortError') return;
@@ -239,6 +352,7 @@ class PlaybackManager {
     }
 
     public destroy(): void {
+        this.destroyHls();
         this.audio.pause();
         this.audio.src = '';
         if (this.audioContext) {
@@ -248,14 +362,26 @@ class PlaybackManager {
     }
 
     // --- Web Audio API Integration (Foundation for EQ/Visualizers) ---
-    private initAudioContext() {
-        try {
-            this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-            const source = this.audioContext.createMediaElementSource(this.audio);
 
-            // Basic routing: Source -> Destination
-            // Future: Source -> Gain (crossfade) -> Analyser (visualizer) -> Biquads (EQ) -> Destination
-            source.connect(this.audioContext.destination);
+    /**
+     * Ensures an AudioContext exists. Call this on first user interaction
+     * (e.g., from App.tsx) so Safari doesn't block it.
+     * If already created, resumes from suspended state if needed.
+     */
+    public ensureAudioContext(): void {
+        try {
+            if (!this.audioContext) {
+                this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+                const source = this.audioContext.createMediaElementSource(this.audio);
+
+                // Basic routing: Source -> Destination
+                // Future: Source -> Gain (crossfade) -> Analyser (visualizer) -> Biquads (EQ) -> Destination
+                source.connect(this.audioContext.destination);
+            }
+
+            if (this.audioContext.state === 'suspended') {
+                this.audioContext.resume();
+            }
         } catch (e) {
             console.warn("Could not initialize AudioContext:", e);
         }

@@ -66,7 +66,8 @@ export default defineConfig({
       workbox: {
         runtimeCaching: [
           {
-            urlPattern: /^http:\/\/localhost:3001\/api\/.*/i,
+            // API calls — relative /api/ paths (works in both dev proxy and prod Express)
+            urlPattern: /\/api\//,
             handler: 'NetworkFirst',
             options: {
               cacheName: 'api-cache',
@@ -100,11 +101,32 @@ export default defineConfig({
             }
           },
           {
-            urlPattern: /\/api\/media\/.*/i,
+            // HLS transport stream segments — immutable, cache-first for offline playback
+            urlPattern: /\/api\/stream\/.*\.ts(\?.*)?$/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'nl-audio-chunks-v1',
+              expiration: { maxEntries: 2000, maxAgeSeconds: 604800 }, // 7 days
+              cacheableResponse: { statuses: [0, 200] }
+            }
+          },
+          {
+            // HLS playlists — NetworkFirst so they're always fresh, with cache fallback for offline
+            urlPattern: /\/api\/stream\/.*\.m3u8(\?.*)?$/i,
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'nl-audio-playlists-v1',
+              expiration: { maxEntries: 200, maxAgeSeconds: 86400 },
+              cacheableResponse: { statuses: [0, 200] }
+            }
+          },
+          {
+            // Album art cache (kept from legacy media-cache)
+            urlPattern: /\/api\/art(\?.*)?$/i,
             handler: 'CacheFirst',
             options: {
               cacheName: 'media-cache',
-              expiration: { maxEntries: 50, maxAgeSeconds: 604800 },
+              expiration: { maxEntries: 500, maxAgeSeconds: 2592000 }, // 30 days
               cacheableResponse: { statuses: [0, 200] }
             }
           }
