@@ -58,6 +58,9 @@ export class CastManager {
     // Tracks whether this manager initiated the cast session (vs joining an existing one)
     private autoCastInProgress = false;
 
+    // Serializes concurrent loadMedia calls to prevent session_error on rapid clicks
+    private currentLoadPromise: Promise<void> = Promise.resolve();
+
     // Listener pattern for state changes (multiple subscribers)
     private stateChangeListeners: Set<(state: CastState) => void> = new Set();
 
@@ -341,7 +344,7 @@ export class CastManager {
 
             // Cast the current track to the device
             await this.castMedia(
-                track.url || '',
+                track.rawUrl || track.url || '',
                 track.title || 'Unknown Title',
                 track.artist || ((track.artists as string[])?.join(', ')) || 'Unknown Artist',
                 track.artUrl,
@@ -410,18 +413,29 @@ export class CastManager {
             mediaInfo.metadata.images = [new chrome.cast.Image(artUrl)];
         }
 
+        // Serialize loadMedia calls to prevent concurrent loads from clashing
+        const previous = this.currentLoadPromise;
+        let resolveLoad: () => void;
+        this.currentLoadPromise = new Promise<void>((resolve) => { resolveLoad = resolve; });
+
+        // Wait for any in-flight load to complete
+        await previous;
+
         const request = new chrome.cast.media.LoadRequest(mediaInfo);
         request.autoplay = true;
 
         try {
             await castSession.loadMedia(request);
         } catch (e: any) {
-            console.error('[Cast] Failed to load media:', e);
-            const msg = e?.message || String(e);
-            if (!msg.includes('cancel') && !msg.includes('abort') && !msg.includes('cancelled')) {
+            const errorDetail = e?.code || e?.message || String(e);
+            const errorDesc = e?.description || '';
+            console.error(`[Cast] Failed to load media: ${errorDetail}${errorDesc ? ' — ' + errorDesc : ''}`, e);
+            if (!String(errorDetail).includes('cancel') && !String(errorDetail).includes('abort')) {
                 toast.error(`Failed to play "${title}" on Cast device.`);
             }
             return;
+        } finally {
+            resolveLoad!();
         }
 
         // Store session ID for rejoin after successful load
@@ -483,15 +497,24 @@ export class CastManager {
         request.repeatMode = repeat === 'all' ? chrome.cast.media.RepeatMode.ALL : chrome.cast.media.RepeatMode.OFF;
         request.autoplay = true;
 
+        // Serialize loadMedia calls to prevent concurrent loads from clashing
+        const previous = this.currentLoadPromise;
+        let resolveLoad: () => void;
+        this.currentLoadPromise = new Promise<void>((resolve) => { resolveLoad = resolve; });
+        await previous;
+
         try {
             await castSession.loadMedia(request);
         } catch (e: any) {
-            console.error('[Cast] Failed to load queue:', e);
-            const msg = e?.message || String(e);
-            if (!msg.includes('cancel') && !msg.includes('abort') && !msg.includes('cancelled')) {
-                toast.error('Failed to load playlist on Cast device.');
+            const errorDetail = e?.code || e?.message || String(e);
+            const errorDesc = e?.description || '';
+            console.error(`[Cast] Failed to load queue: ${errorDetail}${errorDesc ? ' — ' + errorDesc : ''}`, e);
+            if (!String(errorDetail).includes('cancel') && !String(errorDetail).includes('abort')) {
+                toast.error('Failed to load queue on Cast device.');
             }
             return;
+        } finally {
+            resolveLoad!();
         }
 
         // Store session ID for rejoin
