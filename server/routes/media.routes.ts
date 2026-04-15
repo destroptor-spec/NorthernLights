@@ -78,7 +78,21 @@ router.get('/stream/:trackId/playlist.m3u8', async (req, res) => {
     res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
     res.setHeader('Cache-Control', 'no-cache'); // Playlist should always be fresh
     res.setHeader('Access-Control-Allow-Origin', '*');
-    fs.createReadStream(session.playlistPath).pipe(res);
+
+    // Rewrite segment URLs to include auth token so external clients (Chromecast)
+    // can fetch them. The browser's hls.js injects Bearer headers via xhrSetup,
+    // but the Chromecast Default Media Receiver can only pass tokens via URL params.
+    const token = req.query.token as string | undefined;
+    if (token) {
+      const playlist = fs.readFileSync(session.playlistPath, 'utf8');
+      const rewritten = playlist.replace(
+        /^(segment\d+\.ts)$/gm,
+        `$1?token=${encodeURIComponent(token)}`
+      );
+      res.send(rewritten);
+    } else {
+      fs.createReadStream(session.playlistPath).pipe(res);
+    }
   } catch (err: any) {
     console.error('[HLS] Playlist error:', err?.message || err);
     if (!res.headersSent) {

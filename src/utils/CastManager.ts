@@ -225,8 +225,15 @@ export class CastManager {
             this.playerController.addEventListener(
                 cast.framework.RemotePlayerEventType.PLAYER_STATE_CHANGED,
                 () => {
-                    if (this.player.playerState === chrome.cast.media.PlayerState.IDLE && this.player.idleReason === chrome.cast.media.IdleReason.FINISHED) {
-                        this.onEnded?.();
+                    if (this.player.playerState === chrome.cast.media.PlayerState.IDLE) {
+                        // idleReason is only available on the media session, not RemotePlayer
+                        try {
+                            const session = this.castContext?.getCurrentSession();
+                            const mediaSession = session?.getMediaSession();
+                            if (mediaSession?.idleReason === chrome.cast.media.IdleReason.FINISHED) {
+                                this.onEnded?.();
+                            }
+                        } catch { /* ignore */ }
                     }
                 }
             );
@@ -464,10 +471,14 @@ export class CastManager {
         if (repeat === 'one' && tracks[startIndex]) {
             const t = tracks[startIndex];
             await this.castMedia(t.url, t.title, t.artist, t.artUrl, t.album, t.format);
-            // Set the media to loop
+            // Set the media to loop via the queue repeat mode API
             const media = castSession.getMediaSession();
             if (media) {
-                media.playRepeat = chrome.cast.media.RepeatMode.SINGLE;
+                try {
+                    await media.queueSetRepeatMode(chrome.cast.media.RepeatMode.SINGLE);
+                } catch (e) {
+                    console.warn('[Cast] Failed to set repeat mode:', e);
+                }
             }
             return;
         }
@@ -527,10 +538,12 @@ export class CastManager {
         const items = mediaSession.items;
         if (!items || !items[index]) return;
 
-        // Use QUEUE_UPDATE to jump to the specified item
-        const updateRequest = new chrome.cast.media.QueueUpdateRequest([items[index].itemId]);
-        updateRequest.jumpToItemId = items[index].itemId;
-        await session.sendMessage('urn:x-cast:com.google.cast.media', updateRequest);
+        // Jump to the specified item in the cast queue
+        try {
+            await mediaSession.queueJumpToItem(items[index].itemId);
+        } catch (e) {
+            console.error('[Cast] Failed to jump to queue index:', e);
+        }
     }
 
     public playOrPause() {
@@ -609,8 +622,8 @@ export class CastManager {
             // Stop the cast media first
             this.stop();
 
-            // End the cast session using the CastContext API
-            this.castContext.endSession();
+            // End the cast session — pass true to stop the receiver app
+            this.castContext.endCurrentSession(true);
         } catch (e) {
             console.error('[Cast] Error during disconnect:', e);
             toast.error('Error disconnecting from Cast device.');
