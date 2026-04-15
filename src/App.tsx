@@ -28,6 +28,7 @@ import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { useSSE } from './hooks/useSSE';
 import { useToast } from './hooks/useToast';
 import { playbackManager } from './utils/PlaybackManager';
+import { GlobalScanningIndicator } from './components/GlobalScanningIndicator';
 
 const TAB_CONFIG = [
   { path: '/library', label: 'Hub', end: true },
@@ -57,14 +58,8 @@ const App: React.FC = () => {
   const libraryFolders = usePlayerStore(state => state.libraryFolders);
   const rescanLibrary = usePlayerStore(state => state.rescanLibrary);
 
-  const [scannerVisible, setScannerVisible] = React.useState(false);
+  const [isScannerVisibleLocally, setIsScannerVisibleLocally] = React.useState(false);
   const isScanningGlobal = usePlayerStore(state => state.isScanning);
-  const scanningFileGlobal = usePlayerStore(state => state.scanningFile);
-  const scanPhaseGlobal = usePlayerStore(state => state.scanPhase);
-  const scannedFilesGlobal = usePlayerStore(state => state.scannedFiles);
-  const totalFilesGlobal = usePlayerStore(state => state.totalFiles);
-  const activeWorkersGlobal = usePlayerStore(state => state.activeWorkers);
-  const activeFilesGlobal = usePlayerStore(state => state.activeFiles);
   const isSidebarCollapsed = usePlayerStore(state => state.isSidebarCollapsed);
   const playlist = usePlayerStore(state => state.playlist);
   const currentUser = usePlayerStore(state => state.currentUser);
@@ -72,7 +67,7 @@ const App: React.FC = () => {
 
   // Auto-show scanner toast when a scan starts
   React.useEffect(() => {
-    if (isScanningGlobal) setScannerVisible(true);
+    if (isScanningGlobal) setIsScannerVisibleLocally(true);
   }, [isScanningGlobal]);
 
   // Initialize AudioContext on first user interaction (Safari requires this)
@@ -155,35 +150,35 @@ const App: React.FC = () => {
   }, [checkSetupStatus, checkHealth]);
 
   // Connect to scan status SSE only when authenticated (EventSource can't send headers)
+  const onSSEMessage = React.useCallback((data: any) => {
+    const d = data as {
+      isScanning: boolean;
+      phase: 'idle' | 'walk' | 'metadata' | 'analysis';
+      scannedFiles: number;
+      totalFiles: number;
+      activeWorkers: number;
+      activeFiles: string[];
+      currentFile: string;
+      libraryChanged: boolean;
+    };
+    const wasScanning = usePlayerStore.getState().isScanning;
+    usePlayerStore.getState().setIsScanning(
+      d.isScanning,
+      d.phase,
+      d.scannedFiles,
+      d.totalFiles,
+      d.activeWorkers,
+      d.activeFiles,
+      d.currentFile
+    );
+    if (wasScanning && !d.isScanning && d.libraryChanged) {
+      usePlayerStore.getState().fetchLibraryFromServer();
+    }
+  }, []);
+
   useSSE(
     !needsSetup && authToken ? `/api/library/scan/status?token=${authToken}` : null,
-    {
-      onMessage: (data: any) => {
-        const d = data as {
-          isScanning: boolean;
-          phase: 'idle' | 'walk' | 'metadata' | 'analysis';
-          scannedFiles: number;
-          totalFiles: number;
-          activeWorkers: number;
-          activeFiles: string[];
-          currentFile: string;
-          libraryChanged: boolean;
-        };
-        const wasScanning = usePlayerStore.getState().isScanning;
-        usePlayerStore.getState().setIsScanning(
-          d.isScanning,
-          d.phase,
-          d.scannedFiles,
-          d.totalFiles,
-          d.activeWorkers,
-          d.activeFiles,
-          d.currentFile
-        );
-        if (wasScanning && !d.isScanning && d.libraryChanged) {
-          usePlayerStore.getState().fetchLibraryFromServer();
-        }
-      },
-    }
+    { onMessage: onSSEMessage, throttleMs: 100 }
   );
 
   // Offline detection
@@ -367,61 +362,9 @@ const App: React.FC = () => {
     <>
       <TrackContextMenu />
       {/* Global Scanning Indicator (admin only) */}
-      {isAdmin && isScanningGlobal && scannerVisible && (() => {
-        const isAnalysis = scanPhaseGlobal === 'analysis';
-        const isMetaOrAnalysis = scanPhaseGlobal === 'metadata' || scanPhaseGlobal === 'analysis';
-
-        return (
-          <div className="global-scanning-indicator">
-            <button className="scanner-hide-btn" onClick={() => setScannerVisible(false)} title="Hide">
-              <X size={14} />
-            </button>
-
-            <div className="scan-header-row">
-              <div className="scanning-spinner" />
-              <div className="scan-info-col">
-                <div className="scan-title-row">
-                  <span className="scan-title">
-                    {isAnalysis ? 'Analyzing Audio...' : 'Scanning Library...'}
-                  </span>
-                  <span className={`scan-phase-badge ${isAnalysis ? 'scan-phase-badge--analysis' : 'scan-phase-badge--other'}`}>
-                    {scanPhaseGlobal}
-                  </span>
-                </div>
-
-                {isMetaOrAnalysis ? (
-                  <div className="scan-progress-row">
-                    <span>{scannedFilesGlobal} / {totalFilesGlobal} {isAnalysis ? 'tracks' : 'files'}</span>
-                    <span>{activeWorkersGlobal} workers</span>
-                  </div>
-                ) : (
-                  <div className="scan-walk-status">
-                    {scanningFileGlobal || 'Discovering files...'}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {isMetaOrAnalysis && activeFilesGlobal.length > 0 && (
-              <div className="scan-active-files">
-                <div className="scan-active-files-heading">
-                  {isAnalysis ? 'Currently Analyzing:' : 'Currently Processing:'}
-                </div>
-                <ul className="scan-active-files-list">
-                  {activeFilesGlobal.slice(0, 10).map((file, i) => (
-                    <li key={i}>{file}</li>
-                  ))}
-                  {activeFilesGlobal.length > 10 && (
-                    <li className="scan-active-files-more">
-                      ...and {activeFilesGlobal.length - 10} more
-                    </li>
-                  )}
-                </ul>
-              </div>
-            )}
-          </div>
-        );
-      })()}
+      {isAdmin && isScanningGlobal && isScannerVisibleLocally && (
+        <GlobalScanningIndicator onClose={() => setIsScannerVisibleLocally(false)} />
+      )}
 
       <div className="flex h-screen relative z-10 overflow-hidden text-[var(--color-text-primary)]">
 
@@ -434,9 +377,9 @@ const App: React.FC = () => {
             <div className="flex items-center gap-1">
               {isAdmin && isScanningGlobal && (
                 <button
-                  onClick={() => setScannerVisible(v => !v)}
+                  onClick={() => setIsScannerVisibleLocally(v => !v)}
                   className="scan-indicator-btn scan-indicator-btn--dot-only"
-                  title={scannerVisible ? 'Hide scan progress' : 'Show scan progress'}
+                  title={isScannerVisibleLocally ? 'Hide scan progress' : 'Show scan progress'}
                 >
                   <div className="scan-indicator-dot" />
                 </button>
@@ -474,9 +417,9 @@ const App: React.FC = () => {
               <UserMenu onOpenSettings={() => setIsSettingsOpen(true)} />
               {isAdmin && isScanningGlobal && (
                 <button
-                  onClick={() => setScannerVisible(v => !v)}
+                  onClick={() => setIsScannerVisibleLocally(v => !v)}
                   className="scan-indicator-btn"
-                  title={scannerVisible ? 'Hide scan progress' : 'Show scan progress'}
+                  title={isScannerVisibleLocally ? 'Hide scan progress' : 'Show scan progress'}
                 >
                   <div className="scan-indicator-dot" />
                   <span>Scanning</span>

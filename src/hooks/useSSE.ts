@@ -1,8 +1,9 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 
 interface UseSSEOptions {
   onMessage: (data: unknown) => void;
   onError?: (err: Event) => void;
+  throttleMs?: number;
 }
 
 const BASE_DELAY = 1000;
@@ -15,14 +16,20 @@ function applyJitter(delay: number): number {
   return Math.max(BASE_DELAY, delay + jitter);
 }
 
-export function useSSE(url: string | null, { onMessage, onError }: UseSSEOptions) {
+export function useSSE(url: string | null, { onMessage, onError, throttleMs = 0 }: UseSSEOptions) {
   const esRef = useRef<EventSource | null>(null);
   const retryDelayRef = useRef(BASE_DELAY);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectedAtRef = useRef<number | null>(null);
   const isOnlineRef = useRef(navigator.onLine);
+  const onMessageRef = useRef(onMessage);
+  const onErrorRef = useRef(onError);
+  const lastCallRef = useRef(0);
 
-  const connect = useCallback(() => {
+  onMessageRef.current = onMessage;
+  onErrorRef.current = onError;
+
+  const connect = () => {
     if (!url) return;
 
     const es = new EventSource(url);
@@ -31,15 +38,19 @@ export function useSSE(url: string | null, { onMessage, onError }: UseSSEOptions
 
     es.onmessage = (e) => {
       retryDelayRef.current = BASE_DELAY;
+      const now = Date.now();
+      if (throttleMs > 0 && now - lastCallRef.current < throttleMs) return;
+      lastCallRef.current = now;
+
       try {
-        onMessage(JSON.parse(e.data));
+        onMessageRef.current(JSON.parse(e.data));
       } catch {
-        onMessage(e.data);
+        onMessageRef.current(e.data);
       }
     };
 
     es.onerror = (err) => {
-      onError?.(err);
+      onErrorRef.current?.(err);
       const duration = connectedAtRef.current ? Date.now() - connectedAtRef.current : FLAP_THRESHOLD_MS;
       if (duration < FLAP_THRESHOLD_MS) {
         retryDelayRef.current = Math.min(retryDelayRef.current * 2, MAX_DELAY);
@@ -51,7 +62,7 @@ export function useSSE(url: string | null, { onMessage, onError }: UseSSEOptions
         retryTimerRef.current = setTimeout(connect, delay);
       }
     };
-  }, [url, onMessage, onError]);
+  };
 
   useEffect(() => {
     if (!url) return;
@@ -92,5 +103,5 @@ export function useSSE(url: string | null, { onMessage, onError }: UseSSEOptions
         esRef.current = null;
       }
     };
-  }, [url, connect]);
+  }, [url]);
 }
