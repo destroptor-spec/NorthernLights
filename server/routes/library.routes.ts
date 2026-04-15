@@ -19,13 +19,19 @@ const MIME_TYPES: Record<string, string> = {
 // ─── Scan status SSE ─────────────────────────────────────────────────
 router.get('/scan/status', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
 
   scanClients.add(res);
   res.write(`data: ${JSON.stringify(scanStatus)}\n\n`);
 
+  const heartbeat = setInterval(() => {
+    res.write(': keepalive\n\n');
+  }, 15000);
+
   req.on('close', () => {
+    clearInterval(heartbeat);
     scanClients.delete(res);
   });
 });

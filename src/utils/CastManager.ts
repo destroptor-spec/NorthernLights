@@ -304,13 +304,12 @@ export class CastManager {
 
     /**
      * Called when cast state transitions to CONNECTED.
-     * Automatically takes the current playlist and starts casting from the active track.
+     * Automatically takes the currently playing track and starts casting it.
      */
     private async handleCastConnected() {
-        // Read current playback state from the store — this gives us the full
-        // playlist, current index, and repeat mode (consistent with playAtIndex).
+        // Read current playback state from the store
         const state = usePlayerStore.getState();
-        const { playlist, currentIndex, repeat } = state;
+        const { playlist, currentIndex } = state;
 
         if (!playlist.length || currentIndex === null) {
             console.log('[Cast] Connected but no playlist is active — nothing to auto-cast.');
@@ -321,7 +320,7 @@ export class CastManager {
         // Get current playback position before we pause local audio
         const currentTime = playbackManager.getCurrentTime();
 
-        console.log(`[Cast] Auto-casting playlist (${playlist.length} tracks, index ${currentIndex}): "${track.title}" by ${track.artist} (position: ${currentTime.toFixed(1)}s)`);
+        console.log(`[Cast] Auto-casting: "${track.title}" by ${track.artist} (position: ${currentTime.toFixed(1)}s)`);
 
         this.autoCastInProgress = true;
         try {
@@ -332,21 +331,15 @@ export class CastManager {
             // on the Cast device yet. This would leave local audio playing.
             playbackManager.getLocalAudioElement().pause();
 
-            // Build the same cast track list that the store's playAtIndex uses
-            const castTracks = playlist.map(t => ({
-                url: t.url || '',
-                title: t.title || 'Unknown Title',
-                artist: t.artist || ((t.artists as string[])?.join(', ')) || 'Unknown Artist',
-                artUrl: t.artUrl,
-                album: t.album,
-                format: t.format,
-                duration: t.duration,
-            })).filter(t => t.url);
-
-            if (castTracks.length > 0) {
-                const castIndex = castTracks.findIndex(ct => ct.url === (track.url || ''));
-                await this.castQueue(castTracks, castIndex >= 0 ? castIndex : 0, repeat);
-            }
+            // Cast the current track to the device
+            await this.castMedia(
+                track.url || '',
+                track.title || 'Unknown Title',
+                track.artist || ((track.artists as string[])?.join(', ')) || 'Unknown Artist',
+                track.artUrl,
+                track.album,
+                track.format
+            );
 
             // Seek to where we left off locally (with a small delay to let the media load)
             if (currentTime > 1) {

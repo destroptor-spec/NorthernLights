@@ -25,6 +25,7 @@ import { TrackContextMenu } from './components/library/TrackContextMenu';
 import { DatabaseControl } from './components/DatabaseControl';
 import { ToastContainer } from './components/ToastContainer';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
+import { useSSE } from './hooks/useSSE';
 import { useToast } from './hooks/useToast';
 import { playbackManager } from './utils/PlaybackManager';
 
@@ -154,32 +155,36 @@ const App: React.FC = () => {
   }, [checkSetupStatus, checkHealth]);
 
   // Connect to scan status SSE only when authenticated (EventSource can't send headers)
-  React.useEffect(() => {
-    // Don't connect if we're in setup mode or not yet authenticated
-    if (needsSetup || !authToken) return;
-
-    const eventSource = new EventSource(`/api/library/scan/status?token=${authToken}`);
-    eventSource.onmessage = (e) => {
-      const data = JSON.parse(e.data);
-      const wasScanning = usePlayerStore.getState().isScanning;
-
-      usePlayerStore.getState().setIsScanning(
-        data.isScanning,
-        data.phase,
-        data.scannedFiles,
-        data.totalFiles,
-        data.activeWorkers,
-        data.activeFiles,
-        data.currentFile
-      );
-
-      if (wasScanning && !data.isScanning && data.libraryChanged) {
-        usePlayerStore.getState().fetchLibraryFromServer();
-      }
-    };
-
-    return () => eventSource.close();
-  }, [authToken, needsSetup]);
+  useSSE(
+    !needsSetup && authToken ? `/api/library/scan/status?token=${authToken}` : null,
+    {
+      onMessage: (data: any) => {
+        const d = data as {
+          isScanning: boolean;
+          phase: 'idle' | 'walk' | 'metadata' | 'analysis';
+          scannedFiles: number;
+          totalFiles: number;
+          activeWorkers: number;
+          activeFiles: string[];
+          currentFile: string;
+          libraryChanged: boolean;
+        };
+        const wasScanning = usePlayerStore.getState().isScanning;
+        usePlayerStore.getState().setIsScanning(
+          d.isScanning,
+          d.phase,
+          d.scannedFiles,
+          d.totalFiles,
+          d.activeWorkers,
+          d.activeFiles,
+          d.currentFile
+        );
+        if (wasScanning && !d.isScanning && d.libraryChanged) {
+          usePlayerStore.getState().fetchLibraryFromServer();
+        }
+      },
+    }
+  );
 
   // Offline detection
   const isOnline = useOnlineStatus();
