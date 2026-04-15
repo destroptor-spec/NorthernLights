@@ -342,11 +342,11 @@ export const usePlayerStore = create<PlayerState>()(
       });
 
       // Wire up CastManager state changes to the store
-      import('../utils/CastManager').then(({ castManager: cm }) => {
-        cm.addStateChangeListener((castState) => {
+      setTimeout(() => {
+        castManager.addStateChangeListener((castState) => {
           set({ castConnected: castState === 'CONNECTED' });
         });
-      });
+      }, 0);
 
       return {
         // Initial State
@@ -1306,10 +1306,10 @@ export const usePlayerStore = create<PlayerState>()(
         currentUser: state.currentUser,
         streamingQuality: state.streamingQuality,
         // Persist playlist + position for cast session recovery
-        playlist: state.playlist.map((t: TrackInfo) => {
+        playlist: state.playlist ? state.playlist.map((t: TrackInfo) => {
           const { fileHandle, ...rest } = t;
           return rest;
-        }),
+        }) : [],
         currentIndex: state.currentIndex,
         currentTime: state.currentTime,
         castConnected: state.castConnected,

@@ -1,5 +1,13 @@
+import { playbackManager } from './PlaybackManager';
+import { usePlayerStore } from '../store';
 declare const chrome: any;
 declare const cast: any;
+
+const toast = {
+    success: (msg: string) => usePlayerStore.getState().addToast(msg, 'success'),
+    error: (msg: string) => usePlayerStore.getState().addToast(msg, 'error'),
+    info: (msg: string) => usePlayerStore.getState().addToast(msg, 'info'),
+};
 
 export type CastState = 'NO_DEVICES_AVAILABLE' | 'NOT_CONNECTED' | 'CONNECTING' | 'CONNECTED';
 
@@ -265,6 +273,7 @@ export class CastManager {
 
         } catch (e) {
             console.error("Failed to initialize Google Cast API", e);
+            toast.error('Failed to initialize Google Cast. Please refresh and try again.');
         }
     }
 
@@ -282,6 +291,7 @@ export class CastManager {
         } catch (e) {
             console.warn('[Cast] Failed to rejoin session:', e);
             localStorage.removeItem(SESSION_STORAGE_KEY);
+            toast.info('Cast session could not be restored. Starting fresh.');
         }
     }
 
@@ -290,9 +300,6 @@ export class CastManager {
      * Automatically takes the currently playing track and starts casting it.
      */
     private async handleCastConnected() {
-        // Dynamic import to avoid circular dependency issues
-        // PlaybackManager imports CastManager, so we can't import PlaybackManager at module level
-        const { playbackManager } = await import('./PlaybackManager');
 
         const trackInfo = playbackManager.getCurrentTrackInfo();
         if (!trackInfo) {
@@ -328,6 +335,7 @@ export class CastManager {
             }
         } catch (e) {
             console.error('[Cast] Failed to auto-cast current track:', e);
+            toast.error('Connected to Cast device but failed to play media.');
         } finally {
             this.autoCastInProgress = false;
         }
@@ -399,6 +407,8 @@ export class CastManager {
             const host = new URL(castUrl).hostname;
             if (host === 'localhost' || host === '127.0.0.1') {
                 console.warn('[Cast] Server URL is localhost — the Chromecast device cannot reach it. Access the app via your LAN IP or domain to cast.');
+                toast.error('Cannot cast: server is at localhost. Access the app via your LAN IP address to cast.');
+                return;
             }
         } catch { /* ignore */ }
 
@@ -419,7 +429,16 @@ export class CastManager {
         const request = new chrome.cast.media.LoadRequest(mediaInfo);
         request.autoplay = true;
 
-        await castSession.loadMedia(request);
+        try {
+            await castSession.loadMedia(request);
+        } catch (e: any) {
+            console.error('[Cast] Failed to load media:', e);
+            const msg = e?.message || String(e);
+            if (!msg.includes('cancel') && !msg.includes('abort') && !msg.includes('cancelled')) {
+                toast.error(`Failed to play "${title}" on Cast device.`);
+            }
+            return;
+        }
 
         // Store session ID for rejoin after successful load
         const sessionId = castSession.getSessionId();
@@ -476,7 +495,16 @@ export class CastManager {
         request.repeatMode = repeat === 'all' ? chrome.cast.media.RepeatMode.ALL : chrome.cast.media.RepeatMode.OFF;
         request.autoplay = true;
 
-        await castSession.loadMedia(request);
+        try {
+            await castSession.loadMedia(request);
+        } catch (e: any) {
+            console.error('[Cast] Failed to load queue:', e);
+            const msg = e?.message || String(e);
+            if (!msg.includes('cancel') && !msg.includes('abort') && !msg.includes('cancelled')) {
+                toast.error('Failed to load playlist on Cast device.');
+            }
+            return;
+        }
 
         // Store session ID for rejoin
         const sessionId = castSession.getSessionId();
@@ -551,8 +579,13 @@ export class CastManager {
         if (!this.castContext) return;
         try {
             await this.castContext.requestSession();
-        } catch (e) {
+        } catch (e: any) {
             console.error("Failed to request cast session", e);
+            // User cancelled or an error occurred
+            const msg = e?.message || String(e);
+            if (!msg.includes('cancel') && !msg.includes('abort') && !msg.includes('cancelled')) {
+                toast.error('Failed to connect to Cast device. Please try again.');
+            }
         }
     }
 
@@ -580,11 +613,11 @@ export class CastManager {
             this.castContext.endSession();
         } catch (e) {
             console.error('[Cast] Error during disconnect:', e);
+            toast.error('Error disconnecting from Cast device.');
         }
 
         // Resume local playback at the position we left off
         try {
-            const { playbackManager } = await import('./PlaybackManager');
             const trackInfo = playbackManager.getCurrentTrackInfo();
             if (trackInfo && castTime > 0) {
                 // Seek the local audio to the cast position
