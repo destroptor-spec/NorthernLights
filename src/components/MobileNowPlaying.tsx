@@ -27,10 +27,17 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose }) => {
   const setIsSidebarOpen = usePlayerStore((s) => s.setIsSidebarOpen);
 
   const [castConnected, setCastConnected] = useState(castManager.isConnected());
+  const [castDeviceName, setCastDeviceName] = useState('');
   const [showLyrics, setShowLyrics] = useState(false);
   useEffect(() => {
     const unsubscribe = castManager.addStateChangeListener((state) => {
-      setCastConnected(state === 'CONNECTED');
+      const connected = state === 'CONNECTED';
+      setCastConnected(connected);
+      if (connected) {
+        setCastDeviceName(castManager.getCastDeviceName());
+      } else {
+        setCastDeviceName('');
+      }
     });
     return unsubscribe;
   }, []);
@@ -109,6 +116,14 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose }) => {
             <p className="text-xs text-[var(--aurora-extra-glow)] mt-0.5 truncate">
               {currentTrack.album}
             </p>
+          )}
+          {castConnected && (
+            <div className="flex items-center gap-1.5 mt-3 px-3 py-1.5 rounded-full bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/20">
+              <Cast size={14} className="text-[var(--color-primary)]" style={{ filter: 'drop-shadow(0 0 3px var(--color-primary))' }} />
+              <span className="text-xs text-[var(--color-primary)] font-medium">
+                Casting{castDeviceName ? ` to ${castDeviceName}` : ''}
+              </span>
+            </div>
           )}
         </div>
 

@@ -3,6 +3,7 @@ import { persist, PersistOptions } from 'zustand/middleware';
 import type { TrackInfo } from '../utils/fileSystem';
 import { extractMetadata } from '../utils/fileSystem';
 import { playbackManager, PlaybackState } from '../utils/PlaybackManager';
+import { castManager } from '../utils/CastManager';
 
 import { clearExternalCache } from '../utils/externalImagery';
 import type { ToastType } from '../components/Toast';
@@ -312,6 +313,30 @@ export const usePlayerStore = create<PlayerState>()(
           } else {
             // repeat === 'all'
             nextTrack();
+          }
+        },
+        onVolumeChange: (volume) => {
+          // Sync volume from cast device → store (e.g., changed via Google Home)
+          set({ volume });
+        },
+        onMuteChange: (_muted) => {
+          // When muted, show volume as 0; volume will restore via VOLUME_LEVEL_CHANGED
+          if (_muted) {
+            set({ volume: 0 });
+          }
+          // When unmuted, VOLUME_LEVEL_CHANGED fires with the restored value
+        },
+        onTrackChange: (index) => {
+          // Receiver auto-advanced to next track in the queue — sync sender UI
+          const state = get();
+          if (index !== state.currentIndex && index >= 0 && index < state.playlist.length) {
+            set({
+              currentIndex: index,
+              currentTime: 0,
+              duration: state.playlist[index].duration || 0,
+              _scrobbleStartAt: Date.now(),
+              _scrobbleEligible: false,
+            });
           }
         }
       });
@@ -1031,7 +1056,7 @@ export const usePlayerStore = create<PlayerState>()(
 
         // Playback Actions
         playAtIndex: async (index: number) => {
-          const { playlist, volume } = get();
+          const { playlist, volume, repeat } = get();
           const track = playlist[index];
           if (!track) return;
 
@@ -1044,11 +1069,29 @@ export const usePlayerStore = create<PlayerState>()(
           try {
             // Set volume before playing
             playbackManager.setVolume(volume);
-            // Play using the HTTP stream URL
-            if (track.url) {
+
+            if (castManager.isConnected()) {
+              // Casting: use Queue API for gapless playback on the receiver
+              const castTracks = playlist.map(t => ({
+                url: t.url || '',
+                title: t.title || 'Unknown Title',
+                artist: t.artist || ((t.artists as string[])?.join(', ')) || 'Unknown Artist',
+                artUrl: t.artUrl,
+                album: t.album,
+                format: t.format,
+                duration: t.duration,
+              })).filter(t => t.url); // Only include tracks with stream URLs
+
+              if (castTracks.length > 0) {
+                // Map the playlist index to the castTracks index (they should match since we filter with same order)
+                const castIndex = castTracks.findIndex(ct => ct.url === track.url);
+                await castManager.castQueue(castTracks, castIndex >= 0 ? castIndex : 0, repeat);
+              }
+            } else if (track.url) {
+              // Not casting: play locally
               await playbackManager.playUrl(track.url, track.title, track.artist || ((track.artists as string[])?.join(', ')), track.artUrl, track.album, track.format);
             } else if (track.fileHandle) {
-               // Fallback
+               // Fallback for local file handles
                await playbackManager.playFile(track.fileHandle);
             }
             // A newer playAtIndex call has taken over — discard this result
@@ -1116,7 +1159,18 @@ export const usePlayerStore = create<PlayerState>()(
             nextIndex = (currentIndex + 1) % playlist.length;
           }
 
-          await get().playAtIndex(nextIndex);
+          if (castManager.isConnected()) {
+            // Skip in the cast queue instead of reloading — much faster
+            try {
+              await castManager.jumpToQueueIndex(nextIndex);
+              set({ currentIndex: nextIndex, currentTime: 0, duration: playlist[nextIndex].duration || 0 });
+            } catch {
+              // Fallback: reload the full queue
+              await get().playAtIndex(nextIndex);
+            }
+          } else {
+            await get().playAtIndex(nextIndex);
+          }
         },
 
         prevTrack: async () => {
@@ -1133,7 +1187,17 @@ export const usePlayerStore = create<PlayerState>()(
           if (currentIndex !== null) {
             prevIndex = (currentIndex - 1 + playlist.length) % playlist.length;
           }
-          await get().playAtIndex(prevIndex);
+
+          if (castManager.isConnected()) {
+            try {
+              await castManager.jumpToQueueIndex(prevIndex);
+              set({ currentIndex: prevIndex, currentTime: 0, duration: playlist[prevIndex].duration || 0 });
+            } catch {
+              await get().playAtIndex(prevIndex);
+            }
+          } else {
+            await get().playAtIndex(prevIndex);
+          }
         },
 
         setVolume: (v: number) => {
@@ -1241,6 +1305,14 @@ export const usePlayerStore = create<PlayerState>()(
         authToken: state.authToken,
         currentUser: state.currentUser,
         streamingQuality: state.streamingQuality,
+        // Persist playlist + position for cast session recovery
+        playlist: state.playlist.map((t: TrackInfo) => {
+          const { fileHandle, ...rest } = t;
+          return rest;
+        }),
+        currentIndex: state.currentIndex,
+        currentTime: state.currentTime,
+        castConnected: state.castConnected,
       }),
     }
   )

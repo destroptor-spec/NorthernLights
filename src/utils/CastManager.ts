@@ -3,6 +3,8 @@ declare const cast: any;
 
 export type CastState = 'NO_DEVICES_AVAILABLE' | 'NOT_CONNECTED' | 'CONNECTING' | 'CONNECTED';
 
+const SESSION_STORAGE_KEY = 'cast_session_id';
+
 // Client-side format/extension to MIME type mapping (mirrors server MIME_TYPES)
 const FORMAT_TO_MIME: Record<string, string> = {
     mp3: 'audio/mpeg',
@@ -48,6 +50,9 @@ export class CastManager {
     public onDuration?: (duration: number) => void;
     public onPlayStateChange?: (isPlaying: boolean) => void;
     public onEnded?: () => void;
+    public onVolumeChange?: (volume: number) => void;
+    public onMuteChange?: (muted: boolean) => void;
+    public onTrackChange?: (index: number) => void;
 
     private constructor() {
         // The Cast API is loaded asynchronously via the script tag in index.html
@@ -116,7 +121,7 @@ export class CastManager {
             this.player = new cast.framework.RemotePlayer();
             this.playerController = new cast.framework.RemotePlayerController(this.player);
 
-            // Listen to Cast state changes
+            // --- Cast state changes (device discovery) ---
             this.castContext.addEventListener(
                 cast.framework.CastContextEventType.CAST_STATE_CHANGED,
                 (event: any) => {
@@ -131,12 +136,55 @@ export class CastManager {
                 }
             );
 
-            // Also listen to SESSION_RESUMED (e.g., reconnecting to an existing cast session)
+            // --- Session state changes (session lifecycle — per Google Cast docs) ---
             this.castContext.addEventListener(
-                cast.framework.CastContextEventType.SESSION_RESUMED,
+                cast.framework.CastContextEventType.SESSION_STATE_CHANGED,
+                (event: any) => {
+                    switch (event.sessionState) {
+                        case cast.framework.SessionState.SESSION_STARTED:
+                            // Store session ID for rejoin
+                            const session = this.castContext.getCurrentSession();
+                            if (session) {
+                                const sid = session.getSessionId();
+                                if (sid) {
+                                    localStorage.setItem(SESSION_STORAGE_KEY, sid);
+                                    console.log('[Cast] Session started, stored ID:', sid);
+                                }
+                            }
+                            break;
+
+                        case cast.framework.SessionState.SESSION_RESUMED:
+                            this.state = this.castContext.getCastState();
+                            this.notifyStateChange();
+                            // Re-store the session ID
+                            const resumedSession = this.castContext.getCurrentSession();
+                            if (resumedSession) {
+                                const sid = resumedSession.getSessionId();
+                                if (sid) localStorage.setItem(SESSION_STORAGE_KEY, sid);
+                            }
+                            break;
+
+                        case cast.framework.SessionState.SESSION_ENDING:
+                        case cast.framework.SessionState.SESSION_ENDED:
+                            console.log('[Cast] Session ended');
+                            localStorage.removeItem(SESSION_STORAGE_KEY);
+                            this.state = 'NOT_CONNECTED';
+                            this.notifyStateChange();
+                            break;
+                    }
+                }
+            );
+
+            // --- Remote player connection changes (e.g., stopped from Google Home) ---
+            this.playerController.addEventListener(
+                cast.framework.RemotePlayerEventType.IS_CONNECTED_CHANGED,
                 () => {
-                    this.state = this.castContext.getCastState();
-                    this.notifyStateChange();
+                    if (!this.player.isConnected) {
+                        console.log('[Cast] Remote player disconnected');
+                        localStorage.removeItem(SESSION_STORAGE_KEY);
+                        this.state = 'NOT_CONNECTED';
+                        this.notifyStateChange();
+                    }
                 }
             );
 
@@ -144,7 +192,7 @@ export class CastManager {
             this.state = this.castContext.getCastState();
             this.notifyStateChange();
 
-            // Listen to Player states
+            // --- Player state events ---
             this.playerController.addEventListener(
                 cast.framework.RemotePlayerEventType.IS_PAUSED_CHANGED,
                 () => {
@@ -175,8 +223,65 @@ export class CastManager {
                 }
             );
 
+            // --- Volume sync from receiver → sender (per Google Cast docs) ---
+            this.playerController.addEventListener(
+                cast.framework.RemotePlayerEventType.VOLUME_LEVEL_CHANGED,
+                () => {
+                    this.onVolumeChange?.(this.player.volumeLevel);
+                }
+            );
+
+            this.playerController.addEventListener(
+                cast.framework.RemotePlayerEventType.IS_MUTED_CHANGED,
+                () => {
+                    this.onMuteChange?.(this.player.isMuted);
+                }
+            );
+
+            // --- Queue change events (receiver auto-advances tracks) ---
+            this.playerController.addEventListener(
+                cast.framework.RemotePlayerEventType.MEDIA_INFO_CHANGED,
+                () => {
+                    if (!this.isConnected()) return;
+                    // When using the queue API, the receiver auto-advances.
+                    // The currentItemId from the media session tells us which track is playing.
+                    try {
+                        const session = this.castContext.getCurrentSession();
+                        const mediaSession = session?.getMediaSession();
+                        if (!mediaSession) return;
+                        const mediaInfo = mediaSession.media;
+                        if (!mediaInfo) return;
+                        // The metadata.index field on the current media tells us the queue position
+                        const index = mediaInfo.metadata?.index;
+                        if (typeof index === 'number' && index >= 0) {
+                            this.onTrackChange?.(index);
+                        }
+                    } catch { /* ignore */ }
+                }
+            );
+
+            // --- Try to rejoin an existing session on init ---
+            this.tryRejoinSession();
+
         } catch (e) {
             console.error("Failed to initialize Google Cast API", e);
+        }
+    }
+
+    /**
+     * Attempt to rejoin a previously stored cast session.
+     * Per Google Cast docs: use requestSessionById() to resume without page reload.
+     */
+    private tryRejoinSession() {
+        const storedId = localStorage.getItem(SESSION_STORAGE_KEY);
+        if (!storedId) return;
+
+        console.log('[Cast] Attempting to rejoin session:', storedId);
+        try {
+            chrome.cast.requestSessionById(storedId);
+        } catch (e) {
+            console.warn('[Cast] Failed to rejoin session:', e);
+            localStorage.removeItem(SESSION_STORAGE_KEY);
         }
     }
 
@@ -232,22 +337,59 @@ export class CastManager {
         return this.state === 'CONNECTED';
     }
 
+    /**
+     * Returns the friendly name of the connected Cast device (e.g. "Living Room TV").
+     */
+    public getCastDeviceName(): string {
+        try {
+            const session = this.castContext?.getCurrentSession();
+            if (session) {
+                const device = session.getCastDevice();
+                return device?.friendlyName || '';
+            }
+        } catch { /* ignore */ }
+        return '';
+    }
+
+    /**
+     * Forces AAC transcode quality for cast compatibility.
+     * Returns a URL with quality=128k set, ensuring the Chromecast receives AAC audio.
+     */
+    public getCastUrl(url: string): string {
+        try {
+            const u = new URL(url);
+            u.searchParams.set('quality', '128k');
+            return u.toString();
+        } catch {
+            return url;
+        }
+    }
+
     public async castMedia(url: string, title: string, artist: string, artUrl?: string, album?: string, format?: string) {
         if (!this.isConnected()) return;
 
         const castSession = this.castContext.getCurrentSession();
         if (!castSession) return;
 
+        // Force AAC transcode for cast compatibility — override quality parameter to 128k
+        // The Default Media Receiver may not support FLAC/OGG/WMA, so we always transcode
+        let castUrl = url;
+        try {
+            const u = new URL(url);
+            u.searchParams.set('quality', '128k');
+            castUrl = u.toString();
+        } catch { /* use original url */ }
+
         // Warn if the Chromecast can't reach the server (localhost / 127.0.0.1)
         try {
-            const host = new URL(url).hostname;
+            const host = new URL(castUrl).hostname;
             if (host === 'localhost' || host === '127.0.0.1') {
                 console.warn('[Cast] Server URL is localhost — the Chromecast device cannot reach it. Access the app via your LAN IP or domain to cast.');
             }
         } catch { /* ignore */ }
 
-        const contentType = inferContentType(url, format);
-        const mediaInfo = new chrome.cast.media.MediaInfo(url, contentType);
+        // Always use audio/mp4 content type since we're forcing AAC transcoding
+        const mediaInfo = new chrome.cast.media.MediaInfo(castUrl, 'audio/mp4');
         mediaInfo.metadata = new chrome.cast.media.MusicTrackMediaMetadata();
         mediaInfo.metadata.title = title;
         mediaInfo.metadata.artist = artist;
@@ -263,6 +405,88 @@ export class CastManager {
         request.autoplay = true;
 
         await castSession.loadMedia(request);
+
+        // Store session ID for rejoin after successful load
+        const sessionId = castSession.getSessionId();
+        if (sessionId) {
+            localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+        }
+    }
+
+    /**
+     * Load a queue of tracks onto the Cast device for gapless playback.
+     * The receiver handles auto-advancement, eliminating gaps between tracks.
+     * @param tracks Array of track objects with url, title, artist, artUrl, album, format, duration
+     * @param startIndex Which track to start playing (0-based)
+     * @param repeat 'none' | 'one' | 'all' — repeat mode
+     */
+    public async castQueue(tracks: { url: string; title: string; artist: string; artUrl?: string; album?: string; format?: string; duration?: number }[], startIndex: number = 0, repeat: 'none' | 'one' | 'all' = 'none') {
+        if (!this.isConnected()) return;
+
+        const castSession = this.castContext.getCurrentSession();
+        if (!castSession) return;
+
+        // repeat='one': use single loadMedia with loop instead of queue
+        if (repeat === 'one' && tracks[startIndex]) {
+            const t = tracks[startIndex];
+            await this.castMedia(t.url, t.title, t.artist, t.artUrl, t.album, t.format);
+            // Set the media to loop
+            const media = castSession.getMediaSession();
+            if (media) {
+                media.playRepeat = chrome.cast.media.RepeatMode.SINGLE;
+            }
+            return;
+        }
+
+        // Build QueueItems from playlist
+        const queueItems: any[] = tracks.map((t, i) => {
+            const castUrl = this.getCastUrl(t.url);
+            const mediaInfo = new chrome.cast.media.MediaInfo(castUrl, 'audio/mp4');
+            mediaInfo.metadata = new chrome.cast.media.MusicTrackMediaMetadata();
+            mediaInfo.metadata.title = t.title || 'Unknown Title';
+            mediaInfo.metadata.artist = t.artist || 'Unknown Artist';
+            if (t.album) mediaInfo.metadata.albumName = t.album;
+            if (t.artUrl) mediaInfo.metadata.images = [new chrome.cast.Image(t.artUrl)];
+            if (t.duration) mediaInfo.metadata.duration = t.duration;
+
+            const item = new chrome.cast.media.QueueItem(mediaInfo);
+            item.autoplay = true;
+            item.preloadTime = 30; // Start preloading 30s before track ends
+            return item;
+        });
+
+        const request = new chrome.cast.media.QueueLoadRequest(queueItems);
+        request.startIndex = startIndex;
+        request.repeatMode = repeat === 'all' ? chrome.cast.media.RepeatMode.ALL : chrome.cast.media.RepeatMode.OFF;
+        request.autoplay = true;
+
+        await castSession.loadMedia(request);
+
+        // Store session ID for rejoin
+        const sessionId = castSession.getSessionId();
+        if (sessionId) {
+            localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+        }
+    }
+
+    /**
+     * Jump to a specific index in the cast queue.
+     * Much faster than reloading the entire queue for next/prev navigation.
+     */
+    public async jumpToQueueIndex(index: number) {
+        if (!this.isConnected()) return;
+        const session = this.castContext.getCurrentSession();
+        if (!session) return;
+        const mediaSession = session.getMediaSession();
+        if (!mediaSession) return;
+
+        const items = mediaSession.items;
+        if (!items || !items[index]) return;
+
+        // Use QUEUE_UPDATE to jump to the specified item
+        const updateRequest = new chrome.cast.media.QueueUpdateRequest([items[index].itemId]);
+        updateRequest.jumpToItemId = items[index].itemId;
+        await session.sendMessage('urn:x-cast:com.google.cast.media', updateRequest);
     }
 
     public playOrPause() {
@@ -328,6 +552,9 @@ export class CastManager {
         const isPlaying = this.player && !this.player.isPaused;
 
         console.log(`[Cast] Disconnecting — position: ${castTime.toFixed(1)}s, wasPlaying: ${isPlaying}`);
+
+        // Clear stored session ID before ending
+        localStorage.removeItem(SESSION_STORAGE_KEY);
 
         try {
             // Stop the cast media first

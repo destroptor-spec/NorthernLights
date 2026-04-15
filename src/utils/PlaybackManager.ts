@@ -22,6 +22,9 @@ class PlaybackManager {
     private onDurationCallback?: (duration: number) => void;
     private onEndedCallback?: () => void;
     private onPlayStateChangeCallback?: (state: PlaybackState) => void;
+    private onVolumeChangeCallback?: (volume: number) => void;
+    private onMuteChangeCallback?: (muted: boolean) => void;
+    private onTrackChangeCallback?: (index: number) => void;
 
     private constructor() {
         this.audio = new Audio();
@@ -81,6 +84,15 @@ class PlaybackManager {
                 this.onEndedCallback?.();
             }
         };
+        castManager.onVolumeChange = (volume) => {
+            if (castManager.isConnected()) this.onVolumeChangeCallback?.(volume);
+        };
+        castManager.onMuteChange = (muted) => {
+            if (castManager.isConnected()) this.onMuteChangeCallback?.(muted);
+        };
+        castManager.onTrackChange = (index) => {
+            if (castManager.isConnected()) this.onTrackChangeCallback?.(index);
+        };
     }
 
     public static getInstance(): PlaybackManager {
@@ -96,11 +108,17 @@ class PlaybackManager {
         onDuration?: (duration: number) => void;
         onEnded?: () => void;
         onPlayStateChange?: (state: PlaybackState) => void;
+        onVolumeChange?: (volume: number) => void;
+        onMuteChange?: (muted: boolean) => void;
+        onTrackChange?: (index: number) => void;
     }) {
         this.onTimeUpdateCallback = callbacks.onTimeUpdate;
         this.onDurationCallback = callbacks.onDuration;
         this.onEndedCallback = callbacks.onEnded;
         this.onPlayStateChangeCallback = callbacks.onPlayStateChange;
+        this.onVolumeChangeCallback = callbacks.onVolumeChange;
+        this.onMuteChangeCallback = callbacks.onMuteChange;
+        this.onTrackChangeCallback = callbacks.onTrackChange;
     }
 
     // --- Core Playback Controls ---

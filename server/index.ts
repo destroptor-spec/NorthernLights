@@ -43,6 +43,7 @@ app.use(cors({
       callback(new Error('Not allowed by CORS'));
     }
   },
+  allowedHeaders: ['Content-Type', 'Range', 'Accept-Encoding', 'Authorization'],
   exposedHeaders: ['Content-Range', 'Accept-Ranges', 'Content-Length', 'Content-Type']
 }));
 app.use(express.json());

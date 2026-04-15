@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { usePlayerStore } from '../store/index';
-import { Play, Pause, SkipForward } from 'lucide-react';
+import { Play, Pause, SkipForward, Cast } from 'lucide-react';
 import { useSwipe } from '../hooks/useSwipe';
 import MobileNowPlaying from './MobileNowPlaying';
 
@@ -12,6 +12,7 @@ const MobileMiniPlayer = () => {
   const resume = usePlayerStore((s) => s.resume);
   const nextTrack = usePlayerStore((s) => s.nextTrack);
   const prevTrack = usePlayerStore((s) => s.prevTrack);
+  const castConnected = usePlayerStore((s) => s.castConnected);
 
   const currentTrack = currentIndex !== null ? playlist[currentIndex] : null;
   const isPlaying = playbackState === 'playing';
@@ -85,8 +86,13 @@ const MobileMiniPlayer = () => {
 
           {/* Artist + Title */}
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-[var(--color-text-primary)] truncate leading-tight">
-              {currentTrack.title || currentTrack.path.split(/[\\/]/).pop()}
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm font-medium text-[var(--color-text-primary)] truncate leading-tight">
+                {currentTrack.title || currentTrack.path.split(/[\\/]/).pop()}
+              </span>
+              {castConnected && (
+                <Cast size={14} className="flex-shrink-0 text-[var(--color-primary)]" style={{ filter: 'drop-shadow(0 0 3px var(--color-primary))' }} />
+              )}
             </div>
             <div className="text-xs text-[var(--color-text-muted)] truncate leading-tight mt-0.5">
               {currentTrack.artist || 'Unknown Artist'}
