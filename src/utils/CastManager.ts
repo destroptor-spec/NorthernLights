@@ -365,6 +365,20 @@ export class CastManager {
         }
     }
 
+    /**
+     * Infer the correct content type for Cast based on the URL.
+     * HLS streams (.m3u8) MUST use application/x-mpegurl, not audio/mp4.
+     */
+    private getCastContentType(url: string): string {
+        try {
+            const u = new URL(url);
+            if (u.pathname.endsWith('.m3u8')) {
+                return 'application/x-mpegurl';
+            }
+        } catch { /* fall through */ }
+        return 'audio/mp4';
+    }
+
     public async castMedia(url: string, title: string, artist: string, artUrl?: string, album?: string, format?: string) {
         if (!this.isConnected()) return;
 
@@ -389,7 +403,8 @@ export class CastManager {
         } catch { /* ignore */ }
 
         // Always use audio/mp4 content type since we're forcing AAC transcoding
-        const mediaInfo = new chrome.cast.media.MediaInfo(castUrl, 'audio/mp4');
+        const contentType = this.getCastContentType(castUrl);
+        const mediaInfo = new chrome.cast.media.MediaInfo(castUrl, contentType);
         mediaInfo.metadata = new chrome.cast.media.MusicTrackMediaMetadata();
         mediaInfo.metadata.title = title;
         mediaInfo.metadata.artist = artist;
@@ -441,7 +456,8 @@ export class CastManager {
         // Build QueueItems from playlist
         const queueItems: any[] = tracks.map((t, i) => {
             const castUrl = this.getCastUrl(t.url);
-            const mediaInfo = new chrome.cast.media.MediaInfo(castUrl, 'audio/mp4');
+            const contentType = this.getCastContentType(castUrl);
+            const mediaInfo = new chrome.cast.media.MediaInfo(castUrl, contentType);
             mediaInfo.metadata = new chrome.cast.media.MusicTrackMediaMetadata();
             mediaInfo.metadata.title = t.title || 'Unknown Title';
             mediaInfo.metadata.artist = t.artist || 'Unknown Artist';
