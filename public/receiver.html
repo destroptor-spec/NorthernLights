@@ -9,18 +9,49 @@
     cast-media-player { width: 100vw; height: 100vh; }
   </style>
   <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+  <script src="//www.gstatic.com/cast/sdk/libs/devtools/debug_layer/caf_receiver_logger.js"></script>
 </head>
 <body>
   <cast-media-player></cast-media-player>
   <script>
+    const LOG_TAG = 'NorthernLights';
+    const castDebugLogger = cast.debug.CastDebugLogger.getInstance();
     const context = cast.framework.CastReceiverContext.getInstance();
     const playerManager = context.getPlayerManager();
     let currentAuthToken = '';
+
+    // Enable debug overlay when receiver is ready
+    context.addEventListener(cast.framework.system.EventType.READY, () => {
+      if (!castDebugLogger.debugOverlayElement_) {
+        castDebugLogger.setEnabled(true);
+        castDebugLogger.showDebugLogs(true);
+      }
+      castDebugLogger.info(LOG_TAG, 'Receiver started and ready');
+    });
+
+    // Log errors
+    context.addEventListener(cast.framework.system.EventType.ERROR, (e) => {
+      castDebugLogger.error(LOG_TAG, 'Receiver error: ' + JSON.stringify(e));
+    });
+
+    // Log player events
+    castDebugLogger.loggerLevelByEvents = {
+      'cast.framework.events.category.CORE': cast.framework.LoggerLevel.DEBUG,
+      'cast.framework.events.category.ERROR': cast.framework.LoggerLevel.DEBUG,
+      'cast.framework.events.EventType.MEDIA_STATUS': cast.framework.LoggerLevel.DEBUG,
+      'cast.framework.events.EventType.LOAD': cast.framework.LoggerLevel.DEBUG,
+      'cast.framework.events.EventType.LOAD_START': cast.framework.LoggerLevel.DEBUG,
+      'cast.framework.events.EventType.ERROR': cast.framework.LoggerLevel.DEBUG,
+    };
 
     // Intercept LOAD to extract auth token from customData and force HLS MIME type
     playerManager.setMessageInterceptor(
       cast.framework.messages.MessageType.LOAD,
       loadRequestData => {
+        castDebugLogger.info(LOG_TAG, 'LOAD intercepted — contentId: ' + (loadRequestData.media ? loadRequestData.media.contentId : 'none'));
+        castDebugLogger.info(LOG_TAG, 'LOAD contentType: ' + (loadRequestData.media ? loadRequestData.media.contentType : 'none'));
+        castDebugLogger.info(LOG_TAG, 'LOAD customData: ' + JSON.stringify(loadRequestData.media ? loadRequestData.media.customData : null));
+
         if (loadRequestData.media) {
           loadRequestData.media.contentType =
             loadRequestData.media.contentType || 'application/vnd.apple.mpegurl';
@@ -28,8 +59,10 @@
           // Extract auth token passed via customData from the sender
           if (loadRequestData.media.customData && loadRequestData.media.customData.token) {
             currentAuthToken = loadRequestData.media.customData.token;
+            castDebugLogger.info(LOG_TAG, 'Auth token received via customData');
           } else {
             currentAuthToken = '';
+            castDebugLogger.warn(LOG_TAG, 'No auth token in customData');
           }
         }
         return loadRequestData;
