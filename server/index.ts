@@ -29,6 +29,11 @@ const port = process.env.PORT || 3001;
 
 // Allowed origins setup
 const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : ['http://localhost:3000'];
+// If a custom Cast receiver origin is set, add it to CORS whitelist so
+// the receiver can fetch HLS segments from our media server
+if (process.env.CAST_RECEIVER_ORIGIN && !allowedOrigins.includes(process.env.CAST_RECEIVER_ORIGIN)) {
+  allowedOrigins.push(process.env.CAST_RECEIVER_ORIGIN);
+}
 app.use(cors({
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
     if (
@@ -54,12 +59,44 @@ if (fs.existsSync(distPath)) {
   console.log(`[Server] Serving static files from ${distPath}`);
   app.use(express.static(distPath));
 
+  // Serve custom Cast receiver HTML at /cast-receiver
+  const receiverPath = path.join(distPath, 'receiver.html');
+  if (fs.existsSync(receiverPath)) {
+    app.get('/cast-receiver', (_req, res) => {
+      res.sendFile(receiverPath);
+    });
+    console.log('[Server] Cast receiver available at /cast-receiver');
+  }
+
+  // Pre-cache index.html with optional Cast app ID injection
+  const castAppId = process.env.CAST_RECEIVER_APP_ID || '';
+  let cachedIndexHtml: string | null = null;
+  try {
+    const rawHtml = fs.readFileSync(path.join(distPath, 'index.html'), 'utf8');
+    if (castAppId) {
+      // Inject the Cast app ID synchronously before any scripts load
+      cachedIndexHtml = rawHtml.replace(
+        '</head>',
+        `  <script>window.__CAST_APP_ID = ${JSON.stringify(castAppId)};</script>\n  </head>`
+      );
+      console.log(`[Server] Custom Cast receiver enabled (app ID: ${castAppId.slice(0, 6)}…)`);
+    } else {
+      cachedIndexHtml = rawHtml;
+    }
+  } catch (e) {
+    console.warn('[Server] Failed to pre-cache index.html, will read on each request');
+  }
+
   // Catch-all route to serve index.html for React SPA routing
   app.get('/{*splat}', (req, res, next) => {
     if (req.path.startsWith('/api')) {
       return next();
     }
-    res.sendFile(path.join(distPath, 'index.html'));
+    if (cachedIndexHtml) {
+      res.type('html').send(cachedIndexHtml);
+    } else {
+      res.sendFile(path.join(distPath, 'index.html'));
+    }
   });
 }
 

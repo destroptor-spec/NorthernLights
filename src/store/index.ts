@@ -1074,9 +1074,10 @@ export const usePlayerStore = create<PlayerState>()(
             playbackManager.setVolume(volume);
 
             if (castManager.isConnected()) {
-              // Use rawUrl (direct file) for cast — the Default Media Receiver cannot play HLS
+              // Pass both HLS url and rawUrl — CastManager picks based on receiver mode
               await castManager.castMedia(
-                track.rawUrl || track.url || '',
+                track.url || '',
+                track.rawUrl || '',
                 track.title || 'Unknown Title',
                 track.artist || ((track.artists as string[])?.join(', ')) || 'Unknown Artist',
                 track.artUrl,
@@ -1084,8 +1085,8 @@ export const usePlayerStore = create<PlayerState>()(
                 track.format
               );
             } else if (track.url) {
-              // Not casting: play locally
-              await playbackManager.playUrl(track.url, track.title, track.artist || ((track.artists as string[])?.join(', ')), track.artUrl, track.album, track.format);
+              // Not casting: play locally — pass both HLS and raw URLs
+              await playbackManager.playUrl(track.url, track.rawUrl || '', track.title, track.artist || ((track.artists as string[])?.join(', ')), track.artUrl, track.album, track.format);
             } else if (track.fileHandle) {
                // Fallback for local file handles
                await playbackManager.playFile(track.fileHandle);

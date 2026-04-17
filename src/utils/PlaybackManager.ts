@@ -144,8 +144,8 @@ class PlaybackManager {
 
     // --- Core Playback Controls ---
 
-    public async playUrl(url: string, title?: string, artist?: string, artUrl?: string, album?: string, format?: string): Promise<void> {
-        this.currentUrl = url;
+    public async playUrl(hlsUrl: string, rawUrl: string, title?: string, artist?: string, artUrl?: string, album?: string, format?: string): Promise<void> {
+        this.currentUrl = hlsUrl || rawUrl;
         this.currentTitle = title || 'Unknown Title';
         this.currentArtist = artist || 'Unknown Artist';
         this.currentArtUrl = artUrl || null;
@@ -155,13 +155,14 @@ class PlaybackManager {
         try {
             if (castManager.isConnected()) {
                 this.audio.pause();
-                await castManager.castMedia(this.currentUrl, this.currentTitle, this.currentArtist, this.currentArtUrl || undefined, album, format);
+                // Pass both URLs — CastManager picks based on receiver mode
+                await castManager.castMedia(hlsUrl, rawUrl, this.currentTitle, this.currentArtist, this.currentArtUrl || undefined, album, format);
                 return;
             }
 
             // Route HLS URLs through hls.js
-            if (url.includes('.m3u8')) {
-                await this.playHls(url);
+            if (hlsUrl.includes('.m3u8')) {
+                await this.playHls(hlsUrl);
                 return;
             }
 
@@ -173,7 +174,7 @@ class PlaybackManager {
                 URL.revokeObjectURL(this.audio.src);
             }
 
-            this.audio.src = url;
+            this.audio.src = hlsUrl || rawUrl;
             this.audio.load();
             await this.audio.play();
 

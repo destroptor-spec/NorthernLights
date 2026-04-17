@@ -28,6 +28,7 @@ const FORMAT_MIME_MAP = new Map<string, string>([
     ['wave', 'audio/wav'],  // music-metadata sometimes returns 'WAVE'
     ['wma', 'audio/x-ms-wma'],
     ['adts', 'audio/aac'],
+    ['m3u8', 'application/vnd.apple.mpegurl'],
 ]);
 
 function inferContentType(url: string, format?: string): string {
@@ -54,6 +55,10 @@ export class CastManager {
     private player: any = null;
     private playerController: any = null;
     private state: CastState = 'NO_DEVICES_AVAILABLE';
+
+    // Custom receiver app ID (injected by Express server into index.html)
+    // Empty string = use Default Media Receiver + rawUrl fallback
+    private readonly customAppId: string = (window as any).__CAST_APP_ID || '';
 
     // Tracks whether this manager initiated the cast session (vs joining an existing one)
     private autoCastInProgress = false;
@@ -132,7 +137,7 @@ export class CastManager {
 
         try {
             cast.framework.CastContext.getInstance().setOptions({
-                receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+                receiverApplicationId: this.customAppId || chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
                 autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
             });
 
@@ -344,12 +349,14 @@ export class CastManager {
 
             // Cast the current track to the device
             await this.castMedia(
-                track.rawUrl || track.url || '',
+                track.url || '',
+                track.rawUrl || '',
                 track.title || 'Unknown Title',
                 track.artist || ((track.artists as string[])?.join(', ')) || 'Unknown Artist',
                 track.artUrl,
                 track.album,
-                track.format
+                track.format,
+                this.extractTokenFromUrl(track.url || track.rawUrl || '')
             );
 
             // Seek to where we left off locally (with a small delay to let the media load)
@@ -384,15 +391,31 @@ export class CastManager {
         return '';
     }
 
-    public async castMedia(url: string, title: string, artist: string, artUrl?: string, album?: string, format?: string) {
+    /**
+     * Extract the auth token from a track URL's query parameters.
+     */
+    private extractTokenFromUrl(url: string): string {
+        try {
+            return new URL(url).searchParams.get('token') || '';
+        } catch {
+            return '';
+        }
+    }
+
+    public async castMedia(hlsUrl: string, rawUrl: string, title: string, artist: string, artUrl?: string, album?: string, format?: string, token?: string) {
         if (!this.isConnected()) return;
 
         const castSession = this.castContext.getCurrentSession();
         if (!castSession) return;
 
+        // Select URL based on mode: custom receiver → HLS, default → raw file
+        const useHls = !!(this.customAppId && hlsUrl);
+        const mediaUrl = useHls ? hlsUrl : (rawUrl || hlsUrl);
+        const authToken = token || this.extractTokenFromUrl(mediaUrl);
+
         // Warn if the Chromecast can't reach the server (localhost / 127.0.0.1)
         try {
-            const host = new URL(url).hostname;
+            const host = new URL(mediaUrl).hostname;
             if (host === 'localhost' || host === '127.0.0.1') {
                 console.warn('[Cast] Server URL is localhost — the Chromecast device cannot reach it. Access the app via your LAN IP or domain to cast.');
                 toast.error('Cannot cast: server is at localhost. Access the app via your LAN IP address to cast.');
@@ -400,8 +423,8 @@ export class CastManager {
             }
         } catch { /* ignore */ }
 
-        const contentType = inferContentType(url, format);
-        const mediaInfo = new chrome.cast.media.MediaInfo(url, contentType);
+        const contentType = useHls ? 'application/vnd.apple.mpegurl' : inferContentType(mediaUrl, format);
+        const mediaInfo = new chrome.cast.media.MediaInfo(mediaUrl, contentType);
         mediaInfo.metadata = new chrome.cast.media.MusicTrackMediaMetadata();
         mediaInfo.metadata.title = title;
         mediaInfo.metadata.artist = artist;
@@ -411,6 +434,11 @@ export class CastManager {
 
         if (artUrl) {
             mediaInfo.metadata.images = [new chrome.cast.Image(artUrl)];
+        }
+
+        // Pass auth token to custom receiver via customData for Bearer header injection
+        if (useHls && authToken) {
+            mediaInfo.customData = { token: authToken };
         }
 
         // Serialize loadMedia calls to prevent concurrent loads from clashing
@@ -461,7 +489,16 @@ export class CastManager {
         // repeat='one': use single loadMedia with loop instead of queue
         if (repeat === 'one' && tracks[startIndex]) {
             const t = tracks[startIndex];
-            await this.castMedia(t.rawUrl || t.url, t.title, t.artist, t.artUrl, t.album, t.format);
+            await this.castMedia(
+                t.url || '',
+                t.rawUrl || '',
+                t.title,
+                t.artist,
+                t.artUrl,
+                t.album,
+                t.format,
+                this.extractTokenFromUrl(t.url || t.rawUrl || '')
+            );
             // Set the media to loop via the queue repeat mode API
             const media = castSession.getMediaSession();
             if (media) {
@@ -475,9 +512,10 @@ export class CastManager {
         }
 
         // Build QueueItems from playlist
+        const useHls = !!this.customAppId;
         const queueItems: any[] = tracks.map((t, i) => {
-            const mediaUrl = t.rawUrl || t.url;
-            const contentType = inferContentType(mediaUrl, t.format);
+            const mediaUrl = useHls ? (t.url || t.rawUrl || '') : (t.rawUrl || t.url || '');
+            const contentType = useHls ? 'application/vnd.apple.mpegurl' : inferContentType(mediaUrl, t.format);
             const mediaInfo = new chrome.cast.media.MediaInfo(mediaUrl, contentType);
             mediaInfo.metadata = new chrome.cast.media.MusicTrackMediaMetadata();
             mediaInfo.metadata.title = t.title || 'Unknown Title';
@@ -485,6 +523,14 @@ export class CastManager {
             if (t.album) mediaInfo.metadata.albumName = t.album;
             if (t.artUrl) mediaInfo.metadata.images = [new chrome.cast.Image(t.artUrl)];
             if (t.duration) mediaInfo.metadata.duration = t.duration;
+
+            // Pass auth token to custom receiver via customData
+            if (useHls) {
+                const authToken = this.extractTokenFromUrl(mediaUrl);
+                if (authToken) {
+                    mediaInfo.customData = { token: authToken };
+                }
+            }
 
             const item = new chrome.cast.media.QueueItem(mediaInfo);
             item.autoplay = true;
