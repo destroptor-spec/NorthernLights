@@ -109,7 +109,23 @@
     playerManager.addEventListener(
       cast.framework.events.EventType.ERROR,
       function(e) {
-        log('error', LOG_TAG, 'Player error: ' + JSON.stringify(e));
+        var detail = '';
+        if (e.detailedErrorCode) detail += ' code=' + e.detailedErrorCode;
+        if (e.error) {
+          detail += ' error=' + JSON.stringify(e.error);
+          if (e.error.data) detail += ' data=' + JSON.stringify(e.error.data);
+          if (e.error.code) detail += ' shakaCode=' + e.error.code;
+          if (e.error.category) detail += ' category=' + e.error.category;
+        }
+        log('error', LOG_TAG, 'Player error:' + detail);
+      }
+    );
+
+    // Log network requests from Shaka for debugging
+    playerManager.addEventListener(
+      cast.framework.events.EventType.BUFFERING,
+      function(e) {
+        log('ok', LOG_TAG, 'Buffering: ' + e.bufferingType);
       }
     );
 
@@ -126,12 +142,14 @@
     // ─── Shaka Network Config ──────────────────────────────────────
     var playbackConfig = new cast.framework.PlaybackConfig();
     playbackConfig.segmentRequestHandler = function(requestInfo) {
+      log('ok', LOG_TAG, 'Segment request: ' + (requestInfo.url || '').substring(0, 60) + '...');
       if (currentAuthToken) {
         requestInfo.headers = requestInfo.headers || {};
         requestInfo.headers['Authorization'] = 'Bearer ' + currentAuthToken;
       }
     };
     playbackConfig.manifestRequestHandler = function(requestInfo) {
+      log('ok', LOG_TAG, 'Manifest request: ' + (requestInfo.url || '').substring(0, 80));
       if (currentAuthToken) {
         requestInfo.headers = requestInfo.headers || {};
         requestInfo.headers['Authorization'] = 'Bearer ' + currentAuthToken;
