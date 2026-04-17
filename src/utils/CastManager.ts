@@ -592,6 +592,43 @@ export class CastManager {
         }
     }
 
+    /**
+     * Appends a new track to the end of the active Cast queue without interrupting playback.
+     */
+    public async appendToQueue(track: { url: string; rawUrl?: string; title: string; artist: string; artUrl?: string; album?: string; format?: string; duration?: number }) {
+        if (!this.isConnected()) return;
+        const session = this.castContext.getCurrentSession();
+        if (!session) return;
+        const mediaSession = session.getMediaSession();
+        if (!mediaSession) return;
+
+        const useHls = !!this.customAppId;
+        const mediaUrl = useHls ? (track.url || track.rawUrl || '') : (track.rawUrl || track.url || '');
+        const contentType = useHls ? 'application/vnd.apple.mpegurl' : inferContentType(mediaUrl, track.format);
+
+        const mediaInfo = new chrome.cast.media.MediaInfo(mediaUrl, contentType);
+        mediaInfo.metadata = new chrome.cast.media.MusicTrackMediaMetadata();
+        mediaInfo.metadata.title = track.title || 'Unknown Title';
+        mediaInfo.metadata.artist = track.artist || 'Unknown Artist';
+        if (track.album) mediaInfo.metadata.albumName = track.album;
+        if (track.artUrl) mediaInfo.metadata.images = [new chrome.cast.Image(track.artUrl)];
+        if (track.duration) mediaInfo.metadata.duration = track.duration;
+
+        if (useHls) {
+            const authToken = this.extractTokenFromUrl(mediaUrl);
+            if (authToken) mediaInfo.customData = { token: authToken };
+        }
+
+        const item = new chrome.cast.media.QueueItem(mediaInfo);
+        item.preloadTime = 30;
+
+        try {
+            await mediaSession.queueInsertItems([item]);
+        } catch (e) {
+            console.error('[Cast] Failed to append track to queue:', e);
+        }
+    }
+
     public playOrPause() {
         if (this.playerController) {
             this.playerController.playOrPause();

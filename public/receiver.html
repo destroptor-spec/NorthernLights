@@ -37,7 +37,15 @@
   <div id="debug-panel"></div>
   <script>
     const LOG_TAG = 'NorthernLights';
-    const castDebugLogger = cast.debug.CastDebugLogger.getInstance();
+
+    // Safe debug logger — receiver works even if caf_receiver_logger.js fails to load
+    let castDebugLogger = null;
+    try {
+      castDebugLogger = cast.debug.CastDebugLogger.getInstance();
+    } catch (e) {
+      // Debug logger unavailable — CaC Tool logging disabled, receiver still works
+    }
+
     const context = cast.framework.CastReceiverContext.getInstance();
     const playerManager = context.getPlayerManager();
     let currentAuthToken = '';
@@ -51,37 +59,35 @@
       const cls = level === 'error' ? 'err' : level === 'warn' ? 'warn' : 'ok';
       const line = document.createElement('div');
       line.className = cls;
-      line.textContent = `[${ts}s] [${tag}] ${msg}`;
+      line.textContent = '[' + ts + 's] [' + tag + '] ' + msg;
       panel.appendChild(line);
-      // Trim old lines
       while (panel.children.length > MAX_LINES) {
         panel.removeChild(panel.firstChild);
       }
       panel.scrollTop = panel.scrollHeight;
-      // Also log to CaC Tool
-      if (level === 'error') castDebugLogger.error(tag, msg);
-      else if (level === 'warn') castDebugLogger.warn(tag, msg);
-      else castDebugLogger.info(tag, msg);
+      // Log to CaC Tool only if debug logger loaded
+      if (castDebugLogger) {
+        if (level === 'error') castDebugLogger.error(tag, msg);
+        else if (level === 'warn') castDebugLogger.warn(tag, msg);
+        else castDebugLogger.info(tag, msg);
+      }
     }
 
     // ─── Receiver Init ─────────────────────────────────────────────
-    context.addEventListener(cast.framework.system.EventType.READY, () => {
-      // Disable default debug overlay — we use our own panel
-      castDebugLogger.setEnabled(false);
+    context.addEventListener(cast.framework.system.EventType.READY, function() {
       log('ok', LOG_TAG, 'Receiver started and ready');
     });
 
-    // Log errors
-    context.addEventListener(cast.framework.system.EventType.ERROR, (e) => {
+    context.addEventListener(cast.framework.system.EventType.ERROR, function(e) {
       log('error', LOG_TAG, 'Receiver error: ' + JSON.stringify(e));
     });
 
     // ─── LOAD Interceptor ──────────────────────────────────────────
     playerManager.setMessageInterceptor(
       cast.framework.messages.MessageType.LOAD,
-      loadRequestData => {
+      function(loadRequestData) {
         if (loadRequestData.media) {
-          const m = loadRequestData.media;
+          var m = loadRequestData.media;
           log('ok', LOG_TAG, 'LOAD contentId: ' + m.contentId);
           log('ok', LOG_TAG, 'LOAD contentType: ' + m.contentType);
           log('ok', LOG_TAG, 'LOAD customData: ' + JSON.stringify(m.customData));
@@ -100,18 +106,16 @@
       }
     );
 
-    // Log player errors with details
     playerManager.addEventListener(
       cast.framework.events.EventType.ERROR,
-      (e) => {
+      function(e) {
         log('error', LOG_TAG, 'Player error: ' + JSON.stringify(e));
       }
     );
 
-    // Log media status changes
     playerManager.addEventListener(
       cast.framework.events.EventType.MEDIA_STATUS,
-      (e) => {
+      function(e) {
         if (e.mediaStatus) {
           log('ok', LOG_TAG, 'State: ' + e.mediaStatus.playerState +
             (e.mediaStatus.idleReason ? ' (' + e.mediaStatus.idleReason + ')' : ''));
@@ -120,14 +124,14 @@
     );
 
     // ─── Shaka Network Config ──────────────────────────────────────
-    const playbackConfig = new cast.framework.PlaybackConfig();
-    playbackConfig.segmentRequestHandler = requestInfo => {
+    var playbackConfig = new cast.framework.PlaybackConfig();
+    playbackConfig.segmentRequestHandler = function(requestInfo) {
       if (currentAuthToken) {
         requestInfo.headers = requestInfo.headers || {};
         requestInfo.headers['Authorization'] = 'Bearer ' + currentAuthToken;
       }
     };
-    playbackConfig.manifestRequestHandler = requestInfo => {
+    playbackConfig.manifestRequestHandler = function(requestInfo) {
       if (currentAuthToken) {
         requestInfo.headers = requestInfo.headers || {};
         requestInfo.headers['Authorization'] = 'Bearer ' + currentAuthToken;
