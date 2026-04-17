@@ -57,7 +57,7 @@ app.use(express.json());
 const distPath = path.join(__dirname, '../dist');
 if (fs.existsSync(distPath)) {
   console.log(`[Server] Serving static files from ${distPath}`);
-  app.use(express.static(distPath));
+  app.use(express.static(distPath, { index: false }));
 
   // Serve custom Cast receiver HTML at /cast-receiver
   const receiverPath = path.join(distPath, 'receiver.html');
