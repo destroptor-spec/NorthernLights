@@ -50,7 +50,6 @@
 
     var context = cast.framework.CastReceiverContext.getInstance();
     var playerManager = context.getPlayerManager();
-    var currentAuthToken = '';
 
     // ─── Codec Detection via canDisplayType() ───────────────────────
     var CODEC_PROBES = [
@@ -133,14 +132,6 @@
           log('ok', LOG_TAG, 'LOAD customData: ' + JSON.stringify(m.customData));
 
           m.contentType = m.contentType || 'application/vnd.apple.mpegurl';
-
-          if (m.customData && m.customData.token) {
-            currentAuthToken = m.customData.token;
-            log('ok', LOG_TAG, 'Auth token set (' + currentAuthToken.length + ' chars)');
-          } else {
-            currentAuthToken = '';
-            log('warn', LOG_TAG, 'No auth token in customData');
-          }
         }
         return loadRequestData;
       }
@@ -184,24 +175,7 @@
       }
     );
 
-    // ─── Shaka Network Config ──────────────────────────────────────
-    var playbackConfig = new cast.framework.PlaybackConfig();
-    playbackConfig.segmentRequestHandler = function(requestInfo) {
-      log('ok', LOG_TAG, 'Segment: ' + (requestInfo.url || '').substring(0, 60) + '...');
-      if (currentAuthToken) {
-        requestInfo.headers = requestInfo.headers || {};
-        requestInfo.headers['Authorization'] = 'Bearer ' + currentAuthToken;
-      }
-    };
-    playbackConfig.manifestRequestHandler = function(requestInfo) {
-      log('ok', LOG_TAG, 'Manifest: ' + (requestInfo.url || '').substring(0, 80));
-      if (currentAuthToken) {
-        requestInfo.headers = requestInfo.headers || {};
-        requestInfo.headers['Authorization'] = 'Bearer ' + currentAuthToken;
-      }
-    };
-
-    context.start({ playbackConfig: playbackConfig });
+    context.start();
   </script>
 </body>
 </html>

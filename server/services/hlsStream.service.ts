@@ -15,7 +15,7 @@ interface HlsSession {
   ffmpegProcess: ChildProcess | null;
   createdAt: number;
   lastAccessedAt: number;
-  ready: boolean;               // true once FFmpeg has written at least segment 0
+  ready: boolean;               // true once segment000.ts exists (first segment)
   readyPromise: Promise<void>;  // resolves when the first segment appears
 }
 
@@ -39,7 +39,7 @@ function sessionKey(trackId: string, quality: string, codec: string): string {
 
 /**
  * Get or create an HLS session for a given track + quality combination.
- * Returns once the playlist is ready to be served (first segment written).
+ * Returns as soon as the first segment is written — FFmpeg continues in background.
  */
 export async function getOrCreateHlsSession(
   trackId: string,
@@ -127,35 +127,34 @@ export async function getOrCreateHlsSession(
     }
   });
 
-  // Wait for the COMPLETE playlist (#EXT-X-ENDLIST) before serving.
-  // This ensures hls.js receives a full VOD playlist on the first request,
-  // instead of a partial live-looking playlist that stalls after one segment.
-  // For local files with remuxing (-c:a copy), FFmpeg finishes in < 1 second.
+  // Resolve as soon as the first segment exists — instant-start playback.
+  // FFmpeg continues in the background, appending more segments.
+  // The client re-fetches the playlist (Cache-Control: no-cache) and picks
+  // up new segments seamlessly. When FFmpeg finishes, ENDLIST appears on
+  // the next fetch and the player transitions to VOD mode.
+  const firstSegment = path.join(outputDir, 'segment000.ts');
   const pollStart = Date.now();
-  const POLL_TIMEOUT_MS = 30000; // 30s for long transcodes
+  const POLL_TIMEOUT_MS = 30000; // 30s safety net
 
   const pollInterval = setInterval(() => {
     try {
-      if (fs.existsSync(playlistPath)) {
-        const content = fs.readFileSync(playlistPath, 'utf-8');
-        if (content.includes('#EXT-X-ENDLIST')) {
-          clearInterval(pollInterval);
-          session.ready = true;
-          resolveReady!();
-          return;
-        }
+      if (fs.existsSync(firstSegment)) {
+        clearInterval(pollInterval);
+        session.ready = true;
+        resolveReady!();
+        return;
       }
     } catch (_) { /* file may be partially written */ }
 
     if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
       clearInterval(pollInterval);
-      console.error(`[HLS] Timeout waiting for complete playlist of track ${trackId}`);
+      console.error(`[HLS] Timeout waiting for first segment of track ${trackId}`);
       session.ready = true;
       resolveReady!();
     }
-  }, 150);
+  }, 50);
 
-  // Also resolve if FFmpeg exits (success or failure) before the poll finds ENDLIST
+  // Also resolve if FFmpeg exits (success or failure) before the poll finds segment000.ts
   ffmpeg.on('exit', () => {
     // Give a brief moment for the final write to flush
     setTimeout(() => {

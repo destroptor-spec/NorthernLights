@@ -34,6 +34,7 @@ const setCorsHeaders = (req: any, res: any) => {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS, HEAD');
   res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, Range');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
 };
 
 // ─── HLS Streaming ─────────────────────────────────────────────────────
@@ -110,17 +111,30 @@ router.all('/stream/:trackId/playlist.m3u8', async (req, res) => {
     // Rewrite segment URLs to include auth token so external clients (Chromecast)
     // can fetch them. The browser's hls.js injects Bearer headers via xhrSetup,
     // but the Chromecast Default Media Receiver can only pass tokens via URL params.
+    // When FFmpeg is still running (no ENDLIST), inject PLAYLIST-TYPE:EVENT so
+    // the player re-fetches the manifest and picks up new segments seamlessly.
     const token = req.query.token as string | undefined;
-    if (token) {
-      const playlist = fs.readFileSync(session.playlistPath, 'utf8');
-      const rewritten = playlist.replace(
+    const needsTokenRewrite = !!token;
+    const playlist = fs.readFileSync(session.playlistPath, 'utf8');
+    const hasEndlist = playlist.includes('#EXT-X-ENDLIST');
+    let output = playlist;
+
+    if (needsTokenRewrite) {
+      output = output.replace(
         /^(segment\d+\.ts)$/gm,
-        `$1?token=${encodeURIComponent(token)}`
+        `$1?token=${encodeURIComponent(token!)}`
       );
-      res.send(rewritten);
-    } else {
-      fs.createReadStream(session.playlistPath).pipe(res);
     }
+
+    if (!hasEndlist) {
+      // Inject PLAYLIST-TYPE:EVENT after TARGETDURATION per HLS spec order
+      output = output.replace(
+        /(#EXT-X-TARGETDURATION:\d+\n)/,
+        '$1#EXT-X-PLAYLIST-TYPE:EVENT\n'
+      );
+    }
+
+    res.send(output);
   } catch (err: any) {
     console.error('[HLS] Playlist error:', err?.message || err);
     if (!res.headersSent) {
