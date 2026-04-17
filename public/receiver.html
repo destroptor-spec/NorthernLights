@@ -36,28 +36,50 @@
   <cast-media-player></cast-media-player>
   <div id="debug-panel"></div>
   <script>
-    const LOG_TAG = 'NorthernLights';
+    var LOG_TAG = 'NorthernLights';
 
     // Safe debug logger — receiver works even if caf_receiver_logger.js fails to load
-    let castDebugLogger = null;
+    var castDebugLogger = null;
     try {
       castDebugLogger = cast.debug.CastDebugLogger.getInstance();
     } catch (e) {
       // Debug logger unavailable — CaC Tool logging disabled, receiver still works
     }
 
-    const context = cast.framework.CastReceiverContext.getInstance();
-    const playerManager = context.getPlayerManager();
-    let currentAuthToken = '';
+    var context = cast.framework.CastReceiverContext.getInstance();
+    var playerManager = context.getPlayerManager();
+    var currentAuthToken = '';
+
+    // ─── Codec Detection via canDisplayType() ───────────────────────
+    var CODEC_PROBES = [
+      { codec: 'eac3',   mime: 'audio/mp4',  codecs: 'ec-3' },
+      { codec: 'ac3',    mime: 'audio/mp4',  codecs: 'ac-3' },
+      { codec: 'aac_he', mime: 'audio/mp4',  codecs: 'mp4a.40.5' },
+      { codec: 'aac',    mime: 'audio/mp4',  codecs: 'mp4a.40.2' },
+      { codec: 'mp3',    mime: 'audio/mpeg', codecs: '' },
+    ];
+
+    var bestCodec = 'aac'; // universal fallback
+    for (var i = 0; i < CODEC_PROBES.length; i++) {
+      var c = CODEC_PROBES[i];
+      try {
+        if (context.canDisplayType(c.mime, c.codecs)) {
+          bestCodec = c.codec;
+          break; // first match = highest priority
+        }
+      } catch (e) {
+        // canDisplayType may throw for unknown types — skip
+      }
+    }
 
     // ─── Custom Debug Panel ────────────────────────────────────────
-    const panel = document.getElementById('debug-panel');
-    const MAX_LINES = 80;
+    var panel = document.getElementById('debug-panel');
+    var MAX_LINES = 80;
 
     function log(level, tag, msg) {
-      const ts = ((performance.now() / 1000).toFixed(1));
-      const cls = level === 'error' ? 'err' : level === 'warn' ? 'warn' : 'ok';
-      const line = document.createElement('div');
+      var ts = ((performance.now() / 1000).toFixed(1));
+      var cls = level === 'error' ? 'err' : level === 'warn' ? 'warn' : 'ok';
+      var line = document.createElement('div');
       line.className = cls;
       line.textContent = '[' + ts + 's] [' + tag + '] ' + msg;
       panel.appendChild(line);
@@ -75,7 +97,7 @@
 
     // ─── Receiver Init ─────────────────────────────────────────────
     context.addEventListener(cast.framework.system.EventType.READY, function() {
-      log('ok', LOG_TAG, 'Receiver started and ready');
+      log('ok', LOG_TAG, 'Receiver started — best codec: ' + bestCodec);
     });
 
     context.addEventListener(cast.framework.system.EventType.ERROR, function(e) {
@@ -88,6 +110,21 @@
       function(loadRequestData) {
         if (loadRequestData.media) {
           var m = loadRequestData.media;
+
+          // Inject codec parameter into contentId URL
+          if (m.contentId) {
+            try {
+              var urlObj = new URL(m.contentId);
+              if (!urlObj.searchParams.has('codec')) {
+                urlObj.searchParams.set('codec', bestCodec);
+                m.contentId = urlObj.toString();
+                log('ok', LOG_TAG, 'Injected codec: ' + bestCodec);
+              }
+            } catch (e) {
+              log('error', LOG_TAG, 'Failed to parse contentId URL');
+            }
+          }
+
           log('ok', LOG_TAG, 'LOAD contentId: ' + m.contentId);
           log('ok', LOG_TAG, 'LOAD contentType: ' + m.contentType);
           log('ok', LOG_TAG, 'LOAD customData: ' + JSON.stringify(m.customData));
@@ -121,7 +158,6 @@
       }
     );
 
-    // Log network requests from Shaka for debugging
     playerManager.addEventListener(
       cast.framework.events.EventType.BUFFERING,
       function(e) {
@@ -142,14 +178,14 @@
     // ─── Shaka Network Config ──────────────────────────────────────
     var playbackConfig = new cast.framework.PlaybackConfig();
     playbackConfig.segmentRequestHandler = function(requestInfo) {
-      log('ok', LOG_TAG, 'Segment request: ' + (requestInfo.url || '').substring(0, 60) + '...');
+      log('ok', LOG_TAG, 'Segment: ' + (requestInfo.url || '').substring(0, 60) + '...');
       if (currentAuthToken) {
         requestInfo.headers = requestInfo.headers || {};
         requestInfo.headers['Authorization'] = 'Bearer ' + currentAuthToken;
       }
     };
     playbackConfig.manifestRequestHandler = function(requestInfo) {
-      log('ok', LOG_TAG, 'Manifest request: ' + (requestInfo.url || '').substring(0, 80));
+      log('ok', LOG_TAG, 'Manifest: ' + (requestInfo.url || '').substring(0, 80));
       if (currentAuthToken) {
         requestInfo.headers = requestInfo.headers || {};
         requestInfo.headers['Authorization'] = 'Bearer ' + currentAuthToken;

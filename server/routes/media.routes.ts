@@ -28,10 +28,12 @@ const MIME_TYPES: Record<string, string> = {
 router.get('/stream/:trackId/playlist.m3u8', async (req, res) => {
   const { trackId } = req.params;
   const quality = (req.query.quality as string) || '128k';
+  let targetCodec = (req.query.codec as string) || 'aac'; // safe universal default
 
   try {
     let fileBuf: Buffer;
     let bitrate: number | null = null;
+    let sourceFormat: string | null = null;
     
     // Check if the trackId is a valid UUID
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -39,31 +41,41 @@ router.get('/stream/:trackId/playlist.m3u8', async (req, res) => {
     if (uuidRegex.test(trackId)) {
       // Look up the track from the database
       const db = await initDB();
-      const result = await db.query('SELECT path, bitrate FROM tracks WHERE id = $1', [trackId]);
+      const result = await db.query('SELECT path, bitrate, format FROM tracks WHERE id = $1', [trackId]);
       if (result.rows.length === 0) {
         return res.status(404).send('Track not found');
       }
       fileBuf = pathToBuffer(result.rows[0].path);
       bitrate = result.rows[0].bitrate;
+      sourceFormat = result.rows[0].format;
     } else {
       // trackId is base64(dbPath), where dbPath is itself base64(filesystemPath).
       // decodeURIComponent undoes URL encoding, then we decode one layer of base64
       // to recover the DB path string, which pathToBuffer decodes to the raw file path.
       const dbPath = Buffer.from(decodeURIComponent(trackId), 'base64').toString();
       fileBuf = pathToBuffer(dbPath);
+
+      // Quick DB lookup to grab metadata for legacy paths
+      try {
+        const db = await initDB();
+        const result = await db.query('SELECT bitrate, format FROM tracks WHERE path = $1', [dbPath]);
+        if (result.rows.length > 0) {
+          bitrate = result.rows[0].bitrate;
+          sourceFormat = result.rows[0].format;
+        }
+      } catch { /* non-critical — bitrate/format stay null, will transcode */ }
     }
 
-    if (!fs.existsSync(fileBuf)) {
-      return res.status(404).send('Audio file not found on disk');
-    }
-
-    const allowed = await isPathAllowed(fileBuf);
-    if (!allowed) {
-      return res.status(403).send('Forbidden: Path is outside allowed library directories');
+    // Bitrate gate: AC-3/E-AC-3 sound poor below 256k — override to AAC
+    if (targetCodec === 'ac3' || targetCodec === 'eac3') {
+      if (quality !== 'source' && parseInt(quality) < 256) {
+        console.log(`[HLS] Overriding ${targetCodec} → AAC (${quality} too low for AC-3)`);
+        targetCodec = 'aac';
+      }
     }
 
     // Get or create the HLS session (waits for first segment to be ready)
-    const session = await getOrCreateHlsSession(trackId, fileBuf, quality, bitrate);
+    const session = await getOrCreateHlsSession(trackId, fileBuf, quality, bitrate, sourceFormat, targetCodec);
 
     if (!fs.existsSync(session.playlistPath)) {
       return res.status(500).send('HLS playlist generation failed');

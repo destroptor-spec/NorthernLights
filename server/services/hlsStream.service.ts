@@ -1,4 +1,4 @@
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, execSync, ChildProcess } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -9,6 +9,7 @@ import os from 'os';
 interface HlsSession {
   trackId: string;
   quality: string;
+  codec: string;
   outputDir: string;
   playlistPath: string;
   ffmpegProcess: ChildProcess | null;
@@ -30,8 +31,8 @@ const HLS_SEGMENT_DURATION = 10; // seconds per chunk
 const activeSessions = new Map<string, HlsSession>();
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
-function sessionKey(trackId: string, quality: string): string {
-  return `${trackId}::${quality}`;
+function sessionKey(trackId: string, quality: string, codec: string): string {
+  return `${trackId}::${quality}::${codec}`;
 }
 
 // ─── Core API ───────────────────────────────────────────────────────────
@@ -44,9 +45,11 @@ export async function getOrCreateHlsSession(
   trackId: string,
   trackPath: Buffer,
   quality: string,
-  sourceBitrate: number | null
+  sourceBitrate: number | null,
+  sourceFormat: string | null,
+  targetCodec: string
 ): Promise<HlsSession> {
-  const key = sessionKey(trackId, quality);
+  const key = sessionKey(trackId, quality, targetCodec);
 
   // Reuse existing session if available
   const existing = activeSessions.get(key);
@@ -58,9 +61,8 @@ export async function getOrCreateHlsSession(
     return existing;
   }
 
-  // Create output directory — hash the trackId to guarantee a short, fixed-length name
-  // (base64 trackIds from non-DB tracks can exceed filesystem name limits)
-  const dirHash = crypto.createHash('sha256').update(`${trackId}::${quality}`).digest('hex').slice(0, 16);
+  // Create output directory — hash the key to guarantee a short, fixed-length name
+  const dirHash = crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
   const outputDir = path.join(HLS_BASE_DIR, dirHash);
   fs.mkdirSync(outputDir, { recursive: true });
 
@@ -68,11 +70,11 @@ export async function getOrCreateHlsSession(
   const segmentPattern = path.join(outputDir, 'segment%03d.ts');
 
   // Determine encoding strategy
-  const shouldRemux = getRemuxDecision(quality, sourceBitrate);
+  const inputPath = trackPath.toString('utf8');
+  const shouldRemux = getRemuxDecision(quality, sourceBitrate, sourceFormat, targetCodec, inputPath);
 
   // Build FFmpeg args
-  const inputPath = trackPath.toString('utf8');
-  const ffmpegArgs = buildFfmpegArgs(inputPath, playlistPath, segmentPattern, quality, shouldRemux);
+  const ffmpegArgs = buildFfmpegArgs(inputPath, playlistPath, segmentPattern, quality, shouldRemux, targetCodec);
 
   // Create the readiness promise — resolves when segment000.ts appears
   let resolveReady: () => void;
@@ -83,6 +85,7 @@ export async function getOrCreateHlsSession(
   const session: HlsSession = {
     trackId,
     quality,
+    codec: targetCodec,
     outputDir,
     playlistPath,
     ffmpegProcess: null,
@@ -173,21 +176,38 @@ export async function getOrCreateHlsSession(
 }
 
 /**
- * Touch a session to keep it alive.
+ * Touch a session to keep it alive. Codec is optional — matches by trackId + quality.
  */
-export function touchSession(trackId: string, quality: string): void {
-  const session = activeSessions.get(sessionKey(trackId, quality));
-  if (session) {
-    session.lastAccessedAt = Date.now();
+export function touchSession(trackId: string, quality: string, codec?: string): void {
+  if (codec) {
+    const session = activeSessions.get(sessionKey(trackId, quality, codec));
+    if (session) { session.lastAccessedAt = Date.now(); return; }
+  }
+  // Fallback: find any session matching trackId + quality
+  for (const [_key, session] of activeSessions) {
+    if (session.trackId === trackId && session.quality === quality) {
+      session.lastAccessedAt = Date.now();
+      return;
+    }
   }
 }
 
 /**
  * Get the output directory for a session (for serving segments).
+ * Codec is optional — matches by trackId + quality.
  */
-export function getSessionOutputDir(trackId: string, quality: string): string | null {
-  const session = activeSessions.get(sessionKey(trackId, quality));
-  return session?.outputDir ?? null;
+export function getSessionOutputDir(trackId: string, quality: string, codec?: string): string | null {
+  if (codec) {
+    const session = activeSessions.get(sessionKey(trackId, quality, codec));
+    if (session) return session.outputDir;
+  }
+  // Fallback: find any session matching trackId + quality
+  for (const [_key, session] of activeSessions) {
+    if (session.trackId === trackId && session.quality === quality) {
+      return session.outputDir;
+    }
+  }
+  return null;
 }
 
 /**
@@ -207,9 +227,21 @@ export function findSessionByTrackId(trackId: string): { outputDir: string; qual
 /**
  * Clean up a specific session — kill FFmpeg, remove temp files.
  */
-export function cleanupSession(trackId: string, quality: string): void {
-  const key = sessionKey(trackId, quality);
-  const session = activeSessions.get(key);
+export function cleanupSession(trackId: string, quality: string, codec?: string): void {
+  let key: string;
+  if (codec) {
+    key = sessionKey(trackId, quality, codec);
+  } else {
+    // Find the first matching session
+    for (const [k, session] of activeSessions) {
+      if (session.trackId === trackId && session.quality === quality) {
+        key = k;
+        break;
+      }
+    }
+    if (!key!) return;
+  }
+  const session = activeSessions.get(key!);
   if (!session) return;
 
   // Kill FFmpeg if still running
@@ -258,16 +290,74 @@ export function cleanupAllSessions(): void {
 
 // ─── Internal Helpers ───────────────────────────────────────────────────
 
-function getRemuxDecision(quality: string, sourceBitrate: number | null): boolean {
-  if (quality === 'source') return true;
+// Formats that are definitively NOT valid in MPEG-TS containers (HLS spec)
+const NOT_TS_COMPATIBLE = new Set([
+  'flac', 'ogg', 'vorbis', 'opus', 'wav', 'wave', 'wma',
+]);
 
-  // If we don't know the source bitrate, always transcode to be safe
+/**
+ * Use ffprobe to detect the actual audio codec of a file.
+ * Returns codec name (e.g., 'aac', 'alac', 'mp3', 'flac') or null on failure.
+ */
+function detectActualCodec(filePath: string): string | null {
+  try {
+    const output = execSync(
+      `ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "${filePath.replace(/"/g, '\\"')}"`,
+      { timeout: 5000 }
+    ).toString().trim();
+    return output || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Decide whether to remux (copy codec) or transcode.
+ * Considers: user quality preference, source format, and target codec.
+ */
+function getRemuxDecision(
+  quality: string,
+  sourceBitrate: number | null,
+  sourceFormat: string | null,
+  targetCodec: string,
+  inputPath: string
+): boolean {
+  const fmt = (sourceFormat || '').toLowerCase();
+
+  // Known incompatible formats — always transcode regardless of quality
+  if (NOT_TS_COMPATIBLE.has(fmt)) return false;
+
+  // MPEG-4 container: could be AAC or ALAC — must detect actual codec
+  if (fmt === 'mpeg-4' || fmt === 'm4a' || fmt === 'mp4') {
+    const actualCodec = detectActualCodec(inputPath);
+    if (actualCodec === 'alac') return false; // ALAC can't go in MPEG-TS
+    // For AAC in M4A, fall through to the normal bitrate check below
+  }
+
+  // Quality = 'source': remux if the codec is TS-compatible
+  if (quality === 'source') {
+    return true; // FLAC/OGG/ALAC already filtered out above
+  }
+
   if (!sourceBitrate) return false;
 
   const requestedBitrateNum = parseInt(quality) * 1000;
   if (isNaN(requestedBitrateNum)) return false;
 
-  return requestedBitrateNum >= sourceBitrate;
+  // Remux if: source codec matches target AND bitrate is sufficient
+  // This means the source is already in the right format — no transcoding needed
+  const codecMap: Record<string, string[]> = {
+    mp3: ['mp3', 'mpeg'],
+    aac: ['aac', 'm4a', 'mp4', 'mpeg-4', 'mp4/m4a'],
+    ac3: ['ac3'],
+    eac3: ['eac3'],
+  };
+  const matchingFormats = codecMap[targetCodec] || [];
+  if (matchingFormats.includes(fmt) && requestedBitrateNum >= sourceBitrate) {
+    return true;
+  }
+
+  return false; // transcode
 }
 
 function buildFfmpegArgs(
@@ -275,7 +365,8 @@ function buildFfmpegArgs(
   playlistPath: string,
   segmentPattern: string,
   quality: string,
-  shouldRemux: boolean
+  shouldRemux: boolean,
+  codec: string
 ): string[] {
   const args = [
     '-i', inputPath,
@@ -286,10 +377,20 @@ function buildFfmpegArgs(
   if (shouldRemux) {
     args.push('-c:a', 'copy');      // Zero CPU — container change only
   } else {
-    args.push(
-      '-c:a', 'aac',
-      '-b:a', quality,              // e.g. '128k', '320k'
-    );
+    switch (codec) {
+      case 'mp3':
+        args.push('-c:a', 'libmp3lame', '-b:a', quality);
+        break;
+      case 'ac3':
+        args.push('-c:a', 'ac3', '-b:a', quality);
+        break;
+      case 'eac3':
+        args.push('-c:a', 'eac3', '-b:a', quality);
+        break;
+      default: // 'aac', 'aac_he', any unknown → AAC (universal)
+        args.push('-c:a', 'aac', '-b:a', quality, '-profile:a', 'aac_low');
+        break;
+    }
   }
 
   args.push(

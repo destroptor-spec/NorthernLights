@@ -80,6 +80,7 @@ The core music player architecture has transitioned to a client-server model usi
 
 ### Architecture & Refactoring
 - [ ] Refactor `LibraryTab.tsx` and other monolithic UI components to isolate API layers into a `features/api` structure and adopt `React.Suspense` driven fetching according to the frontend-dev-guidelines.
+- [ ] **fMP4 Container Support for Lossless HLS**: Use `-f hls -hls_segment_type fmp4` for FLAC/ALAC sources to enable lossless streaming over HLS. Requires browser + Shaka fMP4 support detection. Not needed for Chromecast (AAC-in-MPEG-TS is sufficient). Also update `scanTrack.ts` to store `metadata.format.codec` over `metadata.format.container` (prefer codec) to accurately distinguish ALAC from AAC in M4A containers.
 
 ### Core Features
 - [x] Create App entrypoint - wire up store initialization from IndexedDB on load
