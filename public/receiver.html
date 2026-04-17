@@ -7,12 +7,34 @@
   <style>
     body { margin: 0; padding: 0; background-color: #000; overflow: hidden; }
     cast-media-player { width: 100vw; height: 100vh; }
+    #debug-panel {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 33vh;
+      background: rgba(0, 0, 0, 0.85);
+      color: #0f0;
+      font-family: monospace;
+      font-size: 12px;
+      line-height: 1.4;
+      padding: 6px 10px;
+      box-sizing: border-box;
+      overflow-y: auto;
+      z-index: 9999;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    #debug-panel .err { color: #f44; }
+    #debug-panel .warn { color: #ff0; }
+    #debug-panel .ok { color: #0f0; }
   </style>
   <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
   <script src="//www.gstatic.com/cast/sdk/libs/devtools/debug_layer/caf_receiver_logger.js"></script>
 </head>
 <body>
   <cast-media-player></cast-media-player>
+  <div id="debug-panel"></div>
   <script>
     const LOG_TAG = 'NorthernLights';
     const castDebugLogger = cast.debug.CastDebugLogger.getInstance();
@@ -20,56 +42,84 @@
     const playerManager = context.getPlayerManager();
     let currentAuthToken = '';
 
-    // Enable debug overlay when receiver is ready
-    context.addEventListener(cast.framework.system.EventType.READY, () => {
-      if (!castDebugLogger.debugOverlayElement_) {
-        castDebugLogger.setEnabled(true);
-        castDebugLogger.showDebugLogs(true);
+    // ─── Custom Debug Panel ────────────────────────────────────────
+    const panel = document.getElementById('debug-panel');
+    const MAX_LINES = 80;
+
+    function log(level, tag, msg) {
+      const ts = ((performance.now() / 1000).toFixed(1));
+      const cls = level === 'error' ? 'err' : level === 'warn' ? 'warn' : 'ok';
+      const line = document.createElement('div');
+      line.className = cls;
+      line.textContent = `[${ts}s] [${tag}] ${msg}`;
+      panel.appendChild(line);
+      // Trim old lines
+      while (panel.children.length > MAX_LINES) {
+        panel.removeChild(panel.firstChild);
       }
-      castDebugLogger.info(LOG_TAG, 'Receiver started and ready');
+      panel.scrollTop = panel.scrollHeight;
+      // Also log to CaC Tool
+      if (level === 'error') castDebugLogger.error(tag, msg);
+      else if (level === 'warn') castDebugLogger.warn(tag, msg);
+      else castDebugLogger.info(tag, msg);
+    }
+
+    // ─── Receiver Init ─────────────────────────────────────────────
+    context.addEventListener(cast.framework.system.EventType.READY, () => {
+      // Disable default debug overlay — we use our own panel
+      castDebugLogger.setEnabled(false);
+      log('ok', LOG_TAG, 'Receiver started and ready');
     });
 
     // Log errors
     context.addEventListener(cast.framework.system.EventType.ERROR, (e) => {
-      castDebugLogger.error(LOG_TAG, 'Receiver error: ' + JSON.stringify(e));
+      log('error', LOG_TAG, 'Receiver error: ' + JSON.stringify(e));
     });
 
-    // Log player events
-    castDebugLogger.loggerLevelByEvents = {
-      'cast.framework.events.category.CORE': cast.framework.LoggerLevel.DEBUG,
-      'cast.framework.events.category.ERROR': cast.framework.LoggerLevel.DEBUG,
-      'cast.framework.events.EventType.MEDIA_STATUS': cast.framework.LoggerLevel.DEBUG,
-      'cast.framework.events.EventType.LOAD': cast.framework.LoggerLevel.DEBUG,
-      'cast.framework.events.EventType.LOAD_START': cast.framework.LoggerLevel.DEBUG,
-      'cast.framework.events.EventType.ERROR': cast.framework.LoggerLevel.DEBUG,
-    };
-
-    // Intercept LOAD to extract auth token from customData and force HLS MIME type
+    // ─── LOAD Interceptor ──────────────────────────────────────────
     playerManager.setMessageInterceptor(
       cast.framework.messages.MessageType.LOAD,
       loadRequestData => {
-        castDebugLogger.info(LOG_TAG, 'LOAD intercepted — contentId: ' + (loadRequestData.media ? loadRequestData.media.contentId : 'none'));
-        castDebugLogger.info(LOG_TAG, 'LOAD contentType: ' + (loadRequestData.media ? loadRequestData.media.contentType : 'none'));
-        castDebugLogger.info(LOG_TAG, 'LOAD customData: ' + JSON.stringify(loadRequestData.media ? loadRequestData.media.customData : null));
-
         if (loadRequestData.media) {
-          loadRequestData.media.contentType =
-            loadRequestData.media.contentType || 'application/vnd.apple.mpegurl';
+          const m = loadRequestData.media;
+          log('ok', LOG_TAG, 'LOAD contentId: ' + m.contentId);
+          log('ok', LOG_TAG, 'LOAD contentType: ' + m.contentType);
+          log('ok', LOG_TAG, 'LOAD customData: ' + JSON.stringify(m.customData));
 
-          // Extract auth token passed via customData from the sender
-          if (loadRequestData.media.customData && loadRequestData.media.customData.token) {
-            currentAuthToken = loadRequestData.media.customData.token;
-            castDebugLogger.info(LOG_TAG, 'Auth token received via customData');
+          m.contentType = m.contentType || 'application/vnd.apple.mpegurl';
+
+          if (m.customData && m.customData.token) {
+            currentAuthToken = m.customData.token;
+            log('ok', LOG_TAG, 'Auth token set (' + currentAuthToken.length + ' chars)');
           } else {
             currentAuthToken = '';
-            castDebugLogger.warn(LOG_TAG, 'No auth token in customData');
+            log('warn', LOG_TAG, 'No auth token in customData');
           }
         }
         return loadRequestData;
       }
     );
 
-    // Configure Shaka Player network layer to inject Bearer auth on segment requests
+    // Log player errors with details
+    playerManager.addEventListener(
+      cast.framework.events.EventType.ERROR,
+      (e) => {
+        log('error', LOG_TAG, 'Player error: ' + JSON.stringify(e));
+      }
+    );
+
+    // Log media status changes
+    playerManager.addEventListener(
+      cast.framework.events.EventType.MEDIA_STATUS,
+      (e) => {
+        if (e.mediaStatus) {
+          log('ok', LOG_TAG, 'State: ' + e.mediaStatus.playerState +
+            (e.mediaStatus.idleReason ? ' (' + e.mediaStatus.idleReason + ')' : ''));
+        }
+      }
+    );
+
+    // ─── Shaka Network Config ──────────────────────────────────────
     const playbackConfig = new cast.framework.PlaybackConfig();
     playbackConfig.segmentRequestHandler = requestInfo => {
       if (currentAuthToken) {
