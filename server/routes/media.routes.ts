@@ -22,10 +22,27 @@ const MIME_TYPES: Record<string, string> = {
   wma: 'audio/x-ms-wma',
 };
 
+// CORS helper to handle authenticated requests and custom headers
+const setCorsHeaders = (req: any, res: any) => {
+  const origin = req.headers.origin;
+  // If we have an origin, echo it back instead of using '*' to allow withCredentials/Authorization
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS, HEAD');
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, Range');
+};
+
 // ─── HLS Streaming ─────────────────────────────────────────────────────
 
 // Serve HLS playlist for a track
-router.get('/stream/:trackId/playlist.m3u8', async (req, res) => {
+router.all('/stream/:trackId/playlist.m3u8', async (req, res) => {
+  setCorsHeaders(req, res);
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+
   const { trackId } = req.params;
   const quality = (req.query.quality as string) || '128k';
   let targetCodec = (req.query.codec as string) || 'aac'; // safe universal default
@@ -89,7 +106,6 @@ router.get('/stream/:trackId/playlist.m3u8', async (req, res) => {
 
     res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
     res.setHeader('Cache-Control', 'no-cache'); // Playlist should always be fresh
-    res.setHeader('Access-Control-Allow-Origin', '*');
 
     // Rewrite segment URLs to include auth token so external clients (Chromecast)
     // can fetch them. The browser's hls.js injects Bearer headers via xhrSetup,
@@ -118,7 +134,10 @@ router.get('/stream/:trackId/playlist.m3u8', async (req, res) => {
 });
 
 // Serve individual HLS segments (.ts files)
-router.get('/stream/:trackId/:segment', async (req, res) => {
+router.all('/stream/:trackId/:segment', async (req, res) => {
+  setCorsHeaders(req, res);
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+
   const { trackId, segment } = req.params;
   const quality = (req.query.quality as string) || '128k';
 
@@ -151,14 +170,16 @@ router.get('/stream/:trackId/:segment', async (req, res) => {
 
   res.setHeader('Content-Type', 'video/MP2T');
   res.setHeader('Cache-Control', 'public, max-age=31536000, immutable'); // Chunks never change
-  res.setHeader('Access-Control-Allow-Origin', '*');
   fs.createReadStream(segmentPath).pipe(res);
 });
 
 // ─── Legacy Streaming ──────────────────────────────────────────────────
 
 // Stream audio (supports Range requests)
-router.get('/stream', async (req, res) => {
+router.all('/stream', async (req, res) => {
+  setCorsHeaders(req, res);
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+
   const b64Path = req.query.pathB64 as string;
   const rawPath = req.query.path as string;
 

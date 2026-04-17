@@ -191,7 +191,6 @@
       if (currentAuthToken) {
         requestInfo.headers = requestInfo.headers || {};
         requestInfo.headers['Authorization'] = 'Bearer ' + currentAuthToken;
-        requestInfo.withCredentials = true;
       }
     };
     playbackConfig.manifestRequestHandler = function(requestInfo) {
@@ -199,7 +198,6 @@
       if (currentAuthToken) {
         requestInfo.headers = requestInfo.headers || {};
         requestInfo.headers['Authorization'] = 'Bearer ' + currentAuthToken;
-        requestInfo.withCredentials = true;
       }
     };
 
