@@ -16,8 +16,8 @@
       background: rgba(0, 0, 0, 0.85);
       color: #0f0;
       font-family: monospace;
-      font-size: 12px;
-      line-height: 1.4;
+      font-size: 1.5vh;
+      line-height: 1.6;
       padding: 6px 10px;
       box-sizing: border-box;
       overflow-y: auto;
@@ -42,6 +42,8 @@
     var castDebugLogger = null;
     try {
       castDebugLogger = cast.debug.CastDebugLogger.getInstance();
+      castDebugLogger.setEnabled(true);
+      castDebugLogger.showDebugLogs(true);
     } catch (e) {
       // Debug logger unavailable — CaC Tool logging disabled, receiver still works
     }
@@ -114,7 +116,8 @@
           // Inject codec parameter into contentId URL
           if (m.contentId) {
             try {
-              var urlObj = new URL(m.contentId);
+              // Use window.location.href as base to support relative URLs
+              var urlObj = new URL(m.contentId, window.location.href);
               if (!urlObj.searchParams.has('codec')) {
                 urlObj.searchParams.set('codec', bestCodec);
                 m.contentId = urlObj.toString();
@@ -143,25 +146,31 @@
       }
     );
 
+    function decodeError(e) {
+      if (!e) return 'Unknown error';
+      var detail = '';
+      if (e.detailedErrorCode) detail += ' [code=' + e.detailedErrorCode + ']';
+      if (e.reason) detail += ' [reason=' + e.reason + ']';
+      if (e.error) {
+        var err = e.error;
+        if (err.message) detail += ' ' + err.message;
+        if (err.code) detail += ' (shaka=' + err.code + ')';
+        if (err.category) detail += ' (cat=' + err.category + ')';
+      }
+      return detail || JSON.stringify(e);
+    }
+
     playerManager.addEventListener(
       cast.framework.events.EventType.ERROR,
       function(e) {
-        var detail = '';
-        if (e.detailedErrorCode) detail += ' code=' + e.detailedErrorCode;
-        if (e.error) {
-          detail += ' error=' + JSON.stringify(e.error);
-          if (e.error.data) detail += ' data=' + JSON.stringify(e.error.data);
-          if (e.error.code) detail += ' shakaCode=' + e.error.code;
-          if (e.error.category) detail += ' category=' + e.error.category;
-        }
-        log('error', LOG_TAG, 'Player error:' + detail);
+        log('error', LOG_TAG, 'Player error: ' + decodeError(e));
       }
     );
 
     playerManager.addEventListener(
       cast.framework.events.EventType.BUFFERING,
       function(e) {
-        log('ok', LOG_TAG, 'Buffering: ' + e.bufferingType);
+        log('ok', LOG_TAG, 'Buffering: ' + e.isBuffering);
       }
     );
 
@@ -182,6 +191,7 @@
       if (currentAuthToken) {
         requestInfo.headers = requestInfo.headers || {};
         requestInfo.headers['Authorization'] = 'Bearer ' + currentAuthToken;
+        requestInfo.withCredentials = true;
       }
     };
     playbackConfig.manifestRequestHandler = function(requestInfo) {
@@ -189,6 +199,7 @@
       if (currentAuthToken) {
         requestInfo.headers = requestInfo.headers || {};
         requestInfo.headers['Authorization'] = 'Bearer ' + currentAuthToken;
+        requestInfo.withCredentials = true;
       }
     };
 
