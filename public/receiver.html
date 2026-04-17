@@ -36,146 +36,169 @@
   <cast-media-player></cast-media-player>
   <div id="debug-panel"></div>
   <script>
-    var LOG_TAG = 'NorthernLights';
+    // ─── Global error capture (runs before anything else) ──────────
+    var _rawPanel = document.getElementById('debug-panel');
+    function _rawLog(msg) {
+      var el = document.createElement('div');
+      el.className = 'err';
+      el.textContent = msg;
+      if (_rawPanel) { _rawPanel.appendChild(el); _rawPanel.scrollTop = _rawPanel.scrollHeight; }
+    }
+    window.onerror = function(msg, src, line, col, err) {
+      _rawLog('[FATAL] ' + msg + ' (' + src + ':' + line + ':' + col + ')');
+      if (err && err.stack) _rawLog('[STACK] ' + err.stack);
+      return false;
+    };
 
-    // Safe debug logger — receiver works even if caf_receiver_logger.js fails to load
-    var castDebugLogger = null;
+    // ─── Main init wrapped in try-catch ────────────────────────────
     try {
-      castDebugLogger = cast.debug.CastDebugLogger.getInstance();
-      castDebugLogger.setEnabled(true);
-      castDebugLogger.showDebugLogs(true);
-    } catch (e) {
-      // Debug logger unavailable — CaC Tool logging disabled, receiver still works
-    }
+      var LOG_TAG = 'NorthernLights';
 
-    var context = cast.framework.CastReceiverContext.getInstance();
-    var playerManager = context.getPlayerManager();
-
-    // ─── Codec Detection via canDisplayType() ───────────────────────
-    var CODEC_PROBES = [
-      { codec: 'eac3',   mime: 'audio/mp4',  codecs: 'ec-3' },
-      { codec: 'ac3',    mime: 'audio/mp4',  codecs: 'ac-3' },
-      { codec: 'aac_he', mime: 'audio/mp4',  codecs: 'mp4a.40.5' },
-      { codec: 'aac',    mime: 'audio/mp4',  codecs: 'mp4a.40.2' },
-      { codec: 'mp3',    mime: 'audio/mpeg', codecs: '' },
-    ];
-
-    var bestCodec = 'aac'; // universal fallback
-    for (var i = 0; i < CODEC_PROBES.length; i++) {
-      var c = CODEC_PROBES[i];
+      // Safe debug logger — receiver works even if caf_receiver_logger.js fails to load
+      var castDebugLogger = null;
       try {
-        if (context.canDisplayType(c.mime, c.codecs)) {
-          bestCodec = c.codec;
-          break; // first match = highest priority
-        }
+        castDebugLogger = cast.debug.CastDebugLogger.getInstance();
+        castDebugLogger.setEnabled(true);
+        castDebugLogger.showDebugLogs(true);
       } catch (e) {
-        // canDisplayType may throw for unknown types — skip
+        // Debug logger unavailable — CaC Tool logging disabled, receiver still works
       }
-    }
 
-    // ─── Custom Debug Panel ────────────────────────────────────────
-    var panel = document.getElementById('debug-panel');
-    var MAX_LINES = 80;
+      var context = cast.framework.CastReceiverContext.getInstance();
+      var playerManager = context.getPlayerManager();
 
-    function log(level, tag, msg) {
-      var ts = ((performance.now() / 1000).toFixed(1));
-      var cls = level === 'error' ? 'err' : level === 'warn' ? 'warn' : 'ok';
-      var line = document.createElement('div');
-      line.className = cls;
-      line.textContent = '[' + ts + 's] [' + tag + '] ' + msg;
-      panel.appendChild(line);
-      while (panel.children.length > MAX_LINES) {
-        panel.removeChild(panel.firstChild);
-      }
-      panel.scrollTop = panel.scrollHeight;
-      // Log to CaC Tool only if debug logger loaded
-      if (castDebugLogger) {
-        if (level === 'error') castDebugLogger.error(tag, msg);
-        else if (level === 'warn') castDebugLogger.warn(tag, msg);
-        else castDebugLogger.info(tag, msg);
-      }
-    }
+      // ─── Codec Detection via canDisplayType() ───────────────────────
+      var CODEC_PROBES = [
+        { codec: 'eac3',   mime: 'audio/mp4',  codecs: 'ec-3' },
+        { codec: 'ac3',    mime: 'audio/mp4',  codecs: 'ac-3' },
+        { codec: 'aac_he', mime: 'audio/mp4',  codecs: 'mp4a.40.5' },
+        { codec: 'aac',    mime: 'audio/mp4',  codecs: 'mp4a.40.2' },
+        { codec: 'mp3',    mime: 'audio/mpeg', codecs: '' },
+      ];
 
-    // ─── Receiver Init ─────────────────────────────────────────────
-    context.addEventListener(cast.framework.system.EventType.READY, function() {
-      log('ok', LOG_TAG, 'Receiver started — best codec: ' + bestCodec);
-    });
-
-    context.addEventListener(cast.framework.system.EventType.ERROR, function(e) {
-      log('error', LOG_TAG, 'Receiver error: ' + JSON.stringify(e));
-    });
-
-    // ─── LOAD Interceptor ──────────────────────────────────────────
-    playerManager.setMessageInterceptor(
-      cast.framework.messages.MessageType.LOAD,
-      function(loadRequestData) {
-        if (loadRequestData.media) {
-          var m = loadRequestData.media;
-
-          // Inject codec parameter into contentId URL
-          if (m.contentId) {
-            try {
-              // Use window.location.href as base to support relative URLs
-              var urlObj = new URL(m.contentId, window.location.href);
-              if (!urlObj.searchParams.has('codec')) {
-                urlObj.searchParams.set('codec', bestCodec);
-                m.contentId = urlObj.toString();
-                log('ok', LOG_TAG, 'Injected codec: ' + bestCodec);
-              }
-            } catch (e) {
-              log('error', LOG_TAG, 'Failed to parse contentId URL');
-            }
+      var bestCodec = 'aac'; // universal fallback
+      for (var i = 0; i < CODEC_PROBES.length; i++) {
+        var c = CODEC_PROBES[i];
+        try {
+          if (context.canDisplayType(c.mime, c.codecs)) {
+            bestCodec = c.codec;
+            break; // first match = highest priority
           }
-
-          log('ok', LOG_TAG, 'LOAD contentId: ' + m.contentId);
-          log('ok', LOG_TAG, 'LOAD contentType: ' + m.contentType);
-          log('ok', LOG_TAG, 'LOAD customData: ' + JSON.stringify(m.customData));
-
-          m.contentType = m.contentType || 'application/vnd.apple.mpegurl';
+        } catch (e) {
+          // canDisplayType may throw for unknown types — skip
         }
-        return loadRequestData;
       }
-    );
 
-    function decodeError(e) {
-      if (!e) return 'Unknown error';
-      var detail = '';
-      if (e.detailedErrorCode) detail += ' [code=' + e.detailedErrorCode + ']';
-      if (e.reason) detail += ' [reason=' + e.reason + ']';
-      if (e.error) {
-        var err = e.error;
-        if (err.message) detail += ' ' + err.message;
-        if (err.code) detail += ' (shaka=' + err.code + ')';
-        if (err.category) detail += ' (cat=' + err.category + ')';
+      // ─── Custom Debug Panel ────────────────────────────────────────
+      var panel = document.getElementById('debug-panel');
+      var MAX_LINES = 80;
+
+      function log(level, tag, msg) {
+        var ts = ((performance.now() / 1000).toFixed(1));
+        var cls = level === 'error' ? 'err' : level === 'warn' ? 'warn' : 'ok';
+        var line = document.createElement('div');
+        line.className = cls;
+        line.textContent = '[' + ts + 's] [' + tag + '] ' + msg;
+        panel.appendChild(line);
+        while (panel.children.length > MAX_LINES) {
+          panel.removeChild(panel.firstChild);
+        }
+        panel.scrollTop = panel.scrollHeight;
+        // Log to CaC Tool only if debug logger loaded
+        if (castDebugLogger) {
+          if (level === 'error') castDebugLogger.error(tag, msg);
+          else if (level === 'warn') castDebugLogger.warn(tag, msg);
+          else castDebugLogger.info(tag, msg);
+        }
       }
-      return detail || JSON.stringify(e);
+
+      // ─── Receiver Init ─────────────────────────────────────────────
+      context.addEventListener(cast.framework.system.EventType.READY, function() {
+        log('ok', LOG_TAG, 'Receiver started — best codec: ' + bestCodec);
+      });
+
+      context.addEventListener(cast.framework.system.EventType.ERROR, function(e) {
+        log('error', LOG_TAG, 'Receiver error: ' + JSON.stringify(e));
+      });
+
+      // ─── LOAD Interceptor ──────────────────────────────────────────
+      playerManager.setMessageInterceptor(
+        cast.framework.messages.MessageType.LOAD,
+        function(loadRequestData) {
+          if (loadRequestData.media) {
+            var m = loadRequestData.media;
+
+            // Inject codec parameter into contentId URL
+            if (m.contentId) {
+              try {
+                var urlObj = new URL(m.contentId, window.location.href);
+                if (!urlObj.searchParams.has('codec')) {
+                  urlObj.searchParams.set('codec', bestCodec);
+                  m.contentId = urlObj.toString();
+                  log('ok', LOG_TAG, 'Injected codec: ' + bestCodec);
+                }
+              } catch (e) {
+                log('error', LOG_TAG, 'Failed to parse contentId URL');
+              }
+            }
+
+            log('ok', LOG_TAG, 'LOAD contentId: ' + m.contentId);
+            log('ok', LOG_TAG, 'LOAD contentType: ' + m.contentType);
+            log('ok', LOG_TAG, 'LOAD customData: ' + JSON.stringify(m.customData));
+
+            m.contentType = m.contentType || 'application/vnd.apple.mpegurl';
+          }
+          return loadRequestData;
+        }
+      );
+
+      function decodeError(e) {
+        if (!e) return 'Unknown error';
+        var detail = '';
+        if (e.detailedErrorCode) detail += ' [code=' + e.detailedErrorCode + ']';
+        if (e.reason) detail += ' [reason=' + e.reason + ']';
+        if (e.error) {
+          var err = e.error;
+          if (err.message) detail += ' ' + err.message;
+          if (err.code) detail += ' (shaka=' + err.code + ')';
+          if (err.category) detail += ' (cat=' + err.category + ')';
+        }
+        return detail || JSON.stringify(e);
+      }
+
+      playerManager.addEventListener(
+        cast.framework.events.EventType.ERROR,
+        function(e) {
+          log('error', LOG_TAG, 'Player error: ' + decodeError(e));
+        }
+      );
+
+      playerManager.addEventListener(
+        cast.framework.events.EventType.BUFFERING,
+        function(e) {
+          log('ok', LOG_TAG, 'Buffering: ' + e.isBuffering);
+        }
+      );
+
+      playerManager.addEventListener(
+        cast.framework.events.EventType.MEDIA_STATUS,
+        function(e) {
+          if (e.mediaStatus) {
+            log('ok', LOG_TAG, 'State: ' + e.mediaStatus.playerState +
+              (e.mediaStatus.idleReason ? ' (' + e.mediaStatus.idleReason + ')' : ''));
+          }
+        }
+      );
+
+      // ─── Start receiver ────────────────────────────────────────────
+      log('ok', LOG_TAG, 'Starting receiver...');
+      context.start();
+      log('ok', LOG_TAG, 'context.start() returned OK');
+
+    } catch (initError) {
+      _rawLog('[INIT ERROR] ' + initError.message);
+      if (initError.stack) _rawLog('[INIT STACK] ' + initError.stack);
     }
-
-    playerManager.addEventListener(
-      cast.framework.events.EventType.ERROR,
-      function(e) {
-        log('error', LOG_TAG, 'Player error: ' + decodeError(e));
-      }
-    );
-
-    playerManager.addEventListener(
-      cast.framework.events.EventType.BUFFERING,
-      function(e) {
-        log('ok', LOG_TAG, 'Buffering: ' + e.isBuffering);
-      }
-    );
-
-    playerManager.addEventListener(
-      cast.framework.events.EventType.MEDIA_STATUS,
-      function(e) {
-        if (e.mediaStatus) {
-          log('ok', LOG_TAG, 'State: ' + e.mediaStatus.playerState +
-            (e.mediaStatus.idleReason ? ' (' + e.mediaStatus.idleReason + ')' : ''));
-        }
-      }
-    );
-
-    context.start();
   </script>
 </body>
 </html>
