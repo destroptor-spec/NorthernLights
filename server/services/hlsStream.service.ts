@@ -15,8 +15,8 @@ interface HlsSession {
   ffmpegProcess: ChildProcess | null;
   createdAt: number;
   lastAccessedAt: number;
-  ready: boolean;               // true once segment000.ts exists (first segment)
-  readyPromise: Promise<void>;  // resolves when the first segment appears
+  ready: boolean;               // true once playlist contains a segment entry
+  readyPromise: Promise<void>;  // resolves when the playlist has a playable segment
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────
@@ -67,14 +67,17 @@ export async function getOrCreateHlsSession(
   fs.mkdirSync(outputDir, { recursive: true });
 
   const playlistPath = path.join(outputDir, 'playlist.m3u8');
-  const segmentPattern = path.join(outputDir, 'segment%03d.ts');
+  // Relative filenames for FFmpeg — absolute paths cause it to embed /tmp/... in the playlist,
+  // which the Chromecast interprets as URLs and fetches 404. Use cwd: outputDir instead.
+  const playlistFilename = 'playlist.m3u8';
+  const segmentFilename = 'segment%03d.ts';
 
   // Determine encoding strategy
   const inputPath = trackPath.toString('utf8');
   const shouldRemux = getRemuxDecision(quality, sourceBitrate, sourceFormat, targetCodec, inputPath);
 
   // Build FFmpeg args
-  const ffmpegArgs = buildFfmpegArgs(inputPath, playlistPath, segmentPattern, quality, shouldRemux, targetCodec);
+  const ffmpegArgs = buildFfmpegArgs(inputPath, playlistFilename, segmentFilename, quality, shouldRemux, targetCodec);
 
   // Create the readiness promise — resolves when segment000.ts appears
   let resolveReady: () => void;
@@ -97,8 +100,8 @@ export async function getOrCreateHlsSession(
 
   activeSessions.set(key, session);
 
-  // Spawn FFmpeg
-  const ffmpeg = spawn('ffmpeg', ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+  // Spawn FFmpeg with cwd: outputDir so segment filenames in the playlist are relative
+  const ffmpeg = spawn('ffmpeg', ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'], cwd: outputDir });
   session.ffmpegProcess = ffmpeg;
 
   ffmpeg.stderr?.on('data', (data: Buffer) => {
@@ -127,22 +130,23 @@ export async function getOrCreateHlsSession(
     }
   });
 
-  // Resolve as soon as the first segment exists — instant-start playback.
-  // FFmpeg continues in the background, appending more segments.
-  // The client re-fetches the playlist (Cache-Control: no-cache) and picks
-  // up new segments seamlessly. When FFmpeg finishes, ENDLIST appears on
-  // the next fetch and the player transitions to VOD mode.
-  const firstSegment = path.join(outputDir, 'segment000.ts');
+  // Resolve as soon as the playlist contains a segment entry — instant-start playback.
+  // We check the playlist (not the segment file) because FFmpeg writes the segment
+  // first, then updates the playlist. Serving a playlist with no segments causes
+  // the CAF Shaka player to close the MediaSource immediately → SourceBuffer error.
   const pollStart = Date.now();
   const POLL_TIMEOUT_MS = 30000; // 30s safety net
 
   const pollInterval = setInterval(() => {
     try {
-      if (fs.existsSync(firstSegment)) {
-        clearInterval(pollInterval);
-        session.ready = true;
-        resolveReady!();
-        return;
+      if (fs.existsSync(playlistPath)) {
+        const content = fs.readFileSync(playlistPath, 'utf8');
+        if (/^segment\d+\.ts$/m.test(content)) {
+          clearInterval(pollInterval);
+          session.ready = true;
+          resolveReady!();
+          return;
+        }
       }
     } catch (_) { /* file may be partially written */ }
 
@@ -154,7 +158,7 @@ export async function getOrCreateHlsSession(
     }
   }, 50);
 
-  // Also resolve if FFmpeg exits (success or failure) before the poll finds segment000.ts
+  // Also resolve if FFmpeg exits (success or failure) before the poll finds a segment
   ffmpeg.on('exit', () => {
     // Give a brief moment for the final write to flush
     setTimeout(() => {

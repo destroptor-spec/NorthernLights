@@ -30,7 +30,6 @@
     #debug-panel .ok { color: #0f0; }
   </style>
   <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
-  <script src="//www.gstatic.com/cast/sdk/libs/devtools/debug_layer/caf_receiver_logger.js"></script>
 </head>
 <body>
   <cast-media-player></cast-media-player>
@@ -53,16 +52,6 @@
     // ─── Main init wrapped in try-catch ────────────────────────────
     try {
       var LOG_TAG = 'NorthernLights';
-
-      // Safe debug logger — receiver works even if caf_receiver_logger.js fails to load
-      var castDebugLogger = null;
-      try {
-        castDebugLogger = cast.debug.CastDebugLogger.getInstance();
-        castDebugLogger.setEnabled(true);
-        castDebugLogger.showDebugLogs(true);
-      } catch (e) {
-        // Debug logger unavailable — CaC Tool logging disabled, receiver still works
-      }
 
       var context = cast.framework.CastReceiverContext.getInstance();
       var playerManager = context.getPlayerManager();
@@ -104,12 +93,6 @@
           panel.removeChild(panel.firstChild);
         }
         panel.scrollTop = panel.scrollHeight;
-        // Log to CaC Tool only if debug logger loaded
-        if (castDebugLogger) {
-          if (level === 'error') castDebugLogger.error(tag, msg);
-          else if (level === 'warn') castDebugLogger.warn(tag, msg);
-          else castDebugLogger.info(tag, msg);
-        }
       }
 
       // ─── Receiver Init ─────────────────────────────────────────────
