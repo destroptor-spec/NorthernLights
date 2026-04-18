@@ -101,6 +101,8 @@ export async function getOrCreateHlsSession(
   activeSessions.set(key, session);
 
   // Spawn FFmpeg with cwd: outputDir so segment filenames in the playlist are relative
+  console.log(`[HLS DEBUG] Spawning FFmpeg: ${ffmpegArgs.join(' ')}`);
+  console.log(`[HLS DEBUG] cwd: ${outputDir}`);
   const ffmpeg = spawn('ffmpeg', ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'], cwd: outputDir });
   session.ffmpegProcess = ffmpeg;
 
@@ -108,6 +110,7 @@ export async function getOrCreateHlsSession(
     // FFmpeg writes ALL output to stderr (config banner, progress, AND errors).
     // Only log lines that look like actual errors, not config/progress noise.
     const msg = data.toString();
+    console.log(`[HLS DEBUG] FFmpeg stderr: ${msg.substring(0, 200)}`);
     if (/^\[?error|Error while|Invalid|No such file|could not|Cannot/mi.test(msg)) {
       console.error(`[HLS] FFmpeg error for ${trackId}:`, msg.trim());
     }
@@ -141,9 +144,11 @@ export async function getOrCreateHlsSession(
     try {
       if (fs.existsSync(playlistPath)) {
         const content = fs.readFileSync(playlistPath, 'utf8');
+        console.log(`[HLS DEBUG] Poll: playlist exists, content: ${JSON.stringify(content.substring(0, 200))}`);
         if (/^segment\d+\.ts$/m.test(content)) {
           clearInterval(pollInterval);
           session.ready = true;
+          console.log(`[HLS DEBUG] Session ready for track ${trackId}`);
           resolveReady!();
           return;
         }

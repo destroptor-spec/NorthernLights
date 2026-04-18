@@ -134,6 +134,7 @@ router.all('/stream/:trackId/playlist.m3u8', async (req, res) => {
       );
     }
 
+    console.log('[HLS DEBUG] Serving playlist:', JSON.stringify(output));
     res.send(output);
   } catch (err: any) {
     console.error('[HLS] Playlist error:', err?.message || err);
@@ -155,6 +156,8 @@ router.all('/stream/:trackId/:segment', async (req, res) => {
   const { trackId, segment } = req.params;
   const quality = (req.query.quality as string) || '128k';
 
+  console.log(`[HLS DEBUG] Segment request: trackId=${trackId} segment=${segment} quality=${quality}`);
+
   // Only serve .ts segment files
   if (!segment.endsWith('.ts')) {
     return res.status(400).send('Invalid segment request');
@@ -171,13 +174,17 @@ router.all('/stream/:trackId/:segment', async (req, res) => {
   }
 
   if (!outputDir) {
+    console.log(`[HLS DEBUG] No session for trackId=${trackId}, returning 404`);
     return res.status(404).send('No active HLS session for this track');
   }
 
   const segmentPath = path.join(outputDir, segment);
   if (!fs.existsSync(segmentPath)) {
+    console.log(`[HLS DEBUG] Segment not found: ${segmentPath}`);
     return res.status(404).send('Segment not found');
   }
+
+  console.log(`[HLS DEBUG] Serving segment: ${segmentPath}`);
 
   // Touch the session to keep it alive
   touchSession(trackId, quality);
