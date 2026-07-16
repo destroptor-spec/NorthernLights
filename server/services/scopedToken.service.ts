@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { getJwtSecret, JwtPayload } from './auth.service';
+import { getJwtSecret, getTokenExpiry, JwtPayload } from './auth.service';
 
 export type ScopedTokenScope = 'media' | 'sse';
 
@@ -7,9 +7,7 @@ export interface ScopedTokenPayload extends JwtPayload {
   scope: ScopedTokenScope;
 }
 
-const SCOPED_TOKEN_EXPIRY = '7d';
-
-export async function generateScopedToken(scope: ScopedTokenScope, user: JwtPayload): Promise<string> {
+export async function generateScopedToken(scope: ScopedTokenScope, user: JwtPayload, rememberMe = true): Promise<string> {
   const secret = await getJwtSecret();
   const payload: ScopedTokenPayload = {
     userId: user.userId,
@@ -17,7 +15,7 @@ export async function generateScopedToken(scope: ScopedTokenScope, user: JwtPayl
     role: user.role,
     scope,
   };
-  return jwt.sign(payload, secret, { expiresIn: SCOPED_TOKEN_EXPIRY });
+  return jwt.sign(payload, secret, { expiresIn: getTokenExpiry(rememberMe) });
 }
 
 export async function verifyScopedToken(token: string, scope: ScopedTokenScope): Promise<ScopedTokenPayload | null> {

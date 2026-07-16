@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
+import { getTrustedClientIp } from './clientIp';
 
 interface RateLimitOptions {
   windowMs: number;
@@ -12,12 +13,8 @@ type RateLimitEntry = { count: number; resetAt: number };
 
 const buckets = new Map<string, RateLimitEntry>();
 
-function getClientIp(req: Request): string {
-  return String(req.ip || req.socket?.remoteAddress || 'unknown');
-}
-
 function defaultKeyGenerator(req: Request): string {
-  return req.user?.userId ? `user:${req.user.userId}` : `ip:${getClientIp(req)}`;
+  return req.user?.userId ? `user:${req.user.userId}` : `ip:${getTrustedClientIp(req)}`;
 }
 
 export function createRateLimiter(options: RateLimitOptions) {

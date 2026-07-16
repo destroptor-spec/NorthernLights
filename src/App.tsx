@@ -52,6 +52,7 @@ const isProtectedApiRequest = (input: RequestInfo | URL): boolean => {
     url.pathname === '/api/setup/complete' ||
     url.pathname === '/api/health' ||
     url.pathname.startsWith('/api/invites/') ||
+    url.pathname.startsWith('/api/public/') ||
     url.pathname === '/api/providers/external/proxy-image'
   ) {
     return false;
@@ -118,6 +119,7 @@ const App: React.FC = () => {
   const authExpired = usePlayerStore(state => state.authExpired);
   const authExpiredMessage = usePlayerStore(state => state.authExpiredMessage);
   const authExpiredUsername = usePlayerStore(state => state.authExpiredUsername);
+  const rememberDevice = usePlayerStore(state => state.rememberDevice);
   const login = usePlayerStore(state => state.login);
 
   const [isScannerVisibleLocally, setIsScannerVisibleLocally] = React.useState(false);
@@ -434,9 +436,9 @@ const App: React.FC = () => {
     });
   }, [checkHealth, checkSetupStatus, authToken]);
 
-  const handleLogin = React.useCallback(async (username: string, password: string) => {
-    const success = await login(username, password);
-    if (!success) return false;
+  const handleLogin = React.useCallback(async (username: string, password: string, rememberDevice: boolean, turnstileToken?: string) => {
+    const result = await login(username, password, rememberDevice, turnstileToken);
+    if (!result.success) return result;
 
     await checkSetupStatus();
     if (!usePlayerStore.getState().needsSetup) {
@@ -444,7 +446,7 @@ const App: React.FC = () => {
       usePlayerStore.getState().fetchLibraryFromServer();
       usePlayerStore.getState().fetchPlaylistsFromServer();
     }
-    return true;
+    return result;
   }, [checkSetupStatus, login]);
 
   // Public shared-playlist view — accessible without auth and before any setup/DB
@@ -528,6 +530,7 @@ const App: React.FC = () => {
         <React.Suspense fallback={<FullPageFallback label="Loading sign in..." />}>
           <LoginPage
             onLogin={handleLogin}
+            initialRememberDevice={rememberDevice}
             sessionMessage="Sign in with the admin account to continue first-run setup."
             submitLabel="Resume setup"
           />
@@ -561,6 +564,7 @@ const App: React.FC = () => {
           <LoginPage
             onLogin={handleLogin}
             initialUsername={authExpiredUsername}
+            initialRememberDevice={rememberDevice}
             sessionMessage={authExpired ? authExpiredMessage : null}
             submitLabel={authExpired ? 'Log in again' : 'Sign in'}
           />

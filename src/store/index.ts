@@ -18,6 +18,7 @@ import {
 } from './playbackTime';
 
 import { clearExternalCache } from '../utils/externalImagery';
+import { readSessionAuth, writeSessionAuth, clearSessionAuth } from '../utils/sessionAuth';
 import { computeLoudnessGainDb, type LoudnessData } from '../utils/loudness';
 import { getCachedLoudness, fetchLoudness, invalidateLoudness, type TrackLoudnessEntry } from '../utils/loudnessCache';
 import type { ToastType } from '../components/Toast';
@@ -36,6 +37,14 @@ export type SetupStep = 'account' | 'analysis' | 'library';
 export type StoreActionResult =
   | { success: true }
   | { success: false; error: string };
+
+// Outcome of a credential submission (login/register). `code` mirrors the
+// server's error code ('captcha_required' | 'captcha_failed' |
+// 'captcha_unavailable') or is client-assigned ('rate_limited' | 'network');
+// undefined means plain bad credentials.
+export type AuthAttemptResult =
+  | { success: true }
+  | { success: false; error: string; code?: string };
 
 export interface AddLibraryFolderOptions {
   scan?: boolean;
@@ -557,6 +566,9 @@ export interface PlayerState {
   authToken: string | null; // Account JWT token
   mediaAccessToken: string | null; // Scoped token for HLS/art/Cast URLs
   sseAccessToken: string | null; // Scoped token for EventSource URLs
+  // When false, auth tokens stay out of localStorage (session-only sign-in)
+  // and the server issues short-lived tokens.
+  rememberDevice: boolean;
   authExpired: boolean;
   authExpiredMessage: string | null;
   authExpiredUsername: string;
@@ -614,6 +626,11 @@ export interface PlayerState {
   genreMatrixProgress: string | null;
   autoFolderWalk: boolean;
 
+  // Sign-in captcha (Cloudflare Turnstile, system-level, admin)
+  turnstileEnabled: boolean;
+  turnstileSiteKey: string;
+  turnstileSecretKey: string;
+
   // Concerts / Jambase (system-level, admin)
   jambaseEnabled: boolean;
   jambaseMaxSubscriptionsPerUser: number;
@@ -668,8 +685,8 @@ export interface PlayerState {
   setAuthToken: (token: string, mediaAccessToken?: string | null, sseAccessToken?: string | null) => void;
   clearAuthToken: () => void;
   expireAuthSession: (message?: string) => void;
-  login: (username: string, password: string) => Promise<boolean>;
-  register: (inviteToken: string, username: string, password: string) => Promise<boolean>;
+  login: (username: string, password: string, rememberDevice?: boolean, turnstileToken?: string) => Promise<AuthAttemptResult>;
+  register: (inviteToken: string, username: string, password: string, turnstileToken?: string) => Promise<AuthAttemptResult>;
   getAuthHeader: () => Record<string, string>;
   /** Build stream/art URLs onto server-fetched tracks using the current token + quality. */
   hydrateTracks: (tracks: TrackInfo[]) => TrackInfo[];
@@ -1144,6 +1161,7 @@ export const usePlayerStore = create<PlayerState>()(
         authToken: null as string | null,
         mediaAccessToken: null as string | null,
         sseAccessToken: null as string | null,
+        rememberDevice: true as boolean,
         authExpired: false,
         authExpiredMessage: null as string | null,
         authExpiredUsername: '',
@@ -1196,6 +1214,9 @@ export const usePlayerStore = create<PlayerState>()(
         mbdbLastImported: null,
         genreMatrixLastRun: null as number | null,
         genreMatrixLastResult: null as string | null,
+        turnstileEnabled: false as boolean,
+        turnstileSiteKey: '',
+        turnstileSecretKey: '',
         genreMatrixProgress: null as string | null,
         autoFolderWalk: false as boolean,
 
@@ -1245,11 +1266,14 @@ export const usePlayerStore = create<PlayerState>()(
             }
 
             const data = await res.json();
+            // Setup always starts a remembered session.
+            clearSessionAuth();
             set({
               authToken: data.token,
               mediaAccessToken: data.mediaToken || data.token,
               sseAccessToken: data.sseToken || data.token,
               currentUser: data.user || null,
+              rememberDevice: true,
               needsSetup: true,
               setupAdminCreated: true,
               setupOnboardingCompleted: false,
@@ -1339,28 +1363,42 @@ export const usePlayerStore = create<PlayerState>()(
           set({ mobileVideoBackgrounds: enabled });
         },
 
-        setAuthToken: (token: string, mediaAccessToken: string | null = null, sseAccessToken: string | null = null) => set({
-          authToken: token,
-          mediaAccessToken: mediaAccessToken || token,
-          sseAccessToken: sseAccessToken || token,
-          authExpired: false,
-          authExpiredMessage: null,
-        }),
+        setAuthToken: (token: string, mediaAccessToken: string | null = null, sseAccessToken: string | null = null) => {
+          set({
+            authToken: token,
+            mediaAccessToken: mediaAccessToken || token,
+            sseAccessToken: sseAccessToken || token,
+            authExpired: false,
+            authExpiredMessage: null,
+          });
+          if (!get().rememberDevice) {
+            writeSessionAuth({
+              authToken: token,
+              mediaAccessToken: mediaAccessToken || token,
+              sseAccessToken: sseAccessToken || token,
+              currentUser: get().currentUser,
+            });
+          }
+        },
 
-        clearAuthToken: () => set({
-          authToken: null,
-          mediaAccessToken: null,
-          sseAccessToken: null,
-          currentUser: null,
-          authExpired: false,
-          authExpiredMessage: null,
-          authExpiredUsername: '',
-        }),
+        clearAuthToken: () => {
+          clearSessionAuth();
+          set({
+            authToken: null,
+            mediaAccessToken: null,
+            sseAccessToken: null,
+            currentUser: null,
+            authExpired: false,
+            authExpiredMessage: null,
+            authExpiredUsername: '',
+          });
+        },
 
         expireAuthSession: (message = 'Your session expired. Log in again to continue.') => {
           // Cancel any in-flight library/playlist fetch so it can't resolve after
           // logout and repopulate state with the previous session's data.
           abortInFlightLibraryFetches();
+          clearSessionAuth();
           return set((state: PlayerState) => ({
           authToken: null,
           mediaAccessToken: null,
@@ -1382,55 +1420,90 @@ export const usePlayerStore = create<PlayerState>()(
         }));
         },
 
-        login: async (username: string, password: string) => {
+        login: async (username: string, password: string, rememberDevice = true, turnstileToken?: string) => {
           try {
             const res = await fetch('/api/auth/login', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ username, password })
+              body: JSON.stringify({
+                username,
+                password,
+                rememberMe: rememberDevice,
+                ...(turnstileToken ? { turnstileToken } : {}),
+              })
             });
             if (res.ok) {
               const data = await res.json();
+              // rememberDevice must land in the same set() as the tokens: the
+              // persist partialize reads it to decide whether auth fields are
+              // written to localStorage.
               set({
                 authToken: data.token,
                 mediaAccessToken: data.mediaToken || data.token,
                 sseAccessToken: data.sseToken || data.token,
                 currentUser: data.user,
+                rememberDevice,
                 authExpired: false,
                 authExpiredMessage: null,
                 authExpiredUsername: '',
               });
-              return true;
+              if (rememberDevice) {
+                clearSessionAuth();
+              } else {
+                writeSessionAuth({
+                  authToken: data.token,
+                  mediaAccessToken: data.mediaToken || data.token,
+                  sseAccessToken: data.sseToken || data.token,
+                  currentUser: data.user,
+                });
+              }
+              return { success: true } as const;
             }
-            return false;
+            const data = await res.json().catch(() => null);
+            if (res.status === 429) {
+              return { success: false, error: data?.error || 'Too many attempts. Try again later.', code: 'rate_limited' } as const;
+            }
+            return { success: false, error: data?.error || 'Invalid credentials', code: data?.code } as const;
           } catch {
-            return false;
+            return { success: false, error: 'Could not reach the server. Check your connection and try again.', code: 'network' } as const;
           }
         },
 
-        register: async (inviteToken: string, username: string, password: string) => {
+        register: async (inviteToken: string, username: string, password: string, turnstileToken?: string) => {
           try {
             const res = await fetch('/api/auth/register', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ inviteToken, username, password })
+              body: JSON.stringify({
+                inviteToken,
+                username,
+                password,
+                ...(turnstileToken ? { turnstileToken } : {}),
+              })
             });
             if (res.ok) {
               const data = await res.json();
+              // Registration always starts a remembered session.
+              clearSessionAuth();
               set({
                 authToken: data.token,
                 mediaAccessToken: data.mediaToken || data.token,
                 sseAccessToken: data.sseToken || data.token,
                 currentUser: data.user,
+                rememberDevice: true,
                 authExpired: false,
                 authExpiredMessage: null,
                 authExpiredUsername: '',
               });
-              return true;
+              return { success: true } as const;
             }
-            return false;
+            const data = await res.json().catch(() => null);
+            if (res.status === 429) {
+              return { success: false, error: data?.error || 'Too many attempts. Try again later.', code: 'rate_limited' } as const;
+            }
+            return { success: false, error: data?.error || 'Registration failed', code: data?.code } as const;
           } catch {
-            return false;
+            return { success: false, error: 'Could not reach the server. Check your connection and try again.', code: 'network' } as const;
           }
         },
 
@@ -1545,6 +1618,9 @@ export const usePlayerStore = create<PlayerState>()(
                 providerArtistBio: data.providerArtistBio || 'lastfm',
                 providerAlbumArt: data.providerAlbumArt || 'lastfm',
                 autoFolderWalk: data.autoFolderWalk === 'true' || data.autoFolderWalk === true,
+                turnstileEnabled: data.turnstileEnabled === true,
+                turnstileSiteKey: data.turnstileSiteKey || '',
+                turnstileSecretKey: data.turnstileSecretKey || '',
                 jambaseEnabled: data.jambaseEnabled ?? false,
                 jambaseMaxSubscriptionsPerUser: typeof data.jambaseMaxSubscriptionsPerUser === 'number' ? data.jambaseMaxSubscriptionsPerUser : 10,
                 jambaseCacheTtlDays: typeof data.jambaseCacheTtlDays === 'number' ? data.jambaseCacheTtlDays : 7,
@@ -1632,6 +1708,9 @@ export const usePlayerStore = create<PlayerState>()(
                 providerArtistBio: state.providerArtistBio,
                 providerAlbumArt: state.providerAlbumArt,
                 autoFolderWalk: state.autoFolderWalk,
+                turnstileEnabled: state.turnstileEnabled,
+                turnstileSiteKey: state.turnstileSiteKey,
+                turnstileSecretKey: state.turnstileSecretKey,
                 jambaseEnabled: state.jambaseEnabled,
                 jambaseMaxSubscriptionsPerUser: state.jambaseMaxSubscriptionsPerUser,
                 jambaseCacheTtlDays: state.jambaseCacheTtlDays,
@@ -2915,10 +2994,15 @@ export const usePlayerStore = create<PlayerState>()(
         providerArtistArtwork: state.providerArtistArtwork,
         providerArtistBio: state.providerArtistBio,
         providerAlbumArt: state.providerAlbumArt,
-        authToken: state.authToken,
-        mediaAccessToken: state.mediaAccessToken,
-        sseAccessToken: state.sseAccessToken,
-        currentUser: state.currentUser,
+        rememberDevice: state.rememberDevice,
+        // Without "Remember me on this device", auth stays out of localStorage —
+        // the session lives in sessionStorage instead (see utils/sessionAuth.ts).
+        ...(state.rememberDevice ? {
+          authToken: state.authToken,
+          mediaAccessToken: state.mediaAccessToken,
+          sseAccessToken: state.sseAccessToken,
+          currentUser: state.currentUser,
+        } : {}),
         streamingQuality: state.streamingQuality,
         playbackDebugLogging: state.playbackDebugLogging,
         prebufferPolicy: state.prebufferPolicy,
@@ -2952,6 +3036,17 @@ export const usePlayerStore = create<PlayerState>()(
         // so the next gesture resumes from the saved position, not 0:00.
         if (state && state.playbackState === 'playing') {
           state.playbackState = 'paused';
+        }
+        // Session-only sign-in: localStorage holds no tokens, but a same-tab
+        // refresh should keep the session — restore it from sessionStorage.
+        if (state && !state.authToken) {
+          const sessionAuth = readSessionAuth();
+          if (sessionAuth) {
+            state.authToken = sessionAuth.authToken;
+            state.mediaAccessToken = sessionAuth.mediaAccessToken;
+            state.sseAccessToken = sessionAuth.sseAccessToken;
+            state.currentUser = sessionAuth.currentUser;
+          }
         }
       },
     }

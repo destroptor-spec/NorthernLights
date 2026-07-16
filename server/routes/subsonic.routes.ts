@@ -1,4 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
+import { getTrustedClientIp } from '../middleware/clientIp';
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import fs from 'fs';
@@ -227,7 +228,7 @@ async function touchSubsonicKeyDebounced(keyId: string) {
 }
 
 function rateLimitKey(req: Request, method: string): string {
-  return `${method}:${req.ip || req.socket?.remoteAddress || 'unknown'}`;
+  return `${method}:${getTrustedClientIp(req)}`;
 }
 
 function writeSubsonicLog(line: string) {

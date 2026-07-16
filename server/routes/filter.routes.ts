@@ -1,5 +1,6 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { initDB } from '../database';
+import { getTrustedClientIp } from '../middleware/clientIp';
 
 const router = Router();
 
@@ -64,14 +65,10 @@ const ALBUM_FIELDS: Record<string, FieldDef> = {
 
 interface BuildResult { sql: string; params: any[]; }
 
-function getClientIp(req: Request): string {
-  return String(req.ip || req.socket?.remoteAddress || 'unknown');
-}
-
 function consumeFilterRateLimit(req: Request, res: Response, next: NextFunction) {
   const now = Date.now();
   const routeKey = req.path || req.originalUrl;
-  const userKey = req.user?.userId ? `user:${req.user.userId}` : `ip:${getClientIp(req)}`;
+  const userKey = req.user?.userId ? `user:${req.user.userId}` : `ip:${getTrustedClientIp(req)}`;
   const key = `${routeKey}:${userKey}`;
   const existing = filterRateLimits.get(key);
 

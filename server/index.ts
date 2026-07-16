@@ -64,6 +64,9 @@ function escapeHtml(value: string): string {
 // Honor X-Forwarded-Proto / X-Forwarded-Host from reverse proxies (nginx,
 // Traefik, Caddy, cloud load balancers) so req.protocol + req.get('host')
 // reflect the public-facing URL. Required for OAuth callback URL construction.
+// NOTE: this also makes req.ip the client-controlled left-most X-Forwarded-For
+// entry — security decisions (rate limiting, auth logging) must use
+// getTrustedClientIp from middleware/clientIp.ts (TRUSTED_PROXY_MODE) instead.
 app.set('trust proxy', true);
 
 // Allowed origins setup
@@ -183,13 +186,16 @@ const sha256Base64 = (s: string) => crypto.createHash('sha256').update(s, 'utf8'
 // to run as inline scripts.
 const buildCsp = (inlineScriptSources: string[]) => [
   "default-src 'self'",
-  `script-src ${["'self'", ...inlineScriptSources, 'www.gstatic.com', 'https://www.youtube.com', 'https://s.ytimg.com'].join(' ')}`,
+  // challenges.cloudflare.com hosts the Turnstile sign-in captcha (script,
+  // challenge iframe, and its XHR). Allowed unconditionally — CSP is computed
+  // at startup, and the extra host is inert while the captcha is disabled.
+  `script-src ${["'self'", ...inlineScriptSources, 'www.gstatic.com', 'https://www.youtube.com', 'https://s.ytimg.com', 'https://challenges.cloudflare.com'].join(' ')}`,
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com",
   "img-src 'self' data: blob: https:",
   "media-src 'self' blob: data:",
-  "connect-src 'self' www.gstatic.com https://nominatim.openstreetmap.org https://fonts.googleapis.com https://fonts.gstatic.com",
-  "frame-src https://www.youtube.com https://www.youtube-nocookie.com",
+  "connect-src 'self' www.gstatic.com https://nominatim.openstreetmap.org https://fonts.googleapis.com https://fonts.gstatic.com https://challenges.cloudflare.com",
+  "frame-src https://www.youtube.com https://www.youtube-nocookie.com https://challenges.cloudflare.com",
   "worker-src 'self' blob:",
   "object-src 'none'",
   "base-uri 'self'",

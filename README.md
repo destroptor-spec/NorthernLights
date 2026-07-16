@@ -128,7 +128,8 @@ Recommended production shape:
 3. Run the Node server with PM2 or systemd.
 4. Put Nginx, Caddy, or another TLS reverse proxy in front of port `3001`.
 5. Set `SERVER_URL` and `ALLOWED_ORIGINS` to your public HTTPS URL.
-6. Back up PostgreSQL data and `.env`.
+6. Set `TRUSTED_PROXY_MODE` to match your ingress (`cloudflare` behind Cloudflare, `proxy` behind a bare reverse proxy) so login rate limiting sees real client IPs instead of the proxy's.
+7. Back up PostgreSQL data and `.env`.
 
 See [docs/production_guide.md](docs/production_guide.md) for concrete commands.
 

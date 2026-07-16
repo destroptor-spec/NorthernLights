@@ -136,7 +136,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         if (tab.id === 'Metadata') return 'genius musicbrainz lastfm jambase provider album bio image api mapping keys concerts tour live'.includes(query);
         if (tab.id === 'Live Music') return 'concerts tour live tickets jambase events location subscribe artists'.includes(query);
         if (tab.id === 'Playback') return 'infinity discovery genre artist amnesia matrix llm playlist diversity blend tracks wander played threshold scrobble count percent listened sleep timer quality streaming'.includes(query);
-        if (tab.id === 'System') return 'cpu audio analysis hub schedule auto-start opensubsonic subsonic api rest'.includes(query);
+        if (tab.id === 'System') return 'cpu audio analysis hub schedule auto-start opensubsonic subsonic api rest security captcha turnstile cloudflare sign-in login protection'.includes(query);
         if (tab.id === 'GenAI') return 'llm api host model key'.includes(query);
         if (tab.id === 'Genre Matrix') return 'genre matrix transition hop cost mapping'.includes(query);
         if (tab.id === 'Database') return 'database postgres container podman start stop status'.includes(query);

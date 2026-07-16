@@ -2,10 +2,13 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import fs from 'fs';
 import { hasUsers, createUser, getUserByUsername, getUserById, updateUser, deleteUser, updateLastLogin, createInvite, getInvite, isInviteValid, incrementInviteUses, createSubsonicApiKey, listSubsonicApiKeys, revokeSubsonicApiKey, rotateSubsonicApiKey, deleteRevokedSubsonicApiKey, getDirectories, getSystemSetting, setSystemSetting } from '../database';
-import { hashPassword, verifyPassword, generateToken, JwtPayload } from '../services/auth.service';
+import { hashPassword, verifyPassword, verifyDummyPassword, generateToken, JwtPayload } from '../services/auth.service';
 import { generateScopedToken } from '../services/scopedToken.service';
+import { logAuthEvent } from '../services/authLog.service';
+import { getTurnstileConfig, verifyTurnstileToken } from '../services/turnstile.service';
 import { queueLlmHubRefreshForUser } from '../services/hubRefresh.service';
 import { createRateLimiter } from '../middleware/rateLimit';
+import { getTrustedClientIp } from '../middleware/clientIp';
 import { requireAdmin } from '../middleware/auth';
 
 const router = Router();
@@ -13,11 +16,11 @@ const MIN_PASSWORD_LENGTH = 12;
 const SUBSONIC_API_KEY_PREFIX_LENGTH = 18;
 const AUTH_WINDOW_MS = 15 * 60 * 1000;
 const AUTH_BLOCK_MS = 15 * 60 * 1000;
-const AUTH_LIMITS: Record<string, number> = {
+const AUTH_LIMITS = {
   login: 8,
   register: 5,
   setup: 5,
-};
+} as const;
 const authStatusRateLimit = createRateLimiter({
   keyPrefix: 'auth:status',
   windowMs: 60 * 1000,
@@ -89,13 +92,9 @@ export function resolveSetupStatus(
   };
 }
 
-function getClientIp(req: any): string {
-  return String(req.ip || req.socket?.remoteAddress || 'unknown');
-}
-
 function getAttemptKey(req: any, bucket: keyof typeof AUTH_LIMITS, username?: unknown): string {
   const normalizedUsername = typeof username === 'string' ? username.trim().toLowerCase() : '';
-  return `${bucket}:${getClientIp(req)}:${normalizedUsername}`;
+  return `${bucket}:${getTrustedClientIp(req)}:${normalizedUsername}`;
 }
 
 function consumeAuthAttempt(req: any, res: any, bucket: keyof typeof AUTH_LIMITS, username?: unknown): boolean {
@@ -107,6 +106,7 @@ function consumeAuthAttempt(req: any, res: any, bucket: keyof typeof AUTH_LIMITS
     const retryAfter = Math.ceil((existing.blockedUntil - now) / 1000);
     res.setHeader('Retry-After', String(retryAfter));
     res.status(429).json({ error: 'Too many attempts. Try again later.' });
+    logAuthEvent({ event: bucket, outcome: 'rate_limited', ip: getTrustedClientIp(req), username });
     return false;
   }
 
@@ -119,6 +119,7 @@ function consumeAuthAttempt(req: any, res: any, bucket: keyof typeof AUTH_LIMITS
     authAttempts.set(key, next);
     res.setHeader('Retry-After', String(Math.ceil(AUTH_BLOCK_MS / 1000)));
     res.status(429).json({ error: 'Too many attempts. Try again later.' });
+    logAuthEvent({ event: bucket, outcome: 'rate_limited', ip: getTrustedClientIp(req), username });
     return false;
   }
 
@@ -150,11 +151,41 @@ function clearAuthAttempts(req: any, bucket: keyof typeof AUTH_LIMITS, username?
   authAttempts.delete(getAttemptKey(req, bucket, username));
 }
 
-async function buildAuthResponse(payload: JwtPayload) {
+// Verify the Turnstile token when the captcha is enabled. Returns true when the
+// request may proceed; otherwise the response has already been sent. Runs AFTER
+// the cheap rate limiters so failed challenges can't amplify outbound
+// siteverify requests.
+async function enforceTurnstile(req: any, res: any, event: 'login' | 'register', username?: unknown): Promise<boolean> {
+  const config = await getTurnstileConfig();
+  if (!config.enabled) return true;
+
+  const ip = getTrustedClientIp(req);
+  const result = await verifyTurnstileToken(req.body?.turnstileToken, config.secretKey, ip);
+  if (result.ok) return true;
+
+  switch (result.reason) {
+    case 'missing_token':
+      logAuthEvent({ event, outcome: 'captcha_missing', ip, username });
+      res.status(400).json({ error: 'Verification required. Complete the captcha and try again.', code: 'captcha_required' });
+      return false;
+    case 'invalid_token':
+      logAuthEvent({ event, outcome: 'captcha_failed', ip, username });
+      res.status(403).json({ error: 'Captcha verification failed. Please try again.', code: 'captcha_failed' });
+      return false;
+    default:
+      // Fail closed: silently skipping verification here would let an outage
+      // (or a blocked egress) turn the captcha off without anyone noticing.
+      logAuthEvent({ event, outcome: 'captcha_unavailable', ip, username });
+      res.status(503).json({ error: 'Captcha service is unreachable. Try again in a moment.', code: 'captcha_unavailable' });
+      return false;
+  }
+}
+
+async function buildAuthResponse(payload: JwtPayload, rememberMe = true) {
   const [token, mediaToken, sseToken] = await Promise.all([
-    generateToken(payload),
-    generateScopedToken('media', payload),
-    generateScopedToken('sse', payload),
+    generateToken(payload, rememberMe),
+    generateScopedToken('media', payload, rememberMe),
+    generateScopedToken('sse', payload, rememberMe),
   ]);
   return { token, mediaToken, sseToken };
 }
@@ -267,20 +298,30 @@ router.post('/login', authPublicMutationRateLimit, async (req, res) => {
       return res.status(400).json({ error: 'Username and password required' });
     }
     if (!consumeAuthAttempt(req, res, 'login', username)) return;
+    if (!(await enforceTurnstile(req, res, 'login', username))) return;
+    const clientIp = getTrustedClientIp(req);
 
     const user = await getUserByUsername(username);
     if (!user) {
+      // Burn the same bcrypt cost as a real compare so response timing can't
+      // reveal whether the username exists.
+      await verifyDummyPassword(password);
+      logAuthEvent({ event: 'login', outcome: 'unknown_user', ip: clientIp, username });
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     const valid = await verifyPassword(password, user.password_hash);
     if (!valid) {
+      logAuthEvent({ event: 'login', outcome: 'bad_password', ip: clientIp, username });
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     await updateLastLogin(user.id);
-    const auth = await buildAuthResponse({ userId: user.id, username: user.username, role: user.role });
+    // Default to remembered so existing clients keep their long-lived sessions.
+    const rememberMe = req.body?.rememberMe !== false;
+    const auth = await buildAuthResponse({ userId: user.id, username: user.username, role: user.role }, rememberMe);
     clearAuthAttempts(req, 'login', username);
+    logAuthEvent({ event: 'login', outcome: 'success', ip: clientIp, username: user.username });
     queueLlmHubRefreshForUser(user.id, 'login');
     res.json({ ...auth, user: { id: user.id, username: user.username, role: user.role } });
   } catch (error) {
@@ -297,6 +338,7 @@ router.post('/register', authPublicMutationRateLimit, async (req, res) => {
       return res.status(400).json({ error: 'Invite token, username, and password required' });
     }
     if (!consumeAuthAttempt(req, res, 'register', username)) return;
+    if (!(await enforceTurnstile(req, res, 'register', username))) return;
 
     if (username.length < 3 || password.length < MIN_PASSWORD_LENGTH) {
       return res.status(400).json({ error: `Username must be 3+ chars, password ${MIN_PASSWORD_LENGTH}+ chars` });
@@ -318,6 +360,7 @@ router.post('/register', authPublicMutationRateLimit, async (req, res) => {
     await incrementInviteUses(inviteToken);
     const auth = await buildAuthResponse({ userId: user.id, username: user.username, role: user.role });
     clearAuthAttempts(req, 'register', username);
+    logAuthEvent({ event: 'register', outcome: 'success', ip: getTrustedClientIp(req), username: user.username });
     res.json({ ...auth, user: { id: user.id, username: user.username, role: user.role } });
   } catch (error) {
     console.error('Registration error:', error);

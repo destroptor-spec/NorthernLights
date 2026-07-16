@@ -3,7 +3,7 @@ import { usePlayerStore } from '../../store/index';
 import { useToast } from '../../hooks/useToast';
 import { ConfirmModal } from '../ConfirmModal';
 
-type SystemSubTab = 'processing' | 'hub' | 'service' | 'logging';
+type SystemSubTab = 'processing' | 'hub' | 'service' | 'logging' | 'security';
 
 const systemPlaylistOptions = [
     {
@@ -76,6 +76,9 @@ export const SystemTab: React.FC = () => {
     const hlsLoggingEnabled = usePlayerStore(state => state.hlsLoggingEnabled);
     const ffmpegLoggingEnabled = usePlayerStore(state => state.ffmpegLoggingEnabled);
     const openSubsonicEnabled = usePlayerStore(state => state.openSubsonicEnabled);
+    const turnstileEnabled = usePlayerStore(state => state.turnstileEnabled);
+    const turnstileSiteKey = usePlayerStore(state => state.turnstileSiteKey);
+    const turnstileSecretKey = usePlayerStore(state => state.turnstileSecretKey);
     const setSettings = usePlayerStore(state => state.setSettings);
     const getAuthHeader = usePlayerStore(state => state.getAuthHeader);
 
@@ -83,6 +86,7 @@ export const SystemTab: React.FC = () => {
     const [activeSubTab, setActiveSubTab] = useState<SystemSubTab>('processing');
     const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; confirmLabel?: string; onConfirm: () => void } | null>(null);
     const [subsonicToggleSaving, setSubsonicToggleSaving] = useState(false);
+    const [turnstileToggleSaving, setTurnstileToggleSaving] = useState(false);
 
     type ServiceStatus = {
         runtime: 'pm2' | 'systemd' | 'manual';
@@ -171,6 +175,37 @@ export const SystemTab: React.FC = () => {
         }
     };
 
+    const updateTurnstileEnabled = async (enabled: boolean) => {
+        const previous = turnstileEnabled;
+        setSettings({ turnstileEnabled: enabled });
+        setTurnstileToggleSaving(true);
+        try {
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+                // Keys ride along so enabling works even before the modal-close
+                // save has persisted freshly typed values.
+                body: JSON.stringify({
+                    turnstileEnabled: enabled,
+                    turnstileSiteKey: turnstileSiteKey.trim(),
+                    turnstileSecretKey: turnstileSecretKey.trim(),
+                }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(data.error || 'Failed to update captcha setting');
+            }
+            addToast(enabled ? 'Sign-in captcha enabled' : 'Sign-in captcha disabled', 'success');
+        } catch (e: any) {
+            setSettings({ turnstileEnabled: previous });
+            addToast(e?.message || 'Failed to update captcha setting', 'error');
+        } finally {
+            setTurnstileToggleSaving(false);
+        }
+    };
+
+    const turnstileKeysPresent = turnstileSiteKey.trim().length > 0 && turnstileSecretKey.trim().length > 0;
+
     return (
         <div className="settings-section mb-8">
             <div className="settings-section-header mb-4">
@@ -205,6 +240,13 @@ export const SystemTab: React.FC = () => {
                     onClick={() => setActiveSubTab('logging')}
                 >
                     Logging
+                </button>
+                <button
+                    type="button"
+                    className={`btn-tab ${activeSubTab === 'security' ? 'active' : ''}`}
+                    onClick={() => setActiveSubTab('security')}
+                >
+                    Security
                 </button>
             </div>
 
@@ -531,6 +573,76 @@ export const SystemTab: React.FC = () => {
 
                         <p className="text-xs text-[var(--color-text-muted)] mt-4 leading-relaxed">
                             Per-track HLS session logs are still written to <code>logs/hls-sessions/</code> on disk regardless of these toggles.
+                        </p>
+                    </div>
+                </div>
+            )}
+
+            {activeSubTab === 'security' && (
+                <div className="space-y-6">
+                    <div>
+                        <h4 className="text-lg font-semibold text-[var(--color-text-primary)] mb-1">Sign-in Captcha (Cloudflare Turnstile)</h4>
+                        <p className="text-xs text-[var(--color-text-muted)] mb-4 leading-relaxed">
+                            Adds a Cloudflare Turnstile challenge to the sign-in and invite registration forms, blocking automated
+                            credential guessing. Create a Turnstile widget in the Cloudflare dashboard (Turnstile → Add site) with
+                            this server's hostname, then paste the key pair below.
+                        </p>
+
+                        <div className="space-y-4">
+                            <div>
+                                <label htmlFor="turnstile-site-key" className="block text-sm font-medium text-[var(--color-text-primary)] mb-2">Site Key</label>
+                                <input
+                                    id="turnstile-site-key"
+                                    type="text"
+                                    value={turnstileSiteKey}
+                                    onChange={e => setSettings({ turnstileSiteKey: e.target.value })}
+                                    placeholder="0x4AAAAAAA..."
+                                    autoComplete="off"
+                                    className="w-full p-2 rounded-lg border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none font-mono text-sm"
+                                />
+                                <p className="text-xs text-[var(--color-text-muted)] mt-1">Public — rendered into the sign-in page.</p>
+                            </div>
+
+                            <div>
+                                <label htmlFor="turnstile-secret-key" className="block text-sm font-medium text-[var(--color-text-primary)] mb-2">Secret Key</label>
+                                <input
+                                    id="turnstile-secret-key"
+                                    type="password"
+                                    value={turnstileSecretKey}
+                                    onChange={e => setSettings({ turnstileSecretKey: e.target.value })}
+                                    placeholder="0x4AAAAAAA..."
+                                    autoComplete="off"
+                                    className="w-full p-2 rounded-lg border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none font-mono text-sm"
+                                />
+                                <p className="text-xs text-[var(--color-text-muted)] mt-1">Server-side only — never sent to visitors.</p>
+                            </div>
+
+                            <div className="flex items-start justify-between gap-4 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] p-4">
+                                <div className="min-w-0">
+                                    <p className="text-sm font-semibold text-[var(--color-text-primary)]">Require captcha on sign-in</p>
+                                    <p className="mt-1 text-xs leading-snug text-[var(--color-text-muted)]">
+                                        {turnstileKeysPresent
+                                            ? 'Applies to sign-in and invite registration. Existing sessions are unaffected.'
+                                            : 'Enter both keys above to enable.'}
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    aria-pressed={turnstileEnabled}
+                                    aria-label="Toggle sign-in captcha"
+                                    disabled={turnstileToggleSaving || (!turnstileEnabled && !turnstileKeysPresent)}
+                                    onClick={() => updateTurnstileEnabled(!turnstileEnabled)}
+                                    className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${turnstileEnabled ? 'bg-[var(--color-primary)]' : 'bg-gray-200 dark:bg-[var(--color-bg-tertiary)]'}`}
+                                >
+                                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${turnstileEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                                </button>
+                            </div>
+                        </div>
+
+                        <p className="text-xs text-[var(--color-text-muted)] mt-4 leading-relaxed">
+                            If Cloudflare ever becomes unreachable from this server, sign-in fails closed with a clear message.
+                            Escape hatch: run <code className="text-[var(--color-text-primary)]">UPDATE system_settings SET value='false' WHERE key='turnstileEnabled';</code> against
+                            the database to turn the captcha off.
                         </p>
                     </div>
                 </div>

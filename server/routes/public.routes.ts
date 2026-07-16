@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getPublicPlaylistByShareToken } from '../database';
 import { createRateLimiter } from '../middleware/rateLimit';
+import { getTurnstileConfig, buildPublicAuthConfig } from '../services/turnstile.service';
 
 // Unauthenticated, public-facing routes. Mounted BEFORE the global JWT
 // middleware so anonymous visitors (e.g. a shared playlist link) can reach them.
@@ -14,6 +15,26 @@ const shareRateLimit = createRateLimiter({
   max: 60,
   keyPrefix: 'public-share',
   message: 'Too many requests. Try again later.',
+});
+
+const authConfigRateLimit = createRateLimiter({
+  windowMs: 60_000,
+  max: 60,
+  keyPrefix: 'public-auth-config',
+  message: 'Too many requests. Try again later.',
+});
+
+// What the pre-auth screens (sign-in, invite registration) need to render:
+// whether the Turnstile widget applies and its public site key. Never the
+// secret. Deliberately reveals nothing about accounts or setup state.
+router.get('/auth-config', authConfigRateLimit, async (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    res.json(buildPublicAuthConfig(await getTurnstileConfig()));
+  } catch {
+    // DB down → advertise no captcha; server-side enforcement stays authoritative.
+    res.json({ turnstile: { enabled: false, siteKey: null } });
+  }
 });
 
 router.get('/playlists/:token', shareRateLimit, async (req, res) => {

@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePlayerStore } from '../store/index';
 import { UserPlus, CheckCircle2, XCircle, Eye, EyeOff, Loader2 } from 'lucide-react';
 import SoftAurora from './SoftAurora';
+import { useAuthConfig } from '../hooks/useAuthConfig';
+import { useTurnstile } from '../hooks/useTurnstile';
 
 const AuthBackdrop: React.FC = () => (
   <div className="absolute inset-0 pointer-events-none">
@@ -68,9 +70,18 @@ export const InviteRegister: React.FC = () => {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  const turnstileRef = useRef<HTMLDivElement>(null);
 
   const strength = getPasswordStrength(password);
   const passwordsMatch = password === confirmPassword;
+
+  const { turnstileEnabled, turnstileSiteKey } = useAuthConfig();
+  const turnstile = useTurnstile(
+    turnstileEnabled,
+    turnstileSiteKey,
+    turnstileRef,
+    inviteData?.valid === true && !success,
+  );
 
   useEffect(() => {
     if (!token) {
@@ -96,8 +107,8 @@ export const InviteRegister: React.FC = () => {
     setIsLoading(true);
     setError('');
 
-    const success = await register(token, username.trim(), password);
-    if (success) {
+    const result = await register(token, username.trim(), password, turnstile.token ?? undefined);
+    if (result.success) {
       setSuccess(true);
       // Brief success moment before navigating
       setTimeout(() => {
@@ -107,7 +118,9 @@ export const InviteRegister: React.FC = () => {
         navigate('/library');
       }, 750);
     } else {
-      setError('Username already taken. Choose a different one.');
+      // Turnstile tokens are single-use — a fresh challenge is needed for the retry.
+      turnstile.reset();
+      setError(result.error);
     }
     setIsLoading(false);
   };
@@ -289,6 +302,23 @@ export const InviteRegister: React.FC = () => {
               <p className="text-xs text-[var(--color-error)] mt-1">Passwords don't match.</p>
             )}
           </div>
+
+          {/* Turnstile challenge */}
+          {turnstileEnabled && (
+            <div>
+              <div ref={turnstileRef} className="flex justify-center min-h-[65px]" />
+              {turnstile.status === 'loading' && (
+                <p className="text-xs text-[var(--color-text-muted)] text-center mt-1">
+                  Loading verification…
+                </p>
+              )}
+              {turnstile.status === 'error' && (
+                <p className="text-xs text-[var(--color-text-muted)] text-center mt-1">
+                  Verification couldn't load — registration may fail.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Error */}
           {error && (
