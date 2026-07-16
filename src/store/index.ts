@@ -541,7 +541,10 @@ export interface PlayerState {
   volume: number;
   shuffle: boolean;
   repeat: "none" | "one" | "all";
-  theme: 'light' | 'dark';
+  theme: 'light' | 'dark' | 'system';
+  // Effective theme after resolving 'system' against the OS preference.
+  // Not persisted; consumers that branch on dark/light should read this.
+  resolvedTheme: 'light' | 'dark';
   reducedMotion: boolean;
   mobileVideoBackgrounds: boolean;
   lastFmApiKey: string;
@@ -740,7 +743,7 @@ export interface PlayerState {
   toggleShuffle: () => void;
   cycleRepeat: () => void;
   setCastConnected: (connected: boolean) => void;
-  setTheme: (theme: 'light' | 'dark') => void;
+  setTheme: (theme: 'light' | 'dark' | 'system') => void;
   setReducedMotion: (enabled: boolean) => void;
   setMobileVideoBackgrounds: (enabled: boolean) => void;
   setLastFmApiKey: (key: string) => void;
@@ -1120,7 +1123,8 @@ export const usePlayerStore = create<PlayerState>()(
         volume: 1,
         shuffle: false as boolean,
         repeat: "none" as "none" | "one" | "all",
-        theme: 'light' as 'light' | 'dark',
+        theme: 'system' as 'light' | 'dark' | 'system',
+        resolvedTheme: ((typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light') as 'light' | 'dark',
         reducedMotion: (typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) || false,
         mobileVideoBackgrounds: true,
         lastFmApiKey: '',
@@ -1341,13 +1345,12 @@ export const usePlayerStore = create<PlayerState>()(
             scanningFile: fileName 
           }),
 
-        setTheme: (theme: 'light' | 'dark') => {
-          set({ theme });
-          if (theme === 'dark') {
-            document.documentElement.classList.add('dark');
-          } else {
-            document.documentElement.classList.remove('dark');
-          }
+        setTheme: (theme: 'light' | 'dark' | 'system') => {
+          const prefersDark = typeof window !== 'undefined'
+            && window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+          const resolved = theme === 'system' ? (prefersDark ? 'dark' : 'light') : theme;
+          set({ theme, resolvedTheme: resolved });
+          document.documentElement.classList.toggle('dark', resolved === 'dark');
         },
 
         setReducedMotion: (enabled: boolean) => {
@@ -3052,3 +3055,14 @@ export const usePlayerStore = create<PlayerState>()(
     }
   )
 );
+
+// Follow OS light/dark changes live while the theme preference is 'system'.
+// Attached once at module scope; setTheme re-resolves against matchMedia.
+if (typeof window !== 'undefined' && window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    const state = usePlayerStore.getState();
+    if (state.theme === 'system') {
+      state.setTheme('system');
+    }
+  });
+}

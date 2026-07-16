@@ -130,7 +130,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         // Also search within common setting labels for this tab
         if (tab.id === 'Scrobbling') return 'scrobble scrobbling lastfm last.fm listenbrainz listen brainz connect account now playing love listening services subsonic opensubsonic bridge symfonium'.includes(query);
         if (tab.id === 'API Keys') return 'api key keys subsonic opensubsonic rest client rotate revoke delete'.includes(query);
-        if (tab.id === 'Appearance') return 'light dark theme'.includes(query);
+        if (tab.id === 'Appearance') return 'light dark system theme'.includes(query);
         if (tab.id === 'Library') return 'folder path scan library stats analysis'.includes(query);
         if (tab.id === 'Library Entities') return 'artist genre duplicate group merge canonical compound credit identity library hygiene'.includes(query);
         if (tab.id === 'Metadata') return 'genius musicbrainz lastfm jambase provider album bio image api mapping keys concerts tour live'.includes(query);

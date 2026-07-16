@@ -155,7 +155,7 @@ const WaveformProgressBarComponent: React.FC<WaveformProgressBarProps> = ({
     const duration = (!Number.isFinite(rawDuration) || rawDuration === 0) && dbDuration
         ? dbDuration
         : rawDuration;
-    const theme = usePlayerStore(state => state.theme);
+    const theme = usePlayerStore(state => state.resolvedTheme);
     const isDark = theme === 'dark';
     const reducedMotion = usePlayerStore(state => state.reducedMotion);
     const containerRef = useRef<HTMLDivElement>(null);

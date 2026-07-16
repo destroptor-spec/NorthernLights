@@ -1,5 +1,5 @@
 import React from 'react';
-import { Sun, Moon } from 'lucide-react';
+import { Sun, Moon, Monitor } from 'lucide-react';
 import { usePlayerStore } from '../../store/index';
 
 export const AppearanceTab: React.FC = () => {
@@ -35,6 +35,15 @@ export const AppearanceTab: React.FC = () => {
                 >
                     <Moon size={18} aria-hidden="true" />
                     Dark
+                </button>
+                <button
+                    type="button"
+                    aria-pressed={theme === 'system'}
+                    className={`btn flex-1 py-4 inline-flex items-center justify-center gap-2 tracking-wide duration-300 ${theme === 'system' ? 'btn-primary !shadow-lg !scale-100 dark:bg-[var(--color-primary)] dark:border-[var(--color-primary)]' : 'btn-ghost'}`}
+                    onClick={() => setTheme('system')}
+                >
+                    <Monitor size={18} aria-hidden="true" />
+                    System
                 </button>
             </div>
 
