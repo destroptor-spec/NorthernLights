@@ -35,16 +35,42 @@ function getAuthHeaders(): Record<string, string> {
     return (state as any).getAuthHeader?.() || {};
 }
 
-async function serverFetch<T>(path: string): Promise<T | null> {
-    try {
-        const res = await fetch(path, {
-            headers: { ...getAuthHeaders() },
-        });
-        if (!res.ok) return null;
-        return res.json();
-    } catch {
-        return null;
+// External provider lookups share the browser's small per-origin connection
+// budget (6 on HTTP/1.1) with every other request — including the /api/health
+// poll that decides whether to swap the app for the DB recovery panel. A grid
+// of art-less cards (e.g. Various Artists' 200+ comps) can otherwise enqueue
+// dozens of slow lookups (MusicBrainz is rate-limited to ~1 req/s upstream)
+// and starve the health check into a false "database down". Cap concurrent
+// lookups so most of the pool stays free for interactive traffic.
+const MAX_CONCURRENT_LOOKUPS = 4;
+let activeLookups = 0;
+const pendingLookups: Array<() => void> = [];
+
+async function withLookupSlot<T>(run: () => Promise<T>): Promise<T> {
+    if (activeLookups >= MAX_CONCURRENT_LOOKUPS) {
+        await new Promise<void>((resolve) => pendingLookups.push(resolve));
     }
+    activeLookups++;
+    try {
+        return await run();
+    } finally {
+        activeLookups--;
+        pendingLookups.shift()?.();
+    }
+}
+
+async function serverFetch<T>(path: string): Promise<T | null> {
+    return withLookupSlot(async () => {
+        try {
+            const res = await fetch(path, {
+                headers: { ...getAuthHeaders() },
+            });
+            if (!res.ok) return null;
+            return res.json();
+        } catch {
+            return null;
+        }
+    });
 }
 
 // In-memory cache for lookup results that resolve to an image URL or summary.

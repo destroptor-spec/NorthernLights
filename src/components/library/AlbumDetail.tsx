@@ -8,6 +8,7 @@ import { useEntityTracks } from '../../hooks/useEntityTracks';
 import { parseArtistsForDisplay } from '../../utils/artistUtils';
 import { useKnownArtistKeys } from '../../hooks/useKnownArtistKeys';
 import { formatTime } from '../../utils/formatTime';
+import { buildArtistLinkMap } from '../../utils/artistLinks';
 import { BackButton } from './BackButton';
 import { useAlbumData } from '../../hooks/useAlbumData';
 import { LoveButton } from '../LoveButton';
@@ -733,24 +734,10 @@ export const AlbumDetail: React.FC = () => {
         enabled: shouldVirtualizeAlbumRows,
     });
 
-    const artistLinkByName = useMemo(() => {
-        const links = new Map<string, string>();
-
-        for (const entity of artists) {
-            if (entity.name && entity.id) {
-                links.set(entity.name.toLowerCase(), `/library/artist/${entity.id}`);
-            }
-        }
-
-        for (const track of albumTracks) {
-            const fallbackName = track.albumArtist || track.artist;
-            if (track.artistId && fallbackName) {
-                links.set(fallbackName.toLowerCase(), `/library/artist/${track.artistId}`);
-            }
-        }
-
-        return links;
-    }, [albumTracks, artists]);
+    const artistLinkByName = useMemo(
+        () => buildArtistLinkMap(albumTracks, artists),
+        [albumTracks, artists]
+    );
 
     const getArtistLink = useCallback((artistName: string): string | null => {
         return artistLinkByName.get(artistName.toLowerCase()) || null;

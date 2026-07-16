@@ -134,6 +134,18 @@ type SimilarArtist = {
     matchScore: number;
 };
 
+// Album row from `ownedAlbums` on /api/artists/:id — albums a VA
+// pseudo-artist owns by album-artist name, shipped without their tracks.
+type OwnedAlbumRow = {
+    id: string;
+    title?: string;
+    artist_name?: string;
+    image_url?: string | null;
+    edition_label?: string | null;
+    track_count?: number;
+    art_hash?: string | null;
+};
+
 const SimilarArtistRow: React.FC<{ artist: SimilarArtist }> = ({ artist }) => {
     const href = `/library/artist/${artist.id}`;
     const heroState: ArtistHeroState = {
@@ -285,12 +297,19 @@ export const ArtistDetail: React.FC = () => {
     const hydrateTracks = usePlayerStore((s) => s.hydrateTracks);
     const getAuthHeader = usePlayerStore((s) => s.getAuthHeader);
     const isLibraryLoading = usePlayerStore((s) => s.isLibraryLoading);
+    const mediaAccessToken = usePlayerStore((s) => s.mediaAccessToken);
+    const authToken = usePlayerStore((s) => s.authToken);
 
     // The artist's own tracks come from the per-artist endpoint so the page
     // works without the full in-memory library. `library` is still used as a
     // fallback and for the cross-artist "appears on" list until that moves
     // server-side. Source for the album art/track maps below.
-    const { tracks: artistTracks, meta: artistMeta, loading: artistTracksLoading } = useEntityTracks<{ name?: string }>(
+    // `ownedAlbums` is only populated for VA pseudo-artists: albums they own
+    // as lean album rows, since shipping every VA comp track is untenable.
+    const { tracks: artistTracks, meta: artistMeta, loading: artistTracksLoading } = useEntityTracks<{
+        name?: string;
+        ownedAlbums?: OwnedAlbumRow[];
+    }>(
         artistId ? `/api/artists/${encodeURIComponent(artistId)}` : null,
     );
     // "Appears on" / collaborations — server-computed so it works without the
@@ -345,12 +364,18 @@ export const ArtistDetail: React.FC = () => {
     // list, so credited-author links resolve instead of showing "Artist not found".
     const artistName = artistInfo?.name || artistMeta?.name || '';
 
-    // Get MusicBrainz artist ID from the first track that has one
+    // Get MusicBrainz artist ID from the first track that has one. Only
+    // trust tracks credited to this artist — the endpoint also returns
+    // uncredited tracks from owned DJ-mix comps, whose mbArtistId belongs to
+    // the per-track performer. On those the artist's own MBID is the
+    // album-artist id, which covers artists with no performer credits at all.
     const mbArtistId = useMemo(() => {
         if (!artistId) return null;
-        const track = artistTracks.find(t => t.mbArtistId)
+        const credited = artistTracks.find(t => t.artistId === artistId && t.mbArtistId)
             || library.find(t => t.artistId === artistId && t.mbArtistId);
-        return track?.mbArtistId || null;
+        if (credited?.mbArtistId) return credited.mbArtistId;
+        const owned = artistTracks.find(t => t.artistId !== artistId && t.mbAlbumArtistId);
+        return owned?.mbAlbumArtistId || null;
     }, [artistTracks, library, artistId]);
 
     const { imageUrl, artworkUrl, bio, disambiguation, area, type, lifeSpan, links, genres, communityTags, listeners, members, isLoading: artistLoading } = useArtistData(artistName, mbArtistId);
@@ -582,11 +607,14 @@ export const ArtistDetail: React.FC = () => {
         return { collaborationTracks: collab, featuredTracks: feat };
     }, [library, otherCreditedTracks, artistName, knownArtistKeys]);
 
-    // Aggregate file-embedded URLs from all primary tracks, deduplicated
+    // Aggregate file-embedded URLs from the artist's credited tracks,
+    // deduplicated. Uncredited owned-comp tracks are excluded — their
+    // embedded URLs belong to the per-track performers.
     const fileLinks = useMemo(() => {
         const seen = new Set<string>();
         const result: { url: string; type: string }[] = [];
         for (const track of primaryTracks) {
+            if (artistId && track.artistId && track.artistId !== artistId) continue;
             for (const link of (track.rawUrls || [])) {
                 if (!seen.has(link.url)) {
                     seen.add(link.url);
@@ -595,7 +623,7 @@ export const ArtistDetail: React.FC = () => {
             }
         }
         return result;
-    }, [primaryTracks]);
+    }, [primaryTracks, artistId]);
 
     // Merge file links + MusicBrainz links, preferring file links (deduplicate by URL)
     const allLinks = useMemo(() => {
@@ -614,7 +642,7 @@ export const ArtistDetail: React.FC = () => {
 
     // Local library stats
     const libraryStats = useMemo(() => {
-        const totalTracks = primaryTracks.length;
+        let totalTracks = primaryTracks.length;
         const albumSet = new Set<string>();
         let totalDuration = 0;
         for (const t of primaryTracks) {
@@ -622,11 +650,21 @@ export const ArtistDetail: React.FC = () => {
             else if (t.album) albumSet.add(t.album);
             totalDuration += t.duration || 0;
         }
+        // Track-less owned-album rows (VA pseudo-artists) count too; their
+        // durations aren't shipped, so totalDuration stays tracks-only.
+        for (const al of artistMeta?.ownedAlbums || []) {
+            if (al.id && !albumSet.has(al.id)) {
+                albumSet.add(al.id);
+                totalTracks += al.track_count || 0;
+            }
+        }
         return { totalTracks, totalAlbums: albumSet.size, totalDuration };
-    }, [primaryTracks]);
+    }, [primaryTracks, artistMeta]);
 
     const buildReleaseGroups = (tracks: TrackInfo[]) => {
-        const albumMap = new Map<string, { title: string, artist: string, artUrl?: string, albumId?: string, editionLabel?: string, type: 'Album' | 'EP' | 'Single' | 'Compilation', tracks: TrackInfo[] }>();
+        // trackCount overrides tracks.length for card subtitles when the album
+        // arrived as a track-less owned-album row (VA pseudo-artists).
+        const albumMap = new Map<string, { title: string, artist: string, artUrl?: string, albumId?: string, editionLabel?: string, type: 'Album' | 'EP' | 'Single' | 'Compilation', tracks: TrackInfo[], trackCount?: number }>();
 
         tracks.forEach(track => {
             const albumTitle = track.album || 'Unknown Album';
@@ -652,6 +690,14 @@ export const ArtistDetail: React.FC = () => {
             albumMap.get(key)!.tracks.push(track);
         });
 
+        // Card play starts the album from the top: the endpoint returns
+        // credited tracks before uncredited owned-comp tracks, and DB order
+        // is arbitrary within each group.
+        for (const entry of albumMap.values()) {
+            entry.tracks.sort((a, b) =>
+                ((a.discNumber || 1) - (b.discNumber || 1)) || ((a.trackNumber || 0) - (b.trackNumber || 0)));
+        }
+
         const all = Array.from(albumMap.values()).sort((a, b) => a.title.localeCompare(b.title));
         return {
             albums: all.filter(r => r.type === 'Album'),
@@ -661,12 +707,64 @@ export const ArtistDetail: React.FC = () => {
         };
     };
 
+    // A credited track only counts toward the artist's OWN releases when the
+    // album is theirs (album artist matches). A credited track on a comp owned
+    // by someone else — a VA "Dream Dance" volume, another DJ's mix — is a
+    // guest appearance and belongs under "Also appears on" instead.
+    const { ownReleaseTracks, guestCompilationTracks } = useMemo(() => {
+        const artistKey = normalizeArtistIdentityKey(artistName);
+        if (!artistKey) {
+            return { ownReleaseTracks: primaryTracks, guestCompilationTracks: [] as TrackInfo[] };
+        }
+        const own: TrackInfo[] = [];
+        const guest: TrackInfo[] = [];
+        for (const t of primaryTracks) {
+            const isComp = !!t.isCompilation
+                || (t.releaseType || '').toLowerCase().includes('compilation');
+            const ownerKey = normalizeArtistIdentityKey(t.albumArtist || t.artist || '');
+            (isComp && ownerKey && ownerKey !== artistKey ? guest : own).push(t);
+        }
+        return { ownReleaseTracks: own, guestCompilationTracks: guest };
+    }, [primaryTracks, artistName]);
+
     const primaryReleaseTracks = useMemo(
-        () => [...primaryTracks, ...collaborationTracks],
-        [primaryTracks, collaborationTracks]
+        () => [...ownReleaseTracks, ...collaborationTracks],
+        [ownReleaseTracks, collaborationTracks]
     );
     const releaseGroups = useMemo(() => buildReleaseGroups(primaryReleaseTracks), [primaryReleaseTracks]);
-    const featuredGroups = useMemo(() => buildReleaseGroups(featuredTracks), [featuredTracks]);
+    const featuredGroups = useMemo(
+        () => buildReleaseGroups([...featuredTracks, ...guestCompilationTracks]),
+        [featuredTracks, guestCompilationTracks]
+    );
+
+    // VA pseudo-artists own their comps by album-artist name only — the
+    // endpoint ships those as lean album rows (ownedAlbums) instead of
+    // thousands of tracks. Fold them into the Compilations section as
+    // track-less cards; play uses whatever tracks the lazy library cache
+    // already holds, and the subtitle uses the server-side track count.
+    // Cover art builds a LOCAL /api/art URL from the row's representative
+    // art_hash (like the Albums grid) so hundreds of cards don't stampede
+    // the rate-limited external art proxy.
+    const compilationReleases = useMemo(() => {
+        const owned = artistMeta?.ownedAlbums || [];
+        if (owned.length === 0) return releaseGroups.compilations;
+        const token = mediaAccessToken || authToken || '';
+        const artHashUrl = (al: OwnedAlbumRow) =>
+            al.art_hash ? `/api/art?hash=${al.art_hash}${token ? `&token=${token}` : ''}` : undefined;
+        const seen = new Set(releaseGroups.compilations.map(a => a.albumId).filter(Boolean));
+        const extra = owned.filter(al => al.id && !seen.has(al.id)).map(al => ({
+            title: al.title || 'Unknown Album',
+            artist: al.artist_name || artistName,
+            artUrl: artUrlByAlbumId.get(al.id) || artHashUrl(al) || al.image_url || undefined,
+            albumId: al.id,
+            editionLabel: al.edition_label || undefined,
+            type: 'Compilation' as const,
+            tracks: tracksByAlbumId.get(al.id) || [],
+            trackCount: al.track_count,
+        }));
+        return [...releaseGroups.compilations, ...extra]
+            .sort((a, b) => a.title.localeCompare(b.title));
+    }, [releaseGroups.compilations, artistMeta, artistName, artUrlByAlbumId, tracksByAlbumId, mediaAccessToken, authToken]);
 
     const popularLibraryTracks = useMemo(() => {
         if (externalTopTracks.length === 0) return [];
@@ -741,7 +839,8 @@ export const ArtistDetail: React.FC = () => {
     // as content so the page renders instead of falling through to "not found".
     const hasCreditContent = rolesInLibrary.length > 0 ||
         Object.values(albumsByRole).some(list => Array.isArray(list) && list.length > 0);
-    const hasAnyContent = primaryTracks.length > 0 || collaborationTracks.length > 0 || featuredTracks.length > 0 || hasCreditContent;
+    const hasAnyContent = primaryTracks.length > 0 || collaborationTracks.length > 0 || featuredTracks.length > 0
+        || (artistMeta?.ownedAlbums?.length || 0) > 0 || hasCreditContent;
 
     if ((isLibraryLoading || artistTracksLoading || creditsLoading) && (!artistName || !hasAnyContent)) {
         return <ArtistDetailSkeleton onBack={() => navigate(-1)} hero={heroState} />;
@@ -1147,24 +1246,27 @@ export const ArtistDetail: React.FC = () => {
                         { title: 'Albums', data: releaseGroups.albums },
                         { title: 'EPs', data: releaseGroups.eps },
                         { title: 'Singles', data: releaseGroups.singles },
-                        { title: 'Compilations', data: releaseGroups.compilations }
+                        { title: 'Compilations', data: compilationReleases }
                     ].map((section) => section.data.length > 0 && (
                         <div key={section.title} className="mb-12">
                             <h3 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2">{section.title}</h3>
                             <div className="album-grid">
-                                {section.data.map(album => (
-                                    <AlbumCard
-                                        key={album.albumId || `${album.title}-${album.artist}`}
-                                        title={album.title}
-                                        artist={album.artist}
-                                        artUrl={album.artUrl}
-                                        subtitle={`${album.tracks.length} track${album.tracks.length !== 1 ? 's' : ''}`}
-                                        editionLabel={album.editionLabel}
-                                        linkTo={album.albumId ? `/library/album/${album.albumId}` : undefined}
-                                        linkState={{ backLabel: 'Back to Artist' }}
-                                        onPlay={() => setPlaylist(album.tracks, 0)}
-                                    />
-                                ))}
+                                {section.data.map(album => {
+                                    const trackCount = album.trackCount ?? album.tracks.length;
+                                    return (
+                                        <AlbumCard
+                                            key={album.albumId || `${album.title}-${album.artist}`}
+                                            title={album.title}
+                                            artist={album.artist}
+                                            artUrl={album.artUrl}
+                                            subtitle={`${trackCount} track${trackCount !== 1 ? 's' : ''}`}
+                                            editionLabel={album.editionLabel}
+                                            linkTo={album.albumId ? `/library/album/${album.albumId}` : undefined}
+                                            linkState={{ backLabel: 'Back to Artist' }}
+                                            onPlay={() => { if (album.tracks.length > 0) setPlaylist(album.tracks, 0); }}
+                                        />
+                                    );
+                                })}
                             </div>
                         </div>
                     ))

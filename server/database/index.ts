@@ -3057,6 +3057,65 @@ export async function getTracksByArtist(artistId: string, userId: string | null 
   return res.rows.map(mapTrackRow);
 }
 
+// Tracks on albums this artist OWNS (albums.artist_name) without being the
+// per-track performer credit. This is the DJ-mix / mixed-compilation case:
+// every track on such an album carries the artist as album_artist while
+// artist_id credits the real performer, so a pure artist_id query misses the
+// whole album — and getArtistAppearsOnTracks deliberately excludes owned
+// albums. Serves the Artist page so owned comps appear under the artist's
+// releases with their full track lists. Callers must skip VA pseudo-artists
+// (artists.is_va_pseudo), or "Various Artists" would claim every comp.
+export async function getUncreditedTracksOnOwnedAlbums(
+  artistId: string,
+  artistName: string | null,
+  userId: string | null = null,
+) {
+  const name = (artistName || '').trim();
+  if (!name) return [];
+  const db = await initDB();
+  const lovedSelect = userId ? '(ult.track_id IS NOT NULL)' : 'FALSE';
+  const lovedJoin = userId ? 'LEFT JOIN user_loved_tracks ult ON ult.track_id = t.id AND ult.user_id = $3' : '';
+  const sql = `
+    SELECT t.*, ${lovedSelect} AS is_loved
+    FROM tracks t
+    JOIN albums al ON al.id = t.album_id
+    ${lovedJoin}
+    WHERE lower(btrim(al.artist_name)) = lower(btrim($2))
+      AND t.artist_id IS DISTINCT FROM $1
+    ORDER BY t.album ASC, t.disc_number ASC NULLS LAST, t.track_number ASC NULLS LAST`;
+  const res = userId
+    ? await db.query(sql, [artistId, name, userId])
+    : await db.query(sql, [artistId, name]);
+  return res.rows.map(mapTrackRow);
+}
+
+// Album rows this artist owns by album-artist name, with a per-album track
+// count. Lean alternative to getUncreditedTracksOnOwnedAlbums for VA
+// pseudo-artists: "Various Artists" can own hundreds of comps (a quarter of
+// the library's tracks), so the artist endpoint ships these album rows
+// instead of every comp track. Zero-track album rows are skipped.
+export async function getAlbumsOwnedByArtistName(artistName: string | null) {
+  const name = (artistName || '').trim();
+  if (!name) return [];
+  const db = await initDB();
+  const res = await db.query(
+    `SELECT al.*, COUNT(t.id)::int AS track_count,
+       -- Representative embedded-cover hash (same trick as getAllAlbums) so
+       -- the client builds a LOCAL /api/art URL for each card instead of
+       -- falling back to the rate-limited external art proxy.
+       (array_agg(t.art_hash ORDER BY t.track_number NULLS LAST)
+          FILTER (WHERE COALESCE(t.art_hash, '') <> ''))[1] AS art_hash
+     FROM albums al
+     LEFT JOIN tracks t ON t.album_id = al.id
+     WHERE lower(btrim(al.artist_name)) = lower(btrim($1))
+     GROUP BY al.id
+     HAVING COUNT(t.id) > 0
+     ORDER BY COALESCE(al.release_year, 9999) DESC, al.title ASC`,
+    [name]
+  );
+  return res.rows;
+}
+
 // Recomputes the per-artist averaged audio profiles MV. Cheap to call after an
 // analysis batch; no-op-safe if the MV is missing on older DBs. Tries the
 // non-blocking CONCURRENTLY refresh first (needs a prior populate + the unique

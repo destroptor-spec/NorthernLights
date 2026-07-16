@@ -8,6 +8,8 @@ import {
   getArtistAlbumsByRole,
   getArtistAlbumsAllRoles,
   getArtistAppearsOnTracks,
+  getUncreditedTracksOnOwnedAlbums,
+  getAlbumsOwnedByArtistName,
 } from '../database';
 
 const router = Router();
@@ -70,11 +72,22 @@ router.get('/:id', async (req, res) => {
   try {
     const artist = await getArtistById(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found' });
-    const [tracks, roles] = await Promise.all([
+    // DJ-mix / mixed compilations the artist owns as album_artist without a
+    // single performer credit are invisible to the artist_id track query.
+    // Real artists get those albums' TRACKS appended (credited tracks stay
+    // first: the client derives the artist's MBID and artist-level links from
+    // them). VA pseudo-artists own hundreds of comps — a quarter of the
+    // library's tracks — so they get lean album ROWS (ownedAlbums) instead.
+    const isVaPseudo = !!artist.is_va_pseudo;
+    const [tracks, roles, ownedAlbumTracks, ownedAlbums] = await Promise.all([
       getTracksByArtist(req.params.id, req.user?.userId || null),
       getArtistRolesInLibrary(req.params.id),
+      isVaPseudo
+        ? Promise.resolve([])
+        : getUncreditedTracksOnOwnedAlbums(req.params.id, artist.name, req.user?.userId || null),
+      isVaPseudo ? getAlbumsOwnedByArtistName(artist.name) : Promise.resolve([]),
     ]);
-    res.json({ ...artist, tracks, rolesInLibrary: roles });
+    res.json({ ...artist, tracks: [...tracks, ...ownedAlbumTracks], ownedAlbums, rolesInLibrary: roles });
   } catch (error) {
     console.error('Artist fetch error:', error);
     res.status(500).json({ error: 'Failed to fetch artist' });

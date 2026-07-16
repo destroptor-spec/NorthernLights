@@ -192,8 +192,16 @@ const App: React.FC = () => {
     // Persistent health poller
     const interval = setInterval(async () => {
       const previouslyConnected = dbConnectedRef.current;
-      const ok = await checkHealth();
-      
+      let ok = await isServerDatabaseConnected();
+      // A single failed probe can just mean the request queue was saturated
+      // (provider lookups share the same six-per-origin connection pool) and
+      // the health fetch timed out. Confirm with a second probe before
+      // swapping the whole UI to the database recovery panel.
+      if (!ok && previouslyConnected === true) {
+        ok = await isServerDatabaseConnected();
+      }
+      setDbConnected(ok);
+
       // Only trigger a sync if we just became healthy (transition from false to true)
       if (ok && previouslyConnected === false) {
         const { needsSetup } = usePlayerStore.getState();
