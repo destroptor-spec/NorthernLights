@@ -577,7 +577,7 @@ async function processMetadataBatch(input: Array<Buffer | ScanItem>, concurrency
             // Tag-derived multi-role credits (composer, conductor, remixer,
             // producer, etc.). DELETE-then-INSERT is scoped to source='tag'
             // inside setTrackCredits so any future MB-sourced rows survive.
-            if (Array.isArray(metadata.credits) && metadata.credits.length > 0) {
+            if (Array.isArray(metadata.credits)) {
               const trackId = Buffer.from(dbPath).toString('base64');
               try { await setTrackCredits(trackId, metadata.credits); } catch (e) {
                 console.warn(`[Scanner] Failed to write credits for ${nameStr}:`, e);
