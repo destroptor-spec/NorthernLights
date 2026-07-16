@@ -42,6 +42,7 @@ export const PlaylistDetail = React.lazy(() => importPlaylistDetail().then(m => 
 const importLibraryHome = () => import('../components/library/LibraryHome');
 const importHub = () => import('../components/Hub');
 const importPlaylists = () => import('../components/library/Playlists');
+const importSearchResultsPage = () => import('../components/SearchResultsPage');
 
 let libraryHomePromise: ReturnType<typeof importLibraryHome> | null = null;
 let hubPromise: ReturnType<typeof importHub> | null = null;
@@ -65,6 +66,7 @@ export const prefetchPlaylists = (): Promise<unknown> => {
 export const LibraryHome = React.lazy(() => importLibraryHome().then(m => ({ default: m.LibraryHome })));
 export const Hub = React.lazy(() => importHub().then(m => ({ default: m.Hub })));
 export const Playlists = React.lazy(() => importPlaylists().then(m => ({ default: m.Playlists })));
+export const SearchResultsPage = React.lazy(() => importSearchResultsPage().then(m => ({ default: m.SearchResultsPage })));
 
 // Map a tab path to the prefetch fn for the chunk it renders. Shared by the
 // desktop and mobile tab bars.

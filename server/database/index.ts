@@ -1257,28 +1257,367 @@ export async function searchLibrary(
   const albumLimit = bound(opts.albumLimit, 20);
   const trackLimit = bound(opts.trackLimit, 50);
   const term = `%${q}%`;
+  const lowered = q.toLowerCase();
+  const normalizedArtistKey = normalizeArtistIdentityKey(q);
+  const normalizedArtistTerm = normalizedArtistKey ? `%${normalizedArtistKey}%` : null;
 
   const db = await initDB();
   const [artists, albums, tracks] = await Promise.all([
-    db.query('SELECT * FROM artists WHERE merged_into IS NULL AND name ILIKE $1 ORDER BY name ASC LIMIT $2', [term, artistLimit]),
-    db.query('SELECT * FROM albums WHERE title ILIKE $1 OR artist_name ILIKE $1 ORDER BY title ASC LIMIT $2', [term, albumLimit]),
+    db.query(
+      `SELECT a.*,
+              GREATEST(
+                CASE
+                  WHEN LOWER(BTRIM(a.name)) = $2 THEN 100
+                  WHEN LOWER(a.name) LIKE $2 || '%' THEN 85
+                  WHEN (' ' || REGEXP_REPLACE(LOWER(a.name), '[^[:alnum:]]+', ' ', 'g')) LIKE '% ' || $2 || '%' THEN 75
+                  ELSE 65
+                END,
+                CASE
+                  WHEN $3::text IS NOT NULL AND a.normalized_key = $3 THEN 100
+                  WHEN $3::text IS NOT NULL AND a.normalized_key LIKE $3 || '%' THEN 85
+                  WHEN $3::text IS NOT NULL AND a.normalized_key LIKE $4 THEN 65
+                  ELSE 0
+                END
+              ) AS _search_relevance,
+              GREATEST(
+                SIMILARITY(LOWER(a.name), $2),
+                CASE WHEN $3::text IS NULL THEN 0 ELSE SIMILARITY(COALESCE(a.normalized_key, ''), $3) END
+              ) AS _search_similarity
+       FROM artists a
+       WHERE a.merged_into IS NULL
+         AND (a.name ILIKE $1 OR ($4::text IS NOT NULL AND a.normalized_key LIKE $4))
+       ORDER BY _search_relevance DESC, _search_similarity DESC, LOWER(a.name) ASC, a.id ASC
+       LIMIT $5`,
+      [term, lowered, normalizedArtistKey || null, normalizedArtistTerm, artistLimit],
+    ),
+    db.query(
+      `SELECT a.*,
+              GREATEST(
+                CASE
+                  WHEN LOWER(BTRIM(a.title)) = $2 THEN 100
+                  WHEN LOWER(a.title) LIKE $2 || '%' THEN 85
+                  WHEN (' ' || REGEXP_REPLACE(LOWER(a.title), '[^[:alnum:]]+', ' ', 'g')) LIKE '% ' || $2 || '%' THEN 75
+                  WHEN a.title ILIKE $1 THEN 65
+                  ELSE 0
+                END,
+                CASE
+                  WHEN LOWER(BTRIM(COALESCE(a.artist_name, ''))) = $2 THEN 80
+                  WHEN LOWER(COALESCE(a.artist_name, '')) LIKE $2 || '%' THEN 70
+                  WHEN (' ' || REGEXP_REPLACE(LOWER(COALESCE(a.artist_name, '')), '[^[:alnum:]]+', ' ', 'g')) LIKE '% ' || $2 || '%' THEN 60
+                  WHEN a.artist_name ILIKE $1 THEN 50
+                  ELSE 0
+                END
+              ) AS _search_relevance,
+              GREATEST(
+                SIMILARITY(LOWER(a.title), $2),
+                SIMILARITY(LOWER(COALESCE(a.artist_name, '')), $2)
+              ) AS _search_similarity
+       FROM albums a
+       WHERE a.title ILIKE $1 OR a.artist_name ILIKE $1
+       ORDER BY _search_relevance DESC, _search_similarity DESC, LOWER(a.title) ASC, a.id ASC
+       LIMIT $3`,
+      [term, lowered, albumLimit],
+    ),
     userId
       ? db.query(
-          `SELECT t.*, (ult.track_id IS NOT NULL) AS is_loved
+          `SELECT t.*, (ult.track_id IS NOT NULL) AS is_loved,
+                  GREATEST(
+                    CASE
+                      WHEN LOWER(BTRIM(t.title)) = $2 THEN 100
+                      WHEN LOWER(t.title) LIKE $2 || '%' THEN 85
+                      WHEN (' ' || REGEXP_REPLACE(LOWER(t.title), '[^[:alnum:]]+', ' ', 'g')) LIKE '% ' || $2 || '%' THEN 75
+                      WHEN t.title ILIKE $1 THEN 65
+                      ELSE 0
+                    END,
+                    CASE
+                      WHEN LOWER(BTRIM(COALESCE(t.artist, ''))) = $2 OR LOWER(BTRIM(COALESCE(t.album, ''))) = $2 THEN 80
+                      WHEN LOWER(COALESCE(t.artist, '')) LIKE $2 || '%' OR LOWER(COALESCE(t.album, '')) LIKE $2 || '%' THEN 70
+                      WHEN (' ' || REGEXP_REPLACE(LOWER(COALESCE(t.artist, '')), '[^[:alnum:]]+', ' ', 'g')) LIKE '% ' || $2 || '%'
+                        OR (' ' || REGEXP_REPLACE(LOWER(COALESCE(t.album, '')), '[^[:alnum:]]+', ' ', 'g')) LIKE '% ' || $2 || '%' THEN 60
+                      ELSE 50
+                    END
+                  ) AS _search_relevance,
+                  GREATEST(
+                    SIMILARITY(LOWER(t.title), $2),
+                    SIMILARITY(LOWER(COALESCE(t.artist, '')), $2),
+                    SIMILARITY(LOWER(COALESCE(t.album, '')), $2)
+                  ) AS _search_similarity
            FROM tracks t
-           LEFT JOIN user_loved_tracks ult ON ult.track_id = t.id AND ult.user_id = $2
+           LEFT JOIN user_loved_tracks ult ON ult.track_id = t.id AND ult.user_id = $3
            WHERE t.title ILIKE $1 OR t.artist ILIKE $1 OR t.album ILIKE $1
-           ORDER BY t.title ASC LIMIT $3`,
-          [term, userId, trackLimit],
+           ORDER BY _search_relevance DESC, _search_similarity DESC, LOWER(t.title) ASC, t.id ASC
+           LIMIT $4`,
+          [term, lowered, userId, trackLimit],
         )
       : db.query(
-          `SELECT t.*, FALSE AS is_loved FROM tracks t
+          `SELECT t.*, FALSE AS is_loved,
+                  GREATEST(
+                    CASE
+                      WHEN LOWER(BTRIM(t.title)) = $2 THEN 100
+                      WHEN LOWER(t.title) LIKE $2 || '%' THEN 85
+                      WHEN (' ' || REGEXP_REPLACE(LOWER(t.title), '[^[:alnum:]]+', ' ', 'g')) LIKE '% ' || $2 || '%' THEN 75
+                      WHEN t.title ILIKE $1 THEN 65
+                      ELSE 0
+                    END,
+                    CASE
+                      WHEN LOWER(BTRIM(COALESCE(t.artist, ''))) = $2 OR LOWER(BTRIM(COALESCE(t.album, ''))) = $2 THEN 80
+                      WHEN LOWER(COALESCE(t.artist, '')) LIKE $2 || '%' OR LOWER(COALESCE(t.album, '')) LIKE $2 || '%' THEN 70
+                      WHEN (' ' || REGEXP_REPLACE(LOWER(COALESCE(t.artist, '')), '[^[:alnum:]]+', ' ', 'g')) LIKE '% ' || $2 || '%'
+                        OR (' ' || REGEXP_REPLACE(LOWER(COALESCE(t.album, '')), '[^[:alnum:]]+', ' ', 'g')) LIKE '% ' || $2 || '%' THEN 60
+                      ELSE 50
+                    END
+                  ) AS _search_relevance,
+                  GREATEST(
+                    SIMILARITY(LOWER(t.title), $2),
+                    SIMILARITY(LOWER(COALESCE(t.artist, '')), $2),
+                    SIMILARITY(LOWER(COALESCE(t.album, '')), $2)
+                  ) AS _search_similarity
+           FROM tracks t
            WHERE t.title ILIKE $1 OR t.artist ILIKE $1 OR t.album ILIKE $1
-           ORDER BY t.title ASC LIMIT $2`,
-          [term, trackLimit],
+           ORDER BY _search_relevance DESC, _search_similarity DESC, LOWER(t.title) ASC, t.id ASC
+           LIMIT $3`,
+          [term, lowered, trackLimit],
         ),
   ]);
-  return { artists: artists.rows, albums: albums.rows, tracks: tracks.rows.map(mapTrackRow) };
+  const stripSearchMeta = (source: Record<string, unknown>) => {
+    const row = { ...source };
+    delete row._search_relevance;
+    delete row._search_similarity;
+    return row;
+  };
+  return {
+    artists: artists.rows.map(stripSearchMeta),
+    albums: albums.rows.map(stripSearchMeta),
+    tracks: tracks.rows.map(stripSearchMeta).map(mapTrackRow),
+  };
+}
+
+export type RankedSearchResultType = 'artist' | 'album' | 'track';
+
+export interface RankedSearchResult {
+  type: RankedSearchResultType;
+  relevance: number;
+  item: unknown;
+}
+
+interface RankedSearchDatabaseRow {
+  result_type: RankedSearchResultType;
+  type_rank: number;
+  entity_id: string;
+  sort_label: string;
+  relevance: number;
+  match_similarity: number;
+  item: Record<string, unknown>;
+}
+
+interface RankedSearchCursor {
+  query: string;
+  relevance: number;
+  similarity: number;
+  sortLabel: string;
+  typeRank: number;
+  id: string;
+}
+
+export class InvalidSearchCursorError extends Error {
+  constructor(message = 'Invalid search cursor') {
+    super(message);
+    this.name = 'InvalidSearchCursorError';
+  }
+}
+
+function encodeRankedSearchCursor(cursor: RankedSearchCursor): string {
+  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+
+export function decodeRankedSearchCursor(cursor: string, query: string): RankedSearchCursor {
+  if (!cursor || cursor.length > 2048) throw new InvalidSearchCursorError();
+
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as Partial<RankedSearchCursor>;
+    const normalizedQuery = query.trim().toLowerCase();
+    const valid = parsed.query === normalizedQuery
+      && Number.isInteger(parsed.relevance)
+      && Number(parsed.relevance) >= 50
+      && Number(parsed.relevance) <= 100
+      && Number.isFinite(parsed.similarity)
+      && Number(parsed.similarity) >= 0
+      && Number(parsed.similarity) <= 1
+      && typeof parsed.sortLabel === 'string'
+      && Number.isInteger(parsed.typeRank)
+      && Number(parsed.typeRank) >= 1
+      && Number(parsed.typeRank) <= 3
+      && typeof parsed.id === 'string'
+      && parsed.id.length > 0;
+
+    if (!valid) throw new InvalidSearchCursorError();
+    return parsed as RankedSearchCursor;
+  } catch (error) {
+    if (error instanceof InvalidSearchCursorError) throw error;
+    throw new InvalidSearchCursorError();
+  }
+}
+
+export async function searchLibraryRanked(
+  query: string,
+  userId: string | null,
+  opts: { limit?: number; cursor?: string } = {},
+): Promise<{ results: RankedSearchResult[]; nextCursor: string | null }> {
+  const q = (query || '').trim();
+  if (!q) return { results: [], nextCursor: null };
+
+  const lowered = q.toLowerCase();
+  const term = `%${q}%`;
+  const normalizedArtistKey = normalizeArtistIdentityKey(q);
+  const normalizedArtistTerm = normalizedArtistKey ? `%${normalizedArtistKey}%` : null;
+  const limit = Math.min(Math.max(Number.isFinite(opts.limit as number) ? Math.floor(opts.limit as number) : 30, 1), 50);
+  const cursor = opts.cursor ? decodeRankedSearchCursor(opts.cursor, q) : null;
+  const db = await initDB();
+
+  const response = await db.query(
+    `WITH candidates AS (
+       SELECT 'artist'::text AS result_type,
+              1 AS type_rank,
+              a.id::text AS entity_id,
+              LOWER(a.name) AS sort_label,
+              GREATEST(
+                CASE
+                  WHEN LOWER(BTRIM(a.name)) = $2 THEN 100
+                  WHEN LOWER(a.name) LIKE $2 || '%' THEN 85
+                  WHEN (' ' || REGEXP_REPLACE(LOWER(a.name), '[^[:alnum:]]+', ' ', 'g')) LIKE '% ' || $2 || '%' THEN 75
+                  ELSE 65
+                END,
+                CASE
+                  WHEN $3::text IS NOT NULL AND a.normalized_key = $3 THEN 100
+                  WHEN $3::text IS NOT NULL AND a.normalized_key LIKE $3 || '%' THEN 85
+                  WHEN $3::text IS NOT NULL AND a.normalized_key LIKE $4 THEN 65
+                  ELSE 0
+                END
+              ) AS relevance,
+              GREATEST(
+                SIMILARITY(LOWER(a.name), $2),
+                CASE WHEN $3::text IS NULL THEN 0 ELSE SIMILARITY(COALESCE(a.normalized_key, ''), $3) END
+              )::real AS match_similarity,
+              JSONB_BUILD_OBJECT('id', a.id, 'name', a.name, 'image_url', a.image_url) AS item
+       FROM artists a
+       WHERE a.merged_into IS NULL
+         AND (a.name ILIKE $1 OR ($4::text IS NOT NULL AND a.normalized_key LIKE $4))
+
+       UNION ALL
+
+       SELECT 'album'::text AS result_type,
+              2 AS type_rank,
+              a.id::text AS entity_id,
+              LOWER(a.title) AS sort_label,
+              GREATEST(
+                CASE
+                  WHEN LOWER(BTRIM(a.title)) = $2 THEN 100
+                  WHEN LOWER(a.title) LIKE $2 || '%' THEN 85
+                  WHEN (' ' || REGEXP_REPLACE(LOWER(a.title), '[^[:alnum:]]+', ' ', 'g')) LIKE '% ' || $2 || '%' THEN 75
+                  WHEN a.title ILIKE $1 THEN 65
+                  ELSE 0
+                END,
+                CASE
+                  WHEN LOWER(BTRIM(COALESCE(a.artist_name, ''))) = $2 THEN 80
+                  WHEN LOWER(COALESCE(a.artist_name, '')) LIKE $2 || '%' THEN 70
+                  WHEN (' ' || REGEXP_REPLACE(LOWER(COALESCE(a.artist_name, '')), '[^[:alnum:]]+', ' ', 'g')) LIKE '% ' || $2 || '%' THEN 60
+                  WHEN a.artist_name ILIKE $1 THEN 50
+                  ELSE 0
+                END
+              ) AS relevance,
+              GREATEST(
+                SIMILARITY(LOWER(a.title), $2),
+                SIMILARITY(LOWER(COALESCE(a.artist_name, '')), $2)
+              )::real AS match_similarity,
+              JSONB_BUILD_OBJECT(
+                'id', a.id,
+                'title', a.title,
+                'artist_name', a.artist_name,
+                'image_url', a.image_url
+              ) AS item
+       FROM albums a
+       WHERE a.title ILIKE $1 OR a.artist_name ILIKE $1
+
+       UNION ALL
+
+       SELECT 'track'::text AS result_type,
+              3 AS type_rank,
+              t.id::text AS entity_id,
+              LOWER(t.title) AS sort_label,
+              GREATEST(
+                CASE
+                  WHEN LOWER(BTRIM(t.title)) = $2 THEN 100
+                  WHEN LOWER(t.title) LIKE $2 || '%' THEN 85
+                  WHEN (' ' || REGEXP_REPLACE(LOWER(t.title), '[^[:alnum:]]+', ' ', 'g')) LIKE '% ' || $2 || '%' THEN 75
+                  WHEN t.title ILIKE $1 THEN 65
+                  ELSE 0
+                END,
+                CASE
+                  WHEN LOWER(BTRIM(COALESCE(t.artist, ''))) = $2 OR LOWER(BTRIM(COALESCE(t.album, ''))) = $2 THEN 80
+                  WHEN LOWER(COALESCE(t.artist, '')) LIKE $2 || '%' OR LOWER(COALESCE(t.album, '')) LIKE $2 || '%' THEN 70
+                  WHEN (' ' || REGEXP_REPLACE(LOWER(COALESCE(t.artist, '')), '[^[:alnum:]]+', ' ', 'g')) LIKE '% ' || $2 || '%'
+                    OR (' ' || REGEXP_REPLACE(LOWER(COALESCE(t.album, '')), '[^[:alnum:]]+', ' ', 'g')) LIKE '% ' || $2 || '%' THEN 60
+                  ELSE 50
+                END
+              ) AS relevance,
+              GREATEST(
+                SIMILARITY(LOWER(t.title), $2),
+                SIMILARITY(LOWER(COALESCE(t.artist, '')), $2),
+                SIMILARITY(LOWER(COALESCE(t.album, '')), $2)
+              )::real AS match_similarity,
+              TO_JSONB(t) || JSONB_BUILD_OBJECT('is_loved', ult.track_id IS NOT NULL) AS item
+       FROM tracks t
+       LEFT JOIN user_loved_tracks ult
+         ON ult.track_id = t.id AND ult.user_id = $5::uuid
+       WHERE t.title ILIKE $1 OR t.artist ILIKE $1 OR t.album ILIKE $1
+     ), ranked AS (
+       SELECT * FROM candidates WHERE relevance >= 50
+     )
+     SELECT result_type, type_rank, entity_id, sort_label, relevance, match_similarity, item
+     FROM ranked
+     WHERE $6::integer IS NULL
+        OR relevance < $6
+        OR (relevance = $6 AND match_similarity < $7::real)
+        OR (relevance = $6 AND match_similarity = $7::real AND sort_label > $8)
+        OR (relevance = $6 AND match_similarity = $7::real AND sort_label = $8 AND type_rank > $9)
+        OR (relevance = $6 AND match_similarity = $7::real AND sort_label = $8 AND type_rank = $9 AND entity_id > $10)
+     ORDER BY relevance DESC, match_similarity DESC, sort_label ASC, type_rank ASC, entity_id ASC
+     LIMIT $11`,
+    [
+      term,
+      lowered,
+      normalizedArtistKey || null,
+      normalizedArtistTerm,
+      userId,
+      cursor?.relevance ?? null,
+      cursor?.similarity ?? null,
+      cursor?.sortLabel ?? null,
+      cursor?.typeRank ?? null,
+      cursor?.id ?? null,
+      limit + 1,
+    ],
+  );
+
+  const hasMore = response.rows.length > limit;
+  const rows = response.rows.slice(0, limit) as RankedSearchDatabaseRow[];
+  const results: RankedSearchResult[] = rows.map((row) => ({
+    type: row.result_type,
+    relevance: Number(row.relevance),
+    item: row.result_type === 'track' ? mapTrackRow(row.item) : row.item,
+  }));
+  const last = rows[rows.length - 1];
+  const nextCursor = hasMore && last
+    ? encodeRankedSearchCursor({
+        query: lowered,
+        relevance: Number(last.relevance),
+        similarity: Number(last.match_similarity),
+        sortLabel: String(last.sort_label),
+        typeRank: Number(last.type_rank),
+        id: String(last.entity_id),
+      })
+    : null;
+
+  return { results, nextCursor };
 }
 
 // Returns which of the given track ids still exist — used to prune a restored

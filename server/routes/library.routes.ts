@@ -13,7 +13,7 @@ import { scanStatus, scanClients, broadcastScanStatus } from '../state';
 import { requireAdmin } from '../middleware/auth';
 import { startMbCreditsEnrichment, getMbCreditsProgress, startGeniusCreditsEnrichment, getGeniusCreditsProgress } from '../services/creditsEnrichment.service';
 import { enrichArtistImages, enrichArtistImagesInBackground } from '../services/artistImageEnrichment.service';
-import { getCreditsStatus, refreshArtistAudioProfiles, searchLibrary, getExistingTrackIds } from '../database';
+import { getCreditsStatus, refreshArtistAudioProfiles, searchLibrary, searchLibraryRanked, InvalidSearchCursorError, getExistingTrackIds } from '../database';
 import { createRateLimiter } from '../middleware/rateLimit';
 import { areAnalysisModelsReady } from '../services/downloadModels';
 
@@ -1417,6 +1417,14 @@ router.get('/search', async (req, res) => {
     const q = typeof req.query.q === 'string' ? req.query.q : '';
     const userId = req.user?.userId || null;
     const num = (v: unknown) => (typeof v === 'string' && v.trim() !== '' ? Number(v) : undefined);
+    if (req.query.mode === 'ranked') {
+      const result = await searchLibraryRanked(q, userId, {
+        limit: num(req.query.limit),
+        cursor: typeof req.query.cursor === 'string' ? req.query.cursor : undefined,
+      });
+      res.json(result);
+      return;
+    }
     const result = await searchLibrary(q, userId, {
       artistLimit: num(req.query.artistLimit),
       albumLimit: num(req.query.albumLimit),
@@ -1424,6 +1432,10 @@ router.get('/search', async (req, res) => {
     });
     res.json(result);
   } catch (error) {
+    if (error instanceof InvalidSearchCursorError) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
     console.error('Library search error:', error);
     res.status(500).json({ error: 'Search failed' });
   }

@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { usePlayerStore } from '../store';
 import { Search as SearchIcon, X, Play, MoreHorizontal, ArrowLeft } from 'lucide-react';
 import { TrackInfo } from '../utils/fileSystem';
 import { AlbumArt } from './AlbumArt';
 import { ArtistInitial } from './library/ArtistInitial';
 import { LoveButton } from './LoveButton';
+import { useKnownArtistKeys } from '../hooks/useKnownArtistKeys';
+import { buildArtistLinkMap, getTrackArtistDisplayNames, resolveArtistLink, resolveTrackArtistLink } from '../utils/artistLinks';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -31,6 +33,10 @@ interface ResultsProps {
     onArtistClick: (id: string) => void;
     onAlbumClick: (id: string) => void;
     onTrackPlay: (track: TrackInfo) => void;
+    onTrackOpen: (track: TrackInfo) => void;
+    artistLinkMap: ReadonlyMap<string, string>;
+    knownArtistKeys: Set<string>;
+    onNavigate: () => void;
     openContextMenu: (track: TrackInfo, x: number, y: number) => void;
 }
 
@@ -54,6 +60,10 @@ const SearchResults = React.memo(function SearchResults({
     onArtistClick,
     onAlbumClick,
     onTrackPlay,
+    onTrackOpen,
+    artistLinkMap,
+    knownArtistKeys,
+    onNavigate,
     openContextMenu,
 }: ResultsProps) {
     const noResults =
@@ -97,35 +107,57 @@ const SearchResults = React.memo(function SearchResults({
                         Albums
                     </h4>
                     <div className="grid grid-cols-1 gap-1">
-                        {matchedAlbums.map(album => (
-                            <button
-                                key={album.id}
-                                onClick={() => onAlbumClick(album.id)}
-                                className="global-search-result-row flex items-center gap-3 w-full text-left p-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
-                            >
-                                {album.artUrl ? (
-                                    <img
-                                        src={album.artUrl}
-                                        className="w-10 h-10 rounded-md object-cover shadow-sm flex-shrink-0"
-                                        alt=""
-                                    />
-                                ) : (
-                                    <div className="w-10 h-10 flex-shrink-0 rounded-md bg-[var(--color-surface)] border border-[var(--color-border)] flex items-center justify-center">
-                                        <span className="text-[var(--color-text-muted)] text-[8px] uppercase">
-                                            No Art
+                        {matchedAlbums.map(album => {
+                            const artistLink = resolveArtistLink(album.artist, artistLinkMap);
+                            return (
+                                <div
+                                    key={album.id}
+                                    className="global-search-result-row flex items-center gap-3 w-full text-left p-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+                                >
+                                    <button
+                                        type="button"
+                                        aria-label={`Open album ${album.title}`}
+                                        onClick={() => onAlbumClick(album.id)}
+                                        className="w-10 h-10 flex-shrink-0 rounded-md overflow-hidden"
+                                    >
+                                        {album.artUrl ? (
+                                            <img
+                                                src={album.artUrl}
+                                                className="w-full h-full object-cover shadow-sm"
+                                                alt=""
+                                            />
+                                        ) : (
+                                            <span className="w-full h-full bg-[var(--color-surface)] border border-[var(--color-border)] flex items-center justify-center">
+                                                <span className="text-[var(--color-text-muted)] text-[8px] uppercase">
+                                                    No Art
+                                                </span>
+                                            </span>
+                                        )}
+                                    </button>
+                                    <div className="flex flex-col overflow-hidden text-left flex-1 min-w-0">
+                                        <button
+                                            type="button"
+                                            onClick={() => onAlbumClick(album.id)}
+                                            className="font-medium text-[var(--color-text-primary)] truncate text-left"
+                                        >
+                                            {album.title}
+                                        </button>
+                                        <span className="text-xs text-[var(--color-text-secondary)] truncate">
+                                            {artistLink ? (
+                                                <Link
+                                                    to={artistLink}
+                                                    state={{ backLabel: 'Back to Search' }}
+                                                    onClick={onNavigate}
+                                                    className="search-result-artist-link"
+                                                >
+                                                    {album.artist}
+                                                </Link>
+                                            ) : album.artist}
                                         </span>
                                     </div>
-                                )}
-                                <div className="flex flex-col overflow-hidden text-left flex-1 min-w-0">
-                                    <span className="font-medium text-[var(--color-text-primary)] truncate">
-                                        {album.title}
-                                    </span>
-                                    <span className="text-xs text-[var(--color-text-secondary)] truncate">
-                                        {album.artist}
-                                    </span>
                                 </div>
-                            </button>
-                        ))}
+                            );
+                        })}
                     </div>
                 </div>
             )}
@@ -136,12 +168,16 @@ const SearchResults = React.memo(function SearchResults({
                         Tracks
                     </h4>
                     <div className="grid grid-cols-1 gap-1">
-                        {matchedTracks.map((track, i) => (
-                            <div
-                                key={track.id || i}
-                                className="global-search-result-row group flex items-center gap-3 w-full text-left p-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
-                            >
+                        {matchedTracks.map((track, i) => {
+                            const artistNames = getTrackArtistDisplayNames(track, knownArtistKeys);
+                            return (
                                 <div
+                                    key={track.id || i}
+                                    className="global-search-result-row group flex items-center gap-3 w-full text-left p-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+                                >
+                                <button
+                                    type="button"
+                                    aria-label={`Play ${track.title || 'track'}`}
                                     className="relative w-10 h-10 flex-shrink-0 cursor-pointer"
                                     onClick={() => onTrackPlay(track)}
                                 >
@@ -154,17 +190,36 @@ const SearchResults = React.memo(function SearchResults({
                                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 rounded-md transition-opacity flex items-center justify-center">
                                         <Play size={16} className="text-white ml-0.5" />
                                     </div>
-                                </div>
-                                <div className="flex flex-col flex-1 overflow-hidden min-w-0 text-left">
-                                    <span className="font-medium text-[var(--color-text-primary)] truncate">
+                                </button>
+                                <div className="global-search-track-link flex flex-col flex-1 overflow-hidden min-w-0 text-left">
+                                    <button
+                                        type="button"
+                                        onClick={() => onTrackOpen(track)}
+                                        disabled={!track.albumId}
+                                        aria-label={track.albumId ? `Open ${track.album || 'album'} and highlight ${track.title || 'track'}` : undefined}
+                                        className="font-medium text-[var(--color-text-primary)] truncate text-left"
+                                    >
                                         {track.title || track.path.split(/[\\\/]/).pop()}
-                                    </span>
+                                    </button>
                                     <span className="text-xs text-[var(--color-text-secondary)] truncate">
-                                        {typeof track.artists === 'string'
-                                            ? track.artists
-                                            : track.artists?.join(', ') ||
-                                              track.artist ||
-                                              'Unknown Artist'}
+                                        {artistNames.length > 0 ? artistNames.map((artistName, artistIndex) => {
+                                            const artistLink = resolveTrackArtistLink(artistName, artistIndex, track, artistLinkMap);
+                                            return (
+                                                <React.Fragment key={`${artistName}-${artistIndex}`}>
+                                                    {artistIndex > 0 && ' · '}
+                                                    {artistLink ? (
+                                                        <Link
+                                                            to={artistLink}
+                                                            state={{ backLabel: 'Back to Search' }}
+                                                            onClick={onNavigate}
+                                                            className="search-result-artist-link"
+                                                        >
+                                                            {artistName}
+                                                        </Link>
+                                                    ) : artistName}
+                                                </React.Fragment>
+                                            );
+                                        }) : 'Unknown Artist'}
                                     </span>
                                 </div>
                                 <button
@@ -173,13 +228,14 @@ const SearchResults = React.memo(function SearchResults({
                                         e.stopPropagation();
                                         openContextMenu(track, e.clientX, e.clientY);
                                     }}
-                                    className="opacity-0 group-hover:opacity-100 p-2 text-[var(--color-text-muted)] hover:text-[var(--color-primary)] transition-ui flex-shrink-0"
+                                    className="search-result-context-action opacity-0 group-hover:opacity-100 p-2 text-[var(--color-text-muted)] transition-ui flex-shrink-0"
                                 >
                                     <MoreHorizontal size={16} />
                                 </button>
                                 <LoveButton track={track} size={15} className="p-2 flex-shrink-0" />
-                            </div>
-                        ))}
+                                </div>
+                            );
+                        })}
                     </div>
                 </div>
             )}
@@ -192,6 +248,8 @@ const SearchResults = React.memo(function SearchResults({
 export const GlobalSearch: React.FC = () => {
     const setPlaylist = usePlayerStore((state: any) => state.setPlaylist);
     const openContextMenu = usePlayerStore((state: any) => state.openContextMenu);
+    const artists = usePlayerStore(state => state.artists);
+    const knownArtistKeys = useKnownArtistKeys();
     const navigate = useNavigate();
     const isMobile = useIsMobile();
 
@@ -203,7 +261,7 @@ export const GlobalSearch: React.FC = () => {
 
     const inputRef = useRef<HTMLInputElement>(null);
     const mobileInputRef = useRef<HTMLInputElement>(null);
-    const containerRef = useRef<HTMLDivElement>(null);
+    const containerRef = useRef<HTMLFormElement>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
     const closeTimerRef = useRef<number | null>(null);
 
@@ -379,6 +437,7 @@ export const GlobalSearch: React.FC = () => {
     }, [debouncedQuery]);
 
     const { matchedArtists, matchedAlbums, matchedTracks } = searchResults;
+    const artistLinkMap = useMemo(() => buildArtistLinkMap(artists), [artists]);
 
     // ── shared handlers ───────────────────────────────────────────────────────
     const handleArtistClick = useCallback((artistId: string) => {
@@ -394,6 +453,20 @@ export const GlobalSearch: React.FC = () => {
         setPlaylist([track], 0);
         handleClose();
     }, [handleClose, setPlaylist]);
+    const handleTrackOpen = useCallback((track: TrackInfo) => {
+        if (!track.albumId) return;
+        navigate(`/library/album/${encodeURIComponent(track.albumId)}?track=${encodeURIComponent(track.id)}`, {
+            state: { backLabel: 'Back to Search' },
+        });
+        handleClose();
+    }, [handleClose, navigate]);
+    const handleSubmit = useCallback((event: React.FormEvent) => {
+        event.preventDefault();
+        const term = query.trim();
+        if (!term) return;
+        navigate(`/search?q=${encodeURIComponent(term)}`);
+        handleClose();
+    }, [handleClose, navigate, query]);
 
     const sharedResultsProps = useMemo<ResultsProps>(() => ({
         query: debouncedQuery.trim() || rawQuery,
@@ -403,12 +476,16 @@ export const GlobalSearch: React.FC = () => {
         onArtistClick: handleArtistClick,
         onAlbumClick: handleAlbumClick,
         onTrackPlay: handleTrackPlay,
+        onTrackOpen: handleTrackOpen,
+        artistLinkMap,
+        knownArtistKeys,
+        onNavigate: handleClose,
         openContextMenu,
-    }), [debouncedQuery, rawQuery, matchedArtists, matchedAlbums, matchedTracks, handleArtistClick, handleAlbumClick, handleTrackPlay, openContextMenu]);
+    }), [debouncedQuery, rawQuery, matchedArtists, matchedAlbums, matchedTracks, handleArtistClick, handleAlbumClick, handleTrackPlay, handleTrackOpen, artistLinkMap, knownArtistKeys, handleClose, openContextMenu]);
 
     // ── pill (trigger) ────────────────────────────────────────────────────────
     const pill = (
-        <div ref={containerRef} className={`global-search-root ${isMobile ? 'global-search-root--mobile' : ''}`}>
+        <form ref={containerRef} onSubmit={handleSubmit} className={`global-search-root ${isMobile ? 'global-search-root--mobile' : ''}`}>
             <div
                 className={`
                     global-search-pill
@@ -465,7 +542,7 @@ export const GlobalSearch: React.FC = () => {
                     </div>,
                     document.body
                 )}
-        </div>
+        </form>
     );
 
     // ── mobile full-screen overlay portal ────────────────────────────────────
@@ -491,6 +568,9 @@ export const GlobalSearch: React.FC = () => {
                             type="search"
                             value={query}
                             onChange={e => setQuery(e.target.value)}
+                            onKeyDown={e => {
+                                if (e.key === 'Enter') handleSubmit(e);
+                            }}
                             placeholder="Search library…"
                             autoComplete="off"
                             className="flex-1 bg-transparent border-none outline-none text-base text-[var(--color-text-primary)] placeholder-[var(--color-text-muted)]"

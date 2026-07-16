@@ -455,6 +455,32 @@ Get the entire library structure (tracks, directories, artists, albums, genres).
   }
   ```
 
+### [GET] `/api/library/search`
+Search artists, albums, and tracks in the authenticated library.
+
+- `q` is the required search text. An empty value returns empty results.
+- The default mode returns `{ artists, albums, tracks }` and accepts
+  `artistLimit`, `albumLimit`, and `trackLimit`.
+- Exact case-insensitive identity/title matches rank before prefix, word-prefix,
+  and substring matches. Canonical artist identities are included.
+- `mode=ranked` returns one mixed result list for the routed search page. It
+  accepts `limit` (default 30, maximum 50) and an opaque `cursor`.
+- Ranked results have a minimum relevance of 50. `nextCursor: null` means there
+  are no more confident matches. A malformed or cross-query cursor returns 400.
+
+```json
+{
+  "results": [
+    {
+      "type": "artist",
+      "relevance": 100,
+      "item": { "id": "uuid-v4", "name": "NTO" }
+    }
+  ],
+  "nextCursor": "opaque-keyset-cursor"
+}
+```
+
 ### [POST] `/api/library/add`
 Add a mapped folder.
 - **Example Request**:

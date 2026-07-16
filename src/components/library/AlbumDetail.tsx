@@ -8,6 +8,7 @@ import { useEntityTracks } from '../../hooks/useEntityTracks';
 import { parseArtistsForDisplay } from '../../utils/artistUtils';
 import { useKnownArtistKeys } from '../../hooks/useKnownArtistKeys';
 import { formatTime } from '../../utils/formatTime';
+import { scrollToAlbumTrackTarget } from '../../utils/albumTrackFocus';
 import { buildArtistLinkMap } from '../../utils/artistLinks';
 import { BackButton } from './BackButton';
 import { useAlbumData } from '../../hooks/useAlbumData';
@@ -165,6 +166,7 @@ interface AlbumTrackRowProps {
     onPlay: (index: number) => void;
     onContextMenu: (track: TrackInfo, x: number, y: number) => void;
     playbackState: 'playing' | 'paused' | 'stopped';
+    isSearchTarget?: boolean;
     inlineCredits?: Array<{ role: string; name: string; artistId: string }>;
 }
 
@@ -193,6 +195,7 @@ const AlbumTrackRow = memo(({
     onPlay,
     onContextMenu,
     playbackState,
+    isSearchTarget = false,
     inlineCredits,
 }: AlbumTrackRowProps) => {
     const knownArtistKeys = useKnownArtistKeys();
@@ -209,6 +212,7 @@ const AlbumTrackRow = memo(({
 
     return (
         <div
+            data-track-id={track.id}
             onClick={() => onPlay(index)}
             role="button"
             tabIndex={0}
@@ -218,7 +222,7 @@ const AlbumTrackRow = memo(({
                     onPlay(index);
                 }
             }}
-            className={`grid grid-cols-[30px_1fr_40px] md:grid-cols-[40px_1fr_100px] gap-2 px-2 md:px-4 py-2 border-b border-black/5 dark:border-white/5 cursor-pointer items-center transition-ui duration-200 hover:bg-black/5 dark:hover:bg-white/5 focus-visible:bg-black/5 dark:focus-visible:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] rounded-lg my-0.5 group ${isCurrent ? 'bg-primary/5' : ''}`}
+            className={`grid grid-cols-[30px_1fr_40px] md:grid-cols-[40px_1fr_100px] gap-2 px-2 md:px-4 py-2 border-b border-black/5 dark:border-white/5 cursor-pointer items-center transition-ui duration-200 hover:bg-black/5 dark:hover:bg-white/5 focus-visible:bg-black/5 dark:focus-visible:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] rounded-lg my-0.5 group ${isCurrent ? 'bg-primary/5' : ''} ${isSearchTarget ? 'album-track-row--search-target' : ''}`}
         >
             <div className="flex items-center justify-center md:justify-start text-[var(--color-text-muted)] group-hover:text-[var(--color-primary)] transition-colors text-sm tabular-nums">
                 {isCurrent && playbackState !== 'stopped' ? (
@@ -549,6 +553,11 @@ export const AlbumDetail: React.FC = () => {
     const editionsButtonRef = useRef<HTMLButtonElement>(null);
     const [editionsMenuOpen, setEditionsMenuOpen] = useState(false);
     const trackListRef = useRef<HTMLDivElement>(null);
+    const [focusedTrackId, setFocusedTrackId] = useState<string | null>(null);
+    const handledTrackFocusRef = useRef<string | null>(null);
+    const trackFocusFrameRef = useRef<number | null>(null);
+    const trackFocusTimerRef = useRef<number | null>(null);
+    const targetTrackId = useMemo(() => new URLSearchParams(location.search).get('track'), [location.search]);
 
     const albumInfo = useMemo(() => albums.find(a => a.id === albumId), [albums, albumId]);
 
@@ -733,6 +742,50 @@ export const AlbumDetail: React.FC = () => {
         overscan: 8,
         enabled: shouldVirtualizeAlbumRows,
     });
+
+    useEffect(() => {
+        if (!targetTrackId) {
+            handledTrackFocusRef.current = null;
+            if (trackFocusFrameRef.current !== null) window.cancelAnimationFrame(trackFocusFrameRef.current);
+            if (trackFocusTimerRef.current !== null) window.clearTimeout(trackFocusTimerRef.current);
+            trackFocusFrameRef.current = null;
+            trackFocusTimerRef.current = null;
+            setFocusedTrackId(null);
+            return;
+        }
+        if (albumTracksLoading) return;
+
+        const focusKey = `${albumId || ''}:${targetTrackId}`;
+        if (handledTrackFocusRef.current === focusKey) return;
+        handledTrackFocusRef.current = focusKey;
+
+        const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        if (trackFocusFrameRef.current !== null) window.cancelAnimationFrame(trackFocusFrameRef.current);
+        if (trackFocusTimerRef.current !== null) window.clearTimeout(trackFocusTimerRef.current);
+        trackFocusFrameRef.current = window.requestAnimationFrame(() => {
+            const found = scrollToAlbumTrackTarget({
+                rows: albumListRows,
+                targetTrackId,
+                container: trackListRef.current,
+                virtualized: shouldVirtualizeAlbumRows,
+                behavior: reduceMotion ? 'auto' : 'smooth',
+                scrollToIndex: albumRowsVirtualizer.scrollToIndex,
+            });
+            if (found) setFocusedTrackId(targetTrackId);
+            trackFocusFrameRef.current = null;
+        });
+        trackFocusTimerRef.current = window.setTimeout(() => {
+            setFocusedTrackId(current => current === targetTrackId ? null : current);
+            trackFocusTimerRef.current = null;
+        }, 2500);
+    }, [albumId, albumListRows, albumTracksLoading, shouldVirtualizeAlbumRows, targetTrackId]);
+
+    useEffect(() => {
+        return () => {
+            if (trackFocusFrameRef.current !== null) window.cancelAnimationFrame(trackFocusFrameRef.current);
+            if (trackFocusTimerRef.current !== null) window.clearTimeout(trackFocusTimerRef.current);
+        };
+    }, []);
 
     const artistLinkByName = useMemo(
         () => buildArtistLinkMap(albumTracks, artists),
@@ -1217,6 +1270,7 @@ export const AlbumDetail: React.FC = () => {
                                                 onPlay={handlePlayTrack}
                                                 onContextMenu={handleTrackContextMenu}
                                                 playbackState={playbackState}
+                                                isSearchTarget={focusedTrackId === row.track.id}
                                                 inlineCredits={selectInlineCredits(row.track)}
                                             />
                                         )}
@@ -1237,6 +1291,7 @@ export const AlbumDetail: React.FC = () => {
                                 onPlay={handlePlayTrack}
                                 onContextMenu={handleTrackContextMenu}
                                 playbackState={playbackState}
+                                isSearchTarget={focusedTrackId === row.track.id}
                                 inlineCredits={selectInlineCredits(row.track)}
                             />
                         ))

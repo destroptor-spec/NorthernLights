@@ -42,7 +42,8 @@ populated lazily for two admin tools (see [On-demand cache](#on-demand-full-libr
 | Album detail (`AlbumDetail`) | `GET /api/albums/:id` | per-album |
 | Artist detail (`ArtistDetail`) | `GET /api/artists/:id` + `GET /api/artists/:id/appears-on` | per-artist + collaborations |
 | Genre detail (`GenreDetail`) | `GET /api/genres/:id` | per-genre |
-| Global search (`GlobalSearch`) | `GET /api/library/search?q=` | matches only |
+| Live search (`GlobalSearch`) | `GET /api/library/search?q=` | grouped matches only |
+| Search results page (`SearchResultsPage`) | `GET /api/library/search?mode=ranked&q=` | cursor-paged mixed matches |
 | Hub (`Hub`) | `GET /api/hub`, `/api/hub/smart` (tracks embedded) | embedded |
 | Playlists / detail | `GET /api/playlists`, `/api/playlists/:id` | embedded |
 | Playlist suggestions | `GET /api/playlists/:id/suggestions` (candidate pool) | pooled |
@@ -71,10 +72,20 @@ fields and only falls back to track derivation if they're absent.
 ## Server-side search
 
 `GET /api/library/search?q=` (`searchLibrary` in `server/database/index.ts`)
-runs three trigram-indexed `ILIKE` queries (tracks, artists, albums) — the same
-pattern as the OpenSubsonic `search3` route — and returns `{ artists, albums,
-tracks }` with per-user `is_loved`. `GlobalSearch` debounces input and aborts
-the prior request per keystroke. Empty query → empty result; results are capped.
+runs three trigram-indexed `ILIKE` queries for tracks, artists, and albums. It
+returns `{ artists, albums, tracks }` with per-user `is_loved`. Exact names are
+ranked before prefixes, word prefixes, and substring matches, including the
+canonical `artists.normalized_key` identity. `GlobalSearch` debounces input and
+aborts the prior request per keystroke. Empty queries return empty arrays and
+each grouped result type is capped.
+
+Submitting the live search opens `/search?q=`. That page requests
+`mode=ranked`, which returns a single mixed list as
+`{ results: [{ type, relevance, item }], nextCursor }`. Results use a
+deterministic 50–100 relevance scale and stop below 50. The opaque cursor is
+bound to the normalized query and carries the complete sort tuple, so infinite
+loading uses keyset pagination instead of a deep `OFFSET`. The default batch is
+30 and the server clamps requests to 50.
 
 ## Liked/loved state
 
@@ -98,6 +109,7 @@ external APIs' term).
 | `GET /api/artists/:id/appears-on` | `{ tracks }` — collaborations (artist in `artists[]`, not primary) |
 | `GET /api/genres/:id` | `{ ...genre, tracks }` (matches `genre_id` + the genre name in multi-genre tags) |
 | `GET /api/library/search?q=` | `{ artists, albums, tracks }` |
+| `GET /api/library/search?mode=ranked&q=&limit=&cursor=` | `{ results, nextCursor }` |
 | `GET /api/playlists/:id/suggestions` | `{ tracks }` — bounded candidate pool |
 | `GET /api/library/tracks` | `{ tracks }` — full list, used only by the on-demand cache |
 | `GET /api/library/directories` | `{ directories }` |

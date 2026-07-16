@@ -3,7 +3,7 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { usePlayerStore } from '../store/index';
 import { usePlayerPlacement } from '../hooks/usePlayerPlacement';
 import { useScrollRestoration } from '../hooks/useScrollRestoration';
-import { AlbumDetail, ArtistDetail, PlaylistDetail, LibraryHome, Hub, Playlists } from '../utils/routePrefetch';
+import { AlbumDetail, ArtistDetail, PlaylistDetail, LibraryHome, Hub, Playlists, SearchResultsPage } from '../utils/routePrefetch';
 
 const GenreDetail = React.lazy(() => import('./library/GenreDetail').then(module => ({ default: module.GenreDetail })));
 // Exported so App's logged-out invite gate and the routes below share one chunk.
@@ -139,6 +139,7 @@ export const MainContent: React.FC = () => {
               <Route path="/library/album/:albumId" element={<AlbumDetail />} />
               <Route path="/library/genres" element={<LibraryHome section="genres" />} />
               <Route path="/library/genre/:genreId" element={<GenreDetail />} />
+              <Route path="/search" element={<SearchResultsPage />} />
               <Route path="/playlists" element={<Playlists />} />
               <Route path="/playlists/:playlistId" element={<PlaylistDetail />} />
               <Route path="*" element={<Navigate to="/library" replace />} />
