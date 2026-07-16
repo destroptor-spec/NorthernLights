@@ -1,28 +1,5 @@
 # Changelog
 
-## [v1.0.0-rc.4] - 2026-05-26
-
-### API
-- **OpenSubsonic Compatibility**: Full API-key-only `/rest` surface for Subsonic clients — browsing, search, playlists, stream/download/HLS, cover art, stars, ratings, scrobbling, and compatibility stubs. Legacy u/p and token/salt auth rejected with OpenSubsonic error codes 41/42. Keys are SHA-256–hashed; the raw key is shown once at creation.
-- **Subsonic Key Management**: `GET/POST/DELETE /api/auth/subsonic-api-keys` for listing, creating, and revoking Aurora-managed Subsonic API keys. Includes per-key rate limiting and last-used-at tracking.
-- **Single-Playlist Endpoint**: `GET /api/playlists/:id` returns one playlist with tracks, eliminating the N+1 fetch pattern when opening a single playlist detail view.
-- **Track Rating**: `setTrackRatingForUser` for Subsonic 1–5 star ratings stored in `user_playback_stats`.
-- **Trigram Search Indexes**: GIN `gin_trgm_ops` indexes on `tracks(title, artist, album)` for fast Subsonic search2/search3 ILIKE queries.
-
-### UI
-- **View-Transition Morphing**: All detail pages (album, artist, playlist) now use `document.startViewTransition` + per-entity `view-transition-name` so cover art and avatars morph smoothly between list and detail views. Falls back to instant navigation on browsers without the API or when the user prefers reduced motion.
-- **Hero State Skeletons**: Album, artist, and playlist detail routes receive hero placeholder data via router state, allowing them to render title, art, and metadata instantly before the store hydrates.
-- **Route Prefetch**: Hover, focus, and pointer-down on album cards, artist cards, playlist cards, Hub tiles, and search results warm up the lazy-loaded detail chunk so navigation is near-instant.
-- **GlobalSearch Overhaul**: Replaced inline Tailwind with named CSS classes. Added pill expansion animation, mobile full-screen overlay with 180ms slide-out close, result row hover translate, and `prefers-reduced-motion` guards.
-- **Mobile Now Playing Sheet**: Deferred unmount via `data-state` (`open`/`closing`) with dedicated enter/exit keyframes so the slide-down animation completes before the DOM is removed.
-- **Context Menu Cleanup**: Removed unused `showMobileHandle` prop and the drag-handle strip from mobile sheets.
-- **Hub Navigation**: All Hub card, tile, and unique-collection clicks now pass hero state through `withViewTransition` for morphing cover art. Jump tiles also prefetch their target on hover/focus.
-- **Subsonic API Key UI**: New "OpenSubsonic API Keys" section in Account settings to create, copy, and revoke keys with prefix display, creation date, last-used date, and revoked state.
-
-### Performance
-- **Playlist Single-Fetch**: Detail views use `fetchPlaylistFromServer(id)` to load one playlist instead of refreshing all playlists. Falls back to bulk refresh only on 404.
-- **View-Transition `flushSync`**: Navigation inside `startViewTransition` callbacks uses `flushSync` to commit the DOM synchronously so the browser captures the post-navigation state for the morph.
-
 ## [Unreleased]
 
 ## [v1.0.0-rc.6] - 2026-07-14
@@ -97,6 +74,86 @@
 
 ### Infrastructure
 - **Rootless Podman**: Enable rootless Podman lingering so DB container survives logout.
+
+## [v1.0.0-rc.5] - 2026-06-10
+
+### Architecture & Performance
+- **Entity-First Client Boot**: The client no longer loads the full track list at boot. Views render from lightweight entity lists (artists/albums/genres); tracks are fetched per-entity on demand via the new `useEntityTracks` hook. `fetchLibraryFromServer` fetches entities + directories in parallel, then reconciles the restored play queue via `POST /api/library/tracks/exists`.
+- **Server-Side Search**: `GET /api/library/search` runs trigram-indexed ILIKE queries (tracks, artists, albums) with per-user `is_loved`. `GlobalSearch` debounces input and aborts the prior request per keystroke. Empty query → empty result; results are capped.
+- **Server-Precomputed Album Metadata**: `getAllAlbums` computes track_count, derived_year, derived_genres, derived_release_type, and art_hash server-side via a LATERAL aggregate over tracks grouped by album_id. The client's `deriveAlbumMetadata` prefers these fields and only falls back to track derivation if absent.
+- **Per-Entity Track Endpoints**: `getTracksBy{Artist,Album,Genre}` accept userId for per-user is_loved. New endpoints: `GET /api/artists/:id/appears-on` (collaborations), `GET /api/playlists/:id/suggestions` (bounded candidate pool), `GET /api/library/tracks`, `GET /api/library/directories`, `POST /api/library/tracks/exists`.
+- **Playlist Suggestion Pool**: `getPlaylistSuggestionPool` returns a bounded pool (≤500) of tracks sharing the playlist's artists, genres, or album-artists, ordered so shared-artist matches survive the cap. The existing client overlap-scoring then ranks the pool.
+- **Gzip Compression**: Added `compression` middleware to gzip JSON/text responses, reducing the ~26MB library payload significantly. SSE streams are excluded to avoid buffering real-time scan/progress updates.
+- **Slow-Query Observability**: Refactored slow-query logging to split connection-acquire time from execution time by acquiring the pool client explicitly. Reveals whether a slow query is pool pressure or SQL cost.
+- **In-Memory Settings Cache**: `system_settings` and `user_settings` are read through in-memory Maps with 30s TTL and write-through on set, eliminating repeated pool round-trips. Progress-polled keys excluded.
+- **Materialized View for Similar Artists**: `artist_audio_profiles` MV precomputes per-artist averaged musicnn + effnet vectors. `getSimilarArtistsByAudioProfile` reads candidates from the MV instead of re-aggregating the whole library. Refreshed after analysis batch writes features.
+- **Rendering Churn Reduction**: Decomposed App shell into memoized sub-components, memoized always-mounted components, preserved artist/album filter+sort memoization across route changes, and extracted library derivations to survive route unmount. Pre-warms tab route chunks on hover/focus/pointerdown. Replaced correlated EXISTS with LEFT JOIN in playlist-track loaders.
+- **Virtualized Grids**: Virtualized album/artist card grids in LibraryHome and the playlist grid with lazy-loaded thumbnails. Bumped PWA art cache maxEntries from 500 to 4000. Measurement gate on `VirtualizedCardGrid` prevents mounting hundreds of cards at once (each firing /api/art requests) when containerWidth is 0, which caused OOM on large libraries under HTTP/1.1. Fixed resize feedback loop crash.
+- **DB Scaling for 100k+ Libraries**: Fetch dedup/cancellation and render churn improvements targeting large libraries.
+
+### Library & Metadata
+- **Incremental Scan**: New `art_hash` and `file_mtime` columns enable reprocessing only changed files. Art is encoded at scan time via the new `artCache` service (`sharp` moved to production deps). Hash-addressed `/api/art` endpoint serves pre-encoded AVIF cache. Content-hash art URLs and size-aware AlbumArt.
+- **Album Disc Hero**: Album detail view shows a disc platter that rolls out from behind the cover. Uses Cover Art Archive "Medium" images when available (real printed disc/vinyl-label scans), falls back to a procedural vinyl label built from local cover art. Backend adds `caaGetReleaseImages`, `pickMediumImage`, `pickFrontImage`, `getRepresentativeReleaseMbid`, and `GET /api/providers/album/media-image`.
+- **Taxonomy-Grouped Genre View**: Genre grid reorganized into taxonomy-grouped aurora cards when MBDB taxonomy is available.
+- **Track File Size**: `file_size` stored in `tracks` and backfilled on scan; surfaced in Subsonic responses.
+
+### Subsonic / OpenSubsonic
+- **Extended Endpoints**: Implemented play queue, lyrics, similar songs, and `getUser` on the `/rest` surface.
+- **Symfonium Compatibility**: `search3` query="" treated as match-all for full-library sync. `getOpenSubsonicExtensions` served without auth so Symfonium can discover apiKey auth. Fixed album list pagination, sorting, and scan status. URL-safe song IDs via base64url encoding. Subsonic client compat fixes for suffix, size, created, filters, and rate limit.
+- **OpenSubsonic Service Toggle**: Admin enable/disable toggle in System settings. `openSubsonicEnabled` added to store state. `/rest` returns error `50` when disabled.
+- **API Keys Tab**: Subsonic API key management moved to dedicated Settings tab with rotate and hard-delete support.
+- **LLM Playlists Read-Only**: LLM-generated playlists marked read-only via Subsonic; hub refresh triggered on generation.
+
+### Playback
+- **Configurable Played Threshold**: User-configurable played threshold with fixed play/skip recording timing.
+- **Wake Lock & Sleep Timer**: Screen wake lock during playback and a sleep timer with scrobble failure surfacing.
+- **MediaSession Stop Action**: Added `stop` action handler to Media Session controls.
+- **Autoplay Handling**: `PlaybackManager.playUrl` treats `NotAllowedError` as paused (no `nextTrack()` cascade). `onRehydrateStorage` coerces persisted 'playing' to 'paused' on reload.
+- **Incidental Offline Playback**: Made incidental offline playback reliable.
+- **Last.fm Signature Fix**: Use byte-order sort for Last.fm API signatures.
+
+### UI
+- **Filter UI Consolidation**: Replaced `FacetPopover` and `MobileFilterOverlay` with shared `ContextMenuPortal` (desktop popover / mobile bottom-sheet). Genre facet gains hierarchical drill-down via `GenreFacetMenu` when MBDB taxonomy is available. `QueryBuilderModal` goes fullscreen on mobile.
+- **Love → Like Rename**: UI labels renamed from "love"/"favorite" to "like"/"liked" for consistency. Internal field names and Last.fm/ListenBrainz integration remain "love".
+- **Shareable Playlist Links**: Public read-only snapshot links for playlists.
+- **Scrobbling Tab**: Extracted Scrobbling tab from Account settings into its own section.
+- **Mobile Tab Feedback**: Instant visual feedback on mobile tab taps.
+- **View Transition Removal**: Removed the view transition system introduced in rc.4.
+
+### Security
+- **Rate Limiting**: Added rate limiting to all route groups; hardened invite preview endpoint.
+- **Admin Auth on Mutations**: Required admin auth on library mutation endpoints.
+- **HLS Path Validation**: Hardened HLS segment path validation against directory traversal.
+- **Playlist Insert Cap**: Capped playlist track inserts to prevent unbounded bulk queries.
+
+### Infrastructure
+- **Container Runtime Detection**: Hardened container runtime detection with absolute path resolution. PM2/systemd often run with a minimal PATH that omits /usr/bin, causing spurious "No container runtime found". Probes common install locations with `fs.accessSync` before falling back to PATH resolution.
+
+### Documentation
+- Added `docs/library_data_loading.md` covering the entity-first boot flow, per-entity track fetching, server-side search, queue reconciliation, and the on-demand full-library cache for admin tools. Updated `architecture_overview.md` and `production_guide.md` with HTTP/2/3 reverse proxy guidance. Refreshed README with rc.4 features and high-level comparative features.
+
+## [v1.0.0-rc.4] - 2026-05-26
+
+### API
+- **OpenSubsonic Compatibility**: Full API-key-only `/rest` surface for Subsonic clients — browsing, search, playlists, stream/download/HLS, cover art, stars, ratings, scrobbling, and compatibility stubs. Legacy u/p and token/salt auth rejected with OpenSubsonic error codes 41/42. Keys are SHA-256–hashed; the raw key is shown once at creation.
+- **Subsonic Key Management**: `GET/POST/DELETE /api/auth/subsonic-api-keys` for listing, creating, and revoking Aurora-managed Subsonic API keys. Includes per-key rate limiting and last-used-at tracking.
+- **Single-Playlist Endpoint**: `GET /api/playlists/:id` returns one playlist with tracks, eliminating the N+1 fetch pattern when opening a single playlist detail view.
+- **Track Rating**: `setTrackRatingForUser` for Subsonic 1–5 star ratings stored in `user_playback_stats`.
+- **Trigram Search Indexes**: GIN `gin_trgm_ops` indexes on `tracks(title, artist, album)` for fast Subsonic search2/search3 ILIKE queries.
+
+### UI
+- **View-Transition Morphing**: All detail pages (album, artist, playlist) now use `document.startViewTransition` + per-entity `view-transition-name` so cover art and avatars morph smoothly between list and detail views. Falls back to instant navigation on browsers without the API or when the user prefers reduced motion.
+- **Hero State Skeletons**: Album, artist, and playlist detail routes receive hero placeholder data via router state, allowing them to render title, art, and metadata instantly before the store hydrates.
+- **Route Prefetch**: Hover, focus, and pointer-down on album cards, artist cards, playlist cards, Hub tiles, and search results warm up the lazy-loaded detail chunk so navigation is near-instant.
+- **GlobalSearch Overhaul**: Replaced inline Tailwind with named CSS classes. Added pill expansion animation, mobile full-screen overlay with 180ms slide-out close, result row hover translate, and `prefers-reduced-motion` guards.
+- **Mobile Now Playing Sheet**: Deferred unmount via `data-state` (`open`/`closing`) with dedicated enter/exit keyframes so the slide-down animation completes before the DOM is removed.
+- **Context Menu Cleanup**: Removed unused `showMobileHandle` prop and the drag-handle strip from mobile sheets.
+- **Hub Navigation**: All Hub card, tile, and unique-collection clicks now pass hero state through `withViewTransition` for morphing cover art. Jump tiles also prefetch their target on hover/focus.
+- **Subsonic API Key UI**: New "OpenSubsonic API Keys" section in Account settings to create, copy, and revoke keys with prefix display, creation date, last-used date, and revoked state.
+
+### Performance
+- **Playlist Single-Fetch**: Detail views use `fetchPlaylistFromServer(id)` to load one playlist instead of refreshing all playlists. Falls back to bulk refresh only on 404.
+- **View-Transition `flushSync`**: Navigation inside `startViewTransition` callbacks uses `flushSync` to commit the DOM synchronously so the browser captures the post-navigation state for the morph.
 
 ## [v1.0.0-rc.3] - 2026-05-19
 
