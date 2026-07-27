@@ -74,7 +74,7 @@ function applyLoudnessForTrack(get: () => PlayerState, track: TrackInfo, generat
 
   if (getCachedLoudness(track.id) !== undefined) return; // already fetched
 
-  const authHeaders = (get() as any).getAuthHeader();
+  const authHeaders = get().getAuthHeader();
   const ids = [track.id];
   const here = s.playlist.findIndex((t) => t.id === track.id);
   if (here >= 0) for (const t of s.playlist.slice(here + 1, here + 3)) if (t?.id) ids.push(t.id);
@@ -849,7 +849,7 @@ export const usePlayerStore = create<PlayerState>()(
           } = state;
           const currentTrack = state.currentIndex !== null ? state.playlist[state.currentIndex] : null;
           if (_scrobbleEligible && _scrobbleStartAt && currentTrack?.artist && currentTrack?.title) {
-            const authHeaders = (get() as any).getAuthHeader();
+            const authHeaders = get().getAuthHeader();
             const { duration } = getPlaybackTimeSnapshot();
             const payload = {
               tracks: [{
@@ -1563,7 +1563,7 @@ export const usePlayerStore = create<PlayerState>()(
 
         loadSettings: async () => {
           try {
-            const authHeaders = (get() as any).getAuthHeader();
+            const authHeaders = get().getAuthHeader();
             const res = await fetch('/api/settings', { headers: authHeaders });
             if (res.ok) {
               const data = await res.json();
@@ -1665,7 +1665,7 @@ export const usePlayerStore = create<PlayerState>()(
         saveSettings: async () => {
            try {
               const state = get();
-              const authHeaders = (state as any).getAuthHeader();
+              const authHeaders = state.getAuthHeader();
               const payload = {
                 discoveryLevel: state.discoveryLevel,
                 genreStrictness: state.genreStrictness,
@@ -1770,7 +1770,7 @@ export const usePlayerStore = create<PlayerState>()(
           
           set({ isFetchingInfinity: true });
           try {
-            const authHeaders = (state as any).getAuthHeader();
+            const authHeaders = state.getAuthHeader();
             const payload = {
               sessionHistoryTrackIds: state.sessionHistoryTrackIds,
               settings: {
@@ -1836,7 +1836,7 @@ export const usePlayerStore = create<PlayerState>()(
               const ids = queue.map((t) => t.id);
               let existing = new Set<string>(ids);
               try {
-                const authHeaders = (get() as any).getAuthHeader();
+                const authHeaders = get().getAuthHeader();
                 const res = await fetch('/api/library/tracks/exists', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json', ...authHeaders },
@@ -1886,7 +1886,7 @@ export const usePlayerStore = create<PlayerState>()(
 
           const run = (async () => {
           try {
-            const authHeaders = (get() as any).getAuthHeader();
+            const authHeaders = get().getAuthHeader();
             // Entity-first: these lightweight lists make the library views
             // interactive immediately, instead of waiting on the full track set.
             const [artistsRes, albumsRes, genresRes, dirsRes] = await Promise.all([
@@ -1943,7 +1943,7 @@ export const usePlayerStore = create<PlayerState>()(
           if (inFlightFullLibrary) return inFlightFullLibrary;
           const p = (async () => {
             try {
-              const authHeaders = (get() as any).getAuthHeader();
+              const authHeaders = get().getAuthHeader();
               const res = await fetch('/api/library/tracks', { headers: authHeaders });
               if (!res.ok) return;
               const data = await res.json();
@@ -1969,7 +1969,7 @@ export const usePlayerStore = create<PlayerState>()(
            set({ isPlaylistsLoading: true, playlistsError: null });
            const run = (async () => {
            try {
-              const authHeaders = (get() as any).getAuthHeader();
+              const authHeaders = get().getAuthHeader();
               const res = await fetch('/api/playlists', { headers: authHeaders, signal: ac.signal });
               if (res.ok) {
                  const data = await res.json();
@@ -2016,7 +2016,7 @@ export const usePlayerStore = create<PlayerState>()(
         // discovered playlists are immediately playable.
         fetchDiscoverPlaylists: async () => {
            try {
-              const authHeaders = (get() as any).getAuthHeader();
+              const authHeaders = get().getAuthHeader();
               const res = await fetch('/api/playlists/discover', { headers: authHeaders });
               if (!res.ok) return;
               const data = await res.json();
@@ -2050,7 +2050,7 @@ export const usePlayerStore = create<PlayerState>()(
         // accessible (404 / unauthenticated / network failure).
         fetchPlaylistFromServer: async (playlistId: string) => {
            try {
-              const authHeaders = (get() as any).getAuthHeader();
+              const authHeaders = get().getAuthHeader();
               const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}`, { headers: authHeaders });
               if (!res.ok) return false;
 
@@ -2090,7 +2090,7 @@ export const usePlayerStore = create<PlayerState>()(
 
         createPlaylist: async (title: string, description?: string) => {
            try {
-              const authHeaders = (get() as any).getAuthHeader();
+              const authHeaders = get().getAuthHeader();
               const res = await fetch('/api/playlists', {
                  method: 'POST',
                  headers: { 'Content-Type': 'application/json', ...authHeaders },
@@ -2112,7 +2112,7 @@ export const usePlayerStore = create<PlayerState>()(
 
          deletePlaylist: async (playlistId: string) => {
             try {
-               const authHeaders = (get() as any).getAuthHeader();
+               const authHeaders = get().getAuthHeader();
                const res = await fetch(`/api/playlists/${playlistId}`, {
                   method: 'DELETE',
                   headers: authHeaders,
@@ -2127,7 +2127,7 @@ export const usePlayerStore = create<PlayerState>()(
 
          togglePin: async (playlistId: string, pinned: boolean) => {
             try {
-               const authHeaders = (get() as any).getAuthHeader();
+               const authHeaders = get().getAuthHeader();
                const res = await fetch(`/api/playlists/${playlistId}/pin`, {
                   method: 'PATCH',
                   headers: { 'Content-Type': 'application/json', ...authHeaders },
@@ -2153,7 +2153,7 @@ export const usePlayerStore = create<PlayerState>()(
                ),
             });
             try {
-               const authHeaders = (get() as any).getAuthHeader();
+               const authHeaders = get().getAuthHeader();
                const res = await fetch(`/api/playlists/${playlistId}/privacy`, {
                   method: 'PATCH',
                   headers: { 'Content-Type': 'application/json', ...authHeaders },
@@ -2180,7 +2180,7 @@ export const usePlayerStore = create<PlayerState>()(
             });
 
             try {
-               const authHeaders = (get() as any).getAuthHeader();
+               const authHeaders = get().getAuthHeader();
                const res = await fetch(`/api/playlists/${playlistId}`, {
                   method: 'PATCH',
                   headers: { 'Content-Type': 'application/json', ...authHeaders },
@@ -2219,7 +2219,7 @@ export const usePlayerStore = create<PlayerState>()(
            });
 
            try {
-             const authHeaders = (get() as any).getAuthHeader();
+             const authHeaders = get().getAuthHeader();
              const res = await fetch(`/api/playlists/${playlistId}/tracks`, {
                method: 'POST',
                headers: { 'Content-Type': 'application/json', ...authHeaders },
@@ -2292,7 +2292,7 @@ export const usePlayerStore = create<PlayerState>()(
           applyLoved(nextLoved);
 
           try {
-            const authHeaders = (get() as any).getAuthHeader();
+            const authHeaders = get().getAuthHeader();
             const res = await fetch('/api/library/love', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', ...authHeaders },
@@ -2363,7 +2363,7 @@ export const usePlayerStore = create<PlayerState>()(
           }));
           
           try {
-            const authHeaders = (get() as any).getAuthHeader();
+            const authHeaders = get().getAuthHeader();
             await fetch('/api/library/remove', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', ...authHeaders },
@@ -2385,7 +2385,7 @@ export const usePlayerStore = create<PlayerState>()(
             let scanStarted = false;
             while (!scanStarted) {
               try {
-                const authHeaders = (get() as any).getAuthHeader();
+                const authHeaders = get().getAuthHeader();
                 const res = await fetch('/api/library/scan', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json', ...authHeaders },
@@ -2416,7 +2416,7 @@ export const usePlayerStore = create<PlayerState>()(
 
           // Fetch the final library to reflect the new tracks
           try {
-            const authHeaders = (get() as any).getAuthHeader();
+            const authHeaders = get().getAuthHeader();
             const fetchRes = await fetch('/api/library', { headers: authHeaders });
             if (fetchRes.ok) {
               const data = await fetchRes.json();
@@ -2686,7 +2686,7 @@ export const usePlayerStore = create<PlayerState>()(
             // Send "now playing" to scrobble providers if connected
             const state = get();
             if (track.artist && track.title) {
-              const authHeaders = (get() as any).getAuthHeader();
+              const authHeaders = get().getAuthHeader();
               const nowPlayingBody = JSON.stringify({
                 artist: track.artist,
                 track: track.title,
@@ -2918,7 +2918,7 @@ export const usePlayerStore = create<PlayerState>()(
           // configured "played" threshold (see onTimeUpdate). The rolling
           // session history is pushed separately at playback start so
           // Infinity-mode dedup doesn't have to wait for the threshold.
-          const authHeaders = (get() as any).getAuthHeader();
+          const authHeaders = get().getAuthHeader();
           fetch('/api/playback/record', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeaders },
@@ -2928,7 +2928,7 @@ export const usePlayerStore = create<PlayerState>()(
 
         recordSkip: (trackId: string) => {
           // Fire-and-forget telemetry to backend
-          const authHeaders = (get() as any).getAuthHeader();
+          const authHeaders = get().getAuthHeader();
           fetch('/api/playback/skip', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeaders },

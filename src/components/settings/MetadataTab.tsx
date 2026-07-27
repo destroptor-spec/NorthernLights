@@ -800,7 +800,7 @@ export const MetadataTab: React.FC = () => {
                                     ) : (
                                         <button onClick={async () => {
                                             try {
-                                                const authHeaders = (usePlayerStore.getState() as any).getAuthHeader?.() || {};
+                                                const authHeaders = usePlayerStore.getState().getAuthHeader();
                                                 // Persist credentials server-side before the OAuth hop — the
                                                 // authorize route reads Client ID/Secret from system settings.
                                                 const saveRes = await fetch('/api/settings', {

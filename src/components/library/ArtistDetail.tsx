@@ -12,7 +12,7 @@ import { AlbumCard, AlbumCardSkeleton } from './AlbumCard';
 import { BackButton } from './BackButton';
 import { FadedHeroImage } from './FadedHeroImage';
 import { ArtistInitial } from './ArtistInitial';
-import { formatTime } from '../../utils/formatTime';
+import { formatDuration, formatTime } from '../../utils/formatTime';
 import { ExternalLink, Globe, Users, Mic2, Calendar, Sparkles, Music2, Clock, BookOpen, Play, Headphones, Link2, Disc3, Radio, Tag } from 'lucide-react';
 import { ContextMenuFrame, ContextMenuHeader, ContextMenuLink, ContextMenuList, ContextMenuPortal } from '../ContextMenu';
 import { useArtistConcerts, OnTourSticker, UpcomingShows } from './ArtistConcerts';
@@ -92,13 +92,6 @@ function formatListeners(raw: string): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M listeners`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K listeners`;
   return `${n} listeners`;
-}
-
-function formatDuration(totalSeconds: number): string {
-  const h = Math.floor(totalSeconds / 3600);
-  const m = Math.floor((totalSeconds % 3600) / 60);
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
 }
 
 function normalizePopularTitle(value: string | undefined | null): string {

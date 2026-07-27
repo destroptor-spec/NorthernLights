@@ -34,7 +34,7 @@ export function useDiscImage(albumId: string | undefined, discIndex = 0): DiscIm
         let cancelled = false;
         setState({ ...EMPTY, loading: true });
 
-        const authHeaders = (usePlayerStore.getState() as any).getAuthHeader?.() || {};
+        const authHeaders = usePlayerStore.getState().getAuthHeader();
         fetch(`/api/providers/album/media-image?albumId=${encodeURIComponent(albumId)}&discIndex=${discIndex}`, { headers: authHeaders })
             .then(r => (r.ok ? r.json() : null))
             .then(data => {

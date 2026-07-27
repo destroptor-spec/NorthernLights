@@ -32,7 +32,7 @@ function proxyImageUrl(externalUrl: string): string {
 
 function getAuthHeaders(): Record<string, string> {
     const state = usePlayerStore.getState();
-    return (state as any).getAuthHeader?.() || {};
+    return state.getAuthHeader();
 }
 
 // External provider lookups share the browser's small per-origin connection

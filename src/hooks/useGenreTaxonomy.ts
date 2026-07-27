@@ -18,7 +18,7 @@ let cache: Promise<TaxonomyResult> | null = null;
 
 function load(): Promise<TaxonomyResult> {
   if (cache) return cache;
-  const authHeader = (usePlayerStore.getState() as any).getAuthHeader?.() || {};
+  const authHeader = usePlayerStore.getState().getAuthHeader();
   cache = fetch('/api/genres/taxonomy', { headers: { ...authHeader } })
     .then((r) => (r.ok ? (r.json() as Promise<TaxonomyResult>) : { available: false, paths: {} }))
     .catch(() => ({ available: false, paths: {} }));

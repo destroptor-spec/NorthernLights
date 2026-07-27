@@ -112,7 +112,6 @@ The scanner indicator in `App.tsx` must use reactive Zustand subscriptions for `
 
 ## Shared Utilities (src/utils/)
 - `formatTime(seconds, fallback?)` — Formats seconds as `M:SS`. Returns fallback for invalid input (default `'0:00'`).
-- `safeBtoa(str)` — Base64-encodes strings that may contain multibyte characters.
 - `parseArtists(raw)` — Parses artist strings from metadata (handles JSON arrays, separators).
 - `fetchGenreImage(genre)`, `fetchArtistData(artist)`, `fetchAlbumImage(album, artist)` — External image lookup from `externalImagery.ts`.
 - `streaming.ts` — Runtime HLS URL rewriting based on `streamingQuality`; used at actual playback/cast time so browser playback honors current settings instead of stale queued URLs. Cast uses a separate compatibility resolver that maps `auto`/`source` to a known-safe AAC bitrate.

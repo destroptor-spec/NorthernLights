@@ -227,7 +227,7 @@ const App: React.FC = () => {
       if (!token) return;
       try {
         const res = await fetch('/api/auth/me', {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: usePlayerStore.getState().getAuthHeader(),
         });
         if (!res.ok) return;
         const data = await res.json().catch(() => null);
