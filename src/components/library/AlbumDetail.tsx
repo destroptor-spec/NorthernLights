@@ -7,7 +7,7 @@ import { AlbumCoverDisc } from './AlbumCoverDisc';
 import { useEntityTracks } from '../../hooks/useEntityTracks';
 import { parseArtistsForDisplay } from '../../utils/artistUtils';
 import { useKnownArtistKeys } from '../../hooks/useKnownArtistKeys';
-import { formatTime } from '../../utils/formatTime';
+import { formatDuration, formatTime } from '../../utils/formatTime';
 import { scrollToAlbumTrackTarget } from '../../utils/albumTrackFocus';
 import { buildArtistLinkMap } from '../../utils/artistLinks';
 import { BackButton } from './BackButton';
@@ -32,13 +32,6 @@ interface EditionRow extends AlbumInfo {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function formatDuration(totalSeconds: number): string {
-    const h = Math.floor(totalSeconds / 3600);
-    const m = Math.floor((totalSeconds % 3600) / 60);
-    if (h > 0) return `${h}h ${m}m`;
-    return `${m} min`;
-}
 
 function formatQuality(format: string | undefined, bitrate: number | undefined, lossless?: boolean): string | null {
     if (!format) return null;

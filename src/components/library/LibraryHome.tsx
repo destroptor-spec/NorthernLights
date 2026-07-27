@@ -255,7 +255,7 @@ export const LibraryHome: React.FC<{ section?: 'artists' | 'albums' | 'genres' }
 
     const handleApplyQuery = useCallback(async (groups: QueryGroup[]) => {
         const view = queryBuilderView;
-        const authHeaders = (usePlayerStore.getState() as any).getAuthHeader();
+        const authHeaders = usePlayerStore.getState().getAuthHeader();
         try {
             const res = await fetch(`/api/filter/${view}`, {
                 method: 'POST',

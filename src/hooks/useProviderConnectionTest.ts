@@ -16,7 +16,7 @@ export const useProviderConnectionTest = () => {
     setLastFmMessage('');
     try {
       const state = usePlayerStore.getState();
-      const authHeaders = (state as any).getAuthHeader?.() || {};
+      const authHeaders = state.getAuthHeader();
       const sharedSecret = state.lastFmSharedSecret;
       const res = await fetch('/api/providers/lastfm/test', { 
         method: 'POST',
@@ -47,7 +47,7 @@ export const useProviderConnectionTest = () => {
     setGeniusMessage('');
     try {
       const state = usePlayerStore.getState();
-      const authHeaders = (state as any).getAuthHeader?.() || {};
+      const authHeaders = state.getAuthHeader();
       const res = await fetch('/api/providers/genius/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders },
@@ -72,7 +72,7 @@ export const useProviderConnectionTest = () => {
     setMusicBrainzMessage('');
     try {
       const state = usePlayerStore.getState();
-      const authHeaders = (state as any).getAuthHeader?.() || {};
+      const authHeaders = state.getAuthHeader();
       const res = await fetch('/api/providers/musicbrainz/test', { headers: authHeaders });
       const data = await res.json();
       if (data.status === 'ok') {

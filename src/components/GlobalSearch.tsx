@@ -414,7 +414,7 @@ export const GlobalSearch: React.FC = () => {
         if (!term) { setSearchResults(EMPTY_SEARCH_MATCHES); setSearchLoading(false); return; }
         const ac = new AbortController();
         setSearchLoading(true);
-        const authHeaders = (usePlayerStore.getState() as any).getAuthHeader?.() || {};
+        const authHeaders = usePlayerStore.getState().getAuthHeader();
         fetch(`/api/library/search?q=${encodeURIComponent(term)}&artistLimit=5&albumLimit=5&trackLimit=10`, { headers: authHeaders, signal: ac.signal })
             .then(r => (r.ok ? r.json() : null))
             .then(data => {

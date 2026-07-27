@@ -23,7 +23,7 @@ export function useEntityTracks<M = Record<string, unknown>>(path: string | null
     let cancelled = false;
     setState((s) => ({ ...s, loading: true }));
 
-    const authHeaders = (usePlayerStore.getState() as any).getAuthHeader?.() || {};
+    const authHeaders = usePlayerStore.getState().getAuthHeader();
     fetch(path, { headers: authHeaders })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {

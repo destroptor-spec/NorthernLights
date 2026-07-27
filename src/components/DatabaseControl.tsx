@@ -119,13 +119,11 @@ export function DatabaseControl({ onReady, inline = false, variant = 'full' }: D
     onReadyRef.current = onReady;
   }, [onReady]);
 
-  const { authToken } = usePlayerStore();
+  const { authToken, getAuthHeader } = usePlayerStore();
 
   const apiFetch = useCallback(async (endpoint: string, method = 'GET') => {
-    const headers: Record<string, string> = {};
-    if (authToken) {
-      headers.Authorization = `Bearer ${authToken}`;
-    } else if (recoveryToken.trim()) {
+    const headers: Record<string, string> = { ...getAuthHeader() };
+    if (!authToken && recoveryToken.trim()) {
       headers['X-Aurora-Recovery-Token'] = recoveryToken.trim();
     }
 
@@ -147,7 +145,7 @@ export function DatabaseControl({ onReady, inline = false, variant = 'full' }: D
       throw new Error(data.message || data.error || `API error: ${res.status}`);
     }
     return data;
-  }, [authToken, recoveryToken]);
+  }, [authToken, recoveryToken, getAuthHeader]);
 
   const fetchDbStatus = useCallback(async () => {
     try {

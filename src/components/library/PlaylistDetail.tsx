@@ -40,7 +40,7 @@ import { LoveButton } from '../LoveButton';
 import { BackButton } from './BackButton';
 import { useToast } from '../../hooks/useToast';
 import { usePlayerStore } from '../../store';
-import { formatTime } from '../../utils/formatTime';
+import { formatDuration, formatTime } from '../../utils/formatTime';
 import { parseArtistsForDisplay } from '../../utils/artistUtils';
 import { useKnownArtistKeys } from '../../hooks/useKnownArtistKeys';
 import type { TrackInfo } from '../../utils/fileSystem';
@@ -50,13 +50,6 @@ import { useNowPlayingState } from '../../hooks/useNowPlaying';
 import { NowPlayingBadge } from '../now-playing/NowPlayingBadge';
 import { NowPlayingBars } from '../now-playing/NowPlayingBars';
 import { readPlaylistHeroState, type PlaylistHeroState } from '../../utils/heroState';
-
-function formatDuration(totalSeconds: number): string {
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  return `${minutes} min`;
-}
 
 function formatPlaylistAddedDate(timestamp?: number): string {
   if (!timestamp || !Number.isFinite(timestamp)) return '--';
