@@ -116,7 +116,7 @@ export const ContextMenuPortal: React.FC<{
     open: boolean;
     onClose: () => void;
     children: (context: { isMobile: boolean }) => React.ReactNode;
-    anchorRef?: React.RefObject<HTMLElement>;
+    anchorRef?: React.RefObject<HTMLElement | null>;
     position?: { x: number; y: number };
     desktopWidth?: number;
     desktopHeight?: number;

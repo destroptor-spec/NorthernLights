@@ -42,7 +42,7 @@ interface VirtualizedCardGridProps<T> {
     // element that has `overflow:auto` but never actually scrolls (e.g. a nested
     // container that just grows to its content). Using such an element makes
     // react-virtual treat every row as visible and mount the whole list.
-    scrollParentRef?: React.RefObject<HTMLElement>;
+    scrollParentRef?: React.RefObject<HTMLElement | null>;
     overscan?: number;
     // Layout overrides. Default to the square-thumbnail album/artist grid;
     // callers with a different shape (e.g. the wide playlist cards) pass their
