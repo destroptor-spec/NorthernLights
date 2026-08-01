@@ -36,8 +36,8 @@ export const useArtistData = (artistName: string, mbArtistId?: string | null, op
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
-  const lastFetchedNameRef = useRef<string | undefined>();
-  const lastSuccessfulFetchKeyRef = useRef<string | undefined>();
+  const lastFetchedNameRef = useRef<string | undefined>(undefined);
+  const lastSuccessfulFetchKeyRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     if (!artistName || !enabled || artistName === 'Unknown Artist') {
