@@ -8,12 +8,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "moduleResolution": "bundler",
-    "allowSyntheticDefaultImports": true,
-    "paths": {
-      "@/*": [
-        "./src/*"
-      ]
-    }
+    "allowSyntheticDefaultImports": true
   },
   "include": [
     "src",
