@@ -105,6 +105,12 @@ interface InlineEditableTextProps {
   /** Allow saving an empty value (description). When false (title), emptying reverts. */
   allowEmpty?: boolean;
   pencilSize?: number;
+  /**
+   * Center the text below the `md` breakpoint and left-align at `md`+, to match
+   * a hero that is centered on mobile. Also mirrors the pencil's right gutter on
+   * the left below `md` so the centered text is truly centered, not offset.
+   */
+  centered?: boolean;
 }
 
 /**
@@ -124,6 +130,7 @@ const InlineEditableText: React.FC<InlineEditableTextProps> = ({
   fieldClassName = 'w-full',
   allowEmpty = false,
   pencilSize = 16,
+  centered = false,
 }) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
@@ -191,8 +198,10 @@ const InlineEditableText: React.FC<InlineEditableTextProps> = ({
         onKeyDown={handleKeyDown}
         // `pr-9` reserves the gutter the pencil floats in; `py-0 pl-0` strips the
         // control's intrinsic padding; the focus-visible overrides drop the
-        // global green focus outline, leaving only the bottom border.
-        className={`${textClassName} block w-full pr-9 py-0 pl-0 bg-transparent border-b-2 outline-none focus:outline-none focus-visible:outline-none resize-none overflow-hidden cursor-text placeholder:italic placeholder:text-[var(--color-text-muted)] ${editing ? 'border-[var(--color-primary)]' : 'border-transparent'}`}
+        // global green focus outline, leaving only the bottom border. When
+        // `centered`, mirror the pr-9 gutter with pl-9 below md so the centered
+        // text is truly centered (md+ stays flush-left with pl-0).
+        className={`${textClassName} block w-full pr-9 py-0 ${centered ? 'pl-9 md:pl-0 text-center md:text-left' : 'pl-0'} bg-transparent border-b-2 outline-none focus:outline-none focus-visible:outline-none resize-none overflow-hidden cursor-text placeholder:italic placeholder:text-[var(--color-text-muted)] ${editing ? 'border-[var(--color-primary)]' : 'border-transparent'}`}
       />
       <button
         type="button"
@@ -907,6 +916,7 @@ export const PlaylistDetail: React.FC = () => {
                   placeholder="Playlist name"
                   fieldClassName="flex-1 min-w-0"
                   textClassName="font-bold text-4xl md:text-5xl lg:text-6xl tracking-tight leading-tight text-[var(--color-text-primary)]"
+                  centered
                   pencilSize={20}
                   onSave={(next) => handleSaveMeta({ title: next })}
                 />
