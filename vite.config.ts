@@ -215,6 +215,14 @@ export default defineConfig({
     assetsDir: 'assets',
     emptyOutDir: true,
     chunkSizeWarningLimit: 1000,
+    // esbuild and lightningcss both collapse the `backdrop-filter` +
+    // `-webkit-backdrop-filter` prefix pair during CSS minification, keeping
+    // only `-webkit-` and dropping the unprefixed form Chrome and Firefox
+    // require — silently killing glass backdrop-blur across every glass surface
+    // in production (dev is unminified, so it looked fine). Disabling CSS
+    // minification (JS minification is unaffected) keeps both prefixes so blur
+    // works in Chrome, Firefox, and Safari. See #13.
+    cssMinify: false,
     rollupOptions: {
       output: {
         manualChunks(id) {
