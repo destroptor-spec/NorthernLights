@@ -9084,25 +9084,21 @@ a:focus-visible > .genre-card .genre-card__label {
 
 .player-chain-chip:hover,
 .player-chain-chip[aria-expanded="true"] {
-  /* Dark glass fill — deeper than the bar's own glass so the pill reads
-     as a distinct surface that emerged from the icon. */
-  background: rgba(8, 6, 20, 0.78);
+  /* Frosted daylight: a distinct light glass surface — more present than the
+     bar's own glass so the pill reads as an emerged surface — with readable
+     dark text. Dark mode overrides below to the night-glass treatment. */
+  background: var(--color-surface-variant);
   border-color: var(--glass-border-hover);
-  color: rgba(232, 232, 248, 0.96);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-}
-
-/* Light theme: still glass, but a calm cool slate instead of pure black. */
-:root .player-chain-chip:hover,
-:root .player-chain-chip[aria-expanded="true"] {
-  background: rgba(28, 28, 40, 0.78);
-  color: rgba(245, 246, 250, 0.98);
+  color: var(--color-text-primary);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
 
 .dark .player-chain-chip:hover,
 .dark .player-chain-chip[aria-expanded="true"] {
+  /* Night glass — deeper than the bar so the pill reads as an emerged surface. */
   background: rgba(6, 4, 18, 0.82);
   color: rgba(232, 232, 248, 0.96);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
 .player-chain-chip:hover .player-chain-icon,
