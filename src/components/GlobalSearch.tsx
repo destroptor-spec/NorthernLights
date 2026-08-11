@@ -335,8 +335,13 @@ export const GlobalSearch: React.FC = () => {
         const handleClickOutside = (e: MouseEvent) => {
             const outside =
                 containerRef.current && !containerRef.current.contains(e.target as Node);
+            // When the results dropdown isn't mounted (empty, still debouncing,
+            // or cleared query) there's nothing to be "inside", so a null ref
+            // must count as outside it. Previously `dropdownRef.current && …` made
+            // outsideDD falsy in those states, so an outside click never collapsed
+            // the field back to its pill (#16).
             const outsideDD =
-                dropdownRef.current && !dropdownRef.current.contains(e.target as Node);
+                !dropdownRef.current || !dropdownRef.current.contains(e.target as Node);
             if (outside && outsideDD) handleClose();
         };
         const handleKeyDown = (e: KeyboardEvent) => {

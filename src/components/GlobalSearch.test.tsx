@@ -129,4 +129,18 @@ describe('GlobalSearch navigation', () => {
     expect(screen.getByTestId('location').textContent).toBe('/library/artist/artist-1');
     expect(mockStoreState.setPlaylist).not.toHaveBeenCalled();
   });
+
+  it('collapses back to the pill on outside click when no results dropdown is shown (#16)', () => {
+    renderGlobalSearch();
+    fireEvent.click(screen.getByText('Search'));
+    expect(screen.queryByRole('searchbox')).not.toBeNull(); // expanded
+
+    // Empty query → no results dropdown is mounted. Clicking outside the field
+    // must still collapse it back to the pill (regression: it used to stay open
+    // because the outside-click check required a mounted dropdown ref).
+    fireEvent.mouseDown(document.body);
+
+    expect(screen.queryByRole('searchbox')).toBeNull(); // collapsed
+    expect(screen.getByText('Search')).toBeTruthy();     // pill restored
+  });
 });
