@@ -1,4 +1,5 @@
 import { queryWithRetry } from '../utils/db';
+import { christmasExclusionSql } from '../utils/seasonalFilter';
 
 // Shared multi-pool primitive used by smart-hub features (artist radio,
 // daylist). Concepts are borrowed from the LLM playlist generator
@@ -86,23 +87,6 @@ function getAcousticClusterKey(row: any): string {
   return bins.join(':');
 }
 
-// ─── Always-on content filters ─────────────────────────────
-
-function isChristmasSeason(now: Date): boolean {
-  const m = now.getMonth();
-  const d = now.getDate();
-  if (m === 11) return true;
-  if (m === 0 && d <= 5) return true;
-  return false;
-}
-
-function buildChristmasFilterSql(): string {
-  if (isChristmasSeason(new Date())) return '';
-  return `
-    AND COALESCE(t.genre, '') !~* '(christmas|xmas|holiday|noel)'
-    AND COALESCE(t.album, '') !~* '(christmas|xmas|noel)'
-  `;
-}
 
 const VA_EXCLUSION_SQL = `AND NOT EXISTS (SELECT 1 FROM artists va WHERE va.id = t.artist_id AND va.is_va_pseudo = TRUE)`;
 
@@ -328,7 +312,7 @@ export async function fetchCandidatePool(opts: FetchPoolOptions): Promise<any[]>
   }
 
   // Christmas / VA filters are always-on.
-  const christmasSql = buildChristmasFilterSql();
+  const christmasSql = christmasExclusionSql('t');
 
   // Track-features join is only required when we have a vector to compute
   // distance against; otherwise a LEFT JOIN keeps non-analysed tracks
