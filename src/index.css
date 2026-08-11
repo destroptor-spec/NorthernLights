@@ -350,6 +350,20 @@ body {
   position: relative;
 }
 
+/* Public shared-playlist route (/share/:token) renders outside the app shell,
+   which locks scrolling globally (body overflow:hidden, #root height:100vh) for
+   its nested in-app scroll layout. That standalone page has no nested scroller,
+   so SharedPlaylistView toggles `share-page` on <html> to restore normal
+   document scrolling — reachable by mouse, touch, and keyboard. */
+html.share-page body {
+  height: auto;
+  overflow: visible;
+}
+html.share-page #root {
+  height: auto;
+  min-height: 100vh;
+}
+
 ::selection {
   background: rgba(34, 201, 131, 0.25);
   color: #fff;
