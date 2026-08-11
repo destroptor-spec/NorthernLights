@@ -3,6 +3,7 @@ import { genreMatrixService } from './genreMatrix.service';
 import { getLibraryProfile, GenreHealth } from './libraryProfile.service';
 import { compileConceptToLibrary } from './llmConceptCompiler.service';
 import { queryWithRetry } from '../utils/db';
+import { christmasExclusionSql, isChristmasSeason, isChristmasRow } from '../utils/seasonalFilter';
 
 // 1. Z-Score normalization is handled by scaling 0-1 mapped values in JS, but 
 // for simplicity we assume vectors are already [0,1] normalized.
@@ -765,7 +766,7 @@ export async function getHubCollections(
         FROM tracks t
         JOIN track_features tf ON t.id = tf.track_id
         ${joinSql}
-        WHERE ${whereClauses.join('\n          AND ')}
+        WHERE ${whereClauses.join('\n          AND ')}${christmasExclusionSql('t')}
       ) pool
       ORDER BY ${orderSql} ASC
       LIMIT $${limitParam}
@@ -1556,7 +1557,13 @@ export async function getHubCollections(
 
   // Persist a system-owned playlist and return the descriptor for the hub list.
   const persistSystem = async (slug: string, title: string, description: string, tracks: any[]) => {
-    const selectedTracks = tracks.slice(0, systemPlaylistTrackLimit);
+    // Off-season, drop Christmas content before it's persisted or returned. This
+    // is the single choke for every engine system hub (Up Next, Jump Back In,
+    // The Vault, genre/decade mixes) — their candidate queries select t.*, so
+    // genre/album are present for isChristmasRow. LLM mixes are filtered at the
+    // SQL pool (fetchLlmPool) instead. (#18)
+    const eligible = isChristmasSeason() ? tracks : tracks.filter((t: any) => !isChristmasRow(t));
+    const selectedTracks = eligible.slice(0, systemPlaylistTrackLimit);
     if (!userId || selectedTracks.length < systemPlaylistMinTracks) {
       return null;
     }
@@ -2198,7 +2205,7 @@ export async function calculateNextInfinityTrack(
         JOIN track_features tf ON t.id = tf.track_id
         LEFT JOIN genres g ON g.id = t.genre_id
         WHERE tf.acoustic_vector_8d IS NOT NULL AND tf.embedding_vector IS NOT NULL
-        AND tf.is_simulated = FALSE
+        AND tf.is_simulated = FALSE${christmasExclusionSql('t')}
         ${renumberedHistory}
         ORDER BY distance ASC
         LIMIT $${penaltyIds.length + 3}
@@ -2210,7 +2217,7 @@ export async function calculateNextInfinityTrack(
         FROM tracks t
         JOIN track_features tf ON t.id = tf.track_id
         LEFT JOIN genres g ON g.id = t.genre_id
-        WHERE tf.acoustic_vector_8d IS NOT NULL AND tf.is_simulated = FALSE
+        WHERE tf.acoustic_vector_8d IS NOT NULL AND tf.is_simulated = FALSE${christmasExclusionSql('t')}
         ${historyClause ? `AND ${historyClause.replace(/^WHERE /, '')}` : ''}
         ORDER BY distance ASC
         LIMIT $${penaltyIds.length + 2}
@@ -2266,6 +2273,7 @@ export async function calculateNextInfinityTrack(
       const randomFallback = await queryWithRetry(`
         SELECT t.* FROM tracks t
         LEFT JOIN track_features tf ON tf.track_id = t.id
+        WHERE TRUE${christmasExclusionSql('t')}
         ORDER BY (tf.track_id IS NOT NULL AND tf.is_simulated = FALSE) DESC, RANDOM()
         LIMIT 1
       `);

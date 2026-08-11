@@ -2,6 +2,7 @@ import { initDB, getPlaylistTracks, getSystemSetting, getUserSetting, setUserSet
 import OpenAI from 'openai';
 import { getLlmConfig, extractJson } from './llm.service';
 import { withTransaction } from '../utils/db';
+import { christmasExclusionSql } from '../utils/seasonalFilter';
 import {
   buildPlaylistFromPools,
   computeArtistCentroids,
@@ -45,24 +46,6 @@ function variousArtistsExclusion(artistAlias: string): string {
   return `COALESCE(${artistAlias}.is_va_pseudo, FALSE) = FALSE`;
 }
 
-// Christmas / holiday content is suppressed from every smart surface
-// outside its season (Dec 1 – Jan 5). We match on genre + album, not
-// track title — "Holiday" by Madonna is not Christmas music.
-function isChristmasSeason(now: Date): boolean {
-  const m = now.getMonth();
-  const d = now.getDate();
-  if (m === 11) return true; // December
-  if (m === 0 && d <= 5) return true; // Jan 1–5 (through Epiphany)
-  return false;
-}
-
-function christmasExclusion(trackAlias: string): string {
-  if (isChristmasSeason(new Date())) return '';
-  return `
-    AND COALESCE(${trackAlias}.genre, '') !~* '(christmas|xmas|holiday|noel)'
-    AND COALESCE(${trackAlias}.album, '') !~* '(christmas|xmas|noel)'
-  `;
-}
 
 const TTL_MS: Record<SmartKind, number> = {
   'on-repeat': 24 * 60 * 60 * 1000,
@@ -230,7 +213,7 @@ async function computeOnRepeatFresh(userId: string, limit: number) {
     JOIN tracks t ON t.id = b.track_id
     WHERE b.user_id = $1
       AND b.year_month >= date_trunc('month', NOW() - INTERVAL '30 days')::date
-      ${christmasExclusion('t')}
+      ${christmasExclusionSql('t')}
     GROUP BY t.id
     HAVING SUM(b.play_count) >= 3
     ORDER BY recent_plays DESC
@@ -274,7 +257,7 @@ async function computeRepeatRewindFresh(userId: string, limit: number) {
       FROM user_track_play_buckets b
       JOIN tracks t ON t.id = b.track_id
       WHERE b.user_id = $1
-        ${christmasExclusion('t')}
+        ${christmasExclusionSql('t')}
       GROUP BY t.id
     )
     SELECT id, old_plays, recent_plays
@@ -341,7 +324,7 @@ export async function computeJumpBackIn(userId: string, limit = 12): Promise<Jum
       AND ups.last_played_at > NOW() - INTERVAL '90 days'
       AND t.album_id IS NOT NULL
       AND t.album IS NOT NULL AND t.album <> ''
-      ${christmasExclusion('t')}
+      ${christmasExclusionSql('t')}
     GROUP BY t.album_id
     ORDER BY last_played_at DESC
     LIMIT $2
@@ -704,7 +687,7 @@ async function generateArtistRadioFresh(userId: string, artistId: string, reques
       FROM tracks t
       LEFT JOIN user_playback_stats ups ON ups.track_id = t.id AND ups.user_id = $1
       WHERE t.artist_id::text = $2
-      ${christmasExclusion('t')}
+      ${christmasExclusionSql('t')}
       ORDER BY COALESCE(ups.play_count, 0) DESC, t.id ASC
       LIMIT $3
       `,
@@ -832,7 +815,7 @@ async function generateArtistRadioFresh(userId: string, artistId: string, reques
       FROM tracks t
       LEFT JOIN user_playback_stats ups ON ups.track_id = t.id AND ups.user_id = $1
       WHERE t.artist_id::text = $2
-      ${christmasExclusion('t')}
+      ${christmasExclusionSql('t')}
       ORDER BY COALESCE(ups.play_count, 0) DESC, t.id ASC
       LIMIT $3
       `,
@@ -1144,7 +1127,7 @@ async function computeDaylistFresh(userId: string, limit: number) {
       FROM tracks t
       LEFT JOIN user_playback_stats ups ON ups.track_id = t.id AND ups.user_id = $1
       WHERE TRUE
-        ${christmasExclusion('t')}
+        ${christmasExclusionSql('t')}
       ORDER BY
         COALESCE(ups.last_played_at, NOW() - INTERVAL '10 years') DESC,
         RANDOM()
@@ -1246,7 +1229,7 @@ async function computeSeasonalRewindFresh(userId: string, limit: number) {
     WHERE b.user_id = $1
       AND b.year_month >= $2::date
       AND b.year_month <= $3::date
-      ${christmasExclusion('t')}
+      ${christmasExclusionSql('t')}
     GROUP BY t.id
     HAVING SUM(b.play_count) >= 2
     ORDER BY plays DESC
@@ -1294,7 +1277,7 @@ async function computeYearRewindFresh(userId: string, limit: number) {
     WHERE b.user_id = $1
       AND b.year_month >= make_date($2::int, 1, 1)
       AND b.year_month < make_date(($2::int + 1), 1, 1)
-      ${christmasExclusion('t')}
+      ${christmasExclusionSql('t')}
     GROUP BY t.id
     HAVING SUM(b.play_count) >= 2
     ORDER BY plays DESC
