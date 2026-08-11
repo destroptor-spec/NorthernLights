@@ -23,6 +23,16 @@ export const SharedPlaylistView: React.FC = () => {
   const [state, setState] = useState<'loading' | 'ok' | 'notfound' | 'error'>('loading');
   const [playlist, setPlaylist] = useState<SharedPlaylist | null>(null);
 
+  // The app shell globally locks scrolling (body overflow:hidden, #root
+  // height:100vh) for its nested in-app layout. This standalone public page has
+  // no nested scroller, so opt <html> into normal document scrolling while
+  // mounted — long track lists then scroll via mouse, touch, and keyboard.
+  useEffect(() => {
+    const html = document.documentElement;
+    html.classList.add('share-page');
+    return () => html.classList.remove('share-page');
+  }, []);
+
   useEffect(() => {
     const token = decodeURIComponent(window.location.pathname.replace(/^\/share\//, '').replace(/\/$/, ''));
     if (!token) { setState('notfound'); return; }
