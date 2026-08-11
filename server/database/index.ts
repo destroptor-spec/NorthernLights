@@ -3,6 +3,11 @@ import path from 'path';
 import fs from 'fs';
 import { ARTWORK_EXTRACTION_VERSION } from '../services/artworkVersion';
 import { normalizeGenreIdentity } from '../utils/genreIdentity';
+// Canonical artist-credit splitter, shared with the client (see
+// shared/artistCredit.ts). Re-exported so existing `import('../database')`
+// consumers (e.g. library.routes) keep resolving `splitArtistNames` here.
+import { splitArtistNames, uniqueArtistNames } from '../../shared/artistCredit';
+export { splitArtistNames };
 
 let pool: Pool | null = null;
 let initPromise: Promise<Pool> | null = null;
@@ -2365,14 +2370,6 @@ const ARTIST_CANONICALIZATION_SETTING = 'artistCanonicalizationV1';
 const COMPOUND_CREDIT_SPLIT_SETTING = 'artistCompoundCreditSplitV1';
 const ALBUM_ARTIST_NAME_SYNC_SETTING = 'albumArtistNameSyncV1';
 
-function cleanArtistNamePart(value: string): string {
-  return value
-    .trim()
-    .replace(/^[([{]+/, '')
-    .replace(/[)\]}]+$/, '')
-    .trim();
-}
-
 // "Various Artists" and its inevitable siblings are compilation pseudo-entities,
 // not real performers. This is the single source of truth used to (a) flag
 // artists.is_va_pseudo so they're hidden from artist-facing surfaces, and
@@ -2394,24 +2391,6 @@ function compilationArtistNameSql(nameExpr: string): string {
   return `LOWER(BTRIM(${nameExpr})) IN (${list})`;
 }
 
-function uniqueArtistNames(names: string[]): string[] {
-  const seen = new Set<string>();
-  const result: string[] = [];
-
-  for (const rawName of names) {
-    const name = cleanArtistNamePart(rawName);
-    if (!name) continue;
-
-    const key = name.toLowerCase();
-    if (seen.has(key)) continue;
-
-    seen.add(key);
-    result.push(name);
-  }
-
-  return result;
-}
-
 export function normalizeArtistIdentityKey(name: string | null | undefined): string {
   return (name || '')
     .normalize('NFKD')
@@ -2430,44 +2409,6 @@ function scoreArtistDisplayName(name: string): number {
   if (/[a-z]/.test(name)) score += 1;
   if (name === name.toUpperCase() && /[A-Z]/.test(name) && name.length <= 4) score -= 2;
   return score;
-}
-
-// Splits a list-style credit like "Alok, Martin Jensen & Jason Derulo" into
-// individual names. The comma is the trigger: presence of a comma means the
-// string is a list, so we split on commas and on a final " & " (Oxford-and).
-// Without a comma we keep the part intact so true group names like
-// "Nick & Jay" / "Hall & Oates" / "Mr. & Mrs. Smith" are preserved. We avoid
-// splitting on the word "and" — too many band names contain it.
-function explodeListCredit(part: string): string[] {
-  if (!part.includes(',')) return [part];
-  const commaParts = part
-    .split(/\s*,\s*/)
-    .map(cleanArtistNamePart)
-    .filter(Boolean);
-  if (commaParts.length === 0) return [];
-  const last = commaParts[commaParts.length - 1];
-  const ampSplit = last
-    .split(/\s+&\s+/)
-    .map(cleanArtistNamePart)
-    .filter(Boolean);
-  if (ampSplit.length > 1) {
-    return [...commaParts.slice(0, -1), ...ampSplit];
-  }
-  return commaParts;
-}
-
-// Utility for splitting credit strings into individual artist names. Splits on
-// `feat.`/`ft.`/`featuring` markers and on comma-list patterns ("A, B & C").
-// Deliberately does NOT split on a bare "&" or "and" — names like
-// "Nick & Jay" or "Florence and the Machine" are a single artist.
-export function splitArtistNames(artistStr: string | null | undefined): string[] {
-  if (!artistStr) return [];
-  const featuredParts = artistStr
-    .split(/\s*(?:[\(\[\{]\s*)?\b(?:feat\.?|ft\.?|featuring)\b\.?\s+(?!$)/i)
-    .map(cleanArtistNamePart)
-    .filter(Boolean);
-  const exploded = featuredParts.flatMap(explodeListCredit);
-  return uniqueArtistNames(exploded);
 }
 
 export function normalizeArtistNames(

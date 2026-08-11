@@ -1,3 +1,5 @@
+import { cleanCreditPart, splitArtistNames } from '../../shared/artistCredit';
+
 /**
  * Canonical identity key for an artist name. Mirrors the server-side
  * `normalizeArtistIdentityKey` so client-side comparisons match the
@@ -14,48 +16,14 @@ export function normalizeArtistIdentityKey(name: string | null | undefined): str
     .trim();
 }
 
-function cleanCreditPart(value: string): string {
-  return value.trim().replace(/^[([{]+/, '').replace(/[)\]}]+$/, '').trim();
-}
-
-// Comma-list credit ("Alok, Martin Jensen & Jason Derulo") -> individuals.
-// Mirror of the server-side splitter: only splits when a comma is present, so
-// genuine groups like "Nick & Jay" / "Florence and the Machine" stay whole.
-function explodeListCredit(part: string): string[] {
-  if (!part.includes(',')) return [part];
-  const commaParts = part.split(/\s*,\s*/).map(cleanCreditPart).filter(Boolean);
-  if (commaParts.length === 0) return [];
-  const last = commaParts[commaParts.length - 1];
-  const ampSplit = last.split(/\s+&\s+/).map(cleanCreditPart).filter(Boolean);
-  if (ampSplit.length > 1) {
-    return [...commaParts.slice(0, -1), ...ampSplit];
-  }
-  return commaParts;
-}
-
 /**
  * Split an ID3/Vorbis artist string into individual artist names.
  * Handles `feat.`/`ft.`/`featuring` markers and comma-list patterns
  * ("A, B & C"). Does NOT split on a bare "&" or "and" — preserves group
- * names like "Nick & Jay" and "Florence and the Machine".
+ * names like "Nick & Jay" and "Florence and the Machine". Canonical
+ * implementation lives in `shared/artistCredit` (shared with the server).
  */
-export function parseArtists(artistStr?: string): string[] {
-  if (!artistStr) return [];
-  const featuredParts = artistStr
-    .split(/\s*(?:[\(\[\{]\s*)?\b(?:feat\.?|ft\.?|featuring)\b\.?\s+(?!$)/i)
-    .map(cleanCreditPart)
-    .filter(Boolean);
-  const exploded = featuredParts.flatMap(explodeListCredit);
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const name of exploded) {
-    const key = name.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push(name);
-  }
-  return result;
-}
+export const parseArtists = splitArtistNames;
 
 // Collaboration separators: " & " or " + ". Bare "and" / "with" / "vs"
 // are intentionally omitted — too many false positives in real names.

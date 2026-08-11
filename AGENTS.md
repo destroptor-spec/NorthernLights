@@ -112,7 +112,7 @@ The scanner indicator in `App.tsx` must use reactive Zustand subscriptions for `
 
 ## Shared Utilities (src/utils/)
 - `formatTime(seconds, fallback?)` — Formats seconds as `M:SS`. Returns fallback for invalid input (default `'0:00'`).
-- `parseArtists(raw)` — Parses artist strings from metadata (handles JSON arrays, separators).
+- `parseArtists(raw)` — Splits an artist-credit string into individual names (`feat.`/`ft.`, comma-lists; preserves group names like "Nick & Jay"). Thin alias over the canonical splitter in `shared/artistCredit.ts`, shared verbatim with the server (`splitArtistNames`) so client and server can't drift. NB: the scan worker's `splitNames` is a deliberately more aggressive splitter and is intentionally not shared.
 - `fetchGenreImage(genre)`, `fetchArtistData(artist)`, `fetchAlbumImage(album, artist)` — External image lookup from `externalImagery.ts`.
 - `streaming.ts` — Runtime HLS URL rewriting based on `streamingQuality`; used at actual playback/cast time so browser playback honors current settings instead of stale queued URLs. Cast uses a separate compatibility resolver that maps `auto`/`source` to a known-safe AAC bitrate.
 - `queue.ts` — Sender-side queue identity helpers. Generates stable `queueEntryId` values for the active play queue so local queue actions can be mirrored onto an active Cast session without full reloads.
