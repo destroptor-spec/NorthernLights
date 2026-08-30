@@ -64,6 +64,7 @@ import {
   isSubsonicSubmission,
   mapAlbum,
   buildTranscodeArgs,
+  parseTimeOffset,
   resolveStreamPlan,
   mapArtist,
   mapTrackToSubsonic,
@@ -534,5 +535,79 @@ describe('buildTranscodeArgs', () => {
   it('passes the source path through untouched so odd filenames survive', () => {
     const args = buildTranscodeArgs("/music/Sean Paul - Dynamite (Banx N' Ranx).flac", plan({}));
     expect(args[1]).toBe("/music/Sean Paul - Dynamite (Banx N' Ranx).flac");
+  });
+});
+
+/**
+ * OpenSubsonic's `transcodeOffset` extension: "When a server support this
+ * extension this means that it support the `timeOffset` parameter of the
+ * stream endpoint for music" — which is what lets a client seek inside a
+ * transcoded stream, since a pipe offers no byte range to seek into.
+ *
+ * Seek accuracy was measured against a real 141.63s library FLAC by counting
+ * decoded AAC frames rather than trusting ffprobe: at a 90s offset the output
+ * is 2225 frames x 1024 / 44100 = 51.66s against 51.63s expected. Raw ADTS has
+ * no container duration field, so ffprobe's estimate for it is off by seconds
+ * and must not be used to judge this.
+ */
+describe('transcodeOffset extension', () => {
+  it('is advertised so clients know seeking is possible', () => {
+    const payload = openSubsonicExtensionsPayload() as {
+      openSubsonicExtensions: { extension: Array<{ name: string; versions: number[] }> };
+    };
+    const names = payload.openSubsonicExtensions.extension.map((e) => e.name);
+    expect(names).toContain('transcodeOffset');
+    const ext = payload.openSubsonicExtensions.extension.find((e) => e.name === 'transcodeOffset');
+    expect(ext?.versions).toEqual([1]);
+  });
+
+  describe('parseTimeOffset', () => {
+    it('treats an absent, empty or non-numeric offset as no seek', () => {
+      expect(parseTimeOffset(undefined)).toBe(0);
+      expect(parseTimeOffset('')).toBe(0);
+      expect(parseTimeOffset('halfway')).toBe(0);
+    });
+
+    it('treats zero and negative offsets as no seek', () => {
+      expect(parseTimeOffset('0')).toBe(0);
+      expect(parseTimeOffset('-30')).toBe(0);
+    });
+
+    it('accepts a fractional offset', () => {
+      expect(parseTimeOffset('90.5', 141.63)).toBeCloseTo(90.5, 3);
+    });
+
+    // Seeking past the end would hand the client an empty stream.
+    it('clamps an offset beyond the track to just before the end', () => {
+      expect(parseTimeOffset('500', 141.63)).toBeCloseTo(140.63, 3);
+    });
+
+    it('passes the offset through when the duration is unknown', () => {
+      expect(parseTimeOffset('90', null)).toBe(90);
+      expect(parseTimeOffset('90', 0)).toBe(90);
+    });
+  });
+
+  describe('buildTranscodeArgs with an offset', () => {
+    const plan = resolveStreamPlan({ suffix: 'flac', bitrateKbps: 1411 }, { maxBitRate: '320' });
+
+    // `-ss` must precede `-i`, or FFmpeg decodes and discards everything before
+    // the offset instead of skipping to it.
+    it('seeks on the input, not the output', () => {
+      const args = buildTranscodeArgs('/music/track.flac', plan, 90);
+      expect(args.indexOf('-ss')).toBeLessThan(args.indexOf('-i'));
+      expect(args[args.indexOf('-ss') + 1]).toBe('90');
+    });
+
+    it('omits the seek entirely when there is no offset', () => {
+      expect(buildTranscodeArgs('/music/track.flac', plan, 0)).not.toContain('-ss');
+      expect(buildTranscodeArgs('/music/track.flac', plan)).not.toContain('-ss');
+    });
+
+    it('still writes to stdout with the planned encoding', () => {
+      expect(buildTranscodeArgs('/a.flac', plan, 60).join(' ')).toBe(
+        '-ss 60 -i /a.flac -vn -map 0:a:0 -c:a libmp3lame -b:a 320k -id3v2_version 3 -f mp3 -',
+      );
+    });
   });
 });

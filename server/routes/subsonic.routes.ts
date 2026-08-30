@@ -105,6 +105,11 @@ export function openSubsonicExtensionsPayload(): Record<string, unknown> {
         { name: 'formPost', versions: [1] },
         { name: 'songLyrics', versions: [1] },
         { name: 'indexBasedQueue', versions: [1] },
+      // Declares that `stream` honours `timeOffset` for music, which is what
+      // lets clients seek within a transcoded stream — without it a transcode
+      // can only ever be played from the start, since a pipe has no byte space
+      // to range-request into.
+      { name: 'transcodeOffset', versions: [1] },
       ],
     },
   };
@@ -867,7 +872,8 @@ async function streamFile(req: Request, res: Response, id: string, userId: strin
     + ` maxBitRate=${requestedMaxBitRate || '-'} format=${requestedFormat || '-'}`
     + ` source=${ext || '-'}@${sourceKbps ?? '-'}kbps`
     + ` target=${plan?.suffix ?? ext}@${plan?.bitrateKbps ?? sourceKbps ?? '-'}kbps`
-    + ` reason=${plan?.reason ?? 'download'} range=${range ? 'yes' : 'no'} ${clientInfo(req)}`,
+    + ` reason=${plan?.reason ?? 'download'} timeOffset=${getParam(req, 'timeOffset') || '-'}`
+    + ` range=${range ? 'yes' : 'no'} ${clientInfo(req)}`,
   );
 
   if (plan?.mode === 'transcode') return streamTranscoded(req, res, fileBuf, plan, track);
@@ -905,14 +911,29 @@ async function streamFile(req: Request, res: Response, id: string, userId: strin
  * embedded cover image as an mjpeg video stream, and without both flags FFmpeg
  * tries to carry it into a container that cannot hold it.
  */
-export function buildTranscodeArgs(filePath: string, plan: StreamPlan): string[] {
-  const args = [
+export function parseTimeOffset(value: unknown, durationSec?: number | null): number {
+  const parsed = Number.parseFloat(String(value ?? ''));
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  // Seeking past the end would produce an empty stream; clamp so the client
+  // gets the tail rather than silence.
+  if (Number.isFinite(Number(durationSec)) && Number(durationSec) > 0) {
+    return Math.min(parsed, Math.max(0, Number(durationSec) - 1));
+  }
+  return parsed;
+}
+
+export function buildTranscodeArgs(filePath: string, plan: StreamPlan, timeOffsetSec = 0): string[] {
+  const args: string[] = [];
+  // Input seeking (`-ss` before `-i`) so FFmpeg skips to the offset instead of
+  // decoding and discarding everything before it.
+  if (timeOffsetSec > 0) args.push('-ss', String(timeOffsetSec));
+  args.push(
     '-i', filePath,
     '-vn',
     '-map', '0:a:0',
     '-c:a', String(plan.codec),
     '-b:a', `${plan.bitrateKbps}k`,
-  ];
+  );
   if (plan.container === 'mp3') args.push('-id3v2_version', '3');
   args.push('-f', String(plan.container), '-');
   return args;
@@ -929,14 +950,19 @@ function streamTranscoded(req: Request, res: Response, fileBuf: Buffer, plan: St
 
   // The real length is not known until the stream has been produced, so the
   // spec offers an estimate for clients that need a progress bar or duration.
+  const timeOffsetSec = parseTimeOffset(getParam(req, 'timeOffset'), track?.duration);
+
   if (String(getParam(req, 'estimateContentLength') || '').toLowerCase() === 'true') {
     const duration = Number(track?.duration);
     if (Number.isFinite(duration) && duration > 0 && plan.bitrateKbps) {
-      res.setHeader('Content-Length', Math.floor((plan.bitrateKbps * 1000 / 8) * duration));
+      // What remains after the offset, not the whole track — otherwise a seek
+      // leaves the client expecting more bytes than it will ever receive.
+      const remaining = Math.max(0, duration - timeOffsetSec);
+      res.setHeader('Content-Length', Math.floor((plan.bitrateKbps * 1000 / 8) * remaining));
     }
   }
 
-  const ffmpeg = spawn('ffmpeg', buildTranscodeArgs(fileBuf.toString('utf8'), plan));
+  const ffmpeg = spawn('ffmpeg', buildTranscodeArgs(fileBuf.toString('utf8'), plan, timeOffsetSec));
 
   ffmpeg.stderr.on('data', (data) => logFfmpeg('[FFmpeg subsonic]', data.toString()));
   ffmpeg.stdout.pipe(res);
