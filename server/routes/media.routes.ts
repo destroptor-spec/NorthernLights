@@ -9,6 +9,7 @@ import { maybeMeasureLoudnessForUser } from '../services/loudness.service';
 import { artCachePath, isValidArtSize, DEFAULT_ART_SIZE, resolveArtwork, ARTWORK_EXTRACTION_VERSION, type ArtSize } from '../services/artCache';
 import { providerArtworkProxyPath, resolveProviderArtworkUrl } from '../services/artworkFallback.service';
 import {
+  completeVodPlaylist,
   getOrCreateHlsSession,
   getSessionInfo,
   touchSession,
@@ -18,6 +19,7 @@ import {
 import {
   buildAdaptiveLadder,
   buildAdaptiveMasterPlaylist,
+  getAdaptiveHlsSessionInfo,
   getAdaptiveSegmentPath,
   getOrCreateAdaptiveHlsSession,
   parseAdaptiveLadder,
@@ -216,21 +218,61 @@ function rewriteMediaPlaylistSegments(playlist: string, quality: string, codec: 
   );
 }
 
+const SEGMENT_WAIT_TIMEOUT_MS = 30000;
+const SEGMENT_WAIT_POLL_MS = 50;
+
+/**
+ * A synthesized VOD playlist lets the player ask for a segment FFmpeg has not
+ * produced yet. FFmpeg writes the segment file *before* appending it to the
+ * playlist, so file existence alone would happily serve a half-written segment;
+ * "listed in the playlist" is the only completeness signal available. Hold the
+ * request until the segment is listed, the session finishes without it, or the
+ * timeout expires.
+ */
+async function waitForSegmentListed(
+  playlistPath: string,
+  segmentName: string,
+  isFinished: () => boolean,
+): Promise<boolean> {
+  const isListed = (): boolean => {
+    try {
+      if (!fs.existsSync(playlistPath)) return false;
+      return fs.readFileSync(playlistPath, 'utf8')
+        .split(/\r?\n/)
+        .some((line) => line.trim() === segmentName);
+    } catch {
+      return false; // playlist mid-write
+    }
+  };
+
+  const deadline = Date.now() + SEGMENT_WAIT_TIMEOUT_MS;
+  for (;;) {
+    if (isListed()) return true;
+    // Re-check after observing completion: the final segment and the finished
+    // flag can land between two polls.
+    if (isFinished()) return isListed();
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, SEGMENT_WAIT_POLL_MS));
+  }
+}
+
 async function resolveTrackForHls(trackId: string, userId?: string): Promise<{
   fileBuf: Buffer;
   bitrate: number | null;
   sourceFormat: string | null;
   sourceLossless: boolean | null;
+  duration: number | null;
 }> {
   let fileBuf: Buffer;
   let bitrate: number | null = null;
   let sourceFormat: string | null = null;
   let sourceLossless: boolean | null = null;
+  let duration: number | null = null;
   let resolvedId: string | null = null;
 
   if (UUID_REGEX.test(trackId)) {
     const db = await initDB();
-    const result = await db.query('SELECT path, bitrate, format, lossless FROM tracks WHERE id = $1', [trackId]);
+    const result = await db.query('SELECT path, bitrate, format, lossless, duration FROM tracks WHERE id = $1', [trackId]);
     if (result.rows.length === 0) {
       const err = new Error('Track not found') as Error & { status?: number };
       err.status = 404;
@@ -240,6 +282,7 @@ async function resolveTrackForHls(trackId: string, userId?: string): Promise<{
     bitrate = result.rows[0].bitrate;
     sourceFormat = result.rows[0].format;
     sourceLossless = typeof result.rows[0].lossless === 'boolean' ? result.rows[0].lossless : null;
+    duration = Number.isFinite(Number(result.rows[0].duration)) ? Number(result.rows[0].duration) : null;
     resolvedId = trackId;
   } else {
     const dbPath = Buffer.from(decodeURIComponent(trackId), 'base64').toString();
@@ -247,12 +290,13 @@ async function resolveTrackForHls(trackId: string, userId?: string): Promise<{
 
     try {
       const db = await initDB();
-      const result = await db.query('SELECT id, bitrate, format, lossless FROM tracks WHERE path = $1', [dbPath]);
+      const result = await db.query('SELECT id, bitrate, format, lossless, duration FROM tracks WHERE path = $1', [dbPath]);
       if (result.rows.length > 0) {
         resolvedId = result.rows[0].id;
         bitrate = result.rows[0].bitrate;
         sourceFormat = result.rows[0].format;
         sourceLossless = typeof result.rows[0].lossless === 'boolean' ? result.rows[0].lossless : null;
+        duration = Number.isFinite(Number(result.rows[0].duration)) ? Number(result.rows[0].duration) : null;
       }
     } catch { /* non-critical */ }
   }
@@ -271,7 +315,7 @@ async function resolveTrackForHls(trackId: string, userId?: string): Promise<{
     void maybeMeasureLoudnessForUser(userId, resolvedId, fileBuf.toString('utf8'));
   }
 
-  return { fileBuf, bitrate, sourceFormat, sourceLossless };
+  return { fileBuf, bitrate, sourceFormat, sourceLossless, duration };
 }
 
 function normalizeTargetCodec(codec: string, quality: string): string {
@@ -283,11 +327,12 @@ function normalizeTargetCodec(codec: string, quality: string): string {
 }
 
 async function ensureHlsSessionForRequest(trackId: string, quality: string, targetCodec: string, userId?: string) {
-  const { fileBuf, bitrate, sourceFormat } = await resolveTrackForHls(trackId, userId);
+  const { fileBuf, bitrate, sourceFormat, duration } = await resolveTrackForHls(trackId, userId);
   const codec = normalizeTargetCodec(targetCodec, quality);
   await getOrCreateHlsSession(trackId, fileBuf, quality, bitrate, sourceFormat, codec);
   return {
     codec,
+    durationSec: duration,
     sessionInfo: getSessionInfo(trackId, quality, codec),
   };
 }
@@ -313,7 +358,7 @@ async function ensureAdaptiveHlsSessionForRequest(
     throw error;
   }
   const sessionInfo = await getOrCreateAdaptiveHlsSession(trackId, track.fileBuf, ladder, 'aac');
-  return { ladder, sessionInfo };
+  return { ladder, sessionInfo, durationSec: track.duration };
 }
 
 function sanitizeCastLogValue(value: string): string {
@@ -451,8 +496,11 @@ router.all('/stream/:trackId/media.m3u8', async (req, res) => {
       }
 
       const token = req.query.token as string | undefined;
-      const playlist = fs.readFileSync(renditionInfo.playlistPath, 'utf8');
-      const output = rewriteAdaptiveMediaPlaylistSegments(playlist, ensured.ladder, rendition, targetCodec, token);
+      const rawPlaylist = fs.readFileSync(renditionInfo.playlistPath, 'utf8');
+      const completedPlaylist = ensured.sessionInfo.finished
+        ? null
+        : completeVodPlaylist(rawPlaylist, ensured.durationSec);
+      const output = rewriteAdaptiveMediaPlaylistSegments(completedPlaylist ?? rawPlaylist, ensured.ladder, rendition, targetCodec, token);
       const validation = validateHlsPlaylist(output);
       if (!validation.valid) {
         writeHlsServerLog(`[adaptive-media ${trackId} ${ensured.sessionInfo.ladderKey} ${rendition}] Invalid playlist: ${validation.error}`);
@@ -480,8 +528,14 @@ router.all('/stream/:trackId/media.m3u8', async (req, res) => {
     }
 
     const token = req.query.token as string | undefined;
-    const playlist = fs.readFileSync(sessionInfo.playlistPath, 'utf8');
-    const output = rewriteMediaPlaylistSegments(playlist, sessionInfo.quality, sessionInfo.codec, token);
+    const rawPlaylist = fs.readFileSync(sessionInfo.playlistPath, 'utf8');
+    const completedPlaylist = sessionInfo.finished
+      ? null
+      : completeVodPlaylist(rawPlaylist, ensured.durationSec);
+    if (completedPlaylist) {
+      writeHlsSessionLog(trackId, quality, targetCodec, `Completed partial playlist to VOD (duration=${ensured.durationSec}s)`);
+    }
+    const output = rewriteMediaPlaylistSegments(completedPlaylist ?? rawPlaylist, sessionInfo.quality, sessionInfo.codec, token);
 
     const validation = validateHlsPlaylist(output);
     if (!validation.valid) {
@@ -624,7 +678,14 @@ router.all('/stream/:trackId/:segment', async (req, res) => {
     if (!segmentPath) {
       return res.status(404).send('No exact adaptive HLS session for this segment');
     }
-    if (!fs.existsSync(segmentPath)) {
+    const renditionPlaylistPath = path.join(path.dirname(segmentPath), 'playlist.m3u8');
+    const segmentReady = await waitForSegmentListed(
+      renditionPlaylistPath,
+      segment,
+      () => getAdaptiveHlsSessionInfo(trackId, ladder, codec)?.finished ?? true,
+    );
+    if (!segmentReady || !fs.existsSync(segmentPath)) {
+      writeHlsSessionLog(trackId, `auto-${serializeAdaptiveLadder(ladder)}`, codec, `Adaptive segment never appeared: ${rendition}/${segment}`);
       return res.status(404).send('Adaptive segment not found');
     }
     const stat = fs.statSync(segmentPath);
@@ -647,7 +708,12 @@ router.all('/stream/:trackId/:segment', async (req, res) => {
   }
 
   const segmentPath = path.join(outputDir, segment);
-  if (!fs.existsSync(segmentPath)) {
+  const segmentReady = await waitForSegmentListed(
+    path.join(outputDir, 'playlist.m3u8'),
+    segment,
+    () => getSessionInfo(trackId, quality, codec)?.finished ?? true,
+  );
+  if (!segmentReady || !fs.existsSync(segmentPath)) {
     logHls(`[HLS DEBUG] Segment not found: ${segmentPath}`);
     writeHlsSessionLog(trackId, quality, codec, `Segment missing on disk: ${segmentPath}`);
     return res.status(404).send('Segment not found');

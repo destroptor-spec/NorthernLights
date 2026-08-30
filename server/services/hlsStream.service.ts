@@ -57,6 +57,81 @@ function summarizePlaylist(content: string): string {
     .join('\\n');
 }
 
+/**
+ * FFmpeg writes a growing `#EXT-X-PLAYLIST-TYPE:EVENT` playlist and only adds
+ * `#EXT-X-ENDLIST` once the transcode finishes. Shaka on the Cast receiver
+ * reads a playlist with no ENDLIST as a *live* presentation: it reports
+ * `duration=-1` and starts playback near the end of what exists — about one
+ * segment in. Any track loaded before its transcode completed therefore began
+ * ~10s late, losing the start of the song (prod 2026-08-30: 8 of 23 track
+ * starts, all of them explicit queue loads rather than prewarmed auto-advances).
+ *
+ * Rewriting the partial playlist into a complete VOD one from the track
+ * duration we already hold gives the player the real timeline, so it starts at
+ * 0 and can seek. Requests for segments FFmpeg has not written yet are held by
+ * the segment route until they are listed.
+ *
+ * Returns null when completion isn't safe — unknown duration, no EXTINF to
+ * derive the segment grid from, or an already-terminated playlist — and
+ * callers then serve FFmpeg's playlist unchanged.
+ *
+ * On segment count this deliberately errs low. FFmpeg cuts each segment at the
+ * first frame boundary at or after the `hls_time` mark, so real segment
+ * lengths drift either side of the first EXTINF rather than holding it exactly,
+ * and the encoded stream also runs fractionally longer than the source
+ * (measured at 0.021–0.040s). Both push the true segment count up: a 200.000s
+ * 44.1kHz source encodes to 200.039912s across 21 segments where ceil() here
+ * says 20. Verified against real FFmpeg output, this only ever under-counts,
+ * and only by one, and only when the duration sits on a grid boundary — see
+ * FFMPEG_GROUND_TRUTH in the tests. That is the safe direction: under-counting
+ * drops a sub-frame tail (23ms in the example above, inaudible), while
+ * over-counting would send the player after a segment that never exists and
+ * stall the end of the track.
+ */
+export function completeVodPlaylist(playlist: string, durationSec: number | null): string | null {
+  if (!durationSec || !Number.isFinite(durationSec) || durationSec <= 0) return null;
+  if (playlist.includes('#EXT-X-ENDLIST')) return null;
+
+  const lines = playlist.split(/\r?\n/);
+  const extinfDurations: number[] = [];
+  for (const line of lines) {
+    if (!line.startsWith('#EXTINF:')) continue;
+    const value = parseFloat(line.slice('#EXTINF:'.length).split(',')[0] || '');
+    if (Number.isFinite(value) && value > 0) extinfDurations.push(value);
+  }
+  if (extinfDurations.length === 0) return null;
+
+  // FFmpeg emits a constant segment length (the trailing segment aside), so the
+  // first EXTINF defines the grid for the whole track. Deriving it from the
+  // real playlist rather than assuming HLS_SEGMENT_DURATION keeps the announced
+  // durations exact — they are frame-aligned, e.g. 10.007800 at 44.1kHz.
+  const segmentDuration = extinfDurations[0];
+  const totalSegments = Math.ceil(durationSec / segmentDuration);
+  if (!Number.isFinite(totalSegments) || totalSegments < extinfDurations.length) return null;
+
+  const header = lines.filter((line) => (
+    line.startsWith('#EXTM3U')
+    || line.startsWith('#EXT-X-VERSION:')
+    || line.startsWith('#EXT-X-TARGETDURATION:')
+    || line.startsWith('#EXT-X-MEDIA-SEQUENCE:')
+    || line.startsWith('#EXT-X-INDEPENDENT-SEGMENTS')
+  ));
+
+  const finalSegmentDuration = durationSec - segmentDuration * (totalSegments - 1);
+  const output = [...header, '#EXT-X-PLAYLIST-TYPE:VOD'];
+  for (let index = 0; index < totalSegments; index += 1) {
+    const isFinal = index === totalSegments - 1;
+    const extinf = isFinal && finalSegmentDuration > 0 && finalSegmentDuration <= segmentDuration
+      ? finalSegmentDuration
+      : segmentDuration;
+    output.push(`#EXTINF:${extinf.toFixed(6)},`);
+    output.push(`segment${String(index).padStart(3, '0')}.ts`);
+  }
+  output.push('#EXT-X-ENDLIST');
+  output.push('');
+  return output.join('\n');
+}
+
 function countPlaylistSegments(content: string): number {
   return (content.match(/^segment\d+\.ts$/gm) || []).length;
 }
