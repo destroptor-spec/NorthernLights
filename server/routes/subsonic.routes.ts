@@ -10,7 +10,7 @@ import { initDB, touchSubsonicApiKey, getActiveSubsonicApiKeyByPrefix, updateSub
 import { fetchCandidatePool, computeArtistCentroids } from '../services/candidatePool.service';
 import { isPathAllowed, pathToBuffer } from '../state';
 import { maybeMeasureLoudnessForUser } from '../services/loudness.service';
-import { getOrCreateHlsSession, getSessionInfo, touchSession, getSessionOutputDir } from '../services/hlsStream.service';
+import { completeVodPlaylist, getOrCreateHlsSession, getSessionInfo, touchSession, getSessionOutputDir, waitForSegmentListed } from '../services/hlsStream.service';
 import { generateScopedToken, verifyScopedToken } from '../services/scopedToken.service';
 import { writeDebugLog } from '../services/debugLogger.service';
 import { logFfmpeg } from '../services/loggingConfig';
@@ -1043,7 +1043,14 @@ async function sendHls(req: Request, res: Response, id: string, ctx: SubsonicCon
     f: getParam(req, 'f') || 'json',
     maxBitRate: quality,
   });
-  const playlist = fs.readFileSync(session.playlistPath, 'utf8').replace(/^(segment\d+\.ts)$/gm, (_match, segment) => {
+  // Mid-transcode FFmpeg's playlist is EVENT-typed with no #EXT-X-ENDLIST, which
+  // players read as a live stream — they report an unknown duration and start
+  // near the live edge rather than at 0. Complete it to VOD from the known track
+  // duration, exactly as the web routes do.
+  const rawPlaylist = fs.readFileSync(session.playlistPath, 'utf8');
+  const trackDuration = Number.isFinite(Number(track.duration)) ? Number(track.duration) : null;
+  const completedPlaylist = session.finished ? null : completeVodPlaylist(rawPlaylist, trackDuration);
+  const playlist = (completedPlaylist ?? rawPlaylist).replace(/^(segment\d+\.ts)$/gm, (_match, segment) => {
     query.set('segment', segment);
     return `/rest/hlsSegment.view?${query.toString()}`;
   });
@@ -1059,7 +1066,14 @@ async function sendHlsSegment(req: Request, res: Response, id: string) {
   const outputDir = getSessionOutputDir(songId(id), `${quality}k`, DEFAULT_HLS_CODEC);
   if (!outputDir) return res.status(404).send('No HLS session');
   const segmentPath = path.join(outputDir, segment);
-  if (!fs.existsSync(segmentPath)) return res.status(404).send('Segment not found');
+  // A completed playlist lists segments FFmpeg has not written yet, so hold the
+  // request until it appears instead of 404ing the client out of the stream.
+  const segmentReady = await waitForSegmentListed(
+    path.join(outputDir, 'playlist.m3u8'),
+    segment,
+    () => getSessionInfo(songId(id), `${quality}k`, DEFAULT_HLS_CODEC)?.finished ?? true,
+  );
+  if (!segmentReady || !fs.existsSync(segmentPath)) return res.status(404).send('Segment not found');
   touchSession(songId(id), `${quality}k`, DEFAULT_HLS_CODEC);
   res.setHeader('Content-Type', 'video/mp2t');
   res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
