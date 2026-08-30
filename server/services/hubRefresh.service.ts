@@ -7,6 +7,7 @@ import {
 } from '../database';
 import { generateHubConcepts, HubCollection } from './llm.service';
 import { getHubCollections } from './recommendation.service';
+import { publishApiV1Event } from './apiV1Events.service';
 
 type LlmVetoMode = 'hard' | 'adaptive';
 type HubGenerationSource = 'login' | 'manual' | 'hub-view' | 'subsonic';
@@ -159,6 +160,9 @@ export async function runLlmHubRegeneration(
     }
 
     console.log(`[LLM Hub] Generated and saved ${validConcepts.length} playlist(s) for user ${userId} (${opts.source || 'manual'}, ${schedule})`);
+    if (validConcepts.length > 0 || (deletedCount || 0) > 0) {
+      publishApiV1Event(userId, 'playlist.changed', { action: 'hubRegenerated', source: opts.source || 'manual' });
+    }
     return { generated: validConcepts.length, schedule };
   } finally {
     runningRefreshes.delete(userId);

@@ -45,6 +45,7 @@ import providersRoutes from './routes/providers.routes';
 import concertsRoutes from './routes/concerts.routes';
 import filterRoutes from './routes/filter.routes';
 import subsonicRoutes from './routes/subsonic.routes';
+import apiV1Routes from './routes/apiV1.routes';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -130,8 +131,24 @@ app.use(cors({
       callback(new Error('Not allowed by CORS'));
     }
   },
-  allowedHeaders: ['Content-Type', 'Range', 'Accept-Encoding', 'Authorization'],
-  exposedHeaders: ['Content-Range', 'Accept-Ranges', 'Content-Length', 'Content-Type']
+  allowedHeaders: [
+    'Content-Type',
+    'Range',
+    'Accept-Encoding',
+    'Authorization',
+    'X-Request-Id',
+    'X-Aurora-Client-Id',
+    'X-Aurora-Client-Name',
+  ],
+  exposedHeaders: [
+    'Content-Range',
+    'Accept-Ranges',
+    'Content-Length',
+    'Content-Type',
+    'ETag',
+    'X-Request-Id',
+    'X-Aurora-API-Version',
+  ]
 }));
 // gzip JSON/text responses. The library/playlist/hub payloads are large,
 // highly compressible JSON; without this they ship raw (e.g. /api/library is
@@ -376,6 +393,11 @@ app.get('/api/client-config', (_req, res) => {
 // Mount /rest before the global JWT middleware so third-party clients can
 // reach it without Aurora browser session tokens.
 app.use('/rest', subsonicRoutes);
+
+// Aurora's in-development listener API supports browser JWT sessions, dedicated app
+// keys, and short-lived scoped tokens. Its router owns authentication so it
+// must be mounted before the browser-only global JWT middleware.
+app.use('/api/v1', apiV1Routes);
 
 // Public, unauthenticated routes (e.g. shared playlist snapshots). Mounted before
 // the global JWT middleware; the module is self-contained and read-only.

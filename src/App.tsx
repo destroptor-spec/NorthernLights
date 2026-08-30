@@ -22,6 +22,7 @@ import { isServerDatabaseConnected } from './utils/serverHealth';
 const SetupWizard = React.lazy(() => import('./components/SetupWizard').then(module => ({ default: module.SetupWizard })));
 const LoginPage = React.lazy(() => import('./components/LoginPage').then(module => ({ default: module.LoginPage })));
 const SharedPlaylistView = React.lazy(() => import('./components/SharedPlaylistView').then(module => ({ default: module.SharedPlaylistView })));
+const PairingApproval = React.lazy(() => import('./components/PairingApproval').then(module => ({ default: module.PairingApproval })));
 const SettingsModal = React.lazy(() => import('./components/SettingsModal').then(module => ({ default: module.SettingsModal })));
 const TrackContextMenu = React.lazy(() => import('./components/library/TrackContextMenu').then(module => ({ default: module.TrackContextMenu })));
 const DatabaseControl = React.lazy(() => import('./components/DatabaseControl').then(module => ({ default: module.DatabaseControl })));
@@ -578,6 +579,14 @@ const App: React.FC = () => {
           />
         </React.Suspense>
       );
+  }
+
+  if (window.location.pathname === '/pair') {
+    return (
+      <React.Suspense fallback={<FullPageFallback label="Checking pairing code..." />}>
+        <PairingApproval />
+      </React.Suspense>
+    );
   }
 
   return (

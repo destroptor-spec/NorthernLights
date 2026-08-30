@@ -13,6 +13,7 @@ import {
   computeJumpBackIn,
   queueSmartHubRefreshForUser,
 } from '../services/smartHub.service';
+import { publishApiV1Event } from '../services/apiV1Events.service';
 
 const router = Router();
 
@@ -91,6 +92,8 @@ router.post('/generate-custom', async (req, res) => {
     if (!playlist) {
       return res.status(503).json({ error: 'LLM generated genres could not be matched after 3 retries or failed completely.' });
     }
+
+    publishApiV1Event(userId, 'playlist.changed', { playlistId: playlist.id, action: 'generated', source: 'web' });
 
     res.json({ playlist });
   } catch (error) {

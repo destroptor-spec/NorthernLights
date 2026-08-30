@@ -15,6 +15,7 @@ import {
 } from './candidatePool.service';
 import { getScrobblesInRange } from './lastfm.service';
 import { getListensInRange } from './listenbrainz.service';
+import { publishApiV1Event } from './apiV1Events.service';
 
 // ============================================================
 // Smart Hub: On Repeat, Repeat Rewind, Jump Back In, Artist
@@ -200,6 +201,7 @@ async function persistSmart(
   });
 
   const tracks = await getPlaylistTracks(id);
+  publishApiV1Event(userId, 'playlist.changed', { playlistId: id, action: 'generated', source: 'smartHub' });
   return { id, title, description, tracks };
 }
 

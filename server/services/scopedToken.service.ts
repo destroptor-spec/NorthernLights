@@ -18,6 +18,22 @@ export async function generateScopedToken(scope: ScopedTokenScope, user: JwtPayl
   return jwt.sign(payload, secret, { expiresIn: getTokenExpiry(rememberMe) });
 }
 
+/** Short-lived capability used by first-party clients for URL-only media/SSE transports. */
+export async function generateEphemeralScopedToken(
+  scope: ScopedTokenScope,
+  user: JwtPayload,
+  expiresIn: '5m' | '15m' | '1h' = '15m',
+): Promise<string> {
+  const secret = await getJwtSecret();
+  const payload: ScopedTokenPayload = {
+    userId: user.userId,
+    username: user.username,
+    role: user.role,
+    scope,
+  };
+  return jwt.sign(payload, secret, { expiresIn });
+}
+
 export async function verifyScopedToken(token: string, scope: ScopedTokenScope): Promise<ScopedTokenPayload | null> {
   try {
     const secret = await getJwtSecret();

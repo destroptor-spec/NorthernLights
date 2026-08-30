@@ -822,6 +822,91 @@ export async function initDB(): Promise<Pool> {
         CREATE INDEX IF NOT EXISTS subsonic_api_keys_user_id_idx ON subsonic_api_keys(user_id);
         CREATE INDEX IF NOT EXISTS subsonic_api_keys_active_idx ON subsonic_api_keys(user_id, revoked_at);
         CREATE UNIQUE INDEX IF NOT EXISTS subsonic_api_keys_prefix_idx ON subsonic_api_keys(key_prefix);
+
+        -- First-party Aurora clients use a separate credential namespace from
+        -- OpenSubsonic. App keys are listener-scoped and are never accepted by
+        -- the legacy/admin route tree.
+        CREATE TABLE IF NOT EXISTS aurora_clients (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          kind TEXT NOT NULL DEFAULT 'desktop' CHECK (kind IN ('desktop', 'web')),
+          platform TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          last_seen_at TIMESTAMPTZ,
+          revoked_at TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS aurora_clients_user_id_idx ON aurora_clients(user_id);
+
+        CREATE TABLE IF NOT EXISTS aurora_app_keys (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          client_id UUID NOT NULL REFERENCES aurora_clients(id) ON DELETE CASCADE,
+          user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          key_prefix TEXT NOT NULL,
+          key_hash TEXT NOT NULL,
+          scope TEXT NOT NULL DEFAULT 'listener' CHECK (scope = 'listener'),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          last_used_at TIMESTAMPTZ,
+          revoked_at TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS aurora_app_keys_user_id_idx ON aurora_app_keys(user_id);
+        CREATE INDEX IF NOT EXISTS aurora_app_keys_active_idx ON aurora_app_keys(user_id, revoked_at);
+        CREATE UNIQUE INDEX IF NOT EXISTS aurora_app_keys_prefix_idx ON aurora_app_keys(key_prefix);
+
+        CREATE TABLE IF NOT EXISTS aurora_pairing_requests (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          request_secret_hash TEXT NOT NULL,
+          verifier_challenge TEXT NOT NULL,
+          user_code TEXT NOT NULL UNIQUE,
+          client_name TEXT NOT NULL,
+          platform TEXT,
+          approved_by UUID REFERENCES users(id) ON DELETE CASCADE,
+          status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'cancelled', 'exchanged')),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          expires_at TIMESTAMPTZ NOT NULL,
+          approved_at TIMESTAMPTZ,
+          exchanged_at TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS aurora_pairing_expiry_idx ON aurora_pairing_requests(expires_at);
+
+        CREATE TABLE IF NOT EXISTS playback_sessions (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          owner_client_id TEXT NOT NULL,
+          current_entry_id UUID,
+          position_ms INTEGER NOT NULL DEFAULT 0 CHECK (position_ms >= 0),
+          playback_state TEXT NOT NULL DEFAULT 'paused' CHECK (playback_state IN ('playing', 'paused', 'stopped')),
+          repeat_mode TEXT NOT NULL DEFAULT 'none' CHECK (repeat_mode IN ('none', 'one', 'all')),
+          shuffle BOOLEAN NOT NULL DEFAULT FALSE,
+          source_kind TEXT,
+          source_id TEXT,
+          revision BIGINT NOT NULL DEFAULT 1,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS playback_sessions_user_updated_idx ON playback_sessions(user_id, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS playback_session_entries (
+          session_id UUID NOT NULL REFERENCES playback_sessions(id) ON DELETE CASCADE,
+          queue_entry_id UUID NOT NULL DEFAULT gen_random_uuid(),
+          track_id TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+          position INTEGER NOT NULL CHECK (position >= 0),
+          added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (session_id, queue_entry_id),
+          UNIQUE (session_id, position)
+        );
+        CREATE INDEX IF NOT EXISTS playback_session_entries_track_idx ON playback_session_entries(track_id);
+
+        CREATE TABLE IF NOT EXISTS api_playback_events (
+          event_id UUID PRIMARY KEY,
+          user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          track_id TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL CHECK (kind IN ('nowPlaying', 'played', 'skipped')),
+          occurred_at TIMESTAMPTZ NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS api_playback_events_user_created_idx ON api_playback_events(user_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS tracks_title_trgm_idx ON tracks USING gin (title gin_trgm_ops);
         CREATE INDEX IF NOT EXISTS tracks_artist_trgm_idx ON tracks USING gin (artist gin_trgm_ops);
         CREATE INDEX IF NOT EXISTS tracks_album_trgm_idx ON tracks USING gin (album gin_trgm_ops);
@@ -3161,6 +3246,27 @@ export async function getAllArtists() {
   return res.rows;
 }
 
+export interface EntityListPageOptions {
+  limit: number;
+  after?: { sort: string; id: string } | null;
+}
+
+export async function getArtistsPage(options: EntityListPageOptions) {
+  const db = await initDB();
+  const limit = Math.max(1, Math.min(201, Math.trunc(options.limit)));
+  const after = options.after || null;
+  const res = await db.query(
+    `SELECT id, name, image_url, artwork_url, genres, community_tags, artist_type, area, lifespan_begin
+       FROM artists
+      WHERE merged_into IS NULL
+        AND ($1::text IS NULL OR (name, id) > ($1::text, $2::text))
+      ORDER BY name ASC, id ASC
+      LIMIT $3`,
+    [after?.sort || null, after?.id || null, limit],
+  );
+  return res.rows;
+}
+
 // Artists that have never been enriched and still have no image. Used by the
 // bounded artist-image batch job (server/services/artistImageEnrichment.service.ts).
 // `last_updated = 0` means getArtistData has never written a cache row for this
@@ -3224,6 +3330,46 @@ export async function getAllAlbums() {
   return res.rows;
 }
 
+export async function getAlbumsPage(options: EntityListPageOptions) {
+  const db = await initDB();
+  const limit = Math.max(1, Math.min(201, Math.trunc(options.limit)));
+  const after = options.after || null;
+  const res = await db.query(`
+    WITH page_albums AS (
+      SELECT a.*
+      FROM albums a
+      WHERE $1::text IS NULL OR (a.title, a.id) > ($1::text, $2::text)
+      ORDER BY a.title ASC, a.id ASC
+      LIMIT $3
+    )
+    SELECT a.*,
+      COALESCE(agg.track_count, 0) AS track_count,
+      agg.derived_year,
+      agg.derived_genres,
+      agg.art_hash,
+      COALESCE(agg.derived_release_type, 'Album') AS derived_release_type
+    FROM page_albums a
+    LEFT JOIN LATERAL (
+      SELECT
+        COUNT(*)::int AS track_count,
+        MIN(NULLIF(t.year, 0)) AS derived_year,
+        (array_agg(t.art_hash ORDER BY t.track_number NULLS LAST) FILTER (WHERE COALESCE(t.art_hash, '') <> ''))[1] AS art_hash,
+        string_agg(DISTINCT NULLIF(btrim(canonical_genre.name), ''), ',') AS derived_genres,
+        CASE
+          WHEN COUNT(DISTINCT t.release_type) FILTER (WHERE COALESCE(t.release_type, '') <> '') > 1 THEN 'Various'
+          WHEN COUNT(*) FILTER (WHERE COALESCE(t.release_type, '') <> '') > 0
+            THEN MAX(t.release_type) FILTER (WHERE COALESCE(t.release_type, '') <> '')
+          ELSE 'Album'
+        END AS derived_release_type
+      FROM tracks t
+      LEFT JOIN genres canonical_genre ON canonical_genre.id = t.genre_id
+      WHERE t.album_id = a.id
+    ) agg ON TRUE
+    ORDER BY a.title ASC, a.id ASC
+  `, [after?.sort || null, after?.id || null, limit]);
+  return res.rows;
+}
+
 export async function getAllGenres() {
   const db = await initDB();
   const res = await db.query(`
@@ -3237,6 +3383,33 @@ export async function getAllGenres() {
     GROUP BY g.id
     ORDER BY g.name ASC
   `);
+  return res.rows;
+}
+
+export async function getGenresPage(options: EntityListPageOptions) {
+  const db = await initDB();
+  const limit = Math.max(1, Math.min(201, Math.trunc(options.limit)));
+  const after = options.after || null;
+  const res = await db.query(`
+    WITH page_genres AS (
+      SELECT g.*
+      FROM genres g
+      WHERE g.merged_into IS NULL
+        AND ($1::text IS NULL OR (g.name, g.id) > ($1::text, $2::text))
+      ORDER BY g.name ASC, g.id ASC
+      LIMIT $3
+    )
+    SELECT g.*,
+      COALESCE(agg.track_count, 0) AS track_count,
+      COALESCE(agg.alias_count, 0) AS alias_count
+    FROM page_genres g
+    LEFT JOIN LATERAL (
+      SELECT
+        (SELECT COUNT(DISTINCT tg.track_id)::int FROM track_genres tg WHERE tg.genre_id = g.id) AS track_count,
+        (SELECT COUNT(DISTINCT alias.id)::int FROM genres alias WHERE alias.merged_into = g.id) AS alias_count
+    ) agg ON TRUE
+    ORDER BY g.name ASC, g.id ASC
+  `, [after?.sort || null, after?.id || null, limit]);
   return res.rows;
 }
 
@@ -4475,14 +4648,32 @@ export async function createPlaylist(
 // supplied list can't drive unbounded query construction.
 const MAX_PLAYLIST_TRACKS = 10000;
 
-export async function addTracksToPlaylist(playlistId: string, trackIds: string[]) {
-  const db = await initDB();
-  let uniqueTrackIds = Array.from(new Set(trackIds.filter(Boolean)));
-  if (uniqueTrackIds.length > MAX_PLAYLIST_TRACKS) {
-    console.warn(`[Playlist] Track list for ${playlistId} exceeds cap (${uniqueTrackIds.length} > ${MAX_PLAYLIST_TRACKS}); truncating.`);
-    uniqueTrackIds = uniqueTrackIds.slice(0, MAX_PLAYLIST_TRACKS);
+export class PlaylistTracksUnavailableError extends Error {
+  constructor(public readonly missingIds: string[]) {
+    super('One or more playlist tracks no longer exist');
   }
-  const existingRes = await db.query(
+}
+
+type PlaylistTransactionClient = {
+  query: (sql: string, values?: any[]) => Promise<{ rows: any[] }>;
+};
+
+export async function replacePlaylistTracksInTransaction(
+  client: PlaylistTransactionClient,
+  playlistId: string,
+  uniqueTrackIds: string[],
+) {
+  // Serialize replacements for one playlist and ensure a concurrent delete
+  // cannot interleave between validation and the final insert.
+  await client.query('SELECT id FROM playlists WHERE id = $1 FOR UPDATE', [playlistId]);
+  if (uniqueTrackIds.length > 0) {
+    const tracksRes = await client.query('SELECT id FROM tracks WHERE id = ANY($1::text[])', [uniqueTrackIds]);
+    const existingIds = new Set(tracksRes.rows.map((row: any) => String(row.id)));
+    const missingIds = uniqueTrackIds.filter((id) => !existingIds.has(id));
+    if (missingIds.length > 0) throw new PlaylistTracksUnavailableError(missingIds);
+  }
+
+  const existingRes = await client.query(
     `SELECT track_id, added_at FROM playlist_tracks WHERE playlist_id = $1`,
     [playlistId]
   );
@@ -4493,8 +4684,8 @@ export async function addTracksToPlaylist(playlistId: string, trackIds: string[]
     ])
   );
 
-  await db.query(`DELETE FROM playlist_tracks WHERE playlist_id = $1`, [playlistId]);
-  
+  await client.query(`DELETE FROM playlist_tracks WHERE playlist_id = $1`, [playlistId]);
+
   if (uniqueTrackIds.length > 0) {
     const values: any[] = [];
     const placeholders: string[] = [];
@@ -4505,7 +4696,7 @@ export async function addTracksToPlaylist(playlistId: string, trackIds: string[]
       values.push(playlistId, uniqueTrackIds[i], i, existingAddedAt.get(uniqueTrackIds[i]) || null);
     }
 
-    await db.query(`
+    await client.query(`
       INSERT INTO playlist_tracks (playlist_id, track_id, sort_order, added_at)
       VALUES ${placeholders.join(', ')}
       ON CONFLICT (playlist_id, track_id)
@@ -4513,6 +4704,26 @@ export async function addTracksToPlaylist(playlistId: string, trackIds: string[]
         sort_order = EXCLUDED.sort_order,
         added_at = COALESCE(playlist_tracks.added_at, EXCLUDED.added_at)
     `, values);
+  }
+}
+
+export async function addTracksToPlaylist(playlistId: string, trackIds: string[]) {
+  const db = await initDB();
+  let uniqueTrackIds = Array.from(new Set(trackIds.filter(Boolean)));
+  if (uniqueTrackIds.length > MAX_PLAYLIST_TRACKS) {
+    console.warn(`[Playlist] Track list for ${playlistId} exceeds cap (${uniqueTrackIds.length} > ${MAX_PLAYLIST_TRACKS}); truncating.`);
+    uniqueTrackIds = uniqueTrackIds.slice(0, MAX_PLAYLIST_TRACKS);
+  }
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await replacePlaylistTracksInTransaction(client, playlistId, uniqueTrackIds);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
   }
 }
 
