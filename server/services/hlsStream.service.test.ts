@@ -8,7 +8,11 @@ jest.mock('./loggingConfig', () => ({
   logHls: jest.fn(),
 }));
 
-import { completeVodPlaylist } from './hlsStream.service';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
+import { completeVodPlaylist, waitForSegmentListed } from './hlsStream.service';
 
 // The exact shape FFmpeg serves mid-transcode: EVENT type, no ENDLIST, and
 // frame-aligned 10.0078s segments (44.1kHz AAC). Captured from prod on
@@ -170,5 +174,63 @@ describe('completeVodPlaylist segment-count safety', () => {
     // a 23ms tail rather than risking a request for a segment that never lands.
     const mine = segmentCount(completeVodPlaylist(playlistOnGrid(10.0078), 200) as string);
     expect(mine).toBe(20);
+  });
+});
+
+/**
+ * Serving a completed VOD playlist means a player can ask for a segment FFmpeg
+ * has not produced yet. FFmpeg writes the segment file *before* appending it to
+ * the playlist, so file existence would happily serve a half-written segment —
+ * being listed in the playlist is the only completeness signal available.
+ * Shared by the web and Subsonic segment routes.
+ */
+describe('waitForSegmentListed', () => {
+  let dir: string;
+  let playlistPath: string;
+
+  const writePlaylist = (...segments: string[]) => {
+    fs.writeFileSync(playlistPath, ['#EXTM3U', ...segments.flatMap((seg) => ['#EXTINF:10.007800,', seg])].join('\n'));
+  };
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hls-wait-'));
+    playlistPath = path.join(dir, 'playlist.m3u8');
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('returns immediately when the segment is already listed', async () => {
+    writePlaylist('segment000.ts', 'segment001.ts');
+    await expect(waitForSegmentListed(playlistPath, 'segment001.ts', () => false)).resolves.toBe(true);
+  });
+
+  it('waits for a segment FFmpeg has not written yet', async () => {
+    writePlaylist('segment000.ts');
+    const pending = waitForSegmentListed(playlistPath, 'segment003.ts', () => false);
+    setTimeout(() => writePlaylist('segment000.ts', 'segment001.ts', 'segment002.ts', 'segment003.ts'), 120);
+    await expect(pending).resolves.toBe(true);
+  });
+
+  it('gives up once the session finishes without the segment', async () => {
+    writePlaylist('segment000.ts');
+    await expect(waitForSegmentListed(playlistPath, 'segment099.ts', () => true)).resolves.toBe(false);
+  });
+
+  // The final segment and the finished flag can land between two polls, so
+  // completion must not be taken as proof the segment never arrived.
+  it('re-checks the playlist after observing completion', async () => {
+    writePlaylist('segment000.ts', 'segment001.ts');
+    await expect(waitForSegmentListed(playlistPath, 'segment001.ts', () => true)).resolves.toBe(true);
+  });
+
+  it('tolerates a playlist that does not exist yet', async () => {
+    await expect(waitForSegmentListed(playlistPath, 'segment000.ts', () => true)).resolves.toBe(false);
+  });
+
+  it('matches whole lines, not substrings', async () => {
+    writePlaylist('segment0001.ts');
+    await expect(waitForSegmentListed(playlistPath, 'segment000.ts', () => true)).resolves.toBe(false);
   });
 });

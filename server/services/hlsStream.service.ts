@@ -88,6 +88,44 @@ function summarizePlaylist(content: string): string {
  * over-counting would send the player after a segment that never exists and
  * stall the end of the track.
  */
+const SEGMENT_WAIT_TIMEOUT_MS = 30000;
+const SEGMENT_WAIT_POLL_MS = 50;
+
+/**
+ * A synthesized VOD playlist lets the player ask for a segment FFmpeg has not
+ * produced yet. FFmpeg writes the segment file *before* appending it to the
+ * playlist, so file existence alone would happily serve a half-written segment;
+ * "listed in the playlist" is the only completeness signal available. Shared by the
+ * web and Subsonic segment routes. Hold the request until the segment is listed, the session finishes without it, or the
+ * timeout expires.
+ */
+export async function waitForSegmentListed(
+  playlistPath: string,
+  segmentName: string,
+  isFinished: () => boolean,
+): Promise<boolean> {
+  const isListed = (): boolean => {
+    try {
+      if (!fs.existsSync(playlistPath)) return false;
+      return fs.readFileSync(playlistPath, 'utf8')
+        .split(/\r?\n/)
+        .some((line) => line.trim() === segmentName);
+    } catch {
+      return false; // playlist mid-write
+    }
+  };
+
+  const deadline = Date.now() + SEGMENT_WAIT_TIMEOUT_MS;
+  for (;;) {
+    if (isListed()) return true;
+    // Re-check after observing completion: the final segment and the finished
+    // flag can land between two polls.
+    if (isFinished()) return isListed();
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, SEGMENT_WAIT_POLL_MS));
+  }
+}
+
 export function completeVodPlaylist(playlist: string, durationSec: number | null): string | null {
   if (!durationSec || !Number.isFinite(durationSec) || durationSec <= 0) return null;
   if (playlist.includes('#EXT-X-ENDLIST')) return null;
