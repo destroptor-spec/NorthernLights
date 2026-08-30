@@ -22,15 +22,6 @@ import { readSessionAuth, writeSessionAuth, clearSessionAuth } from '../utils/se
 import { computeLoudnessGainDb, type LoudnessData } from '../utils/loudness';
 import { getCachedLoudness, fetchLoudness, invalidateLoudness, type TrackLoudnessEntry } from '../utils/loudnessCache';
 import type { ToastType } from '../components/Toast';
-import {
-  auroraApiAllPages,
-  auroraApiRequest,
-  toLegacyTrack,
-  type AlbumSummary as ApiV1Album,
-  type ArtistSummary as ApiV1Artist,
-  type Genre as ApiV1Genre,
-  type Playlist as ApiV1Playlist,
-} from '../api/auroraApi';
 
 export interface ToastItem {
   id: number;
@@ -172,14 +163,6 @@ async function getResponseError(response: Response, fallback: string): Promise<s
 const buildTrackUrls = (trackId: string, path: string, token: string, quality: string = '128k', artHash?: string) => {
   const base = `${window.location.protocol}//${window.location.host}`;
   const tokenParam = token ? `&token=${token}` : '';
-  if (path.startsWith('api-v1:')) {
-    const encodedToken = encodeURIComponent(token);
-    return {
-      url: `${base}/api/stream/${encodeURIComponent(trackId)}/playlist.m3u8?quality=${quality}${tokenParam}`,
-      rawUrl: `${base}/api/v1/media/tracks/${encodeURIComponent(trackId)}${encodedToken ? `?token=${encodedToken}` : ''}`,
-      artUrl: artHash ? `${base}/api/art?hash=${encodeURIComponent(artHash)}${tokenParam}` : undefined,
-    };
-  }
   // path is already base64 from the DB — just URL-encode for safe transport
   const pathB64 = encodeURIComponent(path);
   // Prefer a content-hash art URL when the cover has been pre-encoded: it's
@@ -333,54 +316,6 @@ export interface Playlist {
   tracks: TrackInfo[];
 }
 
-const mapApiV1Artist = (artist: ApiV1Artist): ArtistInfo => ({
-  id: artist.id,
-  name: artist.name,
-  image_url: artist.imageUrl || undefined,
-  artwork_url: artist.artworkUrl || undefined,
-  genres: JSON.stringify(artist.genres),
-  artist_type: artist.artistType || undefined,
-  area: artist.area || undefined,
-  lifespan_begin: artist.lifeSpanBegin || undefined,
-});
-
-const mapApiV1Album = (album: ApiV1Album): AlbumInfo => ({
-  id: album.id,
-  title: album.title,
-  artist_name: album.artistName,
-  image_url: album.imageUrl || undefined,
-  art_hash: album.artworkId,
-  release_year: album.year,
-  is_compilation: album.compilation,
-  derived_year: album.year,
-  derived_genres: album.genres.join(','),
-  derived_release_type: album.releaseType,
-  track_count: album.trackCount,
-});
-
-const mapApiV1Genre = (genre: ApiV1Genre): EntityInfo => ({
-  id: genre.id,
-  name: genre.name,
-});
-
-const mapApiV1Playlist = (
-  playlist: ApiV1Playlist,
-  mediaToken: string,
-  quality: PlayerState['streamingQuality'],
-): Playlist => ({
-  id: playlist.id,
-  title: playlist.title,
-  description: playlist.description,
-  isLlmGenerated: playlist.isGenerated,
-  isSystem: playlist.isSystem,
-  pinned: playlist.pinned,
-  createdAt: playlist.createdAt ? new Date(playlist.createdAt).getTime() : undefined,
-  ownerUsername: playlist.ownerUsername,
-  isPrivate: playlist.private,
-  isOwner: playlist.isOwner,
-  tracks: playlist.tracks.map(track => toLegacyTrack(track, mediaToken, quality)),
-});
-
 export interface EntityInfo {
   id: string;
   name?: string;
@@ -434,10 +369,6 @@ export interface AlbumInfo extends EntityInfo {
   release_year?: number | null;
   is_compilation?: boolean;
   manual_group_override?: boolean;
-  derived_year?: number | null;
-  derived_genres?: string | null;
-  derived_release_type?: string | null;
-  track_count?: number | null;
 }
 
 export interface AlbumEditionsResponse {
@@ -1964,24 +1895,36 @@ export const usePlayerStore = create<PlayerState>()(
             const authHeaders = get().getAuthHeader();
             // Entity-first: these lightweight lists make the library views
             // interactive immediately, instead of waiting on the full track set.
-            const [artists, albums, genres, dirsRes] = await Promise.all([
-              auroraApiAllPages<ApiV1Artist>('/artists', authHeaders, ac.signal),
-              auroraApiAllPages<ApiV1Album>('/albums', authHeaders, ac.signal),
-              auroraApiAllPages<ApiV1Genre>('/genres', authHeaders, ac.signal),
+            const [artistsRes, albumsRes, genresRes, dirsRes] = await Promise.all([
+              fetch('/api/artists', { headers: authHeaders, signal: ac.signal }),
+              fetch('/api/albums', { headers: authHeaders, signal: ac.signal }),
+              fetch('/api/genres', { headers: authHeaders, signal: ac.signal }),
               fetch('/api/library/directories', { headers: authHeaders, signal: ac.signal }),
             ]);
-            const dirsData = dirsRes.ok ? await dirsRes.json() : { directories: [] };
-            set({
-              artists: artists.map(mapApiV1Artist),
-              albums: albums.map(mapApiV1Album),
-              genres: genres.map(mapApiV1Genre),
-              libraryFolders: dirsData.directories || [],
-              isLibraryLoading: false,
-            });
-            // Reconcile the restored play queue against the server (prune
-            // deleted tracks, refresh stream URLs). Lightweight — no full
-            // track list is loaded.
-            void reconcileQueue();
+            if (artistsRes.ok && albumsRes.ok && genresRes.ok) {
+              const [artists, albums, genres, dirsData] = await Promise.all([
+                artistsRes.json(),
+                albumsRes.json(),
+                genresRes.json(),
+                dirsRes.ok ? dirsRes.json() : Promise.resolve({ directories: [] }),
+              ]);
+              set({
+                artists: (artists || []) as ArtistInfo[],
+                albums: (albums || []) as AlbumInfo[],
+                genres: genres || [],
+                libraryFolders: dirsData.directories || [],
+                isLibraryLoading: false,
+              });
+              // Reconcile the restored play queue against the server (prune
+              // deleted tracks, refresh stream URLs). Lightweight — no full
+              // track list is loaded.
+              void reconcileQueue();
+            } else {
+              const status = [artistsRes, albumsRes, genresRes].find(r => !r.ok)?.status;
+              const msg = `Couldn't load your library (server returned ${status}).`;
+              set({ isLibraryLoading: false, libraryError: msg });
+              get().addToast(msg, 'error', { actionLabel: 'Retry', onAction: () => { void get().fetchLibraryFromServer(); } });
+            }
           } catch (e) {
             // Aborted on logout — drop silently; don't surface an error or clear loading.
             if (isAbortError(e) || ac.signal.aborted) return;
@@ -2033,10 +1976,33 @@ export const usePlayerStore = create<PlayerState>()(
            const run = (async () => {
            try {
               const authHeaders = get().getAuthHeader();
-              const playlists = await auroraApiRequest<ApiV1Playlist[]>('/playlists', authHeaders, { signal: ac.signal });
-              const { mediaAccessToken, authToken, streamingQuality } = get();
-              const token = mediaAccessToken || authToken || '';
-              set({ playlists: playlists.map(playlist => mapApiV1Playlist(playlist, token, streamingQuality)) });
+              const res = await fetch('/api/playlists', { headers: authHeaders, signal: ac.signal });
+              if (res.ok) {
+                 const data = await res.json();
+
+                 const { mediaAccessToken, authToken, library } = get();
+                 const token = mediaAccessToken || authToken || '';
+
+                 // Map track objects inside playlists to have full stream URLs
+                 const populatedPlaylists = data.playlists.map((pl: any) => {
+                    const mappedTracks = pl.tracks.map((t: any) => {
+                       // Prefer library track (up-to-date art, etc.), fall back to API data
+                       const fullTrack = library.find((lt: TrackInfo) => lt.id === t.id);
+                       const track = fullTrack ? { ...t, ...fullTrack, playlistAddedAt: t.playlistAddedAt } : t;
+                       if (!track.path) return null;
+                       const quality = get().streamingQuality;
+                       return {
+                         ...track,
+                         ...buildTrackUrls(track.id, track.path, token, quality, (track as any).artHash),
+                       };
+                    }).filter(Boolean);
+                    return { ...pl, tracks: mappedTracks };
+                 });
+
+                 set({ playlists: populatedPlaylists });
+              } else {
+                 set({ playlistsError: `Couldn't load playlists (server returned ${res.status}).` });
+              }
            } catch (e) {
               if (isAbortError(e) || ac.signal.aborted) return; // aborted on logout
               console.error("Failed to fetch playlists from server", e);
@@ -2057,10 +2023,28 @@ export const usePlayerStore = create<PlayerState>()(
         fetchDiscoverPlaylists: async () => {
            try {
               const authHeaders = get().getAuthHeader();
-              const playlists = await auroraApiRequest<ApiV1Playlist[]>('/playlists/discover', authHeaders);
-              const { mediaAccessToken, authToken, streamingQuality } = get();
+              const res = await fetch('/api/playlists/discover', { headers: authHeaders });
+              if (!res.ok) return;
+              const data = await res.json();
+
+              const { mediaAccessToken, authToken, library } = get();
               const token = mediaAccessToken || authToken || '';
-              set({ discoverPlaylists: playlists.map(playlist => mapApiV1Playlist(playlist, token, streamingQuality)) });
+
+              const populated = (data.playlists || []).map((pl: any) => {
+                 const mappedTracks = (pl.tracks || []).map((t: any) => {
+                    const fullTrack = library.find((lt: TrackInfo) => lt.id === t.id);
+                    const track = fullTrack ? { ...t, ...fullTrack, playlistAddedAt: t.playlistAddedAt } : t;
+                    if (!track.path) return null;
+                    const quality = get().streamingQuality;
+                    return {
+                      ...track,
+                      ...buildTrackUrls(track.id, track.path, token, quality, (track as any).artHash),
+                    };
+                 }).filter(Boolean);
+                 return { ...pl, tracks: mappedTracks };
+              });
+
+              set({ discoverPlaylists: populated });
            } catch (e) {
               console.error('Failed to fetch discoverable playlists', e);
            }
@@ -2073,13 +2057,31 @@ export const usePlayerStore = create<PlayerState>()(
         fetchPlaylistFromServer: async (playlistId: string) => {
            try {
               const authHeaders = get().getAuthHeader();
-              const playlist = await auroraApiRequest<ApiV1Playlist>(`/playlists/${encodeURIComponent(playlistId)}`, authHeaders);
-              const { mediaAccessToken, authToken, streamingQuality } = get();
+              const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}`, { headers: authHeaders });
+              if (!res.ok) return false;
+
+              const data = await res.json();
+              const pl = data.playlist;
+              if (!pl) return false;
+
+              const { mediaAccessToken, authToken, library, streamingQuality } = get();
               const token = mediaAccessToken || authToken || '';
-              const populated = mapApiV1Playlist(playlist, token, streamingQuality);
+              const quality = streamingQuality;
+
+              const mappedTracks = (pl.tracks || []).map((t: any) => {
+                 const fullTrack = library.find((lt: TrackInfo) => lt.id === t.id);
+                 const track = fullTrack ? { ...t, ...fullTrack, playlistAddedAt: t.playlistAddedAt } : t;
+                 if (!track.path) return null;
+                 return {
+                   ...track,
+                   ...buildTrackUrls(track.id, track.path, token, quality, (track as any).artHash),
+                 };
+              }).filter(Boolean);
+
+              const populated = { ...pl, tracks: mappedTracks };
 
               set((state) => {
-                 const idx = state.playlists.findIndex((p) => p.id === playlist.id);
+                 const idx = state.playlists.findIndex((p) => p.id === pl.id);
                  if (idx === -1) return { playlists: [populated, ...state.playlists] };
                  const next = state.playlists.slice();
                  next[idx] = populated;
@@ -2095,15 +2097,19 @@ export const usePlayerStore = create<PlayerState>()(
         createPlaylist: async (title: string, description?: string) => {
            try {
               const authHeaders = get().getAuthHeader();
-              const created = await auroraApiRequest<ApiV1Playlist>('/playlists', authHeaders, {
+              const res = await fetch('/api/playlists', {
                  method: 'POST',
-                 headers: { 'Content-Type': 'application/json' },
+                 headers: { 'Content-Type': 'application/json', ...authHeaders },
                  body: JSON.stringify({ title, description })
               });
-              const { mediaAccessToken, authToken, streamingQuality } = get();
-              const mapped = mapApiV1Playlist(created, mediaAccessToken || authToken || '', streamingQuality);
-              set({ playlists: [mapped, ...get().playlists] });
-              return mapped;
+              if (res.ok) {
+                 // Server returns the created playlist ({ id, title, description,
+                 // isLlmGenerated, tracks: [] }). Capture it before refetching so
+                 // callers can navigate straight into the new (empty) playlist.
+                 const created = await res.json().catch(() => null);
+                 await get().fetchPlaylistsFromServer();
+                 return created as Playlist | null;
+              }
            } catch (e) {
                console.error("Failed to create playlist", e);
             }
@@ -2113,8 +2119,13 @@ export const usePlayerStore = create<PlayerState>()(
          deletePlaylist: async (playlistId: string) => {
             try {
                const authHeaders = get().getAuthHeader();
-               await auroraApiRequest(`/playlists/${encodeURIComponent(playlistId)}`, authHeaders, { method: 'DELETE' });
-               set({ playlists: get().playlists.filter((p: Playlist) => p.id !== playlistId) });
+               const res = await fetch(`/api/playlists/${playlistId}`, {
+                  method: 'DELETE',
+                  headers: authHeaders,
+               });
+               if (res.ok) {
+                  set({ playlists: get().playlists.filter((p: Playlist) => p.id !== playlistId) });
+               }
             } catch (e) {
                console.error("Failed to delete playlist", e);
             }
@@ -2123,16 +2134,18 @@ export const usePlayerStore = create<PlayerState>()(
          togglePin: async (playlistId: string, pinned: boolean) => {
             try {
                const authHeaders = get().getAuthHeader();
-               await auroraApiRequest(`/playlists/${encodeURIComponent(playlistId)}/state`, authHeaders, {
+               const res = await fetch(`/api/playlists/${playlistId}/pin`, {
                   method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
+                  headers: { 'Content-Type': 'application/json', ...authHeaders },
                   body: JSON.stringify({ pinned })
                });
-               set({
-                  playlists: get().playlists.map((p: Playlist) =>
-                     p.id === playlistId ? { ...p, pinned } : p
-                  )
-               });
+               if (res.ok) {
+                  set({
+                     playlists: get().playlists.map((p: Playlist) =>
+                        p.id === playlistId ? { ...p, pinned } : p
+                     )
+                  });
+               }
             } catch (e) {
                console.error("Failed to toggle pin", e);
             }
@@ -2147,11 +2160,12 @@ export const usePlayerStore = create<PlayerState>()(
             });
             try {
                const authHeaders = get().getAuthHeader();
-               await auroraApiRequest(`/playlists/${encodeURIComponent(playlistId)}/state`, authHeaders, {
+               const res = await fetch(`/api/playlists/${playlistId}/privacy`, {
                   method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ private: isPrivate }),
+                  headers: { 'Content-Type': 'application/json', ...authHeaders },
+                  body: JSON.stringify({ isPrivate }),
                });
+               if (!res.ok) throw new Error(`Privacy update failed with status ${res.status}`);
             } catch (e) {
                set({ playlists: previousPlaylists });
                console.error('Failed to update playlist privacy', e);
@@ -2173,11 +2187,12 @@ export const usePlayerStore = create<PlayerState>()(
 
             try {
                const authHeaders = get().getAuthHeader();
-               await auroraApiRequest(`/playlists/${encodeURIComponent(playlistId)}`, authHeaders, {
+               const res = await fetch(`/api/playlists/${playlistId}`, {
                   method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
+                  headers: { 'Content-Type': 'application/json', ...authHeaders },
                   body: JSON.stringify(updates),
                });
+               if (!res.ok) throw new Error(`Playlist update failed with status ${res.status}`);
             } catch (e) {
                set({ playlists: previousPlaylists });
                console.error(`Failed to update playlist ${playlistId}`, e);
@@ -2211,11 +2226,15 @@ export const usePlayerStore = create<PlayerState>()(
 
            try {
              const authHeaders = get().getAuthHeader();
-             await auroraApiRequest(`/playlists/${encodeURIComponent(playlistId)}/tracks`, authHeaders, {
-               method: 'PUT',
-               headers: { 'Content-Type': 'application/json' },
+             const res = await fetch(`/api/playlists/${playlistId}/tracks`, {
+               method: 'POST',
+               headers: { 'Content-Type': 'application/json', ...authHeaders },
                body: JSON.stringify({ trackIds: nextTrackIds }),
              });
+
+             if (!res.ok) {
+               throw new Error(`Playlist update failed with status ${res.status}`);
+             }
 
              // Only reconcile with the server if a newer optimistic mutation hasn't
              // superseded this one — otherwise the refetch would clobber it.
