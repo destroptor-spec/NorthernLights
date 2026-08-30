@@ -100,7 +100,6 @@ export class CastManager {
     private readonly maxRejoinHydrationAttempts = 12;
     private readonly rejoinHydrationDelayMs = 250;
     private reconnectInProgress = false;
-    private lastStoredSessionRejoinAt = 0;
     private lastUnmappedSessionLogAt = 0;
     // Watchdog for dead RemotePlayer event streams: after a queue replacement
     // the sender can stay bound to the OLD media session; when that session's
@@ -110,6 +109,7 @@ export class CastManager {
     // healthy playback, so a silent-while-playing stream is detectably dead.
     private statusWatchdogTimer: ReturnType<typeof setInterval> | null = null;
     private lastRemotePlayerEventAt = 0;
+    private lastCastStateChangeAt = 0;
     private lastWatchdogRecoveryLogAt = 0;
     private watchdogMediaRequestId = 0;
     // When the SDK loses the media session entirely we prod the receiver with
@@ -121,7 +121,6 @@ export class CastManager {
     private mediaSessionProbeStartedAt = 0;
     private remoteMediaConcludedGone = false;
     private readonly mediaSessionProbeGraceMs = 20000;
-    private readonly storedSessionRejoinThrottleMs = 5000;
     private freshSessionStartedAt = 0;
     private readonly freshSessionWindowMs = 5000;
     private freshSessionPlaybackPromise: Promise<void> | null = null;
@@ -955,34 +954,17 @@ export class CastManager {
                 return false;
             }
 
-            const storedId = localStorage.getItem(SESSION_STORAGE_KEY);
-            if (storedId) {
-                if (sdkState === cast.framework.CastState.NO_DEVICES_AVAILABLE) {
-                    this.logCast('ok', `Stored Cast session rejoin deferred: ${reason}`, `stored=${storedId} castState=${sdkState}`);
-                    if (sdkState && sdkState !== this.state) {
-                        this.state = sdkState;
-                        this.notifyStateChange();
-                    }
-                    this.setHealthStatus('idle', '');
-                    return false;
-                }
-
-                const now = Date.now();
-                if (now - this.lastStoredSessionRejoinAt >= this.storedSessionRejoinThrottleMs) {
-                    this.lastStoredSessionRejoinAt = now;
-                    this.logCast('ok', `Attempting stored Cast session rejoin: ${reason}`, `stored=${storedId}`);
-                    this.rejoinSessionPending = true;
-                    try {
-                        chrome.cast.requestSessionById(storedId);
-                        this.beginRejoinHydration(`stored-rejoin:${reason}`);
-                    } catch (error) {
-                        this.rejoinSessionPending = false;
-                        localStorage.removeItem(SESSION_STORAGE_KEY);
-                        this.logCast('warn', `Stored Cast session rejoin failed: ${reason}`, this.describeError(error));
-                    }
-                }
-                return false;
-            }
+            // A stored session id used to drive chrome.cast.requestSessionById()
+            // from here. Across 39 attempts in production it never once produced
+            // a session — every one timed out and cleared the stored id — while
+            // the SDK's own `resumeSavedSession` + ORIGIN_SCOPED auto-join
+            // delivered SESSION_RESUMED 59 times over the same log. The manual
+            // call is worse than useless: requestSessionById leaves a session
+            // request pending inside the SDK long after our 3s budget gives up,
+            // and a launcher tap landing on top of that is a candidate for the
+            // INVALID_PARAMETER rejections seen at launch. Rely on auto-join;
+            // the stored id is still used by the stale-transport recovery path,
+            // which does work.
 
             if (sdkState && sdkState !== this.state) {
                 this.state = sdkState;
@@ -1057,6 +1039,7 @@ export class CastManager {
                     const prevState = this.state;
                     this.state = event.castState;
                     this.notifyStateChange();
+                    this.lastCastStateChangeAt = Date.now();
                     this.logCast('ok', `CAST_STATE_CHANGED: ${prevState} -> ${this.state}`);
                     if (this.state === 'CONNECTED') {
                         this.setHealthStatus('connected', `Casting to ${this.getCastDeviceName() || 'device'}.`);
@@ -1147,7 +1130,19 @@ export class CastManager {
                             break;
 
                         case cast.framework.SessionState.SESSION_START_FAILED:
-                            this.logCast('warn', 'SESSION_START_FAILED', `errorCode=${event.errorCode || 'unknown'} reason=${event.reason || 'unknown'}`);
+                            // chrome.cast.Error carries code/description/details, but this
+                            // event exposes only the code — prod logged `reason=unknown` on
+                            // every occurrence. Record the surrounding state instead, so the
+                            // next failure shows whether it landed during device-discovery
+                            // churn or on top of an in-flight rejoin.
+                            this.logCast(
+                                'warn',
+                                'SESSION_START_FAILED',
+                                `errorCode=${event.errorCode || 'unknown'} reason=${event.reason || 'unknown'}`
+                                + ` castState=${this.castContext?.getCastState?.() || 'unknown'}`
+                                + ` msSinceCastStateChange=${this.lastCastStateChangeAt ? Date.now() - this.lastCastStateChangeAt : -1}`
+                                + ` userIntentPending=${this.userSessionRequestPending} rejoinPending=${this.rejoinSessionPending}`,
+                            );
                             this.clearUserSessionIntentTimer();
                             // Dismissing the device picker reports errorCode CANCEL — benign, stay
                             // silent. Surface a concise recovery message only for real failures, and
@@ -1880,15 +1875,19 @@ export class CastManager {
     }
 
     /**
-     * Attempt to rejoin a previously stored cast session.
-     * Per Google Cast docs: use requestSessionById() to resume without page reload.
+     * Pick up a Cast session that is still running from a previous page load.
+     *
+     * This no longer calls requestSessionById(): the SDK's own
+     * `resumeSavedSession` + ORIGIN_SCOPED auto-join re-attaches and fires
+     * SESSION_RESUMED on its own. All this does is reconcile against whatever
+     * session the SDK has already restored, so the sender picks it up without
+     * waiting for a user gesture.
      */
     private tryRejoinSession() {
         const storedId = localStorage.getItem(SESSION_STORAGE_KEY);
         if (!storedId) return;
 
-        console.log('[Cast] Attempting to rejoin session:', storedId);
-        this.logCast('ok', 'Boot rejoin requested', `stored=${storedId}`);
+        this.logCast('ok', 'Boot reconcile against SDK-resumed session', `stored=${storedId}`);
         void this.reconcileActiveSession('boot-stored-session');
     }
 
