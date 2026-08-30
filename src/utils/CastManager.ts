@@ -112,6 +112,15 @@ export class CastManager {
     private lastRemotePlayerEventAt = 0;
     private lastWatchdogRecoveryLogAt = 0;
     private watchdogMediaRequestId = 0;
+    // When the SDK loses the media session entirely we prod the receiver with
+    // GET_STATUS, but an IDLE receiver (queue finished, nothing loaded) has no
+    // media to answer with — the session never returns, so the store would sit
+    // on playbackState 'playing' forever. Observed in prod 2026-08-30
+    // 11:28→11:35: eventSilenceMs climbed 10s→205s while the app still claimed
+    // to be playing. Bound the probing window, then release the playing state.
+    private mediaSessionProbeStartedAt = 0;
+    private remoteMediaConcludedGone = false;
+    private readonly mediaSessionProbeGraceMs = 20000;
     private readonly storedSessionRejoinThrottleMs = 5000;
     private freshSessionStartedAt = 0;
     private readonly freshSessionWindowMs = 5000;
@@ -226,6 +235,8 @@ export class CastManager {
     private startStatusWatchdog() {
         if (this.statusWatchdogTimer !== null) return;
         this.lastRemotePlayerEventAt = Date.now();
+        this.mediaSessionProbeStartedAt = 0;
+        this.remoteMediaConcludedGone = false;
         this.statusWatchdogTimer = setInterval(() => {
             void this.runStatusWatchdogTick();
         }, 5000);
@@ -249,12 +260,27 @@ export class CastManager {
     private async runStatusWatchdogTick() {
         if (!this.isConnected()) return;
         try {
+            // A live media session means any earlier "remote media gone"
+            // verdict is stale — allow probing again on the next loss.
+            if (this.getMediaSession()) {
+                this.mediaSessionProbeStartedAt = 0;
+                this.remoteMediaConcludedGone = false;
+            }
+
             const storeState = usePlayerStore.getState();
             const eventSilenceMs = Date.now() - this.lastRemotePlayerEventAt;
             const streamLooksDead = storeState.playbackState === 'playing' && eventSilenceMs > 7000;
             if (!streamLooksDead && this.doesSessionTrackMatchStore()) return;
 
             if (!this.getMediaSession()) {
+                if (this.remoteMediaConcludedGone) return;
+                const now = Date.now();
+                if (this.mediaSessionProbeStartedAt === 0) this.mediaSessionProbeStartedAt = now;
+                const probedMs = now - this.mediaSessionProbeStartedAt;
+                if (probedMs >= this.mediaSessionProbeGraceMs) {
+                    this.concludeRemoteMediaGone(eventSilenceMs, probedMs);
+                    return;
+                }
                 this.requestMediaStatusBroadcast(eventSilenceMs);
                 return;
             }
@@ -290,6 +316,25 @@ export class CastManager {
                 this.lastWatchdogRecoveryLogAt = now;
                 this.logCast('warn', 'Cast status watchdog requested media status', `eventSilenceMs=${eventSilenceMs} mediaSession=none`);
             }
+        } catch { /* ignore */ }
+    }
+
+    /**
+     * The receiver has taken a full `mediaSessionProbeGraceMs` of GET_STATUS
+     * prods and still reports no media session — the remote media is genuinely
+     * gone (queue finished, or another sender took the receiver over). Release
+     * the local playing state so the watchdog's `streamLooksDead` guard goes
+     * quiet and the UI stops showing a track that isn't playing. The Cast
+     * session itself is left alone: the user is still connected and may queue
+     * something next. Deliberately not `onEnded` — that would auto-advance a
+     * queue whose remote state we've just admitted we can't see.
+     */
+    private concludeRemoteMediaGone(eventSilenceMs: number, probedMs: number) {
+        this.remoteMediaConcludedGone = true;
+        this.mediaSessionProbeStartedAt = 0;
+        this.logCast('warn', 'Cast remote media gone; releasing local playing state', `eventSilenceMs=${eventSilenceMs} probedMs=${probedMs}`);
+        try {
+            this.onPlayStateChange?.(false);
         } catch { /* ignore */ }
     }
 
