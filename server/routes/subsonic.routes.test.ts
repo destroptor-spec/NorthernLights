@@ -47,6 +47,11 @@ jest.mock('../services/artworkFallback.service', () => ({
   providerArtworkProxyPath: jest.fn(),
   resolveProviderArtworkUrl: jest.fn(),
 }));
+jest.mock('child_process', () => ({ spawn: jest.fn() }));
+jest.mock('../services/loggingConfig', () => ({
+  logFfmpeg: jest.fn(),
+  logHls: jest.fn(),
+}));
 
 import {
   buildAlbumListPayload,
@@ -58,6 +63,8 @@ import {
   isSubsonicProviderScrobbleBridgeEnabled,
   isSubsonicSubmission,
   mapAlbum,
+  buildTranscodeArgs,
+  resolveStreamPlan,
   mapArtist,
   mapTrackToSubsonic,
   normalizeSearchQuery,
@@ -393,5 +400,139 @@ describe('subsonic route helpers', () => {
     expect(buildSearchPayload('search2', result)).toHaveProperty('searchResult2');
     expect(buildSearchPayload('search3', result)).toHaveProperty('searchResult3');
     expect(buildSearchPayload('search3', result)).not.toHaveProperty('searchResult2');
+  });
+});
+
+/**
+ * `stream.view` transcoding, driven by the Subsonic spec's `maxBitRate`
+ * ("attempt to limit the bitrate to this value... If set to zero, no limit is
+ * imposed") and `format` ("raw" disables transcoding). Clients surface this as
+ * a per-network quality setting: Symfonium's "Original" must keep getting the
+ * untouched file, while a cellular setting of e.g. 320 asks for a transcode.
+ */
+describe('resolveStreamPlan', () => {
+  const flac = { suffix: 'flac', bitrateKbps: 1411 };
+  const mp3v0 = { suffix: 'mp3', bitrateKbps: 192 };
+
+  describe('serves the original file', () => {
+    it('when no quality parameters are sent at all ("Original")', () => {
+      const plan = resolveStreamPlan(flac, {});
+      expect(plan.mode).toBe('direct');
+      expect(plan.suffix).toBe('flac');
+      expect(plan.contentType).toBe('audio/flac');
+    });
+
+    it('when maxBitRate is zero, which the spec defines as no limit', () => {
+      expect(resolveStreamPlan(flac, { maxBitRate: '0' }).mode).toBe('direct');
+    });
+
+    it('when format=raw, even alongside a bitrate cap', () => {
+      const plan = resolveStreamPlan(flac, { maxBitRate: '320', format: 'raw' });
+      expect(plan.mode).toBe('direct');
+      expect(plan.reason).toBe('format=raw');
+    });
+
+    it('when the source already fits under the cap', () => {
+      const plan = resolveStreamPlan(mp3v0, { maxBitRate: '320' });
+      expect(plan.mode).toBe('direct');
+      expect(plan.reason).toContain('within-cap');
+    });
+
+    it('when the requested format is what the source already is', () => {
+      expect(resolveStreamPlan(mp3v0, { format: 'mp3' }).mode).toBe('direct');
+    });
+
+    it('when maxBitRate is not a number', () => {
+      expect(resolveStreamPlan(flac, { maxBitRate: 'high' }).mode).toBe('direct');
+    });
+  });
+
+  describe('transcodes', () => {
+    it('lossless down to a cellular cap, defaulting to mp3', () => {
+      const plan = resolveStreamPlan(flac, { maxBitRate: '320' });
+      expect(plan.mode).toBe('transcode');
+      expect(plan.bitrateKbps).toBe(320);
+      expect(plan.suffix).toBe('mp3');
+      expect(plan.codec).toBe('libmp3lame');
+      expect(plan.container).toBe('mp3');
+      expect(plan.contentType).toBe('audio/mpeg');
+    });
+
+    it('to a lower cap than the source bitrate', () => {
+      const plan = resolveStreamPlan(mp3v0, { maxBitRate: '128' });
+      expect(plan.mode).toBe('transcode');
+      expect(plan.bitrateKbps).toBe(128);
+    });
+
+    it('to an explicitly requested format', () => {
+      const plan = resolveStreamPlan(flac, { maxBitRate: '128', format: 'opus' });
+      expect(plan.mode).toBe('transcode');
+      expect(plan.suffix).toBe('opus');
+      expect(plan.codec).toBe('libopus');
+      expect(plan.container).toBe('ogg');
+    });
+
+    it('on a format change alone, with no cap', () => {
+      const plan = resolveStreamPlan(flac, { format: 'mp3' });
+      expect(plan.mode).toBe('transcode');
+      expect(plan.bitrateKbps).toBe(320);
+    });
+
+    // MP4 needs a seekable output, so m4a is served as ADTS AAC over a pipe.
+    it('m4a as streamable ADTS AAC', () => {
+      const plan = resolveStreamPlan(flac, { maxBitRate: '256', format: 'm4a' });
+      expect(plan.container).toBe('adts');
+      expect(plan.suffix).toBe('aac');
+      expect(plan.codec).toBe('aac');
+    });
+
+    it('falls back rather than failing on an unsupported format', () => {
+      const plan = resolveStreamPlan(flac, { maxBitRate: '192', format: 'flv' });
+      expect(plan.mode).toBe('transcode');
+      expect(plan.suffix).toBe('mp3');
+    });
+
+    it('caps the default bitrate when the source bitrate is unknown', () => {
+      const plan = resolveStreamPlan({ suffix: 'flac', bitrateKbps: null }, { format: 'mp3' });
+      expect(plan.bitrateKbps).toBe(320);
+    });
+  });
+});
+
+/**
+ * These exact argument lists were run against a real 1696kbps FLAC and probed:
+ * mp3 320079bps, opus 133335bps, vorbis 186308bps, aac 250515bps — every
+ * container pipes to stdout without a seekable output.
+ */
+describe('buildTranscodeArgs', () => {
+  const plan = (over: Partial<ReturnType<typeof resolveStreamPlan>>) => ({
+    ...resolveStreamPlan({ suffix: 'flac', bitrateKbps: 1411 }, { maxBitRate: '320' }),
+    ...over,
+  });
+
+  it('drops video so embedded cover art cannot break the container', () => {
+    const args = buildTranscodeArgs('/music/track.flac', plan({}));
+    expect(args).toContain('-vn');
+    expect(args.join(' ')).toContain('-map 0:a:0');
+  });
+
+  it('writes to stdout with the planned codec, bitrate and container', () => {
+    const args = buildTranscodeArgs('/music/track.flac', plan({}));
+    expect(args.join(' ')).toBe(
+      '-i /music/track.flac -vn -map 0:a:0 -c:a libmp3lame -b:a 320k -id3v2_version 3 -f mp3 -',
+    );
+  });
+
+  it('tags mp3 with id3v2.3 for client compatibility, and nothing else', () => {
+    const mp3 = buildTranscodeArgs('/a.flac', plan({}));
+    const opus = buildTranscodeArgs('/a.flac', plan({ codec: 'libopus', container: 'ogg' }));
+    expect(mp3).toContain('-id3v2_version');
+    expect(opus).not.toContain('-id3v2_version');
+    expect(opus.join(' ')).toBe('-i /a.flac -vn -map 0:a:0 -c:a libopus -b:a 320k -f ogg -');
+  });
+
+  it('passes the source path through untouched so odd filenames survive', () => {
+    const args = buildTranscodeArgs("/music/Sean Paul - Dynamite (Banx N' Ranx).flac", plan({}));
+    expect(args[1]).toBe("/music/Sean Paul - Dynamite (Banx N' Ranx).flac");
   });
 });

@@ -5,6 +5,7 @@ import bcrypt from 'bcrypt';
 import fs from 'fs';
 import path from 'path';
 import * as mm from 'music-metadata';
+import { spawn } from 'child_process';
 import { initDB, touchSubsonicApiKey, getActiveSubsonicApiKeyByPrefix, updateSubsonicApiKeyHash, getPlaylists, getPlaylistTracks, getPlaylistMeta, createPlaylist, addTracksToPlaylist, deletePlaylist, recordPlaybackForUser, setTrackLovedForUser, setTrackRatingForUser, getUserSetting, setUserSetting, getSystemSetting, getArtworkInfoForPath } from '../database';
 import { fetchCandidatePool, computeArtistCentroids } from '../services/candidatePool.service';
 import { isPathAllowed, pathToBuffer } from '../state';
@@ -12,6 +13,7 @@ import { maybeMeasureLoudnessForUser } from '../services/loudness.service';
 import { getOrCreateHlsSession, getSessionInfo, touchSession, getSessionOutputDir } from '../services/hlsStream.service';
 import { generateScopedToken, verifyScopedToken } from '../services/scopedToken.service';
 import { writeDebugLog } from '../services/debugLogger.service';
+import { logFfmpeg } from '../services/loggingConfig';
 import { queueLlmHubRefreshForUser } from '../services/hubRefresh.service';
 import { scrobbleTracks as scrobbleLastFmTracks, updateNowPlaying as updateLastFmNowPlaying } from '../services/lastfm.service';
 import { scrobbleTracks as scrobbleListenBrainzTracks, updateNowPlaying as updateListenBrainzNowPlaying } from '../services/listenbrainz.service';
@@ -745,6 +747,97 @@ async function resolvePlayableTrack(id: string, userId: string) {
   return { track, fileBuf };
 }
 
+/**
+ * Progressive transcode targets. Every container here can be written to a pipe;
+ * `m4a` deliberately maps onto ADTS AAC because the MP4 container needs a
+ * seekable output and cannot be streamed from FFmpeg's stdout without
+ * fragmenting it.
+ */
+const TRANSCODE_TARGETS: Record<string, { codec: string; container: string; suffix: string }> = {
+  mp3: { codec: 'libmp3lame', container: 'mp3', suffix: 'mp3' },
+  opus: { codec: 'libopus', container: 'ogg', suffix: 'opus' },
+  ogg: { codec: 'libvorbis', container: 'ogg', suffix: 'ogg' },
+  aac: { codec: 'aac', container: 'adts', suffix: 'aac' },
+  m4a: { codec: 'aac', container: 'adts', suffix: 'aac' },
+};
+
+const DEFAULT_TRANSCODE_FORMAT = 'mp3';
+const DEFAULT_TRANSCODE_KBPS = 320;
+
+export interface StreamPlan {
+  mode: 'direct' | 'transcode';
+  suffix: string;
+  contentType: string;
+  bitrateKbps?: number;
+  codec?: string;
+  container?: string;
+  reason: string;
+}
+
+/**
+ * Decide whether `stream.view` serves the original file or transcodes, from the
+ * spec's `maxBitRate` and `format` parameters.
+ *
+ * Subsonic defines `maxBitRate` as "the server will attempt to limit the
+ * bitrate to this value, in kilobits per second. If set to zero, no limit is
+ * imposed", and `format=raw` as the explicit opt-out from transcoding. Clients
+ * expose this as a per-network quality setting — Symfonium's "Original" sends
+ * no cap (or zero) and must keep getting the untouched file, while a cellular
+ * setting of e.g. 320 asks the server to do the work.
+ *
+ * Direct play is preserved wherever the request does not actually demand a
+ * change, so the common case stays a plain file read with byte-range support.
+ */
+export function resolveStreamPlan(
+  source: { suffix: string; bitrateKbps?: number | null },
+  params: { maxBitRate?: string | null; format?: string | null },
+): StreamPlan {
+  const sourceSuffix = (source.suffix || '').toLowerCase();
+  const direct = (reason: string): StreamPlan => ({
+    mode: 'direct',
+    suffix: sourceSuffix,
+    contentType: MIME_TYPES[sourceSuffix] || 'audio/mpeg',
+    reason,
+  });
+
+  const requestedFormat = (params.format || '').trim().toLowerCase();
+  if (requestedFormat === 'raw') return direct('format=raw');
+
+  const parsedCap = parseInt(String(params.maxBitRate ?? ''), 10);
+  // Zero means "no limit" per the spec; anything unparseable is treated as absent.
+  const cap = Number.isFinite(parsedCap) && parsedCap > 0 ? parsedCap : null;
+
+  const target = requestedFormat ? TRANSCODE_TARGETS[requestedFormat] : undefined;
+  // An unsupported format is not an error — the spec lets the server fall back
+  // rather than fail, so it is treated as if no format had been requested.
+  const formatWantsChange = Boolean(target) && target!.suffix !== sourceSuffix;
+
+  if (!cap && !formatWantsChange) return direct('no-cap-no-format-change');
+
+  const sourceKbps = Number.isFinite(Number(source.bitrateKbps)) && Number(source.bitrateKbps) > 0
+    ? Number(source.bitrateKbps)
+    : null;
+
+  // Transcoding upward wastes CPU and quality; if the source already fits under
+  // the cap and no format change was asked for, send it untouched.
+  if (cap && !formatWantsChange && sourceKbps !== null && sourceKbps <= cap) {
+    return direct(`source-${sourceKbps}kbps-within-cap-${cap}`);
+  }
+
+  const chosen = target || TRANSCODE_TARGETS[DEFAULT_TRANSCODE_FORMAT];
+  const bitrateKbps = cap ?? Math.min(sourceKbps ?? DEFAULT_TRANSCODE_KBPS, DEFAULT_TRANSCODE_KBPS);
+
+  return {
+    mode: 'transcode',
+    suffix: chosen.suffix,
+    contentType: MIME_TYPES[chosen.suffix] || 'audio/mpeg',
+    bitrateKbps,
+    codec: chosen.codec,
+    container: chosen.container,
+    reason: `cap=${cap ?? 'none'} format=${requestedFormat || 'none'}`,
+  };
+}
+
 async function streamFile(req: Request, res: Response, id: string, userId: string, download = false) {
   const { track, fileBuf } = await resolvePlayableTrack(id, userId);
   if (!fs.existsSync(fileBuf)) return res.status(404).send('File not found');
@@ -754,6 +847,30 @@ async function streamFile(req: Request, res: Response, id: string, userId: strin
   const mimeType = MIME_TYPES[ext] || 'audio/mpeg';
   const fileName = path.basename(fileBuf.toString('utf8'));
   const range = req.headers.range;
+
+  // download.view always returns the original file — only stream.view honours
+  // the transcoding parameters.
+  const sourceKbps = Number.isFinite(Number(track.bitrate)) && Number(track.bitrate) > 0
+    ? Math.round(Number(track.bitrate) / 1000)
+    : null;
+  const requestedMaxBitRate = getParam(req, 'maxBitRate');
+  const requestedFormat = getParam(req, 'format');
+  const plan = download
+    ? null
+    : resolveStreamPlan({ suffix: ext, bitrateKbps: sourceKbps }, {
+      maxBitRate: requestedMaxBitRate,
+      format: requestedFormat,
+    });
+
+  writeSubsonicLog(
+    `stream id=${songId(id)} mode=${plan?.mode ?? 'download'}`
+    + ` maxBitRate=${requestedMaxBitRate || '-'} format=${requestedFormat || '-'}`
+    + ` source=${ext || '-'}@${sourceKbps ?? '-'}kbps`
+    + ` target=${plan?.suffix ?? ext}@${plan?.bitrateKbps ?? sourceKbps ?? '-'}kbps`
+    + ` reason=${plan?.reason ?? 'download'} range=${range ? 'yes' : 'no'} ${clientInfo(req)}`,
+  );
+
+  if (plan?.mode === 'transcode') return streamTranscoded(req, res, fileBuf, plan, track);
 
   res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Content-Type', mimeType);
@@ -779,6 +896,60 @@ async function streamFile(req: Request, res: Response, id: string, userId: strin
 
   res.setHeader('Content-Length', stat.size);
   fs.createReadStream(fileBuf).pipe(res);
+}
+
+/**
+ * FFmpeg arguments for a progressive transcode written to stdout.
+ *
+ * `-vn` with an explicit `-map 0:a:0` matters: library files routinely carry an
+ * embedded cover image as an mjpeg video stream, and without both flags FFmpeg
+ * tries to carry it into a container that cannot hold it.
+ */
+export function buildTranscodeArgs(filePath: string, plan: StreamPlan): string[] {
+  const args = [
+    '-i', filePath,
+    '-vn',
+    '-map', '0:a:0',
+    '-c:a', String(plan.codec),
+    '-b:a', `${plan.bitrateKbps}k`,
+  ];
+  if (plan.container === 'mp3') args.push('-id3v2_version', '3');
+  args.push('-f', String(plan.container), '-');
+  return args;
+}
+
+/**
+ * Pipe an FFmpeg transcode straight to the response. There is no seekable byte
+ * space behind a pipe, so range requests are refused up front rather than
+ * answered wrongly — clients fall back to sequential playback.
+ */
+function streamTranscoded(req: Request, res: Response, fileBuf: Buffer, plan: StreamPlan, track: any) {
+  res.setHeader('Content-Type', plan.contentType);
+  res.setHeader('Accept-Ranges', 'none');
+
+  // The real length is not known until the stream has been produced, so the
+  // spec offers an estimate for clients that need a progress bar or duration.
+  if (String(getParam(req, 'estimateContentLength') || '').toLowerCase() === 'true') {
+    const duration = Number(track?.duration);
+    if (Number.isFinite(duration) && duration > 0 && plan.bitrateKbps) {
+      res.setHeader('Content-Length', Math.floor((plan.bitrateKbps * 1000 / 8) * duration));
+    }
+  }
+
+  const ffmpeg = spawn('ffmpeg', buildTranscodeArgs(fileBuf.toString('utf8'), plan));
+
+  ffmpeg.stderr.on('data', (data) => logFfmpeg('[FFmpeg subsonic]', data.toString()));
+  ffmpeg.stdout.pipe(res);
+
+  ffmpeg.on('error', (err: Error) => {
+    writeSubsonicLog(`stream_transcode_error message=${String(err?.message || err).slice(0, 200)}`);
+    if (!res.headersSent) res.status(500).send('Transcoding failed');
+    else res.destroy();
+  });
+
+  // Kill the encoder as soon as the client goes away; without this a skipped
+  // track leaves FFmpeg running to the end of the file.
+  req.on('close', () => ffmpeg.kill('SIGKILL'));
 }
 
 async function sendCoverArt(req: Request, res: Response, id: string, userId: string) {
