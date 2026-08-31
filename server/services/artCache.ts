@@ -52,8 +52,29 @@ export function hashArt(bytes: Uint8Array): string {
 }
 
 // Sharded by the first two hex chars to avoid one enormous flat directory.
+/**
+ * Resolve a cache file for an artwork hash, refusing anything that lands
+ * outside the cache directory.
+ *
+ * Both HTTP surfaces that reach here — `/api/art?hash=` and
+ * `/api/v1/artwork/:hash` — validate the id against an anchored
+ * `/^[0-9a-f]{1,64}$/` allowlist, which cannot express a separator, a `..` or a
+ * null byte, so traversal is already unreachable. The check below is not
+ * fixing a hole: it moves the guarantee next to the filesystem call instead of
+ * leaving it several lines away in each caller. A later change to the id scheme
+ * — uppercase digests, a UUID, some other cache key — would otherwise make
+ * these paths attacker-controlled with nothing anywhere failing.
+ *
+ * Throwing rather than returning null keeps callers unchanged: every one of
+ * them either wraps this in try/catch or passes a server-generated hash, so a
+ * throw here means a genuine bug or an attack, not an ordinary miss.
+ */
 export function artCachePath(hash: string, size: ArtSize): string {
-  return path.join(ART_CACHE_DIR, hash.slice(0, 2), `${hash}_${size}.avif`);
+  const file = path.resolve(path.join(ART_CACHE_DIR, hash.slice(0, 2), `${hash}_${size}.avif`));
+  if (file !== ART_CACHE_DIR && !file.startsWith(ART_CACHE_DIR + path.sep)) {
+    throw new Error('Artwork cache path escapes the cache directory');
+  }
+  return file;
 }
 
 export function artExists(hash: string, size: ArtSize): boolean {
