@@ -1,7 +1,7 @@
 jest.mock('../database', () => ({ initDB: jest.fn() }));
 
 import { initDB } from '../database';
-import { createAuroraAppKey, verifyAuroraAppKey } from './auroraAppAuth.service';
+import { createAuroraAppKey, verifyAuroraAppKey, __testing } from './auroraAppAuth.service';
 import crypto from 'crypto';
 
 const initDBMock = initDB as jest.MockedFunction<typeof initDB>;
@@ -53,5 +53,80 @@ describe('Aurora app-key authentication', () => {
       userId: 'user-1', username: 'alice', role: 'user', clientId: 'client-1',
       clientName: 'Desktop', authKind: 'appKey', keyId: 'key-1',
     });
+  });
+});
+
+/**
+ * Pairing codes are read aloud and typed by hand, so the alphabet is small and
+ * likely to be edited (dropping a character that looks like another). The old
+ * implementation indexed with `randomBytes[i] % alphabet.length`, which is only
+ * unbiased because 32 divides 256 exactly — an invisible dependency on the
+ * alphabet's size. These tests pin the properties that must survive such an edit.
+ */
+describe('pairing user codes', () => {
+  const { userCode, USER_CODE_ALPHABET, USER_CODE_LENGTH } = __testing;
+
+  it('is formatted as two readable groups', () => {
+    for (let i = 0; i < 50; i++) {
+      expect(userCode()).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+    }
+  });
+
+  it('draws only from the alphabet', () => {
+    for (let i = 0; i < 200; i++) {
+      for (const char of userCode().replace('-', '')) {
+        expect(USER_CODE_ALPHABET).toContain(char);
+      }
+    }
+  });
+
+  it('excludes characters that are easy to misread', () => {
+    for (const ambiguous of ['I', 'O', '0', '1']) {
+      expect(USER_CODE_ALPHABET).not.toContain(ambiguous);
+    }
+  });
+
+  it('has no repeated characters, so every symbol is equally reachable', () => {
+    expect(new Set(USER_CODE_ALPHABET).size).toBe(USER_CODE_ALPHABET.length);
+  });
+
+  // Deterministic guard on the actual invariant: characters must come from the
+  // unbiased API, never from modulo on raw bytes.
+  it('draws each character with crypto.randomInt, not modulo on raw bytes', () => {
+    const randomInt = jest.spyOn(crypto, 'randomInt');
+    const randomBytes = jest.spyOn(crypto, 'randomBytes');
+    try {
+      userCode();
+      expect(randomInt).toHaveBeenCalledTimes(USER_CODE_LENGTH);
+      for (const call of randomInt.mock.calls) {
+        expect(call[0]).toBe(USER_CODE_ALPHABET.length);
+      }
+      expect(randomBytes).not.toHaveBeenCalled();
+    } finally {
+      randomInt.mockRestore();
+      randomBytes.mockRestore();
+    }
+  });
+
+  // Statistical backstop, sized to discriminate rather than to look reassuring.
+  // Measured against real generators at this sample size: the current
+  // implementation deviates ~3%, while modulo indexing over a 31-character
+  // alphabet — one ambiguous character removed — deviates ~11%. A 6% band sits
+  // between them at roughly 4.8 sigma per symbol, so it catches the regression
+  // without flaking. A looser band would pass the very bug it guards against.
+  it('stays flat enough to rule out modulo bias', () => {
+    const codes = 25_000;
+    const counts = new Map<string, number>();
+    for (let i = 0; i < codes; i++) {
+      for (const char of userCode().replace('-', '')) {
+        counts.set(char, (counts.get(char) || 0) + 1);
+      }
+    }
+
+    const expected = (codes * USER_CODE_LENGTH) / USER_CODE_ALPHABET.length;
+    for (const char of USER_CODE_ALPHABET) {
+      const seen = counts.get(char) || 0;
+      expect(Math.abs(seen - expected) / expected).toBeLessThan(0.06);
+    }
   });
 });

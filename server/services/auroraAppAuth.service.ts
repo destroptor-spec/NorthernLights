@@ -195,13 +195,33 @@ export async function verifyAuroraAppKey(rawKey: string): Promise<AuroraAppPrinc
   };
 }
 
+// Deliberately excludes characters that are easy to misread aloud or by eye:
+// I, O, 0 and 1. Anything may be added or removed here without weakening the
+// code — see userCode() for why that is now safe.
+const USER_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const USER_CODE_LENGTH = 8;
+
+/**
+ * Human-readable pairing code, e.g. `A7K2-9QMX`.
+ *
+ * Uses crypto.randomInt rather than `randomBytes[i] % alphabet.length`. The
+ * modulo form is only unbiased when the alphabet length divides 256, which the
+ * 32 characters above happen to do — every byte value maps to a symbol exactly
+ * 8 times. That is an invisible dependency on the alphabet's size: dropping one
+ * ambiguous-looking character (S for 5, say) would leave 31 symbols, and the
+ * first 8 of them would then come up ~3% more often than the rest, silently
+ * shrinking the space an attacker has to guess. randomInt rejection-samples
+ * internally, so it is unbiased for any alphabet length.
+ */
 function userCode(): string {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const bytes = crypto.randomBytes(8);
   let value = '';
-  for (let index = 0; index < bytes.length; index++) value += alphabet[bytes[index] % alphabet.length];
+  for (let index = 0; index < USER_CODE_LENGTH; index++) {
+    value += USER_CODE_ALPHABET[crypto.randomInt(USER_CODE_ALPHABET.length)];
+  }
   return `${value.slice(0, 4)}-${value.slice(4)}`;
 }
+
+export const __testing = { userCode, USER_CODE_ALPHABET, USER_CODE_LENGTH };
 
 export async function createPairingRequest(input: {
   clientName: string;
