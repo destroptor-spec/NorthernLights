@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Aurora Listener API
+- Added the versioned `/api/v1` listener API for first-party Aurora web and dedicated desktop/mobile clients, with explicit path-free Zod DTOs, consistent data/error envelopes, request IDs, cursor pagination, capability discovery, and a generated OpenAPI 3.1 contract.
+- Added separate listener-scoped `aurora_app_` credentials with digest-only storage, manual create/rotate/revoke/delete lifecycle, and browser-assisted one-time pairing using a request secret plus verifier challenge. Aurora app keys remain isolated from OpenSubsonic keys and browser/admin routes.
+- Added listener library, search, lyrics, artwork, playlists, Hub/discovery, annotations, playback reporting, preferences, source resolution, Range-capable direct streaming, and short-lived media/SSE tokens.
+- Added durable server-backed playback sessions with stable queue-entry IDs, optimistic revisions, explicit client handoff, and user-scoped SSE invalidation/replay events.
+- Migrated central web library indexes and playlist reads/writes to the shared v1 client contract. Settings now separates Aurora Apps from OpenSubsonic keys, and `/pair?code=…` provides a focused approval screen.
+- Re-audited `docs/API.md`, documented the compatibility boundaries between `/api/v1`, `/rest`, and internal `/api`, and checked in `docs/openapi/aurora-v1.json` with generation/drift-check scripts. Offline retention is deliberately advertised as unavailable while stable IDs, library revisions, ETags, and byte ranges reserve a compatible future path.
+
 ## [v1.0.0-rc.6] - 2026-07-14
 
 ### Audio & Playback

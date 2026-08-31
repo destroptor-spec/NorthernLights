@@ -21,6 +21,7 @@ import type { LfmTrack } from '../services/lastfm.service';
 import type { LbTrack } from '../services/listenbrainz.service';
 import { resolveArtwork } from '../services/artCache';
 import { providerArtworkProxyPath, resolveProviderArtworkUrl } from '../services/artworkFallback.service';
+import { publishApiV1Event } from '../services/apiV1Events.service';
 
 const router = Router();
 const SUBSONIC_VERSION = '1.16.1';
@@ -1611,6 +1612,7 @@ async function handlePlaylists(req: Request, res: Response, method: string, ctx:
       await createPlaylist(id, name, null, false, ctx.userId);
       const songs = getParamList(req, 'songId').map(songId);
       if (songs.length > 0) await addTracksToPlaylist(id, songs);
+      publishApiV1Event(ctx.userId, 'playlist.changed', { playlistId: id, action: 'created', source: 'openSubsonic' });
       return sendSubsonic(req, res, subsonicSuccess({ playlist: { id, name, songCount: songs.length } }));
     }
     case 'updateplaylist': {
@@ -1625,6 +1627,7 @@ async function handlePlaylists(req: Request, res: Response, method: string, ctx:
       const addIds = getParamList(req, 'songIdToAdd').map(songId);
       nextIds = nextIds.concat(addIds);
       await addTracksToPlaylist(id, nextIds);
+      publishApiV1Event(ctx.userId, 'playlist.changed', { playlistId: id, action: 'tracksReplaced', source: 'openSubsonic' });
       return sendSubsonic(req, res, subsonicSuccess({}));
     }
     case 'deleteplaylist': {
@@ -1634,6 +1637,7 @@ async function handlePlaylists(req: Request, res: Response, method: string, ctx:
       if (meta.isSystem || meta.isLlmGenerated) return sendError(req, res, 50, 'Generated playlists are read-only');
       if (meta.userId !== ctx.userId && ctx.role !== 'admin') return sendError(req, res, 50, 'Playlist belongs to another user');
       await deletePlaylist(id, ctx.role === 'admin' ? null : ctx.userId);
+      publishApiV1Event(meta.userId || ctx.userId, 'playlist.changed', { playlistId: id, action: 'deleted', source: 'openSubsonic' });
       return sendSubsonic(req, res, subsonicSuccess({}));
     }
     default:
@@ -1646,13 +1650,17 @@ async function handleAnnotations(req: Request, res: Response, method: string, ct
   switch (method) {
     case 'star':
       await setTrackLovedForUser(ctx.userId, songId(id), true);
+      publishApiV1Event(ctx.userId, 'annotation.changed', { trackId: songId(id), loved: true, source: 'openSubsonic' });
       return sendSubsonic(req, res, subsonicSuccess({}));
     case 'unstar':
       await setTrackLovedForUser(ctx.userId, songId(id), false);
+      publishApiV1Event(ctx.userId, 'annotation.changed', { trackId: songId(id), loved: false, source: 'openSubsonic' });
       return sendSubsonic(req, res, subsonicSuccess({}));
     case 'setrating': {
       const rating = parseInt(getParam(req, 'rating') || '0', 10);
-      await setTrackRatingForUser(ctx.userId, songId(id), Number.isFinite(rating) ? rating : 0);
+      const normalizedRating = Number.isFinite(rating) ? rating : 0;
+      await setTrackRatingForUser(ctx.userId, songId(id), normalizedRating);
+      publishApiV1Event(ctx.userId, 'annotation.changed', { trackId: songId(id), rating: normalizedRating, source: 'openSubsonic' });
       return sendSubsonic(req, res, subsonicSuccess({}));
     }
     case 'scrobble': {

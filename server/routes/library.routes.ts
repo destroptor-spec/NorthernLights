@@ -16,6 +16,7 @@ import { enrichArtistImages, enrichArtistImagesInBackground } from '../services/
 import { getCreditsStatus, refreshArtistAudioProfiles, searchLibrary, searchLibraryRanked, InvalidSearchCursorError, getExistingTrackIds } from '../database';
 import { createRateLimiter } from '../middleware/rateLimit';
 import { areAnalysisModelsReady } from '../services/downloadModels';
+import { publishApiV1Event, publishApiV1LibraryRevision } from '../services/apiV1Events.service';
 
 const router = Router();
 
@@ -290,6 +291,7 @@ router.post('/love', async (req, res) => {
     if (!track) return res.status(404).json({ error: 'Track not found' });
 
     await setTrackLovedForUser(userId, trackId, loved);
+    publishApiV1Event(userId, 'annotation.changed', { trackId, loved, source: 'web' });
 
     const syncJobs: Array<Promise<{ provider: string; status: 'ok' | 'skipped'; reason?: string }>> = [];
 
@@ -1023,6 +1025,7 @@ export async function runSyncWalk(dirPath: string): Promise<{ removed: number; a
         console.warn('[Scanner] Orphan art cleanup after stale removal failed:', e);
       }
     }
+    await publishApiV1LibraryRevision({ source: 'syncWalk', added: 0, removed: stalePaths.length });
   }
 
   // New files, plus existing files whose mtime changed (re-tagged / replaced).
@@ -1071,6 +1074,7 @@ export async function runSyncWalk(dirPath: string): Promise<{ removed: number; a
     const metadataConcurrency = await getScannerConcurrency();
     await processMetadataBatch(itemsToProcess, metadataConcurrency);
     console.log(`[Scanner] Metadata phase complete: ${itemsToProcess.length} new/changed file(s)`);
+    await publishApiV1LibraryRevision({ source: 'syncWalk', added: itemsToProcess.length, removed: 0 });
 
     // ── Analysis ──
     const tracksNeedingAnalysis = await getTracksWithoutFeatures();
@@ -1187,6 +1191,7 @@ router.post('/refresh-metadata', async (req, res) => {
       console.log(`[Scanner] Purged orphaned entities after refresh: ${purged.artists} artists, ${purged.albums} albums, ${purged.genres} genres`);
 
       resetScanStatus(true);
+      await publishApiV1LibraryRevision({ source: 'metadataRefresh' });
 
       const { genreMatrixService } = await import('../services/genreMatrix.service');
       setImmediate(() => {
@@ -1371,6 +1376,7 @@ router.post('/remove', requireAdmin, async (req, res) => {
     // 4. Clean up entity rows that now have zero tracks
     const purged = await purgeOrphanedEntities();
     console.log(`[Scanner] Removed directory ${dirPath}. Purged ${staleTracks} stale tracks, ${purged.albums} albums, ${purged.artists} artists, ${purged.genres} genres`);
+    await publishApiV1LibraryRevision({ source: 'directoryRemoved' });
     res.json({ status: 'removed', staleTracks, purged });
   } catch (error) {
     console.error('Remove error:', error);

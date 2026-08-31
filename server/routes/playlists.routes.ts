@@ -16,6 +16,7 @@ import {
   togglePlaylistPrivacy,
   getPlaylistSuggestionPool,
 } from '../database';
+import { publishApiV1Event } from '../services/apiV1Events.service';
 
 const router = Router();
 
@@ -98,6 +99,7 @@ router.post('/', async (req, res) => {
 
     const id = `user_${Date.now()}`;
     await createPlaylist(id, title, description, false, userId);
+    publishApiV1Event(userId, 'playlist.changed', { playlistId: id, action: 'created', source: 'web' });
 
     res.json({ id, title, description, isLlmGenerated: false, tracks: [] });
   } catch (error) {
@@ -125,6 +127,7 @@ router.post('/:id/tracks', async (req, res) => {
     }
 
     await addTracksToPlaylist(id as string, trackIds);
+    publishApiV1Event(meta?.userId || userId, 'playlist.changed', { playlistId: id as string, action: 'tracksReplaced', source: 'web' });
     res.json({ status: 'success' });
   } catch (error) {
     console.error('Playlist track update error:', error);
@@ -149,6 +152,7 @@ router.delete('/:id', async (req, res) => {
     } else {
       await deletePlaylist(id as string, userId);
     }
+    publishApiV1Event(meta?.userId || userId, 'playlist.changed', { playlistId: id as string, action: 'deleted', source: 'web' });
 
     res.json({ status: 'deleted' });
   } catch (error) {
@@ -200,6 +204,8 @@ router.patch('/:id', async (req, res) => {
     );
     if (!updated) return res.status(404).json({ error: 'Playlist not found' });
 
+    publishApiV1Event(meta.userId || userId, 'playlist.changed', { playlistId: id as string, action: 'updated', source: 'web' });
+
     res.json({ status: 'ok', playlist: updated });
   } catch (error) {
     console.error('Playlist update error:', error);
@@ -221,6 +227,7 @@ router.patch('/:id/pin', async (req, res) => {
 
     const ok = await togglePlaylistPin(id, userId, pinned);
     if (!ok) return res.status(404).json({ error: 'Playlist not found' });
+    publishApiV1Event(userId, 'playlist.changed', { playlistId: id as string, action: 'pinUpdated', source: 'web' });
     res.json({ status: 'ok', pinned });
   } catch (error) {
     console.error('Playlist pin error:', error);
@@ -243,6 +250,7 @@ router.patch('/:id/privacy', async (req, res) => {
 
     const ok = await togglePlaylistPrivacy(id, userId, isPrivate);
     if (!ok) return res.status(404).json({ error: 'Playlist not found' });
+    publishApiV1Event(userId, 'playlist.changed', { playlistId: id as string, action: 'privacyUpdated', source: 'web' });
     res.json({ status: 'ok', isPrivate });
   } catch (error) {
     console.error('Playlist privacy error:', error);
@@ -266,6 +274,7 @@ router.post('/:id/share', async (req, res) => {
     const candidateToken = crypto.randomBytes(18).toString('base64url'); // 24-char URL-safe
     const result = await setPlaylistShare(id as string, userId, enable, candidateToken);
     if (!result) return res.status(404).json({ error: 'Playlist not found' });
+    publishApiV1Event(userId, 'playlist.changed', { playlistId: id as string, action: 'shareUpdated', source: 'web' });
 
     res.json({
       isPublic: result.isPublic,
