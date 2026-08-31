@@ -137,6 +137,10 @@ const pairingExchangeLimiter = createRateLimiter({
   keyGenerator: (req) => typeof req.body?.requestId === 'string' ? `request:${req.body.requestId}` : 'invalid-request',
 });
 const listenerLimiter = createRateLimiter({ keyPrefix: 'api-v1-listener', windowMs: 60_000, max: 1200 });
+// Media streaming is registered before the router-wide listener limiter, so it
+// needs its own. Range requests make it the highest-frequency endpoint here, and
+// its own bucket stops a heavy stream from consuming a client's API quota.
+const mediaLimiter = createRateLimiter({ keyPrefix: 'api-v1-media', windowMs: 60_000, max: 1800 });
 
 function parseBody<T>(schema: ZodType<T>, req: Request, res: Response): T | null {
   const parsed = schema.safeParse(req.body || {});
@@ -299,7 +303,7 @@ async function authenticateMediaRequest(req: Request, res: Response): Promise<bo
 }
 
 // URL-safe direct stream, addressed by track ID rather than a server path.
-router.get('/media/tracks/:id', async (req, res) => {
+router.get('/media/tracks/:id', mediaLimiter, async (req, res) => {
   if (!(await authenticateMediaRequest(req, res))) return;
   try {
     const db = await initDB();
