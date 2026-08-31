@@ -64,6 +64,7 @@ import {
   isSubsonicSubmission,
   mapAlbum,
   buildTranscodeArgs,
+  describeRangeHeader,
   parseTimeOffset,
   resolveStreamPlan,
   mapArtist,
@@ -609,5 +610,49 @@ describe('transcodeOffset extension', () => {
         '-ss 60 -i /a.flac -vn -map 0:a:0 -c:a libmp3lame -b:a 320k -id3v2_version 3 -f mp3 -',
       );
     });
+  });
+});
+
+/**
+ * The stream log previously recorded range as yes/no, which could not tell an
+ * opening `bytes=0-` from a real byte-seek — the distinction that matters when
+ * a client scrubs a transcoded stream, since a pipe has no byte space to seek
+ * within. Symfonium was observed sending Range on transcodes without ever
+ * sending the spec's `timeOffset`, and yes/no could not say which it meant.
+ */
+describe('describeRangeHeader', () => {
+  it('distinguishes an opening request from a byte-seek', () => {
+    expect(describeRangeHeader('bytes=0-')).toBe('bytes=0-');
+    expect(describeRangeHeader('bytes=1048576-')).toBe('bytes=1048576-');
+    expect(describeRangeHeader('bytes=0-1023')).toBe('bytes=0-1023');
+  });
+
+  it('reports an absent header rather than an empty field', () => {
+    expect(describeRangeHeader(undefined)).toBe('none');
+    expect(describeRangeHeader('')).toBe('none');
+    expect(describeRangeHeader(null)).toBe('none');
+    expect(describeRangeHeader(['bytes=0-'])).toBe('none');
+  });
+
+  it('keeps multi-range requests legible', () => {
+    expect(describeRangeHeader('bytes=0-99,200-299')).toBe('bytes=0-99,200-299');
+  });
+
+  // The header is attacker-controlled and lands in a log file, so it must not
+  // be able to forge a new record or break the key=value format.
+  it('cannot inject a new log record or break the line format', () => {
+    const injected = describeRangeHeader('bytes=0-\n[2026-01-01T00:00:00Z] stream id=forged mode=direct');
+    expect(injected).not.toContain('\n');
+    expect(injected).not.toContain(' ');
+    expect(injected.length).toBeLessThanOrEqual(64);
+  });
+
+  it('caps an over-long header', () => {
+    expect(describeRangeHeader('bytes=' + '9'.repeat(500)).length).toBe(64);
+  });
+
+  it('flags anything that is not a byte range rather than echoing it', () => {
+    expect(describeRangeHeader('items=0-10')).toBe('malformed');
+    expect(describeRangeHeader('../../etc/passwd')).toBe('malformed');
   });
 });

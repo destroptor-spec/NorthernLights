@@ -189,6 +189,22 @@ export function normalizeSearchQuery(raw: string | undefined): string {
 
 // Diagnostics only — never logs secret values, just which auth params are
 // present so we can see what a client (e.g. Symfonium) actually sends.
+/**
+ * Render a client's Range header for the stream log.
+ *
+ * A yes/no flag could not distinguish an opening `bytes=0-` from a genuine
+ * byte-seek, which is exactly the question when a client tries to scrub a
+ * transcoded stream — a pipe has no byte space, so the two are handled very
+ * differently. The value is client-controlled and goes into a log file, so
+ * strip anything that could break the `key=value` line format or inject a new
+ * record, and cap the length.
+ */
+export function describeRangeHeader(range: unknown): string {
+  if (typeof range !== 'string' || range === '') return 'none';
+  const safe = range.slice(0, 64).replace(/[^A-Za-z0-9=,-]/g, '');
+  return safe.startsWith('bytes=') ? safe : 'malformed';
+}
+
 function clientInfo(req: Request): string {
   return `c=${getParam(req, 'c') || '-'} v=${getParam(req, 'v') || '-'}`;
 }
@@ -874,7 +890,7 @@ async function streamFile(req: Request, res: Response, id: string, userId: strin
     + ` source=${ext || '-'}@${sourceKbps ?? '-'}kbps`
     + ` target=${plan?.suffix ?? ext}@${plan?.bitrateKbps ?? sourceKbps ?? '-'}kbps`
     + ` reason=${plan?.reason ?? 'download'} timeOffset=${getParam(req, 'timeOffset') || '-'}`
-    + ` range=${range ? 'yes' : 'no'} ${clientInfo(req)}`,
+    + ` range=${describeRangeHeader(range)} ${clientInfo(req)}`,
   );
 
   if (plan?.mode === 'transcode') return streamTranscoded(req, res, fileBuf, plan, track);
