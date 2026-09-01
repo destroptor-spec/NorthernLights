@@ -2259,6 +2259,14 @@ export class CastManager {
         request.queueData.items = queueItems;
         request.queueData.startIndex = normalizedStartIndex;
         if (normalizedStartTime > 0) {
+            // Handing over from local playback has to resume where the listener
+            // was, not restart the track. `QueueData.startTime` alone does not
+            // do it — the documented places are the start item's own
+            // `startTime` and the LoadRequest's `currentTime`, so set those and
+            // keep queueData.startTime for good measure. All three carry the
+            // same absolute position, so there is nothing to disagree about.
+            startItem.startTime = normalizedStartTime;
+            request.currentTime = normalizedStartTime;
             request.queueData.startTime = normalizedStartTime;
         }
         request.queueData.repeatMode = this.getRepeatMode(repeat);
