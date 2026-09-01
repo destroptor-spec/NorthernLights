@@ -127,6 +127,9 @@ export class CastManager {
     // tracks only the event stream: that stream can die while the receiver
     // plays on perfectly well, and status refreshes keep succeeding.
     private lastRemoteEvidenceAt = 0;
+    // Session we have already attached the MEDIA_SESSION listener to, so
+    // repeated SESSION_STARTED/RESUMED/reconcile passes don't stack handlers.
+    private mediaSessionListenerSessionId = '';
     private readonly remoteEvidenceWindowMs = 60000;
     private freshSessionStartedAt = 0;
     private readonly freshSessionWindowMs = 5000;
@@ -565,6 +568,7 @@ export class CastManager {
     }
 
     private resetSessionAttemptState(reason: string, options: { clearStoredSession?: boolean; healthPhase?: CastHealthPhase; healthMessage?: string } = {}) {
+        this.mediaSessionListenerSessionId = '';
         this.userSessionRequestPending = false;
         this.rejoinSessionPending = false;
         this.freshSessionStartedAt = 0;
@@ -703,6 +707,53 @@ export class CastManager {
             return !!window.localStorage.getItem(SESSION_STORAGE_KEY);
         } catch {
             return false;
+        }
+    }
+
+    /**
+     * Follow the receiver onto each new piece of media.
+     *
+     * RemotePlayerController's events are bound to whichever `Media` object the
+     * SDK held when they were wired up. When the receiver advances its own
+     * queue the SDK builds a *new* `chrome.cast.media.Media`, and a sender that
+     * only listens to RemotePlayer keeps talking to the old one — its events
+     * stop, its `playerState` freezes, and nothing ever re-binds.
+     *
+     * Prod 2026-09-01: RemotePlayer went silent at 08:59:10 and stayed silent
+     * for 26 minutes while the receiver played five more tracks. The sender sat
+     * on a stale media object (`playerState=IDLE time=0 duration=185.626`)
+     * against a 457s track, so progress froze and every attempt to map the
+     * session item to the playlist failed. A page reload did not help either:
+     * on resume the media already exists, so no RemotePlayer event is coming
+     * and `Cast session exists without active media` repeated.
+     *
+     * `SessionEventType.MEDIA_SESSION` is the SDK's signal that a new Media was
+     * created — the intended way to learn about media the sender did not load
+     * itself. This supplements RemotePlayer rather than replacing it.
+     */
+    private attachMediaSessionListener(session: any | null = this.castContext?.getCurrentSession?.()) {
+        if (!session || typeof session.addEventListener !== 'function') return;
+        const sessionId = session.getSessionId?.() || '';
+        if (sessionId && sessionId === this.mediaSessionListenerSessionId) return;
+        this.mediaSessionListenerSessionId = sessionId;
+
+        try {
+            session.addEventListener(cast.framework.SessionEventType.MEDIA_SESSION, (event: any) => {
+                // The event carries the new Media on CAF; fall back to reading
+                // it off the session in case a build does not populate it.
+                const mediaSession = event?.mediaSession || this.getMediaSession();
+                const now = Date.now();
+                this.lastRemoteEvidenceAt = now;
+                this.lastRemotePlayerEventAt = now;
+                this.mediaSessionProbeStartedAt = 0;
+                this.remoteMediaConcludedGone = false;
+                this.logCast('ok', 'MEDIA_SESSION: rebinding to new remote media', this.describeMediaSession(mediaSession));
+                void this.hydrateSenderFromRemoteSession(mediaSession, 'media-session-event');
+            });
+            this.logCast('ok', 'Attached MEDIA_SESSION listener', `sid=${sessionId || 'unknown'}`);
+        } catch (error) {
+            this.mediaSessionListenerSessionId = '';
+            this.logCast('warn', 'Failed to attach MEDIA_SESSION listener', this.describeError(error));
         }
     }
 
@@ -932,6 +983,11 @@ export class CastManager {
         try {
             const sdkState = this.castContext.getCastState?.();
             const startingSession = this.castContext.getCurrentSession?.() || null;
+            // A page can come up already holding a session without any
+            // SESSION_STATE_CHANGED firing — the reload case, where the media
+            // already exists and no RemotePlayer event is coming. The listener
+            // is idempotent per session id.
+            if (startingSession) this.attachMediaSessionListener(startingSession);
             const refreshedMediaSession = startingSession
                 ? await this.refreshMediaSessionStatus(`reconcile:${reason}`)
                 : null;
@@ -1123,6 +1179,7 @@ export class CastManager {
                                     this.logCast('ok', 'SESSION_STARTED', `sid=${sid}`);
                                 }
                             }
+                            this.attachMediaSessionListener(session);
                             if (treatStartedSessionAsRejoin) {
                                 this.beginRejoinHydration('session-started');
                             } else if (this.userSessionRequestPending) {
@@ -1143,6 +1200,7 @@ export class CastManager {
                                 const sid = resumedSession.getSessionId();
                                 if (sid) localStorage.setItem(SESSION_STORAGE_KEY, sid);
                             }
+                            this.attachMediaSessionListener(resumedSession);
                             this.beginRejoinHydration('session-resumed');
                             break;
 
