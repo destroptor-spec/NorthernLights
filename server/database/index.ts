@@ -3259,8 +3259,8 @@ export async function getArtistsPage(options: EntityListPageOptions) {
     `SELECT id, name, image_url, artwork_url, genres, community_tags, artist_type, area, lifespan_begin
        FROM artists
       WHERE merged_into IS NULL
-        AND ($1::text IS NULL OR (name, id) > ($1::text, $2::text))
-      ORDER BY name ASC, id ASC
+        AND ($1::text IS NULL OR (name, id::text) > ($1::text, $2::text))
+      ORDER BY name ASC, id::text ASC
       LIMIT $3`,
     [after?.sort || null, after?.id || null, limit],
   );
@@ -3338,8 +3338,8 @@ export async function getAlbumsPage(options: EntityListPageOptions) {
     WITH page_albums AS (
       SELECT a.*
       FROM albums a
-      WHERE $1::text IS NULL OR (a.title, a.id) > ($1::text, $2::text)
-      ORDER BY a.title ASC, a.id ASC
+      WHERE $1::text IS NULL OR (a.title, a.id::text) > ($1::text, $2::text)
+      ORDER BY a.title ASC, a.id::text ASC
       LIMIT $3
     )
     SELECT a.*,
@@ -3395,8 +3395,8 @@ export async function getGenresPage(options: EntityListPageOptions) {
       SELECT g.*
       FROM genres g
       WHERE g.merged_into IS NULL
-        AND ($1::text IS NULL OR (g.name, g.id) > ($1::text, $2::text))
-      ORDER BY g.name ASC, g.id ASC
+        AND ($1::text IS NULL OR (g.name, g.id::text) > ($1::text, $2::text))
+      ORDER BY g.name ASC, g.id::text ASC
       LIMIT $3
     )
     SELECT g.*,
