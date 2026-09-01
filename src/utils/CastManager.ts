@@ -1670,7 +1670,18 @@ export class CastManager {
             return fallbackIndex;
         }
 
-        const mediaUrl = this.normalizeCastUrlForMatch(mediaSession.media?.contentId);
+        // During a track change the top-level `media` still describes the item
+        // that just finished, so matching on it resolves to the previous track,
+        // equals the stored index, and updates nothing — the queue keeps the old
+        // row highlighted until something forces a fresh status. The item named
+        // by `currentItemId` is the authoritative one, so prefer its contentId.
+        const currentItemId = mediaSession.currentItemId;
+        const currentItem = typeof currentItemId === 'number' && Array.isArray(mediaSession.items)
+            ? mediaSession.items.find((item: any) => item?.itemId === currentItemId)
+            : null;
+        const mediaUrl = this.normalizeCastUrlForMatch(
+            currentItem?.media?.contentId || mediaSession.media?.contentId,
+        );
         if (mediaUrl) {
             const streamingQuality = usePlayerStore.getState().streamingQuality;
             const urlIndex = playlist.findIndex((track) => {
@@ -2384,9 +2395,27 @@ export class CastManager {
     public async appendToQueue(track: { queueEntryId?: string; url?: string; rawUrl?: string; title?: string; artist?: string; artUrl?: string; album?: string; format?: string; duration?: number }) {
         if (!this.isConnected()) return;
         const session = this.castContext.getCurrentSession();
-        if (!session) return;
-        const mediaSession = session.getMediaSession();
-        if (!mediaSession) return;
+        if (!session) {
+            this.logCast('warn', 'Cast queue append skipped: no session', `title=${track.title || 'unknown'}`);
+            return;
+        }
+        // Infinity Mode appends exactly when a short queue is running out, which
+        // is when the sender is most likely to be between media sessions. This
+        // used to return silently: the track entered the local playlist, never
+        // reached the device, and playback simply stopped at the end of the
+        // queue with nothing logged. Prod every attempt, 2026-09-01. Prod the
+        // receiver for a status and retry once before giving up.
+        let mediaSession = session.getMediaSession();
+        if (!mediaSession) {
+            this.logCast('warn', 'Cast queue append: no media session, requesting status', `title=${track.title || 'unknown'}`);
+            this.requestMediaStatusBroadcast(Date.now() - this.lastRemotePlayerEventAt);
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            mediaSession = session.getMediaSession();
+        }
+        if (!mediaSession) {
+            this.logCast('error', 'Cast queue append failed: no media session', `title=${track.title || 'unknown'}`);
+            return;
+        }
         const item = this.buildQueueItem({
             ...track,
             queueEntryId: track.queueEntryId || createQueueEntryId(),
@@ -2399,6 +2428,7 @@ export class CastManager {
                 return activeMediaSession.queueAppendItem(item);
             });
             this.syncQueueItemMapFromSession(this.getMediaSession());
+            this.logCast('ok', 'Appended track to Cast queue', `title=${track.title || 'unknown'}`);
         } catch (e) {
             console.error('[Cast] Failed to append track to queue:', e);
             this.logCast('error', 'Failed to append Cast queue item', this.describeError(e));
