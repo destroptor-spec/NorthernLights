@@ -1,5 +1,6 @@
 import { playbackManager } from './PlaybackManager';
 import { usePlayerStore } from '../store';
+import { shouldReleaseRemoteMedia } from './castWatchdogPolicy';
 import { applyCastStreamingQualityToHlsUrl, applyStreamingQualityToHlsUrl } from './streaming';
 import { createQueueEntryId, ensureQueueEntryIds } from './queue';
 import type { TrackInfo } from './fileSystem';
@@ -121,6 +122,12 @@ export class CastManager {
     private mediaSessionProbeStartedAt = 0;
     private remoteMediaConcludedGone = false;
     private readonly mediaSessionProbeGraceMs = 20000;
+    // Any proof the receiver is alive — a RemotePlayer event, or a media status
+    // we successfully pulled. Distinct from lastRemotePlayerEventAt, which
+    // tracks only the event stream: that stream can die while the receiver
+    // plays on perfectly well, and status refreshes keep succeeding.
+    private lastRemoteEvidenceAt = 0;
+    private readonly remoteEvidenceWindowMs = 60000;
     private freshSessionStartedAt = 0;
     private readonly freshSessionWindowMs = 5000;
     private freshSessionPlaybackPromise: Promise<void> | null = null;
@@ -234,6 +241,7 @@ export class CastManager {
     private startStatusWatchdog() {
         if (this.statusWatchdogTimer !== null) return;
         this.lastRemotePlayerEventAt = Date.now();
+        this.lastRemoteEvidenceAt = Date.now();
         this.mediaSessionProbeStartedAt = 0;
         this.remoteMediaConcludedGone = false;
         this.statusWatchdogTimer = setInterval(() => {
@@ -276,7 +284,12 @@ export class CastManager {
                 const now = Date.now();
                 if (this.mediaSessionProbeStartedAt === 0) this.mediaSessionProbeStartedAt = now;
                 const probedMs = now - this.mediaSessionProbeStartedAt;
-                if (probedMs >= this.mediaSessionProbeGraceMs) {
+                if (shouldReleaseRemoteMedia({
+                    probedMs,
+                    graceMs: this.mediaSessionProbeGraceMs,
+                    msSinceEvidence: now - this.lastRemoteEvidenceAt,
+                    evidenceWindowMs: this.remoteEvidenceWindowMs,
+                })) {
                     this.concludeRemoteMediaGone(eventSilenceMs, probedMs);
                     return;
                 }
@@ -286,6 +299,9 @@ export class CastManager {
 
             const refreshed = await this.refreshMediaSessionStatus('status-watchdog');
             if (refreshed && this.hasActiveRemoteMediaSession(refreshed)) {
+                // The receiver answered with live media: that is proof of life,
+                // whatever the RemotePlayer event stream is doing.
+                this.lastRemoteEvidenceAt = Date.now();
                 const now = Date.now();
                 if (now - this.lastWatchdogRecoveryLogAt > 30000) {
                     this.lastWatchdogRecoveryLogAt = now;
@@ -321,8 +337,9 @@ export class CastManager {
     /**
      * The receiver has taken a full `mediaSessionProbeGraceMs` of GET_STATUS
      * prods and still reports no media session — the remote media is genuinely
-     * gone (queue finished, or another sender took the receiver over). Release
-     * the local playing state so the watchdog's `streamLooksDead` guard goes
+     * gone (queue finished, or another sender took the receiver over) — not
+     * merely unreachable, which `shouldReleaseRemoteMedia` distinguishes.
+     * Release the local playing state so the watchdog's `streamLooksDead` guard goes
      * quiet and the UI stops showing a track that isn't playing. The Cast
      * session itself is left alone: the user is still connected and may queue
      * something next. Deliberately not `onEnded` — that would auto-advance a
@@ -331,7 +348,7 @@ export class CastManager {
     private concludeRemoteMediaGone(eventSilenceMs: number, probedMs: number) {
         this.remoteMediaConcludedGone = true;
         this.mediaSessionProbeStartedAt = 0;
-        this.logCast('warn', 'Cast remote media gone; releasing local playing state', `eventSilenceMs=${eventSilenceMs} probedMs=${probedMs}`);
+        this.logCast('warn', 'Cast remote media gone; releasing local playing state', `eventSilenceMs=${eventSilenceMs} probedMs=${probedMs} msSinceEvidence=${Date.now() - this.lastRemoteEvidenceAt}`);
         try {
             this.onPlayStateChange?.(false);
         } catch { /* ignore */ }
@@ -1270,6 +1287,7 @@ export class CastManager {
                 cast.framework.RemotePlayerEventType.CURRENT_TIME_CHANGED,
                 () => {
                     this.lastRemotePlayerEventAt = Date.now();
+                    this.lastRemoteEvidenceAt = Date.now();
                     this.onTimeUpdate?.(this.player.currentTime);
                 }
             );
@@ -1285,6 +1303,7 @@ export class CastManager {
                 cast.framework.RemotePlayerEventType.PLAYER_STATE_CHANGED,
                 () => {
                     this.lastRemotePlayerEventAt = Date.now();
+                    this.lastRemoteEvidenceAt = Date.now();
                     const mediaSession = this.getHydratableMediaSession();
                     const stateKey = `state=${this.player.playerState || 'unknown'} idleReason=${mediaSession?.idleReason || 'none'} paused=${this.player.isPaused}`;
                     if (stateKey !== this.lastRemotePlayerStateKey) {
