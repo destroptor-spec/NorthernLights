@@ -283,6 +283,23 @@ export class CastManager {
             if (!streamLooksDead && this.doesSessionTrackMatchStore()) return;
 
             if (!this.getMediaSession()) {
+                // The SDK's Media object is gone, but RemotePlayer often still
+                // describes the current item well enough to resolve it — that
+                // synthetic session is what doesSessionTrackMatchStore() reads,
+                // and it resolves fine. Hydration was gated on the real Media,
+                // so a resolved track change was worked out and then discarded.
+                // Prod 2026-09-01 20:30: resolution reported a changed index
+                // 100 times across four tracks while exactly one sync applied,
+                // leaving the queue highlight frozen on the first track.
+                //
+                // Deliberately not treated as evidence of life: this is local
+                // state, not a reply from the receiver, so it must not keep the
+                // watchdog's release timer alive.
+                const remotePlayerSession = this.getHydratableMediaSession(null);
+                if (remotePlayerSession && this.hasActiveRemoteMediaSession(remotePlayerSession)) {
+                    await this.hydrateSenderFromRemoteSession(remotePlayerSession, 'watchdog-remote-player');
+                }
+
                 if (this.remoteMediaConcludedGone) return;
                 const now = Date.now();
                 if (this.mediaSessionProbeStartedAt === 0) this.mediaSessionProbeStartedAt = now;
