@@ -1645,6 +1645,77 @@
           }
         } catch (auroraIntervalError) { /* ignore */ }
       }, 5000);
+
+      // ─── STAGE 0 SPIKE — NOT FOR PRODUCTION ──────────────────────────────
+      // Answers one question and nothing else: does QueueManager.insertItems
+      // work on a queue that arrived as the sender's QUEUE_LOAD? The SDK
+      // reference neither confirms nor forbids it, and the whole receiver-driven
+      // Infinity design in #56 rests on the answer.
+      //
+      // Deliberately isolates that question. It clones an item already in the
+      // queue — a URL this very session has proven playable — strips the itemId
+      // so the SDK assigns a fresh one, and inserts it directly after the
+      // current item. No auth, no server call, no URL construction, so a failure
+      // can only mean insertItems itself does not work here.
+      //
+      // Fires once, 20s after playback starts. Revert by redeploying main.
+      var probeDone = false;
+      setInterval(function() {
+        if (probeDone) return;
+        try {
+          if (playerManager.getPlayerState() !== cast.framework.messages.PlayerState.PLAYING) return;
+          if (!queueManager || typeof queueManager.insertItems !== 'function') {
+            probeDone = true;
+            postServerLog('warn', '[' + LOG_TAG + '] queue-insert-probe unavailable', 'queueManager.insertItems is not a function');
+            return;
+          }
+
+          var items = queueManager.getItems ? queueManager.getItems() : null;
+          var currentIndex = queueManager.getCurrentItemIndex();
+          if (!items || !items.length || currentIndex < 0) return;
+
+          probeDone = true;
+          var source = items[currentIndex];
+          var clone = JSON.parse(JSON.stringify(source));
+          delete clone.itemId;              // the SDK assigns this
+          clone.autoplay = true;
+          clone.preloadTime = 30;
+
+          // Insert directly after the current item so it is reached quickly.
+          var insertBefore = (currentIndex + 1 < items.length) ? items[currentIndex + 1].itemId : undefined;
+          var beforeLength = items.length;
+          var title = 'unknown';
+          try { title = (clone.media && clone.media.metadata && clone.media.metadata.title) || 'unknown'; } catch (e) {}
+
+          postServerLog('ok', '[' + LOG_TAG + '] queue-insert-probe attempting',
+            'beforeLength=' + beforeLength + ' currentIndex=' + currentIndex +
+            ' insertBefore=' + (insertBefore === undefined ? 'append' : insertBefore) +
+            ' title=' + title);
+
+          queueManager.insertItems([clone], insertBefore);
+
+          // Read back on the next tick — insertion may not be synchronous.
+          setTimeout(function() {
+            try {
+              var after = queueManager.getItems ? queueManager.getItems() : [];
+              var ids = [];
+              for (var i = 0; i < after.length; i++) ids.push(after[i].itemId);
+              postServerLog('ok', '[' + LOG_TAG + '] queue-insert-probe result',
+                'beforeLength=' + beforeLength + ' afterLength=' + after.length +
+                ' grew=' + (after.length > beforeLength) +
+                ' currentIndex=' + queueManager.getCurrentItemIndex() +
+                ' itemIds=' + ids.join(','));
+            } catch (readErr) {
+              postServerLog('warn', '[' + LOG_TAG + '] queue-insert-probe readback failed', safeStringify(readErr));
+            }
+          }, 1500);
+        } catch (probeErr) {
+          probeDone = true;
+          postServerLog('warn', '[' + LOG_TAG + '] queue-insert-probe threw', safeStringify(probeErr));
+        }
+      }, 20000);
+      // ─── END STAGE 0 SPIKE ───────────────────────────────────────────────
+
     } catch (initError) {
       _rawLog('[INIT ERROR] ' + initError.message);
       if (initError.stack) _rawLog('[INIT STACK] ' + initError.stack);
