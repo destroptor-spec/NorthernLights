@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { initDB } from '../database';
+import { playlistGenerationSourceSchema } from '../../shared/api/v1';
 import type { AlbumSummary, ArtistSummary, Genre, Playlist, Track } from '../../shared/api/v1';
 
 function list(value: unknown): string[] {
@@ -176,6 +177,10 @@ export async function mapPlaylistV1(row: any, userId: string, prefetchedTracks?:
   const isOwner = row.isOwner === true || ownerId === userId;
   const isSystem = Boolean(row.isSystem ?? row.is_system);
   const generated = Boolean(row.isLlmGenerated ?? row.is_llm_generated);
+  // generation_source is free-form TEXT and predates the enum, so anything
+  // unrecognised (or absent, on rows written before the column existed) falls
+  // back to the same nature the flags imply.
+  const source = playlistGenerationSourceSchema.safeParse(row.generationSource ?? row.generation_source);
   return {
     id: String(row.id),
     title: String(row.title || 'Untitled Playlist'),
@@ -184,6 +189,7 @@ export async function mapPlaylistV1(row: any, userId: string, prefetchedTracks?:
     isOwner,
     isSystem,
     isGenerated: generated,
+    generationSource: source.success ? source.data : isSystem ? 'system' : generated ? 'hub' : 'manual',
     pinned: Boolean(row.pinned),
     private: Boolean(row.isPrivate ?? row.is_private),
     readOnly: isSystem || generated || !isOwner,

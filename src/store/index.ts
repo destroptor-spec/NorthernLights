@@ -373,6 +373,7 @@ const mapApiV1Playlist = (
   description: playlist.description,
   isLlmGenerated: playlist.isGenerated,
   isSystem: playlist.isSystem,
+  generationSource: playlist.generationSource,
   pinned: playlist.pinned,
   createdAt: playlist.createdAt ? new Date(playlist.createdAt).getTime() : undefined,
   ownerUsername: playlist.ownerUsername,

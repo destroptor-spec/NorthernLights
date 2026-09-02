@@ -138,6 +138,23 @@ export const playlistTrackSchema = z.object({
   addedAt: ISO_DATE_TIME.nullable(),
 }).meta({ id: 'PlaylistTrack' });
 
+// What produced a playlist. `isSystem`/`isGenerated` only say *that* something
+// was generated; clients need the family to group playlists into their own
+// rails and pick the right cover art (Wrapped recaps, artist radios, …).
+export const playlistGenerationSourceSchema = z.enum([
+  'manual',          // hand-built by the listener
+  'hub',             // LLM hub mix
+  'custom',          // LLM mix from a listener prompt
+  'system',          // engine mix (genre/decade rails)
+  'on-repeat',
+  'repeat-rewind',
+  'daylist',
+  'artist-radio',
+  'seasonal-rewind',
+  'year-rewind',
+  'wrapped',         // frozen year/season recap
+]).meta({ id: 'PlaylistGenerationSource' });
+
 export const playlistSchema = z.object({
   id: OPAQUE_ID,
   title: z.string(),
@@ -146,6 +163,7 @@ export const playlistSchema = z.object({
   isOwner: z.boolean(),
   isSystem: z.boolean(),
   isGenerated: z.boolean(),
+  generationSource: playlistGenerationSourceSchema,
   pinned: z.boolean(),
   private: z.boolean(),
   readOnly: z.boolean(),
@@ -295,6 +313,7 @@ export type Track = z.infer<typeof trackSchema>;
 export type ArtistSummary = z.infer<typeof artistSummarySchema>;
 export type AlbumSummary = z.infer<typeof albumSummarySchema>;
 export type Genre = z.infer<typeof genreSchema>;
+export type PlaylistGenerationSource = z.infer<typeof playlistGenerationSourceSchema>;
 export type Playlist = z.infer<typeof playlistSchema>;
 export type PlaybackDescriptor = z.infer<typeof playbackDescriptorSchema>;
 export type TrackLyrics = z.infer<typeof lyricsSchema>;

@@ -62,7 +62,8 @@ describe('Aurora web API client', () => {
     } satisfies Track;
     const playlist = {
       id: 'p1', title: 'List', description: null, ownerUsername: 'alice', isOwner: true,
-      isSystem: false, isGenerated: false, pinned: false, private: false, readOnly: false,
+      isSystem: false, isGenerated: false, generationSource: 'manual' as const,
+      pinned: false, private: false, readOnly: false,
       createdAt: null, tracks: [{ track, addedAt: '2026-08-30T10:00:00.000Z' }],
     } satisfies Playlist;
 

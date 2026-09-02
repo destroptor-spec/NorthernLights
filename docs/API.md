@@ -96,6 +96,24 @@ Track DTOs expose opaque IDs, normalized metadata, user annotations, MusicBrainz
 
 Playlist `tracks` are entry objects shaped as `{ "track": Track, "addedAt": "ISO 8601 timestamp or null" }`. This preserves playlist ordering metadata without changing the meaning of a standalone Track. Full replacement validates every track and commits atomically; unavailable IDs return `409 TRACKS_UNAVAILABLE` without emptying the existing playlist.
 
+Playlist `generationSource` names the family that produced a playlist, which `isSystem` and `isGenerated` alone cannot express — those only say *that* something was generated. Clients use it to group playlists into their own rails and to pick cover art. Values:
+
+| Value | Meaning |
+| --- | --- |
+| `manual` | Hand-built by the listener |
+| `hub` | LLM Hub mix |
+| `custom` | LLM mix from a listener prompt |
+| `system` | Engine mix (the genre and decade rails) |
+| `on-repeat` | Smart Hub "On Repeat" |
+| `repeat-rewind` | Smart Hub "Repeat Rewind" |
+| `daylist` | Time-of-day mix |
+| `artist-radio` | Artist radio |
+| `seasonal-rewind` | Active seasonal time capsule |
+| `year-rewind` | Active year time capsule |
+| `wrapped` | Frozen year or season recap |
+
+The field is always present. Rows written before the column existed, and any value outside this set, are reported as `system`, `hub` or `manual` to match whatever `isSystem`/`isGenerated` imply — so clients can treat the enum as closed.
+
 Playback reports carry a caller-generated UUID `eventId`; retrying the same event is idempotent. `nowPlaying`, `played`, and `skipped` are distinct report kinds.
 
 ### Playback sources
