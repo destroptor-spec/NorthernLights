@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import type { NextFunction, Request, Response } from 'express';
 import { verifyToken } from '../services/auth.service';
 import { verifyAuroraAppKey } from '../services/auroraAppAuth.service';
-import { verifyScopedToken } from '../services/scopedToken.service';
+import { verifyScopedToken, type ScopedTokenScope } from '../services/scopedToken.service';
 
 export interface ApiV1Principal {
   userId: string;
@@ -11,7 +11,7 @@ export interface ApiV1Principal {
   clientId: string;
   clientName: string;
   authKind: 'jwt' | 'appKey' | 'scoped';
-  scope?: 'media' | 'sse';
+  scope?: ScopedTokenScope;
   keyId?: string;
 }
 
@@ -54,6 +54,36 @@ export function sendApiV1Error(
     },
   });
 }
+
+/**
+ * Scope → the endpoints that scope may authenticate.
+ *
+ * A scoped token is a narrow capability, not a session, so this is an allowlist
+ * per scope rather than a guess at one scope per path. Anything not listed here
+ * is refused with SCOPED_TOKEN_NOT_ALLOWED, which is the security guarantee
+ * these tokens rest on — see the deny cases in apiV1Auth.test.ts.
+ */
+const SCOPE_ALLOWED_ENDPOINTS: Record<string, (method: string, path: string) => boolean> = {
+  media: (_method, path) => path.startsWith('/artwork/'),
+  sse: (_method, path) => path === '/events',
+  // A Cast receiver feeding its own queue with no sender attached needs exactly
+  // four things: ask for a track, resolve a playable URL for it, report what it
+  // played so server-side history advances, and read the played-threshold
+  // preference. Notably NOT: mutating preferences, playlists, loved/rating, or
+  // anything under /app-keys.
+  receiver: (method, path) => (
+    (method === 'POST' && path === '/recommendations/next')
+    || (method === 'POST' && /^\/tracks\/[^/]+\/playback$/.test(path))
+    || (method === 'POST' && path === '/playback/reports')
+    || (method === 'GET' && path === '/preferences')
+  ),
+};
+
+const SCOPE_CLIENT_NAMES: Record<string, string> = {
+  media: 'Aurora artwork',
+  sse: 'Aurora event stream',
+  receiver: 'Aurora Cast receiver',
+};
 
 export async function requireApiV1Auth(req: Request, res: Response, next: NextFunction) {
   try {
@@ -102,10 +132,10 @@ export async function requireApiV1Auth(req: Request, res: Response, next: NextFu
     if (!payload) return sendApiV1Error(req, res, 401, 'INVALID_SESSION', 'The Aurora session is invalid or expired.');
     const tokenScope = (payload as typeof payload & { scope?: unknown }).scope;
     if (tokenScope !== undefined) {
-      const allowedScope = req.path.startsWith('/artwork/')
-        ? 'media'
-        : req.path === '/events' ? 'sse' : null;
-      if (!allowedScope || tokenScope !== allowedScope) {
+      const scopeName = typeof tokenScope === 'string' ? tokenScope : '';
+      const matcher = SCOPE_ALLOWED_ENDPOINTS[scopeName];
+      const allowedScope = matcher && matcher(req.method, req.path) ? (scopeName as ScopedTokenScope) : null;
+      if (!allowedScope) {
         return sendApiV1Error(
           req,
           res,
@@ -123,7 +153,7 @@ export async function requireApiV1Auth(req: Request, res: Response, next: NextFu
         username: scoped.username,
         role: scoped.role,
         clientId: `${allowedScope}:${scoped.userId}`,
-        clientName: allowedScope === 'media' ? 'Aurora artwork' : 'Aurora event stream',
+        clientName: SCOPE_CLIENT_NAMES[allowedScope],
         authKind: 'scoped',
         scope: allowedScope,
       };
