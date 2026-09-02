@@ -1,0 +1,72 @@
+name: CI
+
+# Nothing ran the test suite before this: .github held only FUNDING.yml and
+# issue templates, and the green checks on pull requests came from GitHub's
+# default CodeQL setup. So `tsc` and `jest` only ever ran when someone
+# remembered to run them, which is how a parse-time SQL error reached
+# production on 2026-09-02 and took the library down.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    services:
+      # pgvector rather than plain postgres: the schema creates the `vector`
+      # extension (alongside pg_trgm and pgcrypto), so initDB() cannot apply it
+      # to a stock image.
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: musicuser
+          POSTGRES_PASSWORD: musicpass
+          POSTGRES_DB: musicdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: OpenAPI document is current
+        run: npm run api:check
+
+      # receiver.html is inline ES5 in an HTML file, covered by neither the type
+      # checker nor jest. A syntax error there fails only on the Chromecast, and
+      # the symptom is that casting is completely dead.
+      - name: Cast receiver parses
+        run: npm run verify:receiver
+
+      - name: Tests (including the Postgres-backed suite)
+        run: npx jest
+        env:
+          AURORA_DB_TESTS: '1'
+          DB_USER: musicuser
+          DB_PASSWORD: musicpass
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: musicdb
+
+      # The timezone matrix guards the date-window logic that broke in
+      # ea785a5 (periods enumerated in UTC rather than local time). Run without
+      # the database gate — three more full passes of the schema build would be
+      # wasted work for tests that do not touch it.
+      - name: Tests across timezones
+        run: npm run test:tz

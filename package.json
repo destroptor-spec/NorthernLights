@@ -10,7 +10,8 @@
     "generate:pwa-assets": "node scripts/generate-pwa-assets.mjs",
     "verify:cast": "node scripts/verify-cast-design-checklist.mjs",
     "test": "jest",
-    "test:tz": "TZ=UTC jest && TZ=Pacific/Auckland jest && TZ=America/Los_Angeles jest"
+    "test:tz": "TZ=UTC jest && TZ=Pacific/Auckland jest && TZ=America/Los_Angeles jest",
+    "verify:receiver": "node scripts/check-receiver-syntax.mjs"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",
