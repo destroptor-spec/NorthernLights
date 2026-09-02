@@ -69,6 +69,8 @@ App keys are listener-scoped, stored as SHA-256 digests, shown only when created
 Those four operations require a normal web JWT; an app key cannot mint or manage other app keys.
 Short-lived `media` and `sse` JWTs remain scoped credentials even when supplied in an `Authorization` header. They are accepted only by their matching artwork/event transports and can never satisfy the normal-web-session requirement for app-key management or pairing approval.
 
+The same rule now holds on the legacy `/api` surface: a scoped token is accepted only on the endpoints mapped to its scope — `media` on `/api/stream/*`, `/api/art` and `/api/cast/log`; `sse` on `/api/library/scan/status`, `/api/admin/mbdb/status` and `/api/settings/models/progress` — and is refused with `403` anywhere else, including admin routes. Scoped tokens are signed with the same secret as a full session and are distinguished solely by their `scope` claim, so this is enforced explicitly in `requireAuth` rather than implied by signature verification.
+
 ### Browser-assisted pairing
 
 Pairing uses a one-time device secret plus a SHA-256 verifier challenge. The human only handles an eight-character code.

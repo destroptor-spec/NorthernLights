@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { verifyToken, JwtPayload } from '../services/auth.service';
-import { verifyScopedToken, ScopedTokenScope } from '../services/scopedToken.service';
+import { ScopedTokenScope } from '../services/scopedToken.service';
 
 // Extend Express Request to include user info
 declare global {
@@ -64,16 +64,26 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 
   const payload = await verifyToken(token);
   if (payload) {
+    // A scoped token is a narrow transport capability, not a session. It must
+    // only satisfy the endpoint class it was minted for.
+    //
+    // `verifyToken` is deliberately scope-blind — it is the same function that
+    // validates full sessions — and scoped tokens are signed with the same
+    // secret, carrying nothing but a `scope` claim to distinguish them. So
+    // returning here unconditionally let a `media` token (which travels in
+    // every stream and artwork URL, and lives 30 days with "remember me")
+    // satisfy every non-allowlisted /api route, `requireAdmin` included, since
+    // that only inspects `role`. The mapping below was unreachable for any
+    // valid token. docs/API.md already documented the behaviour implemented
+    // here; /api/v1 has always enforced it (see middleware/apiV1Auth.ts).
+    const tokenScope = (payload as { scope?: unknown }).scope;
+    if (typeof tokenScope === 'string' && tokenScope !== '') {
+      if (!scopedScope || tokenScope !== scopedScope) {
+        return res.status(403).json({ error: 'Scoped token is not valid for this endpoint' });
+      }
+    }
     req.user = payload;
     return next();
-  }
-
-  if (scopedScope) {
-    const scopedPayload = await verifyScopedToken(token, scopedScope);
-    if (scopedPayload) {
-      req.user = scopedPayload;
-      return next();
-    }
   }
 
   if (!payload) {
