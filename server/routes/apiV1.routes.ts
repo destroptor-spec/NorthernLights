@@ -421,7 +421,7 @@ router.delete('/pairing/requests/:code', requireApiV1WebSession, async (req, res
 });
 
 router.post('/auth/scoped-token', async (req, res) => {
-  const schema = z.object({ scope: z.enum(['media', 'sse']), expiresIn: z.enum(['5m', '15m', '1h']).default('15m') }).strict();
+  const schema = z.object({ scope: z.enum(['media', 'sse', 'receiver']), expiresIn: z.enum(['5m', '15m', '1h', '12h']).default('15m') }).strict();
   const input = parseBody(schema, req, res);
   if (!input) return;
   const token = await generateEphemeralScopedToken(input.scope, {
@@ -429,7 +429,10 @@ router.post('/auth/scoped-token', async (req, res) => {
     username: req.apiV1!.username,
     role: req.apiV1!.role,
   }, input.expiresIn);
-  const seconds = input.expiresIn === '5m' ? 300 : input.expiresIn === '1h' ? 3600 : 900;
+  const seconds = input.expiresIn === '5m' ? 300
+    : input.expiresIn === '1h' ? 3600
+    : input.expiresIn === '12h' ? 43200
+    : 900;
   dataResponse(req, res, { token, scope: input.scope, expiresAt: new Date(Date.now() + seconds * 1000).toISOString() });
 });
 

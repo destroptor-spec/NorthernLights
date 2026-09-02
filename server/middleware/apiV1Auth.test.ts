@@ -64,3 +64,92 @@ describe('Aurora API v1 authentication boundaries', () => {
     expect(webNext).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Scoped tokens are narrow capabilities, so the allowlist is per scope. These
+ * deny cases ARE the security guarantee — the `receiver` scope is handed to a
+ * Cast device that keeps its own queue fed with no sender attached, so it must
+ * reach exactly four endpoints and nothing else.
+ */
+describe('scoped token endpoint allowlist', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const attempt = async (scope: string, method: string, path: string) => {
+    (verifyToken as jest.MockedFunction<typeof verifyToken>).mockResolvedValue({
+      userId: 'user-1', username: 'alice', role: 'user', scope,
+    } as never);
+    (verifyScopedToken as jest.MockedFunction<typeof verifyScopedToken>).mockResolvedValue({
+      userId: 'user-1', username: 'alice', role: 'user', scope,
+    } as never);
+    const req = {
+      headers: { authorization: 'Bearer scoped-token' },
+      method, path, query: {}, requestId: 'r1',
+    } as unknown as Request;
+    const res = responseMock();
+    const next = jest.fn() as unknown as NextFunction;
+    await requireApiV1Auth(req, res, next);
+    return {
+      allowed: (next as jest.Mock).mock.calls.length > 0,
+      status: res.status.mock.calls[0]?.[0],
+      code: res.json.mock.calls[0]?.[0]?.error?.code,
+      principal: (req as Request & { apiV1?: { scope?: string; clientName?: string } }).apiV1,
+    };
+  };
+
+  describe('allowed', () => {
+    it.each([
+      ['media', 'GET', '/artwork/abc'],
+      ['sse', 'GET', '/events'],
+      ['receiver', 'POST', '/recommendations/next'],
+      ['receiver', 'POST', '/tracks/track-1/playback'],
+      ['receiver', 'POST', '/playback/reports'],
+      ['receiver', 'GET', '/preferences'],
+    ])('%s may %s %s', async (scope, method, path) => {
+      const { allowed, principal } = await attempt(scope, method, path);
+      expect(allowed).toBe(true);
+      expect(principal?.scope).toBe(scope);
+    });
+
+    it('names the receiver principal so logs and audits are readable', async () => {
+      const { principal } = await attempt('receiver', 'POST', '/recommendations/next');
+      expect(principal?.clientName).toBe('Aurora Cast receiver');
+    });
+  });
+
+  describe('refused', () => {
+    it.each([
+      // The receiver must not be able to mutate anything or manage access.
+      ['receiver', 'PATCH', '/preferences'],
+      ['receiver', 'GET', '/app-keys'],
+      ['receiver', 'POST', '/app-keys'],
+      ['receiver', 'GET', '/playlists'],
+      ['receiver', 'PUT', '/tracks/track-1/loved'],
+      ['receiver', 'PUT', '/tracks/track-1/rating'],
+      ['receiver', 'GET', '/artwork/abc'],
+      ['receiver', 'GET', '/events'],
+      // Method matters, not just the path.
+      ['receiver', 'GET', '/recommendations/next'],
+      ['receiver', 'GET', '/playback/reports'],
+      // Existing scopes must not have widened.
+      ['media', 'POST', '/recommendations/next'],
+      ['media', 'GET', '/preferences'],
+      ['media', 'GET', '/events'],
+      ['sse', 'GET', '/artwork/abc'],
+      ['sse', 'POST', '/recommendations/next'],
+      // An unrecognised scope claim is not a free pass.
+      ['listener', 'POST', '/recommendations/next'],
+      ['', 'POST', '/recommendations/next'],
+    ])('%s may not %s %s', async (scope, method, path) => {
+      const { allowed, status, code } = await attempt(scope, method, path);
+      expect(allowed).toBe(false);
+      expect(status).toBe(403);
+      expect(code).toBe('SCOPED_TOKEN_NOT_ALLOWED');
+    });
+
+    it('does not let a path prefix smuggle a receiver token past the matcher', async () => {
+      for (const path of ['/tracks/track-1/playback/extra', '/recommendations/next/foo', '/preferences/secret']) {
+        expect((await attempt('receiver', 'POST', path)).allowed).toBe(false);
+      }
+    });
+  });
+});

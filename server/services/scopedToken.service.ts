@@ -1,7 +1,9 @@
 import jwt from 'jsonwebtoken';
 import { getJwtSecret, getTokenExpiry, JwtPayload } from './auth.service';
 
-export type ScopedTokenScope = 'media' | 'sse';
+// 'receiver' is for a Cast receiver keeping its own queue fed with no sender
+// attached. Its capability set is enumerated in middleware/apiV1Auth.ts.
+export type ScopedTokenScope = 'media' | 'sse' | 'receiver';
 
 export interface ScopedTokenPayload extends JwtPayload {
   scope: ScopedTokenScope;
@@ -22,7 +24,9 @@ export async function generateScopedToken(scope: ScopedTokenScope, user: JwtPayl
 export async function generateEphemeralScopedToken(
   scope: ScopedTokenScope,
   user: JwtPayload,
-  expiresIn: '5m' | '15m' | '1h' = '15m',
+  // 12h exists for a Cast receiver: a shorter token cannot survive "phone
+  // asleep for four hours", and with the tab closed nobody can renew it.
+  expiresIn: '5m' | '15m' | '1h' | '12h' = '15m',
 ): Promise<string> {
   const secret = await getJwtSecret();
   const payload: ScopedTokenPayload = {

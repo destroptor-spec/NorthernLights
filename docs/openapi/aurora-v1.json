@@ -2903,7 +2903,7 @@
     },
     "/auth/scoped-token": {
       "post": {
-        "summary": "Mint a short-lived media or SSE token",
+        "summary": "Mint a short-lived scoped token",
         "tags": [
           "Authentication"
         ],
@@ -2923,7 +2923,8 @@
                     "type": "string",
                     "enum": [
                       "media",
-                      "sse"
+                      "sse",
+                      "receiver"
                     ]
                   },
                   "expiresIn": {
@@ -2931,7 +2932,8 @@
                     "enum": [
                       "5m",
                       "15m",
-                      "1h"
+                      "1h",
+                      "12h"
                     ]
                   }
                 },

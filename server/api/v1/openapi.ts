@@ -112,7 +112,7 @@ path({ method: 'delete', path: '/app-keys/{id}', summary: 'Revoke or delete an A
 path({ method: 'get', path: '/pairing/requests/{code}', summary: 'Preview a pairing request', tags: ['Authentication'], security: authed, request: { params: codeParams }, responses: ok(unknownObject) });
 path({ method: 'post', path: '/pairing/requests/{code}/approve', summary: 'Approve a pairing request', tags: ['Authentication'], security: authed, request: { params: codeParams }, responses: ok(unknownObject) });
 path({ method: 'delete', path: '/pairing/requests/{code}', summary: 'Cancel an approved pairing request', tags: ['Authentication'], security: authed, request: { params: codeParams }, responses: ok(unknownObject) });
-path({ method: 'post', path: '/auth/scoped-token', summary: 'Mint a short-lived media or SSE token', tags: ['Authentication'], security: authed, request: { body: { required: true, content: json(z.object({ scope: z.enum(['media', 'sse']), expiresIn: z.enum(['5m', '15m', '1h']).optional() })) } }, responses: ok(unknownObject) });
+path({ method: 'post', path: '/auth/scoped-token', summary: 'Mint a short-lived scoped token', tags: ['Authentication'], security: authed, request: { body: { required: true, content: json(z.object({ scope: z.enum(['media', 'sse', 'receiver']), expiresIn: z.enum(['5m', '15m', '1h', '12h']).optional() })) } }, responses: ok(unknownObject) });
 
 path({ method: 'get', path: '/artists', summary: 'List artists', tags: ['Library'], security: authed, request: { query: cursorQuery }, responses: paged(z.array(schemas.Artist)) });
 path({ method: 'get', path: '/artists/{id}', summary: 'Get an artist and tracks', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(unknownObject) });
