@@ -2043,10 +2043,38 @@ export async function getDynamicConstraints() {
   return constraints;
 }
 
+/**
+ * Track ids to exclude from a recommendation: recent history, plus anything the
+ * caller already has queued but unheard.
+ *
+ * Two separate concerns are unioned here deliberately.
+ *
+ * `penaltySize` bounds how far back *heard* history suppresses a repeat, and
+ * the relaxation loop halves it on each failed attempt to widen the candidate
+ * pool. Note `slice(-0)` returns the whole array rather than an empty one, so a
+ * `penaltySize` of 0 — reachable both from `artistAmnesiaLimit: 0` and from that
+ * halving bottoming out — used to apply the *maximum* penalty instead of none,
+ * exactly inverting the relaxation it was meant to perform.
+ *
+ * `excludeTrackIds` is what the caller already holds in its queue. It is not
+ * subject to relaxation: widening the pool is worth doing, re-recommending a
+ * track that is already queued never is.
+ */
+export function buildPenaltyIds(
+  sessionHistoryTrackIds: string[],
+  penaltySize: number,
+  excludeTrackIds: string[] = []
+): string[] {
+  const recent = penaltySize > 0 ? sessionHistoryTrackIds.slice(-penaltySize) : [];
+  return Array.from(new Set([...recent, ...excludeTrackIds]));
+}
+
 export async function calculateNextInfinityTrack(
   sessionHistoryTrackIds: string[],
-  settings: any = {}
+  settings: any = {},
+  options: { excludeTrackIds?: string[] } = {}
 ) {
+  const excludeTrackIds = Array.isArray(options.excludeTrackIds) ? options.excludeTrackIds : [];
   const constraints = await getDynamicConstraints();
   
   // 1. Fetch vectors for the last 10 tracks to compute the Weighted Decay Centroid
@@ -2113,7 +2141,10 @@ export async function calculateNextInfinityTrack(
   }
 
   // Deduplication: Fetch metadata for the last 50 tracks to prevent duplicate songs from different albums
-  const dedupeHistoryIds = sessionHistoryTrackIds.slice(-50);
+  const dedupeHistoryIds = Array.from(new Set([
+    ...sessionHistoryTrackIds.slice(-50),
+    ...excludeTrackIds,
+  ]));
   let historyMetadata: any[] = [];
   if (dedupeHistoryIds.length > 0) {
     const metaPlaceholders = dedupeHistoryIds.map((_, i) => `$${i + 1}`).join(',');
@@ -2186,7 +2217,7 @@ export async function calculateNextInfinityTrack(
 
   // Iterative Relaxation Loop
   for (let attempt = 0; attempt < 3; attempt++) {
-    const penaltyIds = sessionHistoryTrackIds.slice(-penaltySize);
+    const penaltyIds = buildPenaltyIds(sessionHistoryTrackIds, penaltySize, excludeTrackIds);
     const historyParams = penaltyIds.map((_, i) => `$${i + 2}`);
     const historyClause = historyParams.length > 0 ? `WHERE t.id NOT IN (${historyParams.join(',')})` : '';
 

@@ -68,6 +68,7 @@ import {
   playbackSessionCreateSchema,
   playbackSessionDeleteSchema,
   playbackSessionPatchSchema,
+  OPAQUE_ID,
 } from '../../shared/api/v1';
 import {
   approvePairingRequest,
@@ -717,10 +718,36 @@ router.post('/hub/custom', async (req, res) => {
   dataResponse(req, res, await mapPlaylistV1({ ...meta, tracks }, req.apiV1!.userId), 201);
 });
 
+// The engine reads these from the settings object it is handed. A browser has
+// them in its store; a headless client — the Cast receiver — has no access to
+// the sliders at all, so the server resolves them itself. Anything the caller
+// does provide still wins, which keeps the web client's behaviour identical.
+const INFINITY_SETTING_KEYS = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit'] as const;
+
+async function resolveInfinitySettings(userId: string, provided: Record<string, unknown>) {
+  const resolved: Record<string, unknown> = {};
+  for (const key of INFINITY_SETTING_KEYS) {
+    const value = await getUserSetting(userId, key);
+    if (value !== null && value !== undefined) resolved[key] = value;
+  }
+  return { ...resolved, ...provided };
+}
+
 router.post('/recommendations/next', async (req, res) => {
-  const input = parseBody(z.object({ settings: z.record(z.string(), z.unknown()).default({}) }).strict(), req, res);
+  const input = parseBody(z.object({
+    settings: z.record(z.string(), z.unknown()).default({}),
+    // What the caller already has queued but unheard. Server-side history only
+    // advances on threshold-gated playback reports, so without this a client
+    // topping up several tracks ahead is handed the same track repeatedly.
+    exclude: z.array(OPAQUE_ID).max(200).optional(),
+  }).strict(), req, res);
   if (!input) return;
-  const track = await calculateNextInfinityTrack(getSessionHistory(req.apiV1!.userId), input.settings);
+  const settings = await resolveInfinitySettings(req.apiV1!.userId, input.settings);
+  const track = await calculateNextInfinityTrack(
+    getSessionHistory(req.apiV1!.userId),
+    settings,
+    { excludeTrackIds: input.exclude ?? [] },
+  );
   dataResponse(req, res, track ? await getApiV1TrackById(req.apiV1!.userId, String((track as any).id)) : null);
 });
 
