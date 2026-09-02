@@ -14,6 +14,27 @@ const toast = {
 };
 
 export type CastState = 'NO_DEVICES_AVAILABLE' | 'NOT_CONNECTED' | 'CONNECTING' | 'CONNECTED';
+/**
+ * Status the receiver pushes on `urn:x-cast:dk.onecloud.aurora.status`.
+ *
+ * The SDK's MEDIA_STATUS relay drops queue-item `customData`, so the sender
+ * cannot see the `queueEntryId` it assigned and has to infer identity from a
+ * URL. This channel carries it verbatim.
+ */
+export interface AuroraReceiverStatus {
+  type?: string;
+  reason?: string;
+  queueEntryId?: string | null;
+  contentId?: string | null;
+  itemId?: number | null;
+  currentItemIndex?: number;
+  queueLength?: number;
+  playerState?: string | null;
+  currentTime?: number;
+  duration?: number;
+  ts?: number;
+}
+
 export type CastHealthPhase = 'idle' | 'connected' | 'rejoining' | 'recovering' | 'recovered' | 'warning' | 'error';
 
 export interface CastHealthStatus {
@@ -23,6 +44,7 @@ export interface CastHealthStatus {
     updatedAt: number;
 }
 
+const AURORA_STATUS_NAMESPACE = 'urn:x-cast:dk.onecloud.aurora.status';
 const SESSION_STORAGE_KEY = 'cast_session_id';
 // Receiver volume applied once when a FRESH session hands playback over (some
 // receivers power on reporting 100% and would blast the first track). Never
@@ -130,6 +152,14 @@ export class CastManager {
     // Session we have already attached the MEDIA_SESSION listener to, so
     // repeated SESSION_STARTED/RESUMED/reconcile passes don't stack handlers.
     private mediaSessionListenerSessionId = '';
+    // Latest status the receiver pushed on its own namespace. This is the
+    // authoritative view: the receiver reported an exact index, queue length,
+    // position and queueEntryId across 327 broadcasts with zero errors, while
+    // the sender was reconstructing the same facts by URL-matching a contentId
+    // the SDK relay had already staled. See #56.
+    private lastAuroraStatus: AuroraReceiverStatus | null = null;
+    private lastAuroraStatusAt = 0;
+    private readonly auroraStatusFreshMs = 20000;
     private readonly remoteEvidenceWindowMs = 60000;
     private freshSessionStartedAt = 0;
     private readonly freshSessionWindowMs = 5000;
@@ -768,9 +798,77 @@ export class CastManager {
                 void this.hydrateSenderFromRemoteSession(mediaSession, 'media-session-event');
             });
             this.logCast('ok', 'Attached MEDIA_SESSION listener', `sid=${sessionId || 'unknown'}`);
+            this.attachAuroraStatusListener(session, sessionId);
         } catch (error) {
             this.mediaSessionListenerSessionId = '';
             this.logCast('warn', 'Failed to attach MEDIA_SESSION listener', this.describeError(error));
+        }
+    }
+
+    /**
+     * Listen for the receiver's own status broadcasts.
+     *
+     * Registered on the same sessions as the MEDIA_SESSION listener and guarded
+     * by the same session id, so it cannot stack handlers. Purely additive: if
+     * the receiver predates the namespace, nothing arrives and every existing
+     * path behaves as before.
+     */
+    private attachAuroraStatusListener(session: any, sessionId: string) {
+        if (!session || typeof session.addMessageListener !== 'function') return;
+        try {
+            // The sender receives a raw string on custom namespaces, not an object.
+            session.addMessageListener(AURORA_STATUS_NAMESPACE, (_ns: string, message: string) => {
+                let status: AuroraReceiverStatus | null = null;
+                try {
+                    status = typeof message === 'string' ? JSON.parse(message) : message;
+                } catch {
+                    return; // malformed payload — ignore rather than throw in a listener
+                }
+                if (status && status.type === 'aurora.status') this.applyAuroraStatus(status);
+            });
+            this.logCast('ok', 'Attached aurora-status listener', `sid=${sessionId || 'unknown'}`);
+        } catch (error) {
+            this.logCast('warn', 'Failed to attach aurora-status listener', this.describeError(error));
+        }
+    }
+
+    /**
+     * Apply a receiver-pushed status.
+     *
+     * This is a reply from the receiver, so it counts as evidence of life for
+     * the release timer added in #51 — unlike the synthetic RemotePlayer
+     * snapshot, which is local state.
+     */
+    private applyAuroraStatus(status: AuroraReceiverStatus) {
+        const now = Date.now();
+        this.lastAuroraStatus = status;
+        this.lastAuroraStatusAt = now;
+        this.lastRemoteEvidenceAt = now;
+        this.mediaSessionProbeStartedAt = 0;
+        this.remoteMediaConcludedGone = false;
+
+        const state = usePlayerStore.getState();
+
+        // Identity first: an exact id beats matching a URL that has to survive
+        // token, codec and quality rewriting.
+        if (status.queueEntryId) {
+            const index = state.playlist.findIndex((track) => track.queueEntryId === status.queueEntryId);
+            if (index >= 0 && index !== state.currentIndex) {
+                this.logCast('ok', 'aurora-status: syncing track index', `from=${state.currentIndex} to=${index} entryId=${status.queueEntryId}`);
+                this.onTrackChange?.(index);
+            }
+        }
+
+        if (typeof status.duration === 'number' && isFinite(status.duration) && status.duration > 0) {
+            this.onDuration?.(status.duration);
+        }
+        if (typeof status.currentTime === 'number' && isFinite(status.currentTime) && status.currentTime >= 0) {
+            this.onTimeUpdate?.(status.currentTime);
+        }
+        if (status.playerState === 'PLAYING') {
+            this.onPlayStateChange?.(true);
+        } else if (status.playerState === 'PAUSED') {
+            this.onPlayStateChange?.(false);
         }
     }
 
@@ -1632,6 +1730,12 @@ export class CastManager {
     }
 
     private getCurrentQueueEntryId(mediaSession: any | null = this.getMediaSession()): string | null {
+        // A recent receiver push is the most reliable source there is: the SDK
+        // strips customData from relayed queue items, so the lookups below
+        // almost always fall through on this receiver.
+        if (this.lastAuroraStatus?.queueEntryId && Date.now() - this.lastAuroraStatusAt < this.auroraStatusFreshMs) {
+            return this.lastAuroraStatus.queueEntryId;
+        }
         if (!mediaSession) return null;
         const currentItemId = mediaSession.currentItemId;
         if (typeof currentItemId === 'number' && Array.isArray(mediaSession.items)) {
