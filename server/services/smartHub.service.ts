@@ -4,6 +4,11 @@ import { getLlmConfig, extractJson } from './llm.service';
 import { withTransaction } from '../utils/db';
 import { christmasExclusionSql } from '../utils/seasonalFilter';
 import {
+  enumerateCompletedWrappedPeriods,
+  wrappedYmToLocalMs,
+  type WrappedPeriod,
+} from '../utils/wrappedPeriods';
+import {
   buildPlaylistFromPools,
   computeArtistCentroids,
   fetchCandidatePool,
@@ -1321,67 +1326,7 @@ export async function computeYearRewind(userId: string, limit = 50) {
 // "Uniquely yours" rail and backfills older periods in the background; the full
 // archive surfaces via the Playlists "Wrapped" rail. No Christmas exclusion —
 // a Wrapped is a factual recap, so seasonal music you actually played belongs.
-type WrappedSeason = 'winter' | 'spring' | 'summer' | 'autumn';
-const WRAPPED_SEASON_LABEL: Record<WrappedSeason, string> = {
-  winter: 'Winter', spring: 'Spring', summer: 'Summer', autumn: 'Autumn',
-};
 const WRAPPED_MIN_TRACKS = 10;
-
-interface WrappedPeriod {
-  isYear: boolean;
-  suffix: string;         // id suffix: `${year}` or `${year}_${season}`
-  title: string;          // "2025 Wrapped" | "Summer 2024"
-  descLabel: string;      // "2025" | "summer of 2024"
-  startYm: string;        // 'YYYY-MM-01'
-  endYmExclusive: string; // 'YYYY-MM-01' (first month AFTER the period)
-  limit: number;
-  sortKey: number;        // period end (ms), for newest-first ordering
-}
-
-function wrappedYm(y: number, m: number): string {
-  return `${y}-${String(m).padStart(2, '0')}-01`;
-}
-
-function wrappedSeasonRange(y: number, s: WrappedSeason): { startYm: string; endYmExclusive: string } {
-  switch (s) {
-    case 'winter': return { startYm: wrappedYm(y - 1, 12), endYmExclusive: wrappedYm(y, 3) }; // Dec(y-1)–Feb(y)
-    case 'spring': return { startYm: wrappedYm(y, 3), endYmExclusive: wrappedYm(y, 6) };
-    case 'summer': return { startYm: wrappedYm(y, 6), endYmExclusive: wrappedYm(y, 9) };
-    case 'autumn': return { startYm: wrappedYm(y, 9), endYmExclusive: wrappedYm(y, 12) };
-  }
-}
-
-// Every completed year+season period that could hold data, newest-first. A
-// period is "complete" once its last month is strictly before the current month.
-function enumerateCompletedWrappedPeriods(now: Date, earliest: Date): WrappedPeriod[] {
-  const nowMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-  const earliestMonthStart = new Date(earliest.getFullYear(), earliest.getMonth(), 1).getTime();
-  const out: WrappedPeriod[] = [];
-
-  const consider = (p: Omit<WrappedPeriod, 'sortKey'>) => {
-    const endMs = new Date(p.endYmExclusive).getTime();
-    if (endMs <= nowMonthStart && endMs > earliestMonthStart) {
-      out.push({ ...p, sortKey: endMs });
-    }
-  };
-
-  for (let y = now.getFullYear(); y >= earliest.getFullYear(); y--) {
-    consider({
-      isYear: true, suffix: String(y), title: `${y} Wrapped`, descLabel: String(y),
-      startYm: wrappedYm(y, 1), endYmExclusive: wrappedYm(y + 1, 1), limit: 50,
-    });
-    for (const s of ['winter', 'spring', 'summer', 'autumn'] as WrappedSeason[]) {
-      const r = wrappedSeasonRange(y, s);
-      consider({
-        isYear: false, suffix: `${y}_${s}`, title: `${WRAPPED_SEASON_LABEL[s]} ${y}`,
-        descLabel: `${WRAPPED_SEASON_LABEL[s].toLowerCase()} of ${y}`,
-        startYm: r.startYm, endYmExclusive: r.endYmExclusive, limit: 30,
-      });
-    }
-  }
-  out.sort((a, b) => b.sortKey - a.sortKey);
-  return out;
-}
 
 // Blend a user's external scrobbles (Last.fm + ListenBrainz) into the in-app
 // play counts for a period so a recap reflects real listening even for tracks
@@ -1427,8 +1372,8 @@ async function computeWrappedPeriodFresh(userId: string, p: WrappedPeriod) {
 
   // 2) External scrobbles for the same window, aggregated by song key. Both
   //    providers run in parallel and self-heal to [] on failure.
-  const fromTs = Math.floor(new Date(p.startYm).getTime() / 1000);
-  const toTs = Math.floor(new Date(p.endYmExclusive).getTime() / 1000) - 1;
+  const fromTs = Math.floor(wrappedYmToLocalMs(p.startYm) / 1000);
+  const toTs = Math.floor(wrappedYmToLocalMs(p.endYmExclusive) / 1000) - 1;
   const [lfm, lb] = await Promise.all([
     getScrobblesInRange(userId, fromTs, toTs).catch(() => []),
     getListensInRange(userId, fromTs, toTs).catch(() => []),

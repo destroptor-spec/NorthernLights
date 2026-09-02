@@ -578,6 +578,13 @@ interface UniqueCardProps {
   kind: UniqueCardKind;
   title: string;
   subtitle?: string;
+  /**
+   * AuroraCover seed — pass the playlist id for families that also render
+   * elsewhere (Wrapped: the Playlists rail and the detail hero both seed from
+   * the id), so the same playlist gets the same shape on every surface. Falls
+   * back to the title for Hub-only families.
+   */
+  seed?: string;
   imageUrl?: string | null;
   onClick: () => void;
   onPlay?: () => void;
@@ -590,6 +597,7 @@ const UniqueCard: React.FC<UniqueCardProps> = ({
   kind,
   title,
   subtitle,
+  seed,
   imageUrl,
   onClick,
   onPlay,
@@ -646,7 +654,7 @@ const UniqueCard: React.FC<UniqueCardProps> = ({
     badgeLabel = 'decade';
   } else if (kind === 'wrapped') {
     coverContent = (
-      <AuroraCover variant="wrapped" seed={title} title={title} label={wrappedCoverLabel(title) || undefined} />
+      <AuroraCover variant="wrapped" seed={seed || title} title={title} label={wrappedCoverLabel(title) || undefined} />
     );
     badgeLabel = 'wrapped';
   } else {
@@ -1522,6 +1530,7 @@ export const Hub: React.FC = () => {
                     kind="wrapped"
                     title={displayWrapped.title || 'Wrapped'}
                     subtitle={displayWrapped.description || undefined}
+                    seed={displayWrapped.id || displayWrapped.title || undefined}
                     onClick={() => handleOpenSmartPlaylist(displayWrapped)}
                     onPlay={() => handlePlayCollection(displayWrapped.tracks)}
                     loading={openingSmartPlaylistId === displayWrapped.id}
@@ -1541,6 +1550,7 @@ export const Hub: React.FC = () => {
                     kind="wrapped"
                     title={displayWrapped.title || 'Wrapped'}
                     subtitle={displayWrapped.description || undefined}
+                    seed={displayWrapped.id || displayWrapped.title || undefined}
                     onClick={() => handleOpenSmartPlaylist(displayWrapped)}
                     onPlay={() => handlePlayCollection(displayWrapped.tracks)}
                     loading={openingSmartPlaylistId === displayWrapped.id}
