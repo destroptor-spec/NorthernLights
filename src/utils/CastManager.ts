@@ -859,11 +859,23 @@ export class CastManager {
             }
         }
 
-        if (typeof status.duration === 'number' && isFinite(status.duration) && status.duration > 0) {
-            this.onDuration?.(status.duration);
-        }
-        if (typeof status.currentTime === 'number' && isFinite(status.currentTime) && status.currentTime >= 0) {
-            this.onTimeUpdate?.(status.currentTime);
+        // Position is the only continuous value on this channel. RemotePlayer
+        // emits CURRENT_TIME_CHANGED every second while it is alive, so applying
+        // a status up to five seconds old on top of that drags the progress bar
+        // backwards and then forwards again — visible as a flash every five
+        // seconds. Defer to RemotePlayer whenever it is talking, and drive
+        // position from the receiver only once that stream has gone quiet, which
+        // is the case this channel exists to cover.
+        //
+        // Track identity and play state are discrete and authoritative, so they
+        // still apply unconditionally below.
+        if (now - this.lastRemotePlayerEventAt > 3000) {
+            if (typeof status.duration === 'number' && isFinite(status.duration) && status.duration > 0) {
+                this.onDuration?.(status.duration);
+            }
+            if (typeof status.currentTime === 'number' && isFinite(status.currentTime) && status.currentTime >= 0) {
+                this.onTimeUpdate?.(status.currentTime);
+            }
         }
         if (status.playerState === 'PLAYING') {
             this.onPlayStateChange?.(true);
