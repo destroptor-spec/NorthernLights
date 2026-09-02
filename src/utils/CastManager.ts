@@ -160,6 +160,10 @@ export class CastManager {
     private lastAuroraStatus: AuroraReceiverStatus | null = null;
     private lastAuroraStatusAt = 0;
     private readonly auroraStatusFreshMs = 20000;
+    // A queue append fires on a track transition, when the SDK's Media object is
+    // briefly absent. The append has the rest of the current track to succeed in,
+    // so wait well past the transition rather than giving up inside it.
+    private readonly queueAppendWaitMs = 30000;
     private readonly remoteEvidenceWindowMs = 60000;
     private freshSessionStartedAt = 0;
     private readonly freshSessionWindowMs = 5000;
@@ -859,11 +863,21 @@ export class CastManager {
             }
         }
 
-        if (typeof status.duration === 'number' && isFinite(status.duration) && status.duration > 0) {
-            this.onDuration?.(status.duration);
-        }
-        if (typeof status.currentTime === 'number' && isFinite(status.currentTime) && status.currentTime >= 0) {
-            this.onTimeUpdate?.(status.currentTime);
+        // Position is the one continuous value here. RemotePlayer emits
+        // CURRENT_TIME_CHANGED every second when it is alive, so applying a
+        // status that is up to five seconds old on top of that drags the
+        // progress bar backwards and then forwards again — visible as a flash
+        // every five seconds. Defer to RemotePlayer whenever it is talking, and
+        // only drive position from the receiver when that stream has gone
+        // quiet, which is the case this channel exists to cover.
+        const remotePlayerQuietMs = now - this.lastRemotePlayerEventAt;
+        if (remotePlayerQuietMs > 3000) {
+            if (typeof status.duration === 'number' && isFinite(status.duration) && status.duration > 0) {
+                this.onDuration?.(status.duration);
+            }
+            if (typeof status.currentTime === 'number' && isFinite(status.currentTime) && status.currentTime >= 0) {
+                this.onTimeUpdate?.(status.currentTime);
+            }
         }
         if (status.playerState === 'PLAYING') {
             this.onPlayStateChange?.(true);
@@ -2520,21 +2534,36 @@ export class CastManager {
             this.logCast('warn', 'Cast queue append skipped: no session', `title=${track.title || 'unknown'}`);
             return;
         }
-        // Infinity Mode appends exactly when a short queue is running out, which
-        // is when the sender is most likely to be between media sessions. This
-        // used to return silently: the track entered the local playlist, never
-        // reached the device, and playback simply stopped at the end of the
-        // queue with nothing logged. Prod every attempt, 2026-09-01. Prod the
-        // receiver for a status and retry once before giving up.
+        // Infinity Mode appends when the queue is running out, which the sender
+        // now learns about promptly (#59) — meaning the append lands right on a
+        // track transition, exactly when the SDK is tearing down one Media
+        // object and building the next. `insertNextInQueue` shares this guard
+        // and works fine, because a user triggers it mid-track when the session
+        // is healthy; this path just has the worst possible timing.
+        //
+        // A single one-second retry was a coin flip: prod 2026-09-02 recorded
+        // one success in five attempts. Since the append happens while the last
+        // track is still playing, there is a whole track's duration of slack —
+        // so keep asking across the transition instead of giving up in it.
         let mediaSession = session.getMediaSession();
         if (!mediaSession) {
-            this.logCast('warn', 'Cast queue append: no media session, requesting status', `title=${track.title || 'unknown'}`);
-            this.requestMediaStatusBroadcast(Date.now() - this.lastRemotePlayerEventAt);
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-            mediaSession = session.getMediaSession();
+            this.logCast('warn', 'Cast queue append: no media session, retrying', `title=${track.title || 'unknown'}`);
+            const deadline = Date.now() + this.queueAppendWaitMs;
+            let prodded = 0;
+            while (!mediaSession && Date.now() < deadline) {
+                // Re-prod periodically rather than every poll: the receiver
+                // answers a GET_STATUS with a fresh MEDIA_STATUS the SDK can
+                // rebuild from, but there is no point flooding it.
+                if (prodded === 0 || Date.now() - prodded > 3000) {
+                    prodded = Date.now();
+                    this.requestMediaStatusBroadcast(Date.now() - this.lastRemotePlayerEventAt);
+                }
+                await new Promise((resolve) => setTimeout(resolve, 400));
+                mediaSession = session.getMediaSession();
+            }
         }
         if (!mediaSession) {
-            this.logCast('error', 'Cast queue append failed: no media session', `title=${track.title || 'unknown'}`);
+            this.logCast('error', 'Cast queue append failed: no media session', `title=${track.title || 'unknown'} waitedMs=${this.queueAppendWaitMs}`);
             return;
         }
         const item = this.buildQueueItem({
