@@ -1024,6 +1024,86 @@
             receiverStopReason = '';
           }
           postDiagnosticMarker('receiver-state', 'from=' + previousState + ' to=' + nextState);
+          broadcastAuroraStatus('state:' + nextState);
+        }
+      }
+
+      // ── Aurora status channel (diagnostic stage) ─────────────────────────
+      // The SDK's own MEDIA_STATUS relay drops queue-item customData, so the
+      // sender cannot see the queueEntryId it assigned and has to reconstruct
+      // track identity by URL-matching a contentId that goes stale mid-track.
+      // An application namespace is relayed verbatim, so the identity survives.
+      //
+      // This stage only broadcasts and reports; no sender depends on it yet.
+      // The point is to learn from a real session whether the channel opens,
+      // whether sends succeed, and — the crux — whether queueEntryId is
+      // actually present here. See issue #56.
+      var AURORA_STATUS_NS = 'urn:x-cast:dk.onecloud.aurora.status';
+      var auroraStatusSends = 0;
+      var auroraStatusErrors = 0;
+      var auroraStatusMissingId = 0;
+      var lastAuroraStatusLogAt = 0;
+
+      function buildAuroraStatus(reason) {
+        var mediaInfo = playerManager.getMediaInformation();
+        var customData = (mediaInfo && mediaInfo.customData) || {};
+        var currentIndex = -1;
+        var queueLength = 0;
+        var itemId = null;
+        try {
+          if (queueManager) {
+            currentIndex = queueManager.getCurrentItemIndex();
+            var items = queueManager.getItems ? queueManager.getItems() : null;
+            queueLength = items ? items.length : 0;
+            var currentItem = queueManager.getCurrentItem ? queueManager.getCurrentItem() : null;
+            if (currentItem && typeof currentItem.itemId === 'number') itemId = currentItem.itemId;
+          }
+        } catch (queueError) { /* queue not ready yet */ }
+
+        return {
+          type: 'aurora.status',
+          reason: reason,
+          queueEntryId: customData.queueEntryId || null,
+          contentId: (mediaInfo && mediaInfo.contentId) || null,
+          itemId: itemId,
+          currentItemIndex: currentIndex,
+          queueLength: queueLength,
+          playerState: playerManager.getPlayerState() || null,
+          currentTime: playerManager.getCurrentTimeSec ? playerManager.getCurrentTimeSec() : 0,
+          duration: playerManager.getDurationSec ? playerManager.getDurationSec() : 0,
+          ts: Date.now()
+        };
+      }
+
+      function broadcastAuroraStatus(reason) {
+        var payload;
+        try {
+          payload = buildAuroraStatus(reason);
+          if (!payload.queueEntryId) auroraStatusMissingId++;
+          context.sendCustomMessage(AURORA_STATUS_NS, undefined, payload);
+          auroraStatusSends++;
+        } catch (broadcastError) {
+          auroraStatusErrors++;
+          postServerLog('warn', '[' + LOG_TAG + '] aurora-status broadcast failed', safeStringify(broadcastError));
+          return;
+        }
+        // Throttled: this fires every few seconds and the log is already busy.
+        var now = Date.now();
+        if (now - lastAuroraStatusLogAt > 30000) {
+          lastAuroraStatusLogAt = now;
+          postServerLog(
+            'ok',
+            '[' + LOG_TAG + '] aurora-status broadcast',
+            'sends=' + auroraStatusSends +
+              ' errors=' + auroraStatusErrors +
+              ' missingEntryId=' + auroraStatusMissingId +
+              ' reason=' + reason +
+              ' queueEntryId=' + (payload.queueEntryId ? 'present' : 'MISSING') +
+              ' index=' + payload.currentItemIndex +
+              ' queueLength=' + payload.queueLength +
+              ' state=' + payload.playerState +
+              ' time=' + Math.floor(payload.currentTime || 0)
+          );
         }
       }
 
@@ -1526,12 +1606,16 @@
       if (ui.mediaElement) {
         receiverOptions.mediaElement = ui.mediaElement;
       }
+      // Must be declared before context.start(), or sends fail CHANNEL_ERROR.
+      receiverOptions.customNamespaces = {};
+      receiverOptions.customNamespaces[AURORA_STATUS_NS] = cast.framework.system.MessageType.JSON;
       receiverOptions.supportedCommands =
         cast.framework.messages.Command.ALL_BASIC_MEDIA |
         cast.framework.messages.Command.QUEUE_NEXT |
         cast.framework.messages.Command.QUEUE_PREV;
       context.start(receiverOptions);
       logAndPost('ok', LOG_TAG, 'context.start() returned OK');
+      logAndPost('ok', LOG_TAG, 'aurora-status namespace registered: ' + AURORA_STATUS_NS);
 
       // Senders can lose their RemotePlayer binding across queue replacements
       // (the old media session's terminal IDLE detaches them) and then hear
@@ -1548,6 +1632,19 @@
           }
         } catch (broadcastError) { /* ignore */ }
       }, 15000);
+
+      // Finer cadence for the Aurora status channel: the sender needs position
+      // often enough to interpolate a progress bar between messages.
+      setInterval(function() {
+        try {
+          var auroraState = playerManager.getPlayerState();
+          if (auroraState === cast.framework.messages.PlayerState.PLAYING
+              || auroraState === cast.framework.messages.PlayerState.BUFFERING
+              || auroraState === cast.framework.messages.PlayerState.PAUSED) {
+            broadcastAuroraStatus('interval');
+          }
+        } catch (auroraIntervalError) { /* ignore */ }
+      }, 5000);
     } catch (initError) {
       _rawLog('[INIT ERROR] ' + initError.message);
       if (initError.stack) _rawLog('[INIT STACK] ' + initError.stack);
