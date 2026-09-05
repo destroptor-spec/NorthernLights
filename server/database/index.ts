@@ -5437,36 +5437,70 @@ export async function hasUsers(): Promise<boolean> {
 // INVITE MANAGEMENT
 // ==========================================
 
+// Stored tokens are always canonical lowercase hex (the column default is
+// encode(gen_random_bytes(32), 'hex') and nothing else writes one), so
+// normalizing the *input* is enough to tolerate a link that picked up padding
+// or a capital on its way through a chat app. Every invite query normalizes the
+// same way: a lookup that matched but a write that didn't left invites
+// unconsumable and unrevokable, because `UPDATE ... WHERE token = $1` silently
+// affects zero rows.
+function normalizeInviteToken(token: string): string {
+  return String(token ?? '').trim().toLowerCase();
+}
+
+// expires_at / created_at are TIMESTAMPTZ, but every caller — isInviteValid,
+// the validate endpoint, the admin UI's Invite type — treats them as epoch ms.
+// Convert at the boundary so that assumption actually holds; pg hands back Date
+// objects, which JSON-serialize to ISO strings and compare as NaN against
+// Date.now().
+function mapInviteRow(row: any) {
+  if (!row) return null;
+  return {
+    ...row,
+    expires_at: row.expires_at == null ? null : new Date(row.expires_at).getTime(),
+    created_at: row.created_at == null ? null : new Date(row.created_at).getTime(),
+  };
+}
+
 export async function createInvite(createdBy: string | null, role: string = 'user', maxUses: number = 1, expiresAt: number | null = null) {
   const db = await initDB();
+  // The column is TIMESTAMPTZ; handing Postgres a raw epoch-ms number fails
+  // with `date/time field value out of range`.
+  const expiresAtValue = expiresAt == null || !Number.isFinite(expiresAt) ? null : new Date(expiresAt);
   const res = await db.query(`
     INSERT INTO invites (created_by, role, max_uses, expires_at)
     VALUES ($1, $2, $3, $4)
     RETURNING *
-  `, [createdBy, role, maxUses, expiresAt]);
-  return res.rows[0] as any;
+  `, [createdBy, role, maxUses, expiresAtValue]);
+  return mapInviteRow(res.rows[0]) as any;
 }
 
 export async function getInvite(token: string) {
   const db = await initDB();
-  const res = await db.query('SELECT * FROM invites WHERE lower(trim(token)) = lower(trim($1))', [token]);
-  return res.rows[0] || null;
+  const res = await db.query('SELECT * FROM invites WHERE token = $1', [normalizeInviteToken(token)]);
+  return mapInviteRow(res.rows[0]);
 }
 
 export async function listInvites() {
   const db = await initDB();
   const res = await db.query('SELECT * FROM invites ORDER BY created_at DESC');
-  return res.rows;
+  return res.rows.map(mapInviteRow);
 }
 
 export async function deleteInvite(token: string) {
   const db = await initDB();
-  await db.query('DELETE FROM invites WHERE token = $1', [token]);
+  await db.query('DELETE FROM invites WHERE token = $1', [normalizeInviteToken(token)]);
 }
 
 export async function incrementInviteUses(token: string) {
   const db = await initDB();
-  await db.query('UPDATE invites SET uses = uses + 1 WHERE token = $1', [token]);
+  const res = await db.query('UPDATE invites SET uses = uses + 1 WHERE token = $1', [normalizeInviteToken(token)]);
+  if (res.rowCount === 0) {
+    // A consumed invite that stayed at uses = 0 is a reusable invite. Never
+    // silent.
+    console.error(`[Invite] Failed to record a use: no invite row matched token "${normalizeInviteToken(token)}".`);
+  }
+  return res.rowCount ?? 0;
 }
 
 export async function isInviteValid(token: string): Promise<boolean> {
@@ -5477,9 +5511,9 @@ export async function isInviteValid(token: string): Promise<boolean> {
     return false;
   }
   
-  // Safe comparison for BIGINT (postgres returns as string) vs JS timestamp
+  // mapInviteRow already normalized expires_at to epoch ms.
   if (invite.expires_at) {
-    const expiresAt = typeof invite.expires_at === 'string' ? parseInt(invite.expires_at, 10) : Number(invite.expires_at);
+    const expiresAt = Number(invite.expires_at);
     if (Date.now() > expiresAt) {
       console.warn(`[Invite] Validation failed: Token "${token}" has expired (expired at ${expiresAt}, now ${Date.now()}).`);
       return false;

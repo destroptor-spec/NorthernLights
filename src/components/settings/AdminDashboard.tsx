@@ -281,7 +281,13 @@ export const AdminDashboard: React.FC = () => {
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             {invites.map(inv => {
-                                const isExpired = inv.expires_at && inv.expires_at < Date.now();
+                                // expires_at is epoch ms (normalized in the DB
+                                // layer). Comparing the raw column — a Date that
+                                // JSON-serializes to an ISO string — against
+                                // Date.now() is always false, so an expired
+                                // invite rendered as "Active" forever.
+                                const expiresAt = inv.expires_at == null ? null : Number(inv.expires_at);
+                                const isExpired = expiresAt !== null && Number.isFinite(expiresAt) && expiresAt < Date.now();
                                 const isUsedUp = inv.uses >= inv.max_uses;
                                 const invalid = isExpired || isUsedUp;
                                 
@@ -303,7 +309,7 @@ export const AdminDashboard: React.FC = () => {
                                             </div>
                                             <div className="text-xs text-[var(--color-text-secondary)] flex items-center justify-between">
                                                 <span>Expires</span>
-                                                <span>{inv.expires_at ? new Date(inv.expires_at).toLocaleDateString() : 'Never'}</span>
+                                                <span>{expiresAt !== null && Number.isFinite(expiresAt) ? new Date(expiresAt).toLocaleDateString() : 'Never'}</span>
                                             </div>
                                         </div>
                                         

@@ -182,8 +182,17 @@ router.get('/invites', adminReadRateLimit, requireAdmin, async (req, res) => {
 
 router.post('/invites', adminMutationRateLimit, requireAdmin, async (req, res) => {
   try {
-    const { role, maxUses, expiresIn } = req.body;
-    const expiresAt = expiresIn ? Date.now() + (parseInt(expiresIn, 10) * 1000) : null;
+    const { role, maxUses, expiresIn, expiresInDays } = req.body;
+    // The admin UI sends expiresInDays; expiresIn (seconds) stays accepted for
+    // any caller that already used it. Reading only expiresIn silently dropped
+    // every expiry, so every invite ever issued is permanent.
+    const ttlSeconds = expiresInDays != null
+      ? Number(expiresInDays) * 24 * 60 * 60
+      : expiresIn != null ? Number(expiresIn) : null;
+    if (ttlSeconds != null && (!Number.isFinite(ttlSeconds) || ttlSeconds <= 0)) {
+      return res.status(400).json({ error: 'Invite expiry must be a positive number of days.' });
+    }
+    const expiresAt = ttlSeconds == null ? null : Date.now() + ttlSeconds * 1000;
     const invite = await createInvite(req.user!.userId, role || 'user', maxUses || 1, expiresAt);
 
     const origin = req.headers.origin || `${req.protocol}://${req.get('host')}`;
