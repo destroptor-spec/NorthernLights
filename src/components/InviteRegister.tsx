@@ -38,6 +38,13 @@ interface InviteData {
   usesLeft?: number;
 }
 
+// Mirrors the server's rules in server/routes/auth.routes.ts. When the client
+// only checked the password, a too-short username reached the server and came
+// back as "Username must be 3+ chars, password 12+ chars" — a message that
+// names both fields and reads as a password rejection.
+const MIN_USERNAME_LENGTH = 3;
+const MIN_PASSWORD_LENGTH = 12;
+
 function getPasswordStrength(pw: string): 'weak' | 'fair' | 'strong' | null {
   if (!pw) return null;
   const hasUpper = /[A-Z]/.test(pw);
@@ -74,6 +81,9 @@ export const InviteRegister: React.FC = () => {
 
   const strength = getPasswordStrength(password);
   const passwordsMatch = password === confirmPassword;
+  const trimmedUsername = username.trim();
+  const usernameTooShort = trimmedUsername.length > 0 && trimmedUsername.length < MIN_USERNAME_LENGTH;
+  const passwordTooShort = password.length > 0 && password.length < MIN_PASSWORD_LENGTH;
 
   const { turnstileEnabled, turnstileSiteKey } = useAuthConfig();
   const turnstile = useTurnstile(
@@ -99,15 +109,19 @@ export const InviteRegister: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!token || !username.trim() || !password || !passwordsMatch) return;
-    if (password.length < 12) {
-      setError('Password must be at least 12 characters.');
+    if (!token || !trimmedUsername || !password || !passwordsMatch) return;
+    if (trimmedUsername.length < MIN_USERNAME_LENGTH) {
+      setError(`Username must be at least ${MIN_USERNAME_LENGTH} characters.`);
+      return;
+    }
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
       return;
     }
     setIsLoading(true);
     setError('');
 
-    const result = await register(token, username.trim(), password, turnstile.token ?? undefined);
+    const result = await register(token, trimmedUsername, password, turnstile.token ?? undefined);
     if (result.success) {
       setSuccess(true);
       // Brief success moment before navigating
@@ -229,8 +243,21 @@ export const InviteRegister: React.FC = () => {
               placeholder="Choose a username"
               autoFocus
               autoComplete="username"
-              className="w-full bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary/50 transition-ui text-[var(--color-text-primary)] placeholder-[var(--color-text-muted)]"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              aria-describedby="reg-username-help"
+              aria-invalid={usernameTooShort || undefined}
+              className={`w-full bg-[var(--color-surface)] border rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary/50 transition-ui text-[var(--color-text-primary)] placeholder-[var(--color-text-muted)] ${
+                usernameTooShort ? 'border-error/50' : 'border-[var(--glass-border)]'
+              }`}
             />
+            <p
+              id="reg-username-help"
+              className={`text-xs mt-1 ${usernameTooShort ? 'text-[var(--color-error)]' : 'text-[var(--color-text-muted)]'}`}
+            >
+              At least {MIN_USERNAME_LENGTH} characters.
+            </p>
           </div>
 
           {/* Password */}
@@ -268,6 +295,9 @@ export const InviteRegister: React.FC = () => {
                 </p>
               </div>
             )}
+            <p className={`text-xs mt-1 ${passwordTooShort ? 'text-[var(--color-error)]' : 'text-[var(--color-text-muted)]'}`}>
+              At least {MIN_PASSWORD_LENGTH} characters.
+            </p>
           </div>
 
           {/* Confirm password */}
@@ -330,7 +360,13 @@ export const InviteRegister: React.FC = () => {
           {/* Submit */}
           <button
             type="submit"
-            disabled={!username.trim() || !password || !confirmPassword || !passwordsMatch || isLoading}
+            disabled={
+              trimmedUsername.length < MIN_USERNAME_LENGTH ||
+              password.length < MIN_PASSWORD_LENGTH ||
+              !confirmPassword ||
+              !passwordsMatch ||
+              isLoading
+            }
             className="btn btn-primary btn-lg w-full mt-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isLoading ? (
