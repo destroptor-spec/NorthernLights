@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { usePlayerStore } from '../store/index';
-import { Globe, User, Palette, Folder, Play, Cpu, LogOut, Search, X, Users, Database, Brain, Ticket, GitMerge, KeyRound, Radio } from 'lucide-react';
+import { Globe, User, Palette, Folder, Play, Cpu, LogOut, Search, X, Users, Database, Brain, Ticket, GitMerge, KeyRound, Radio, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface SettingsModalProps {
     onClose: () => void;
@@ -56,6 +56,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             : false
     ));
     const [activeTab, setActiveTab] = useState('My Account');
+    const [sectionOpen, setSectionOpen] = useState(false);
+    const [sectionVisited, setSectionVisited] = useState(false);
+    const backRef = useRef<HTMLButtonElement>(null);
+    const sectionScrollRef = useRef<HTMLDivElement>(null);
+    const selectedMenuItemRef = useRef<HTMLButtonElement | null>(null);
+
+    const openSection = (tabId: string, button: HTMLButtonElement) => {
+        selectedMenuItemRef.current = button;
+        if (activeTab !== tabId) sectionScrollRef.current?.scrollTo?.({ top: 0 });
+        setActiveTab(tabId);
+        setSectionVisited(true);
+        setSectionOpen(true);
+    };
+
+    useEffect(() => {
+        if (!isCompactLayout) return;
+        if (sectionOpen) backRef.current?.focus({ preventScroll: true });
+        else selectedMenuItemRef.current?.focus({ preventScroll: true });
+    }, [isCompactLayout, sectionOpen]);
 
     useEffect(() => {
         loadSettings();
@@ -90,14 +109,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') {
-                handleClose();
+            if (event.key === 'Escape' && !event.defaultPrevented) {
+                if (isCompactLayout && sectionOpen) setSectionOpen(false);
+                else handleClose();
             }
         };
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [handleClose]);
+    }, [handleClose, isCompactLayout, sectionOpen]);
 
     const isAdmin = currentUser?.role === 'admin';
 
@@ -148,12 +168,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     const navGroups: SettingsTab['category'][] = ['User Settings', 'App Settings', 'Server Settings', 'Admin'];
 
     useEffect(() => {
-        if (!searchQuery.trim() || filteredTabs.length === 0 || filteredTabs.some(tab => tab.id === activeTab)) {
+        if (isCompactLayout || !searchQuery.trim() || filteredTabs.length === 0 || filteredTabs.some(tab => tab.id === activeTab)) {
             return;
         }
 
         setActiveTab(filteredTabs[0].id);
-    }, [activeTab, filteredTabs, searchQuery]);
+    }, [activeTab, filteredTabs, isCompactLayout, searchQuery]);
 
     const getTabIcon = (tabId: string) => {
         if (tabId === 'My Account') return User;
@@ -181,7 +201,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
     return createPortal(
         <div className={`settings-full-backdrop ${isClosing ? 'closing' : ''}`}>
-            <div className="settings-modal-shell flex w-full h-[100dvh] lg:h-auto lg:max-h-[85vh] lg:w-[90vw] lg:max-w-6xl bg-[var(--color-background)] lg:rounded-3xl shadow-2xl overflow-hidden relative flex-col lg:flex-row border border-[var(--glass-border)]" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title" onClick={e => e.stopPropagation()}>
+            <div className="settings-modal-shell flex w-full h-[100dvh] lg:h-auto lg:max-h-[85vh] lg:w-[90vw] lg:max-w-6xl bg-[var(--color-background)] lg:rounded-3xl shadow-2xl overflow-hidden relative flex-col lg:flex-row border border-[var(--glass-border)]" data-settings-view={sectionOpen ? 'section' : 'menu'} role="dialog" aria-modal="true" aria-labelledby={isCompactLayout && sectionOpen ? 'settings-section-title' : 'settings-modal-title'} onClick={e => e.stopPropagation()}>
                 
                 {/* Close Button UI */}
                 <div className="settings-close-action absolute top-4 right-4 flex items-center justify-center z-50 group">
@@ -199,56 +219,66 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
                 {/* Compact: phone and tablet navigation */}
                 {isCompactLayout && (
-                    <div className="w-full bg-[var(--color-surface)] border-b border-[var(--glass-border)] pt-[var(--safe-area-top)] z-10 shrink-0 backdrop-blur-xl">
-                        <div className="px-4 sm:px-6 pt-4 pb-3 pr-16">
-                            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">{tabs.find(tab => tab.id === activeTab)?.category}</p>
-                            <h2 id="settings-modal-title" className="mt-1 text-xl font-bold text-[var(--color-text-primary)] tracking-tight">Settings</h2>
+                    <div className="settings-mobile-menu" inert={sectionOpen} aria-hidden={sectionOpen || undefined}>
+                        <div className="settings-mobile-menu-header">
+                            <h2 id="settings-modal-title">Settings</h2>
                         </div>
 
-                        <div className="px-4 sm:px-6 pb-3 relative">
-                            <Search size={16} className="absolute left-8 sm:left-10 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] pointer-events-none" />
+                        <div className="settings-mobile-search">
+                            <Search size={18} aria-hidden="true" />
                             <input
+                                id="settings-mobile-search"
                                 type="text"
                                 aria-label="Search settings"
-                                className="w-full min-h-11 bg-background border border-[var(--glass-border)] rounded-2xl pl-10 pr-4 py-2.5 text-base text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-primary/50 transition-ui placeholder:text-[var(--color-text-muted)]"
                                 placeholder="Search settings"
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
                             />
                         </div>
 
-                        <nav className="flex items-center gap-2 overflow-x-auto hide-scrollbar px-4 sm:px-6 pb-3" aria-label="Settings sections">
-                            {filteredTabs.map(tab => {
-                                const Icon = getTabIcon(tab.id);
-
+                        <nav className="settings-mobile-menu-list" aria-label="Settings sections">
+                            {navGroups.map(group => {
+                                const groupTabs = filteredTabs.filter(tab => tab.category === group);
+                                if (!groupTabs.length) return null;
                                 return (
-                                    <button
-                                        type="button"
-                                        key={tab.id}
-                                        aria-current={activeTab === tab.id ? 'page' : undefined}
-                                        data-settings-tab={getTabDataAttribute(tab.id)}
-                                        onClick={() => setActiveTab(tab.id)}
-                                        className={`flex min-h-11 items-center gap-2 px-3.5 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-ui flex-shrink-0 ${
-                                            activeTab === tab.id
-                                                ? 'bg-[var(--color-primary)] text-[var(--color-bg-primary)] shadow-md'
-                                                : 'text-[var(--color-text-muted)] bg-[var(--color-surface-variant)] hover:bg-[var(--glass-bg-hover)]'
-                                        }`}
-                                    >
-                                        <Icon size={14} />
-                                        {tab.label}
-                                    </button>
+                                    <div className="settings-mobile-menu-group" key={group}>
+                                        <h3>{group}</h3>
+                                        {groupTabs.map(tab => {
+                                            const Icon = getTabIcon(tab.id);
+                                            return (
+                                                <button
+                                                    type="button"
+                                                    key={tab.id}
+                                                    className="btn btn-ghost settings-mobile-menu-item"
+                                                    data-settings-tab={getTabDataAttribute(tab.id)}
+                                                    aria-controls="settings-section"
+                                                    onClick={event => openSection(tab.id, event.currentTarget)}
+                                                >
+                                                    <Icon size={20} aria-hidden="true" />
+                                                    <span>{tab.label}</span>
+                                                    <ChevronRight size={18} aria-hidden="true" />
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
                                 );
                             })}
+                            {filteredTabs.length === 0 && (
+                                <div className="settings-mobile-empty" role="status">
+                                    <h3>No matching settings</h3>
+                                    <p>Try a section like Appearance or Playback.</p>
+                                </div>
+                            )}
                             <button
                                 type="button"
                                 onClick={() => {
                                     clearAuthToken();
                                     handleClose();
                                 }}
-                                className="flex min-h-11 items-center gap-2 px-3.5 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-ui flex-shrink-0 text-[var(--color-error)] bg-error/10 hover:bg-error/15 ml-auto"
+                                className="btn btn-danger settings-mobile-menu-item settings-mobile-sign-out"
                             >
-                                <LogOut size={14} />
-                                Sign Out
+                                <LogOut size={20} aria-hidden="true" />
+                                <span>Sign Out</span>
                             </button>
                         </nav>
                     </div>
@@ -325,17 +355,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 )}
 
                 {/* Main Content Area */}
-                <div className="flex-1 min-w-0 flex flex-col bg-[var(--color-background)] overflow-hidden relative">
+                <div id="settings-section" className={`flex-1 min-w-0 flex flex-col bg-[var(--color-background)] overflow-hidden relative ${isCompactLayout ? 'settings-mobile-section' : ''}`} inert={isCompactLayout && !sectionOpen} aria-hidden={isCompactLayout && !sectionOpen || undefined}>
+                    {isCompactLayout && (
+                        <header className="settings-mobile-section-header">
+                            <button ref={backRef} type="button" className="btn btn-ghost settings-mobile-back" onClick={() => setSectionOpen(false)} aria-label="Back to settings">
+                                <ChevronLeft size={20} aria-hidden="true" />
+                                <span>Settings</span>
+                            </button>
+                            <h2 id="settings-section-title">{tabs.find(tab => tab.id === activeTab)?.label}</h2>
+                        </header>
+                    )}
                     <div className="settings-modal-ambient" aria-hidden="true"></div>
                     
-                    <div className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-10 py-5 sm:py-7 lg:py-10 pb-[calc(1rem+var(--safe-area-bottom))]">
+                    <div ref={sectionScrollRef} className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 lg:px-10 py-5 sm:py-7 lg:py-10 pb-[calc(1rem+var(--safe-area-bottom))]">
                         <div className="max-w-3xl lg:max-w-2xl mx-auto w-full relative z-10">
-                            {filteredTabs.length === 0 ? (
+                            {!isCompactLayout && filteredTabs.length === 0 ? (
                                 <div className="rounded-2xl border border-[var(--glass-border)] bg-[var(--color-surface)] p-5 shadow-lg" role="status">
                                     <h3 className="text-lg font-semibold text-[var(--color-text-primary)]">No matching settings</h3>
                                     <p className="mt-2 text-sm text-[var(--color-text-secondary)]">Try a tab name like Playback, Library, Metadata, or GenAI.</p>
                                 </div>
-                            ) : (
+                            ) : (!isCompactLayout || sectionVisited) ? (
                                 <React.Suspense fallback={<SettingsTabFallback />}>
                                     {activeTab === 'My Account' && <AccountTab onClose={handleClose} />}
                                     {activeTab === 'Scrobbling' && <ScrobblingTab />}
@@ -357,7 +396,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                         </>
                                     )}
                                 </React.Suspense>
-                            )}
+                            ) : null}
                         </div>
                     </div>
                 </div>
