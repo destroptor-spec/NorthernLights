@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { createRateLimiter } from '../middleware/rateLimit';
 import { randomBytes } from 'crypto';
-import { getSystemSetting, setSystemSetting, getUserSetting, setUserSetting, getRepresentativeReleaseMbid, getArtistVideosCache, getMusicVideoByTrackId } from '../database';
+import { getSystemSetting, setSystemSetting, getUserSetting, setUserSetting, getRepresentativeReleaseMbid, getArtistVideosCache } from '../database';
 import { caaGetReleaseImages, pickMediumImage, pickFrontImage } from '../services/metadata/providers/musicbrainz';
 import { lfmFetch, scrobbleTracks, updateNowPlaying, loveTrack, unloveTrack } from '../services/lastfm.service';
 import {
@@ -31,6 +31,7 @@ import {
   refreshArtistVideosIfStale,
   testYouTubeConnection,
   getMusicVideosForArtist,
+  getMusicVideoForTrack,
   getCurrentDayUsage as getYoutubeDayUsage,
   YoutubeBudgetError,
   YoutubeConfigError,
@@ -1195,13 +1196,11 @@ router.get('/providers/external/artist-videos/:artistId', requireAuth, async (re
   }
 });
 
-// Quota-free lookup of the music video matched to a single track. Reads only
-// already-cached matches (no YouTube API call), so it costs no daily quota.
-// Used by the mobile now-playing full-screen background video.
+// Mobile background lookup. Reuse a match or populate the artist cache using
+// the same freshness, concurrency and quota limits as the artist-page rail.
 router.get('/providers/external/track-video/:trackId', requireAuth, async (req, res) => {
   try {
-    if (!(await isYouTubeEnabled())) return res.json({ video: null });
-    const video = await getMusicVideoByTrackId(String(req.params.trackId));
+    const video = await getMusicVideoForTrack(String(req.params.trackId));
     res.json({ video: video || null });
   } catch (err: any) {
     console.error('[YouTube] track-video error:', err.message);

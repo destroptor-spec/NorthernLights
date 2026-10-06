@@ -247,7 +247,7 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
       data-playing={isPlaying}
       data-buffering={isBuffering}
       data-state={isOpen ? 'open' : 'closing'}
-      data-video={videoPhase}
+      data-video={videoId ? videoPhase : 'none'}
     >
       {/* Two-page scroller: the now-playing page fills the frame; the queue
           panel sits below the fold and is revealed by scrolling down. The

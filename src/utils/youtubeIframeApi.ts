@@ -34,9 +34,10 @@ export interface YTPlayerOptions {
   height?: string | number;
   playerVars?: Record<string, string | number>;
   events?: {
-    onReady?: (event: YTPlayerEvent) => void;
+    onReady?: (event: Pick<YTPlayerEvent, 'target'>) => void;
     onStateChange?: (event: YTPlayerEvent) => void;
     onError?: (event: YTPlayerEvent) => void;
+    onAutoplayBlocked?: (event: Pick<YTPlayerEvent, 'target'>) => void;
   };
 }
 
@@ -60,44 +61,53 @@ declare global {
 }
 
 const IFRAME_API_SRC = 'https://www.youtube.com/iframe_api';
+const API_LOAD_TIMEOUT_MS = 15000;
 
 let apiPromise: Promise<YTNamespace> | null = null;
 
 export function loadYouTubeIframeApi(): Promise<YTNamespace> {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return Promise.reject(new Error('YouTube IFrame API unavailable outside the browser'));
+  }
+  if (window.YT?.Player) return Promise.resolve(window.YT);
   if (apiPromise) return apiPromise;
 
   apiPromise = new Promise<YTNamespace>((resolve, reject) => {
-    if (typeof window === 'undefined' || typeof document === 'undefined') {
-      reject(new Error('YouTube IFrame API unavailable outside the browser'));
-      return;
-    }
-
-    // Already loaded and ready.
-    if (window.YT && window.YT.Player) {
-      resolve(window.YT);
-      return;
-    }
-
-    // Preserve any callback that might already be registered, then chain ours.
+    const existing = document.querySelector<HTMLScriptElement>(`script[src="${IFRAME_API_SRC}"]`);
+    const script = existing ?? document.createElement('script');
     const previous = window.onYouTubeIframeAPIReady;
-    window.onYouTubeIframeAPIReady = () => {
-      previous?.();
-      if (window.YT && window.YT.Player) {
-        resolve(window.YT);
-      } else {
-        reject(new Error('YouTube IFrame API loaded without YT.Player'));
+    const cleanup = () => {
+      window.clearTimeout(timeout);
+      script.removeEventListener('error', onError);
+      if (window.onYouTubeIframeAPIReady === onReady) {
+        window.onYouTubeIframeAPIReady = previous;
       }
     };
-
-    // Inject the script only once.
-    if (!document.querySelector(`script[src="${IFRAME_API_SRC}"]`)) {
-      const script = document.createElement('script');
+    const fail = (message: string) => {
+      cleanup();
+      script.remove(); // A failed tag must not prevent the next attempt.
+      apiPromise = null;
+      reject(new Error(message));
+    };
+    const onError = () => fail('Failed to load YouTube IFrame API script');
+    const onReady = () => {
+      try {
+        previous?.();
+      } finally {
+        if (window.YT?.Player) {
+          cleanup();
+          resolve(window.YT);
+        } else {
+          fail('YouTube IFrame API loaded without YT.Player');
+        }
+      }
+    };
+    const timeout = window.setTimeout(() => fail('YouTube IFrame API timed out'), API_LOAD_TIMEOUT_MS);
+    window.onYouTubeIframeAPIReady = onReady;
+    script.addEventListener('error', onError);
+    if (!existing) {
       script.src = IFRAME_API_SRC;
       script.async = true;
-      script.onerror = () => {
-        apiPromise = null;
-        reject(new Error('Failed to load YouTube IFrame API script'));
-      };
       document.head.appendChild(script);
     }
   });
