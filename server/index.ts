@@ -596,7 +596,8 @@ async function runAutoWalk() {
     let totalRemoved = 0;
     for (const dir of dirs) {
       try {
-        const { added, removed } = await runSyncWalk(dir);
+        // Unattended: also capped on how much it may remove in one pass.
+        const { added, removed } = await runSyncWalk(dir, { unattended: true });
         totalAdded += added;
         totalRemoved += removed;
       } catch (e) {
