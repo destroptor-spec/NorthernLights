@@ -1,7 +1,8 @@
 /** @jest-environment node */
 jest.mock('../utils/db', () => ({ queryWithRetry: jest.fn() }));
-jest.mock('./genreMatrix.service', () => ({ genreMatrixService: { getHopCost: () => 0 } }));
+jest.mock('./genreMatrix.service', () => ({ genreMatrixService: { getHopCost: jest.fn() } }));
 import { queryWithRetry } from '../utils/db';
+import { genreMatrixService } from './genreMatrix.service';
 import { calculateNextInfinityTrack } from './recommendation.service';
 
 const embedding = JSON.stringify([1, ...Array(1279).fill(0)]);
@@ -9,7 +10,10 @@ const acoustic = (energy: number) => JSON.stringify([energy, 0.1, 0.1, 0.5, 0.1,
 let seeds: Array<{ id: string; acoustic_vector_8d: string; embedding_vector: string; feature_version: number }>;
 let candidates: Array<{ id: string; title: string; artist: string; distance: number }>;
 let fallback: Array<{ id: string; title: string; artist: string }>;
+let anchorGenre: string | null;
 beforeEach(() => {
+  anchorGenre = 'Rock';
+  jest.mocked(genreMatrixService.getHopCost).mockReset().mockReturnValue(0);
   seeds = [
     { id: 'old', acoustic_vector_8d: acoustic(1), embedding_vector: embedding, feature_version: 1 },
     { id: 'new', acoustic_vector_8d: acoustic(0.7), embedding_vector: embedding, feature_version: 2 },
@@ -22,7 +26,7 @@ beforeEach(() => {
     if (sql.includes('COUNT(*)')) rows = [{ count: '28000' }];
     else if (sql.includes('SELECT t.id, tf.acoustic_vector_8d')) rows = seeds;
     else if (sql.includes('SELECT id, title')) rows = [{ id: 'new', title: 'Heard', artist: 'Artist' }];
-    else if (sql.includes('AS genre') && !sql.includes('AS distance')) rows = [{ genre: 'Rock' }];
+    else if (sql.includes('AS genre') && !sql.includes('AS distance')) rows = [{ genre: anchorGenre }];
     else if (sql.includes('AS distance')) rows = candidates;
     else if (sql.includes('OFFSET')) rows = fallback;
     return { rows, rowCount: rows.length, command: 'SELECT', oid: 0, fields: [] } as Awaited<ReturnType<typeof queryWithRetry>>;
@@ -98,3 +102,36 @@ test('only the last ten queue seeds are used', async () => {
     .toEqual(queue.slice(-10));
 });
 
+test('an untagged anchor skips the genre penalty instead of favouring untagged tracks', async () => {
+  anchorGenre = null;
+  // Real matrix behaviour: an unknown/empty genre scores the "alien" maximum
+  // against every tagged track, but 0 against another untagged one.
+  jest.mocked(genreMatrixService.getHopCost).mockImplementation((a, b) => (a || '') === (b || '') ? 0 : 2);
+  candidates = [
+    { id: 'tagged-close', title: 'Close', artist: 'A', distance: 0.1, genre: 'Rock' } as typeof candidates[number],
+    { id: 'untagged-far', title: 'Far', artist: 'B', distance: 0.29, genre: null } as unknown as typeof candidates[number],
+  ];
+  jest.spyOn(Math, 'random').mockReturnValue(0);
+  const result = await calculateNextInfinityTrack(['new'], { genreStrictness: 100, discoveryLevel: 1 });
+  expect(genreMatrixService.getHopCost).not.toHaveBeenCalled();
+  expect(result?.id).toBe('tagged-close');
+  expect(result?.finalScore).toBeCloseTo(0.1);
+});
+
+test('a tagged anchor still applies genre strictness', async () => {
+  jest.mocked(genreMatrixService.getHopCost).mockImplementation((_a, b) => b === 'Rock' ? 0 : 2);
+  candidates = [{ id: 'jazz', title: 'J', artist: 'A', distance: 0.1, genre: 'Jazz' } as typeof candidates[number]];
+  const result = await calculateNextInfinityTrack(['new'], { genreStrictness: 100 });
+  expect(genreMatrixService.getHopCost).toHaveBeenCalledWith('Rock', 'Jazz');
+  expect(result?.finalScore).toBeCloseTo(0.3);
+});
+
+test('repeat protection keeps its full limit through every relaxation attempt', async () => {
+  candidates = [];
+  fallback = [{ id: 'fresh', title: 'Fresh', artist: 'Other' }];
+  const history = ['h1', 'h2', 'h3', 'h4'];
+  await calculateNextInfinityTrack(history, { artistAmnesiaLimit: 4 });
+  const attempts = jest.mocked(queryWithRetry).mock.calls.filter(([sql]) => sql.includes('AS distance'));
+  expect(attempts).toHaveLength(3);
+  for (const [, values] of attempts) expect(values).toEqual(expect.arrayContaining(history));
+});

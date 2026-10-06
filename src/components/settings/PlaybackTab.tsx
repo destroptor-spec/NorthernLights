@@ -570,7 +570,7 @@ export const PlaybackTab: React.FC = () => {
                     
                     <div className="mb-6">
                         <label className="flex justify-between text-sm font-medium text-[var(--color-text-primary)] mb-2">
-                            <span>Artist Amnesia (Anti-Repeat)</span>
+                            <span>Repeat Protection</span>
                             <span>{artistAmnesiaLimit === 0 ? 'Off' : `${artistAmnesiaLimit} tracks`}</span>
                         </label>
                         <select 
@@ -582,7 +582,7 @@ export const PlaybackTab: React.FC = () => {
                             <option value={10}>Standard (last 10)</option>
                             <option value={50}>Strict (last 50)</option>
                         </select>
-                        <p className="text-xs text-[var(--color-text-muted)] mt-1.5"><strong>Step 1:</strong> Blocks recently played tracks from being picked again. "Off" means anything can repeat; "Strict" remembers the last 50 tracks you heard.</p>
+                        <p className="text-xs text-[var(--color-text-muted)] mt-1.5"><strong>Step 1:</strong> Blocks recently played tracks from being picked again, even when Infinity has to widen its search. Tracks in your queue are always skipped. "Off" means earlier tracks can come back; "Strict" remembers the last 50 tracks you heard.</p>
                     </div>
 
                     <div className="mb-6">
@@ -600,7 +600,7 @@ export const PlaybackTab: React.FC = () => {
                             <span>{genreStrictness}%</span>
                         </label>
                         <input type="range" min="0" max="100" value={genreStrictness} onChange={e => setSettings({ genreStrictness: Number(e.target.value) })} className="w-full accent-[var(--color-primary)]" />
-                        <p className="text-xs text-[var(--color-text-muted)] mt-1.5"><strong>Step 3:</strong> Penalizes tracks from different genres. 0% ignores genre entirely; 100% strongly prefers staying in the same genre family.</p>
+                        <p className="text-xs text-[var(--color-text-muted)] mt-1.5"><strong>Step 3:</strong> Re-ranks the closest-sounding tracks by genre distance from the end of your queue. 0% ignores genre; 100% favors the same genre family. Has no effect when that track has no genre tag.</p>
                     </div>
                 </div>
             )}

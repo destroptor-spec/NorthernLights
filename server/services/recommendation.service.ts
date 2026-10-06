@@ -2195,7 +2195,7 @@ export async function calculateNextInfinityTrack(
   // Base parameters
   let genreWeight = (genreStrictness / 100) * 3.0;
   let poolSize = Math.max(5, Math.floor(discoveryLevel / 2));
-  let penaltySize = settings.artistAmnesiaLimit !== undefined 
+  const penaltySize = settings.artistAmnesiaLimit !== undefined
                       ? settings.artistAmnesiaLimit 
                       : constraints.historyPenaltySize;
                       
@@ -2260,7 +2260,10 @@ export async function calculateNextInfinityTrack(
     if (res.rows.length > 0) {
       // Step 4.2: Apply Hop Cost
       const scored = res.rows.filter(row => Number.isFinite(row.distance)).map((row: any) => {
-        const hopCost = genreMatrixService.getHopCost(currentGenre, row.genre || '');
+        // An untagged anchor has no genre to stay near. Scoring it would give
+        // every tagged candidate the "unknown genre" maximum and steer Infinity
+        // toward other untagged tracks, so genre strictness sits out instead.
+        const hopCost = currentGenre ? genreMatrixService.getHopCost(currentGenre, row.genre || '') : 0;
         const finalScore = row.distance * Math.pow(1 + hopCost, genreWeight / 3.0);
         return { ...row, hopCost, originalDistance: row.distance, finalScore };
       });
@@ -2293,10 +2296,10 @@ export async function calculateNextInfinityTrack(
       }
     }
 
-    // Relax Constraints
+    // Relax Constraints. Repeat protection is the listener's explicit limit
+    // and is never relaxed; widening the pool and loosening genre is enough.
     poolSize += 10;
     genreWeight *= 0.75;
-    penaltySize = Math.max(0, Math.floor(penaltySize / 2));
   }
 
   // Exhaustion can relax similarity, never queue/recent-song exclusions.
