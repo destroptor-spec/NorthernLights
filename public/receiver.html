@@ -1074,7 +1074,7 @@
           // Lets the sender tell this receiver from one cached before
           // aurora.control existed: both accept messages on the namespace,
           // but only this one acts on them.
-          caps: ['control'],
+          caps: ['control', 'queue-insert'],
           ts: Date.now()
         };
       }
@@ -1121,13 +1121,7 @@
       // No status is broadcast from here: setPlayerState already broadcasts on
       // the state change this causes, and broadcasting before it lands would
       // report the old state and flicker the sender's play button.
-      function handleAuroraControl(event) {
-        var data = event && event.data;
-        if (typeof data === 'string') {
-          try { data = JSON.parse(data); } catch (parseError) { return; }
-        }
-        if (!data || data.type !== 'aurora.control') return;
-
+      function handleAuroraControl(event, data) {
         var action = data.action;
         var ok = true;
         var detail = '';
@@ -1175,6 +1169,102 @@
             detail: detail
           });
         } catch (ackError) { /* the state-change broadcast still carries the outcome */ }
+      }
+
+      // Sender -> receiver queue insertion, for when the sender has no media
+      // session to call queueAppendItem / queueInsertItems on. Prod 2026-09-08
+      // to 09-10: 21 appends found no media session and 6 failed outright —
+      // each one Infinity silently not feeding the queue.
+      //
+      // Items arrive exactly as the sender builds them for queueAppendItem —
+      // codec and token already in contentId — so they play exactly as that
+      // path's items always have; queue inserts were never routed through
+      // normalizeMedia. The Stage 0 spike (2026-09-02, on the NAD) proved
+      // insertItems accepts a plain JSON item with itemId removed and places it
+      // where asked. Position is resolved here, against the receiver's real
+      // queue; the sender only ever sees a two-item window of it.
+      var MAX_QUEUE_INSERT_ITEMS = 20;
+
+      function handleAuroraQueueInsert(event, data) {
+        var ok = true;
+        var detail = '';
+        var titles = [];
+        var inserted = 0;
+        try {
+          var incoming = data.items;
+          if (!queueManager || typeof queueManager.insertItems !== 'function') {
+            ok = false;
+            detail = 'insertItems-unavailable';
+          } else if (!incoming || !incoming.length || incoming.length > MAX_QUEUE_INSERT_ITEMS) {
+            ok = false;
+            detail = 'bad-item-count';
+          } else {
+            var items = [];
+            for (var i = 0; i < incoming.length; i++) {
+              var raw = incoming[i];
+              // An item with nothing to play would stop the queue when reached.
+              if (!raw || !raw.media || typeof raw.media.contentId !== 'string' || !raw.media.contentId) continue;
+              delete raw.itemId;
+              if (raw.autoplay !== false) raw.autoplay = true;
+              items.push(raw);
+              titles.push((raw.media.metadata && raw.media.metadata.title) || 'unknown');
+            }
+            if (!items.length) {
+              ok = false;
+              detail = 'no-playable-items';
+            } else {
+              var existing = queueManager.getItems ? queueManager.getItems() : null;
+              var currentIndex = queueManager.getCurrentItemIndex ? queueManager.getCurrentItemIndex() : -1;
+              var insertBefore;
+              if (data.position === 'next' && existing && currentIndex >= 0 && currentIndex + 1 < existing.length) {
+                insertBefore = existing[currentIndex + 1].itemId;
+              }
+              queueManager.insertItems(items, insertBefore);
+              inserted = items.length;
+              detail = 'position=' + (data.position === 'next' ? 'next' : 'end') +
+                ' insertBefore=' + (insertBefore === undefined ? 'append' : insertBefore) +
+                ' beforeLength=' + (existing ? existing.length : 0) +
+                ' currentIndex=' + currentIndex;
+            }
+          }
+        } catch (insertError) {
+          ok = false;
+          detail = safeStringify(insertError);
+        }
+
+        postServerLog(
+          ok ? 'ok' : 'warn',
+          '[' + LOG_TAG + '] aurora-queue-insert',
+          'ok=' + ok + ' inserted=' + inserted + (detail ? ' ' + detail : '') +
+            ' requestId=' + (data.requestId || 'none') + (titles.length ? ' title=' + titles.join(' | ') : '')
+        );
+        try {
+          context.sendCustomMessage(AURORA_STATUS_NS, event.senderId, {
+            type: 'aurora.queue.insert.ack',
+            requestId: data.requestId || null,
+            ok: ok,
+            inserted: inserted,
+            detail: detail
+          });
+        } catch (ackError) { /* the next status broadcast still carries queueLength */ }
+        // Insertion may land on a later tick (the spike read back after 1.5s);
+        // tell senders the new queue length once it has.
+        if (ok) {
+          setTimeout(function() { broadcastAuroraStatus('queue-insert'); }, 500);
+        }
+      }
+
+      function handleAuroraMessage(event) {
+        var data = event && event.data;
+        if (typeof data === 'string') {
+          try { data = JSON.parse(data); } catch (parseError) { return; }
+        }
+        if (!data || typeof data.type !== 'string') return;
+        if (data.type === 'aurora.control') {
+          handleAuroraControl(event, data);
+        } else if (data.type === 'aurora.queue.insert') {
+          handleAuroraQueueInsert(event, data);
+        }
       }
 
       function getMetadata(mediaInfo) {
@@ -1684,7 +1774,7 @@
       // runs ahead of context.start(), so a throw here must cost the control
       // channel, never the receiver booting at all.
       try {
-        context.addCustomMessageListener(AURORA_STATUS_NS, handleAuroraControl);
+        context.addCustomMessageListener(AURORA_STATUS_NS, handleAuroraMessage);
       } catch (listenerError) {
         log('warn', LOG_TAG, 'aurora-control listener failed: ' + safeStringify(listenerError));
       }

@@ -2,6 +2,8 @@ import { playbackManager } from './PlaybackManager';
 import { usePlayerStore } from '../store';
 import {
     POSITION_TICK_MS,
+    RECEIVER_MESSAGE_MAX_BYTES,
+    RECEIVER_QUEUE_INSERT_CAP,
     REMOTE_PLAYER_STALE_MS,
     SEEK_STATUS_FRESH_MS,
     chooseTransportAction,
@@ -12,6 +14,7 @@ import {
     receiverControlAvailable,
     reconcileDuration,
     shouldReleaseRemoteMedia,
+    toReceiverQueueItem,
     transportStateFromPlayerState,
 } from './castWatchdogPolicy';
 import { applyCastStreamingQualityToHlsUrl, applyStreamingQualityToHlsUrl } from './streaming';
@@ -946,9 +949,16 @@ export class CastManager {
                 if (status && status.type === 'aurora.status') {
                     if (status.caps?.includes('control') && this.auroraControlCapLoggedSid !== sessionId) {
                         this.auroraControlCapLoggedSid = sessionId;
-                        this.logCast('ok', 'Receiver accepts aurora-control', `sid=${sessionId || 'unknown'}`);
+                        this.logCast('ok', 'Receiver accepts aurora-control', `sid=${sessionId || 'unknown'} caps=${status.caps.join(',')}`);
                     }
                     this.applyAuroraStatus(status);
+                } else if (status && (status as { type?: string }).type === 'aurora.queue.insert.ack') {
+                    const ack = status as unknown as { ok?: boolean; inserted?: number; detail?: string; requestId?: number };
+                    this.logCast(
+                        ack.ok ? 'ok' : 'error',
+                        'Cast queue insert acknowledged by receiver',
+                        `ok=${Boolean(ack.ok)} inserted=${ack.inserted ?? 0} requestId=${ack.requestId ?? 'none'}${ack.detail ? ` ${ack.detail}` : ''}`,
+                    );
                 } else if (status && (status as { type?: string }).type === 'aurora.control.ack') {
                     const ack = status as unknown as { action?: string; ok?: boolean; detail?: string; requestId?: number };
                     this.logCast(
@@ -1204,6 +1214,52 @@ export class CastManager {
             return true;
         } catch (error) {
             this.handleControlError(`${action} via receiver channel`, error);
+            return false;
+        }
+    }
+
+    /**
+     * Ask the receiver to insert a queue item itself, for when there is no
+     * media session to call queueAppendItem / queueInsertItems on.
+     *
+     * Prod 2026-09-08 to 09-10: 21 appends found no media session and 6 failed
+     * outright. The receiver resolves `next` against its real queue — this side
+     * only ever sees a two-item window of it. Only offered when a fresh status
+     * advertises queue-insert, so a receiver from #70 or earlier keeps today's
+     * behaviour.
+     */
+    private sendReceiverQueueInsert(item: unknown, position: 'next' | 'end', title?: string): boolean {
+        if (!receiverControlAvailable({
+            caps: this.lastAuroraStatus?.caps,
+            statusAgeMs: Date.now() - this.lastAuroraStatusAt,
+            freshMs: this.auroraStatusFreshMs,
+            capability: RECEIVER_QUEUE_INSERT_CAP,
+        })) return false;
+        const session = this.castContext?.getCurrentSession?.() || null;
+        if (!session || typeof session.sendMessage !== 'function') return false;
+
+        const label = `title=${title || 'unknown'}`;
+        const receiverItem = toReceiverQueueItem(item);
+        if (!receiverItem) {
+            this.logCast('error', 'Cast queue insert refused: item has no playable URL', label);
+            return false;
+        }
+        const requestId = ++this.auroraControlRequestId;
+        const message = { type: 'aurora.queue.insert', requestId, position, items: [receiverItem] };
+        if (JSON.stringify(message).length > RECEIVER_MESSAGE_MAX_BYTES) {
+            this.logCast('error', 'Cast queue insert refused: message too large', label);
+            return false;
+        }
+
+        // The contentId carries the media token, so it is never logged.
+        const detail = `position=${position} requestId=${requestId} ${label}`;
+        try {
+            session.sendMessage(AURORA_STATUS_NAMESPACE, message)
+                .then(() => this.logCast('ok', 'Cast queue insert via receiver channel', detail))
+                .catch((error: unknown) => this.logCast('error', 'Cast queue insert via receiver channel failed', `${detail} ${this.describeError(error)}`));
+            return true;
+        } catch (error) {
+            this.logCast('error', 'Cast queue insert via receiver channel failed', `${detail} ${this.describeError(error)}`);
             return false;
         }
     }
@@ -2855,7 +2911,11 @@ export class CastManager {
         // queue with nothing logged. Prod every attempt, 2026-09-01. Prod the
         // receiver for a status and retry once before giving up.
         let mediaSession = session.getMediaSession();
+        const queueEntryId = track.queueEntryId || createQueueEntryId();
         if (!mediaSession) {
+            // The receiver can insert it itself, which needs no media session
+            // on this side at all — the condition behind every failure above.
+            if (this.sendReceiverQueueInsert(this.buildQueueItem({ ...track, queueEntryId }), 'end', track.title)) return;
             this.logCast('warn', 'Cast queue append: no media session, requesting status', `title=${track.title || 'unknown'}`);
             this.requestMediaStatusBroadcast(Date.now() - this.lastRemotePlayerEventAt);
             await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -2865,10 +2925,7 @@ export class CastManager {
             this.logCast('error', 'Cast queue append failed: no media session', `title=${track.title || 'unknown'}`);
             return;
         }
-        const item = this.buildQueueItem({
-            ...track,
-            queueEntryId: track.queueEntryId || createQueueEntryId(),
-        });
+        const item = this.buildQueueItem({ ...track, queueEntryId });
 
         try {
             await this.runCastCommand('queue-append', async () => {
@@ -2887,12 +2944,18 @@ export class CastManager {
     public async insertNextInQueue(track: { queueEntryId?: string; url?: string; rawUrl?: string; title?: string; artist?: string; artUrl?: string; album?: string; format?: string; duration?: number }) {
         if (!this.isConnected()) return;
         const mediaSession = this.getMediaSession();
-        if (!mediaSession) return;
-
         const item = this.buildQueueItem({
             ...track,
             queueEntryId: track.queueEntryId || createQueueEntryId(),
         });
+        if (!mediaSession) {
+            if (this.sendReceiverQueueInsert(item, 'next', track.title)) return;
+            // This used to return silently: the track went into the local queue
+            // as "next" and never reached the device.
+            this.logCast('error', 'Cast play-next failed: no media session', `title=${track.title || 'unknown'}`);
+            return;
+        }
+
         const request = new chrome.cast.media.QueueInsertItemsRequest([item]);
         // Media sessions expose currentItemId, not an index — derive the
         // position from it. Without insertBefore the item appends to the end,
