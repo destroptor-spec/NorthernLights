@@ -8,6 +8,7 @@ import {
   clientSchema,
   genreSchema,
   listenerPreferencesSchema,
+  nextRecommendationSchema,
   lyricsSchema,
   pairingExchangeSchema,
   pairingRequestSchema,
@@ -139,7 +140,7 @@ path({ method: 'get', path: '/hub', summary: 'Get listener hub collections', tag
 path({ method: 'get', path: '/hub/smart', summary: 'Get deterministic smart sections', tags: ['Discovery'], security: authed, responses: ok(unknownObject) });
 path({ method: 'post', path: '/hub/artist-radio', summary: 'Generate artist radio', tags: ['Discovery'], security: authed, request: { body: { required: true, content: json(z.object({ artistId: z.string(), limit: z.number().int().optional() })) } }, responses: ok(schemas.Playlist) });
 path({ method: 'post', path: '/hub/custom', summary: 'Generate a prompt-driven playlist', tags: ['Discovery'], security: authed, request: { body: { required: true, content: json(z.object({ prompt: z.string(), count: z.number().int().optional() })) } }, responses: created(schemas.Playlist) });
-path({ method: 'post', path: '/recommendations/next', summary: 'Choose the next infinity-mode track', tags: ['Discovery'], security: authed, request: { body: { required: true, content: json(unknownObject) } }, responses: ok(schemas.Track.nullable()) });
+path({ method: 'post', path: '/recommendations/next', summary: 'Choose the next infinity-mode track', description: 'Uses playback-start history and queue exclusions without recording plays. Returns null when no eligible track remains.', tags: ['Discovery'], security: authed, request: { body: { required: true, content: json(nextRecommendationSchema) } }, responses: ok(z.union([schemas.Track, z.null()])) });
 
 path({ method: 'put', path: '/tracks/{id}/loved', summary: 'Set track loved state', tags: ['Listening'], security: authed, request: { params: idParams, body: { required: true, content: json(z.object({ loved: z.boolean() })) } }, responses: ok(unknownObject) });
 path({ method: 'put', path: '/tracks/{id}/rating', summary: 'Set track rating', tags: ['Listening'], security: authed, request: { params: idParams, body: { required: true, content: json(z.object({ rating: z.number().int().min(0).max(5) })) } }, responses: ok(unknownObject) });

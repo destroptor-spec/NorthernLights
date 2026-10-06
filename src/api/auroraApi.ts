@@ -3,6 +3,7 @@ import type {
   ArtistSummary,
   AuroraClient,
   Genre,
+  NextRecommendationRequest,
   PlaybackDescriptor,
   PlaybackSession,
   PlaybackSessionPatch,
@@ -113,6 +114,14 @@ export async function auroraApiAllPages<T>(
     cursor = pageResult.page.nextCursor;
   } while (cursor);
   return values;
+}
+
+export function fetchNextRecommendation(authHeaders: Record<string, string>, input: NextRecommendationRequest): Promise<Track | null> {
+  return auroraApiRequest<Track | null>('/recommendations/next', authHeaders, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
 }
 
 export function toLegacyTrack(track: Track, mediaToken: string, quality: string): TrackInfo {

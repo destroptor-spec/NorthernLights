@@ -26,6 +26,7 @@ import type { ToastType } from '../components/Toast';
 import {
   auroraApiAllPages,
   auroraApiRequest,
+  fetchNextRecommendation,
   toLegacyTrack,
   type AlbumSummary as ApiV1Album,
   type ArtistSummary as ApiV1Artist,
@@ -1002,6 +1003,7 @@ export const usePlayerStore = create<PlayerState>()(
             setPlaybackTimeState({ currentTime: 0, duration: state.playlist[index].duration || 0 });
             set({
               currentIndex: index,
+              sessionHistoryTrackIds: [...state.sessionHistoryTrackIds, state.playlist[index].id].slice(-50),
               _scrobbleStartAt: Date.now(),
               _scrobbleEligible: false,
             });
@@ -1874,40 +1876,47 @@ export const usePlayerStore = create<PlayerState>()(
           set({ isFetchingInfinity: true });
           try {
             const authHeaders = state.getAuthHeader();
+            const currentId = state.currentIndex === null ? undefined : state.playlist[state.currentIndex]?.id;
+            const history = currentId && state.sessionHistoryTrackIds.at(-1) !== currentId
+              ? [...state.sessionHistoryTrackIds, currentId].slice(-50)
+              : state.sessionHistoryTrackIds;
+            const excludeTrackIds = Array.from(new Set(state.playlist
+              .slice(Math.max(0, (state.currentIndex ?? 0) - 50))
+              .map(track => track.id))).slice(0, 200);
             const payload = {
-              sessionHistoryTrackIds: state.sessionHistoryTrackIds,
+              sessionHistoryTrackIds: history,
+              exclude: excludeTrackIds,
+              // The recommendation is appended, so it continues from the end of
+              // the queue as it stands now (Infinity picks included), not from
+              // whatever happened to play last.
+              seedTrackIds: state.playlist.slice(-10).map(track => track.id),
               settings: {
                 discoveryLevel: state.discoveryLevel,
                 genreStrictness: state.genreStrictness,
                 artistAmnesiaLimit: state.artistAmnesiaLimit,
               }
             };
-            const res = await fetch('/api/recommend', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', ...authHeaders },
-              body: JSON.stringify(payload)
-            });
-            if (res.ok) {
-              const data = await res.json();
-              if (data.track) {
-                const { mediaAccessToken, authToken, streamingQuality } = state;
-                const token = mediaAccessToken || authToken || '';
-                const quality = streamingQuality;
+            const recommended = await fetchNextRecommendation(authHeaders, payload);
+            if (recommended) {
+              const latest = get();
+              // An older server or a queue edit during the request must not
+              // append a track we already hold. Do not undo Infinity-off.
+              if (isPrefetch && !latest.isInfinityMode) return;
+              if (latest.playlist.slice(Math.max(0, (latest.currentIndex ?? 0) - 50))
+                .some(track => track.id === recommended.id)) return;
+              const { mediaAccessToken, authToken, streamingQuality } = latest;
+              const token = mediaAccessToken || authToken || '';
 
-                const track = {
-                  ...data.track,
-                  isInfinity: true,
-                  ...hydrateServerTrack(data.track, token, quality),
-                };
-                get().addTrackToPlaylist(track);
-                if (!isPrefetch) {
-                  get().playAtIndex(state.playlist.length); // Play the newly appended track
-                }
-              } else if (!isPrefetch) {
-                get().stop();
+              const track = {
+                ...toLegacyTrack(recommended, token, streamingQuality),
+                isInfinity: true,
+              };
+              get().addTrackToPlaylist(track);
+              if (!isPrefetch) {
+                get().playAtIndex(latest.playlist.length); // Play the newly appended track
               }
             } else if (!isPrefetch) {
-               get().stop();
+              get().stop();
             }
           } catch (e) {
             console.error("Failed to fetch infinity track", e);
@@ -2693,7 +2702,7 @@ export const usePlayerStore = create<PlayerState>()(
             persistContinuitySnapshot(true);
 
             // Push to the rolling session history immediately so Infinity-mode
-            // dedup (sent to /api/recommend) sees the track as soon as it starts.
+            // dedup (sent to API v1 recommendations) sees the track as soon as it starts.
             // The actual play-count is recorded later, once the listened
             // threshold is crossed (see onTimeUpdate → recordPlay).
             set((s: PlayerState) => ({ sessionHistoryTrackIds: [...s.sessionHistoryTrackIds, track.id].slice(-50) }));

@@ -33,6 +33,21 @@ describe('Aurora API v1 OpenAPI inventory', () => {
       .toBe('#/components/schemas/PlaybackSessionDelete');
   });
 
+  it('documents the bounded Infinity request instead of an untyped object', () => {
+    const document = generateAuroraApiDocument() as any;
+    const operation = document.paths['/recommendations/next'].post;
+    expect(operation.requestBody.content['application/json'].schema.$ref)
+      .toBe('#/components/schemas/NextRecommendationRequest');
+    const request = document.components.schemas.NextRecommendationRequest;
+    expect(request.properties.sessionHistoryTrackIds.maxItems).toBe(200);
+    expect(request.properties.exclude.maxItems).toBe(200);
+    expect(request.properties.seedTrackIds.maxItems).toBe(50);
+    expect(request.required ?? []).not.toContain('seedTrackIds');
+    expect(document.components.schemas.InfinitySettings.properties.discoveryLevel.maximum).toBe(100);
+    expect(operation.responses['200'].content['application/json'].schema.properties.data)
+      .toEqual(expect.objectContaining({ anyOf: expect.arrayContaining([{ $ref: '#/components/schemas/Track' }, { type: 'null' }]) }));
+  });
+
   // The Playlists page partitions its rails by generationSource, and the detail
   // hero picks the Wrapped cover from it. It was absent from the v1 Playlist DTO
   // when the store migrated off the legacy endpoint, which silently emptied the

@@ -135,7 +135,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         if (tab.id === 'Library Entities') return 'artist genre duplicate group merge canonical compound credit identity library hygiene'.includes(query);
         if (tab.id === 'Metadata') return 'genius musicbrainz lastfm jambase provider album bio image api mapping keys concerts tour live'.includes(query);
         if (tab.id === 'Live Music') return 'concerts tour live tickets jambase events location subscribe artists'.includes(query);
-        if (tab.id === 'Playback') return 'infinity discovery genre artist amnesia matrix llm playlist diversity blend tracks wander played threshold scrobble count percent listened sleep timer quality streaming'.includes(query);
+        if (tab.id === 'Playback') return 'infinity discovery genre repeat protection artist amnesia matrix llm playlist diversity blend tracks wander played threshold scrobble count percent listened sleep timer quality streaming'.includes(query);
         if (tab.id === 'System') return 'cpu audio analysis hub schedule auto-start opensubsonic subsonic api rest security captcha turnstile cloudflare sign-in login protection'.includes(query);
         if (tab.id === 'GenAI') return 'llm api host model key'.includes(query);
         if (tab.id === 'Genre Matrix') return 'genre matrix transition hop cost mapping'.includes(query);
