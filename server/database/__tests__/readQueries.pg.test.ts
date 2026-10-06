@@ -90,6 +90,27 @@ describeDb('database read queries', () => {
     }
   });
 
+  it('selects legacy feature versions for reanalysis and preserves loudness on feature writes', async () => {
+    const legacyId = `${TRACK_ID}0`;
+    const currentId = `${TRACK_ID}1`;
+    const simulatedId = `${TRACK_ID}2`;
+    const features = { bpm: 120, acoustic_vector: Array(8).fill(0.5), embedding_vector: [1, ...Array(1279).fill(0)] };
+    try {
+      await db.addTrackFeatures(legacyId, features);
+      await db.setTrackLoudness(currentId, -12, -1);
+      await db.addTrackFeatures(currentId, { ...features, feature_version: 2 });
+      await db.addTrackFeatures(simulatedId, { ...features, is_simulated: true, feature_version: 2 });
+      expect((await db.getTracksWithoutFeatures()).map(row => row.id)).toEqual([legacyId]);
+      await db.addTrackFeatures(legacyId, { ...features, feature_version: 2 });
+      expect(await db.getTracksWithoutFeatures()).toEqual([]);
+      const row = (await pool.query('SELECT feature_version, loudness_lufs FROM track_features WHERE track_id = $1', [currentId])).rows[0];
+      expect(row).toMatchObject({ feature_version: 2, loudness_lufs: -12 });
+      expect((await db.getTracksWithSimulatedFeatures()).map(row => row.id)).toEqual([simulatedId]);
+    } finally {
+      await pool.query('DELETE FROM track_features WHERE track_id = ANY($1::text[])', [[legacyId, currentId, simulatedId]]);
+    }
+  });
+
   // The outage itself. First page alone would have caught it, but the cursor
   // page is what the ORDER BY cast guarantees, so both are asserted.
   describe('keyset pagination (the 2026-09-02 outage)', () => {

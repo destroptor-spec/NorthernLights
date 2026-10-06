@@ -2,6 +2,7 @@ import { Pool } from 'pg';
 import path from 'path';
 import fs from 'fs';
 import { ARTWORK_EXTRACTION_VERSION } from '../services/artworkVersion';
+import { AUDIO_FEATURE_VERSION } from '../services/audioFeatureVersion';
 import { normalizeGenreIdentity } from '../utils/genreIdentity';
 // Canonical artist-credit splitter, shared with the client (see
 // shared/artistCredit.ts). Re-exported so existing `import('../database')`
@@ -282,6 +283,11 @@ export async function initDB(): Promise<Pool> {
           ALTER TABLE track_features ADD COLUMN IF NOT EXISTS is_simulated BOOLEAN NOT NULL DEFAULT FALSE;
         EXCEPTION WHEN OTHERS THEN null;
         END $$;
+
+        -- Legacy vectors used the wrong dance tag and length-dependent energy.
+        -- Preserve them until reanalysis; version 2 records attempts
+        -- with the corrected extractor, including explicitly simulated failures.
+        ALTER TABLE track_features ADD COLUMN IF NOT EXISTS feature_version INTEGER NOT NULL DEFAULT 1;
 
         -- Migration: Loudness normalization (EBU R128). loudness_measured_at is a
         -- sentinel: set on every attempt (success OR failure) so a track that can't
@@ -2031,7 +2037,7 @@ export async function backfillTrackFileSizes(): Promise<number> {
   return updated;
 }
 
-export async function addTrackFeatures(trackId: string, audioFeatures: { bpm: number; acoustic_vector: number[]; embedding_vector?: number[]; is_simulated?: boolean }) {
+export async function addTrackFeatures(trackId: string, audioFeatures: { bpm: number; acoustic_vector: number[]; embedding_vector?: number[]; is_simulated?: boolean; feature_version?: number }) {
   const db = await initDB();
   const vector8dStr = `[${audioFeatures.acoustic_vector.slice(0, 8).join(',')}]`;
   const simulated = audioFeatures.is_simulated ?? false;
@@ -2040,14 +2046,15 @@ export async function addTrackFeatures(trackId: string, audioFeatures: { bpm: nu
     : null;
 
   await db.query(`
-    INSERT INTO track_features (track_id, bpm, acoustic_vector_8d, embedding_vector, is_simulated)
-    VALUES ($1, $2, $3, $4, $5)
+    INSERT INTO track_features (track_id, bpm, acoustic_vector_8d, embedding_vector, is_simulated, feature_version)
+    VALUES ($1, $2, $3, $4, $5, $6)
     ON CONFLICT (track_id) DO UPDATE SET
       bpm = EXCLUDED.bpm,
       acoustic_vector_8d = EXCLUDED.acoustic_vector_8d,
       embedding_vector = EXCLUDED.embedding_vector,
-      is_simulated = EXCLUDED.is_simulated
-  `, [trackId, audioFeatures.bpm, vector8dStr, embStr, simulated]);
+      is_simulated = EXCLUDED.is_simulated,
+      feature_version = EXCLUDED.feature_version
+  `, [trackId, audioFeatures.bpm, vector8dStr, embStr, simulated, audioFeatures.feature_version ?? 1]);
 }
 
 // ─── Loudness (EBU R128) ──────────────────────────────────────────────
@@ -2168,9 +2175,9 @@ export async function getTracksWithoutFeatures(): Promise<{ id: string; filePath
     -- Key on the acoustic vector, not row presence: loudness measurement can
     -- create a track_features row (loudness columns only) before feature
     -- analysis runs, so "row exists" no longer means "features computed".
-    WHERE tf.acoustic_vector_8d IS NULL
+    WHERE tf.acoustic_vector_8d IS NULL OR tf.feature_version < $1
     ORDER BY t.title
-  `);
+  `, [AUDIO_FEATURE_VERSION]);
   return res.rows.map((r: any) => ({
     id: r.id,
     filePath: Buffer.from(r.path, 'base64'),

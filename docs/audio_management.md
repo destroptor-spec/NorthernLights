@@ -176,21 +176,23 @@ ffmpeg -ss <seek_to_35%> -i <input> -t 15 -f f32le -ac 1 -ar 44100 pipe:1
 ```
 - **Smart Seeking**: Seeks to ~35% into the track (past intros/silence) to capture a representative segment of the chorus or main verse.
 - **15-Second Window**: Captures sufficient audio for the ML models to generate stable embeddings while minimizing memory and CPU overhead.
-- **Raw PCM Output**: Decodes to 32-bit little-endian float mono PCM for the analysis engine.
+- **Raw PCM Output**: Decodes once to 44.1 kHz, 32-bit little-endian float mono PCM for DSP. Essentia resamples that buffer to 16 kHz for both models; there is no second ffmpeg decode.
 
 #### Python ML Engine
 The analysis has transitioned from WASM-based processing to a dedicated **Python 3** engine using the **Essentia Python library** and **TensorFlow** models.
 
 **MusiCNN (8D Acoustic Features)**:
 Extracted using the MusiCNN classification model and traditional DSP algorithms:
-1. **Energy** — Overall amplitude and loudness.
+1. **Energy** — Duration-independent RMS level, mapped linearly from -60 dBFS (0) to 0 dBFS (1).
 2. **Brightness** (Spectral Centroid) — Frequency balance (high-frequency content proxy).
 3. **Percussiveness** (Dynamic Complexity) — Rhythmic energy variation.
-4. **Pitch Salience** — Harmonic clarity/tonality.
+4. **Pitch Salience** — Reserved dimension, currently the constant 0.5.
 5. **Instrumentalness** (ML-derived) — Probability that the track is instrumental.
 6. **Acousticness** (ML-derived) — Probability of acoustic vs. synthetic instruments.
-7. **Danceability** (ML-derived) — Rhythmic stability and "grid" adherence.
-8. **Tempo** — Normalized BPM estimation.
+7. **Danceability** (ML-derived) — MSD MusiCNN “dance” tag (index 6), used as a proxy. Index 49 is “happy” and is not used for danceability.
+8. **Tempo** — BPM divided by 200 and clamped to [0, 1]. Clips shorter than three seconds report unknown BPM as 0.
+
+Short clips are repeated to a three-second minimum for model inference only; DSP uses the original audio. Empty, non-finite, wrong-dimension, and zero-norm model outputs are rejected. The worker protocol uses strict JSON, and the Node boundary validates vectors again before storage.
 
 **Discogs-EffNet (1280D Neural Embedding)**:
 The primary system for timbre and production similarity. It uses a **EfficientNet-based model** (Discogs-EffNet) to generate a high-fidelity **1280-dimensional** embedding.
@@ -200,31 +202,20 @@ The primary system for timbre and production similarity. It uses a **EfficientNe
 #### Worker Thread Architecture
 ```
 Main Thread (Express Server)
-  ├── Worker 1 → spawn("tsx analyzeTrack.ts")
+  ├── Worker 1 → spawn("node --import tsx analyzeTrack.ts")
   │     └── persistent child_process → extractor.py (Python ML)
-  ├── Worker 2 → spawn("tsx analyzeTrack.ts")
+  ├── Worker 2 → spawn("node --import tsx analyzeTrack.ts")
   │     └── persistent child_process → extractor.py (Python ML)
   ...
 ```
 - **Process Isolation**: Node.js manages a pool of `analyzeTrack.ts` workers. Each worker keeps one Python `extractor.py` process alive and sends multiple track jobs over stdin/stdout so the TensorFlow models load once per worker.
-- **Resource Management**: Concurrency is adjusted via the "Audio Analysis Workers" setting in the UI.
-- **Concurrency Control**: `audioAnalysisCpu` setting (Background=1, Balanced=4, Maximum=6 workers)
+- **Resource Management**: `AURORA_ANALYSIS_THREADS` sets native threads per library (1–64, default 2), before NumPy/TensorFlow initialization.
+- **Concurrency Control**: Worker counts are Background=1, Balanced=4, Performance=8, Intensive=16, Maximum=available CPUs. These selections are authoritative and independent of native thread counts or estimated memory usage. A batch with fewer tracks uses fewer workers. Setting changes resize an active pool.
 - **Protocol**: Newline-delimited JSON over stdin/stdout
-- **Process Lifetime**: Persistent child processes per worker, handling multiple tracks
+- **Process Lifetime**: Persistent child processes per worker, handling multiple tracks. On POSIX, each pool worker owns a separate process group. Timeouts, crashes, shrink, and shutdown kill that group (including Python/ffmpeg); pending jobs settle and timers clear. Windows uses `taskkill /t /f`. Unexpected failures respawn with a short backoff. Final stdout drains before exit settlement.
 
-#### Non-ASCII Filename Support
-Node.js spawn always UTF-8 encodes arguments, mangling special characters. Workaround:
-```typescript
-// 1. Create temp symlink with ASCII-safe name
-const tmpDir = fs.mkdtempSync('/tmp/am-XXXXXX');
-const symlink = path.join(tmpDir, 'input.flac');
-fs.symlinkSync(Buffer.from(rawBytes), symlink);
-
-// 2. Pass symlink to ffmpeg (preserves raw bytes via Buffer API)
-// 3. Clean up temp directory after processing
-```
-
-Handles: Danish `øæ`, em-dashes `–`, curly quotes `'` `"`, and other UTF-8 multi-byte sequences.
+#### Filename Support
+Paths are sent as base64 to the Node worker, decoded as UTF-8, and passed as subprocess arguments to Python/ffmpeg without a shell. Native regression tests cover Danish characters, em dashes, and apostrophes. Raw non-UTF-8 filesystem byte names are not covered by this path.
 
 ### Database Schema
 ```sql
@@ -232,18 +223,54 @@ CREATE TABLE track_features (
   track_id TEXT REFERENCES tracks(id) ON DELETE CASCADE PRIMARY KEY,
   bpm NUMERIC,
   acoustic_vector_8d VECTOR(8),  -- 8D acoustic semantic
-  embedding_vector VECTOR(1280)  -- 1280D Discogs-EffNet Timbre
+  embedding_vector VECTOR(1280), -- 1280D Discogs-EffNet Timbre
+  is_simulated BOOLEAN NOT NULL DEFAULT FALSE,
+  feature_version INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX track_features_idx ON track_features USING hnsw (acoustic_vector_8d vector_cosine_ops);
 CREATE INDEX track_features_effnet_idx ON track_features USING hnsw (embedding_vector vector_cosine_ops);
 ```
 
-### Normalization
-Features are normalized using native SQL aggregation for ultra-fast library-wide computation:
-```sql
-SELECT AVG(acoustic_vector_8d), STDDEV(acoustic_vector_8d) FROM track_features
+### Feature versions and reanalysis
+Version 2 corrects the dance tag and energy mapping and uses a single decode plus resampling. Existing rows migrate to version 1. The next regular scan/analysis selects missing or outdated vectors and rewrites them with version 2; no scan is started by the migration itself. Failed extraction retains the existing explicit simulated-fallback behavior and is stamped with the attempted version, so it does not retry forever. Use **Re-analyze Fallbacks** to retry those failures. Loudness columns are preserved when feature vectors are replaced.
+
+The extractor uses fixed per-feature mappings and L2-normalized embeddings. It does not use library-wide z-score statistics; the unused batch statistics query and worker payload have been removed.
+
+### Scanner verification
+
+```bash
+npx tsc --noEmit
+npm test -- --runInBand
+.venv/bin/python3 -B -m unittest discover -s server/workers -p 'test_*.py'
+AURORA_MODEL_TESTS=1 .venv/bin/python3 -B -m unittest discover -s server/workers -p 'test_*.py'
+AURORA_DB_TESTS=1 npm test -- --runInBand server/database/__tests__/readQueries.pg.test.ts
 ```
-Z-score normalization per-dimension, then sigmoid to [0,1] range.
+
+Native model tests require the installed Essentia/TensorFlow environment, ffmpeg/ffprobe, and both model files. Database tests create and remove a temporary database. Unit coverage includes crash/timeout/shutdown settlement, process-group targeting, EPIPE, resizing, buffered final results, invalid model outputs, energy duration invariance, the dance-tag mapping, and single-decode behavior.
+
+### Processing diagnostics
+
+Admins can enable independent **Library scanner**, **Audio analyzer**, and **Loudness computation** switches in **Settings → System & Processing → Logging**. Each change saves immediately to the server and applies to active jobs without restarting workers. Failed saves show an error and leave the switch unchanged. These settings are server-wide and survive restarts.
+
+Scanner diagnostics cover auto-walk, scan phases, and metadata jobs. Analyzer diagnostics cover worker activity, per-track timings, and Python/TensorFlow output. Loudness diagnostics cover measurement duration, integrated LUFS, and true peak for both scan-time and lazy playback measurements. They default to off; `LOG_SCANNER`, `LOG_ANALYZER`, and `LOG_LOUDNESS` provide environment defaults until an explicit setting is saved.
+
+Actual failures and actionable warnings remain visible with diagnostics off, including Python failure details. Worker diagnostics use stderr separately from the stdout result protocol. HLS and streaming FFmpeg retain their own independent switches; HLS session files are unaffected.
+
+### Scanner measurements (2026-10-06)
+
+An isolated synthetic benchmark used four persistent workers and twenty analyses of the same 15-second 44.1 kHz sine-wave WAV (five per worker), including model startup. This is a local resource comparison, not a full-library throughput guarantee.
+
+| Metric | Before | Corrected extractor (2 native threads) |
+|---|---:|---:|
+| Batch wall time | 6.177 s | 6.325 s |
+| Throughput | 3.238 tracks/s | 3.162 tracks/s |
+| Mean decode + resample time | 151.0 ms | 111.0 ms |
+| Peak RSS per Python worker | 928–967 MiB | 771–785 MiB |
+| Threads per Python worker | 49 | 7 |
+
+One native thread reduced memory further but materially reduced throughput, so two is the default. A separate 30-job run reached about 677 MiB resident memory; growth flattened between jobs 20 and 30 (676.2 to 676.7 MiB). The original 600 MB target is still unmet by the installed bs64 EffNet model. Allow roughly 1 GiB per worker when selecting concurrency; the server does not silently reduce the selected process count.
+
+Native Linux verification also confirmed that a deliberately paused Python descendant is killed on pool timeout and that the real Node→Python pipeline completes repeated short Unicode-path jobs. Windows tree termination has not been runtime-verified.
 
 ### Timbre-Weighted EffNet Similarity
 For electronic/synthetic playlists (target acousticness < 0.3), Discogs-EffNet embedding similarity is weighted more heavily in the SQL query to prioritize instrument texture and production character over rhythm alone.

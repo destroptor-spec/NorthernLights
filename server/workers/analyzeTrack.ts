@@ -1,4 +1,3 @@
-import fs from 'fs';
 import { extractAudioFeatures } from '../services/audioExtraction.service';
 
 // Long-running analysis process: reads JSON commands from stdin, outputs results to stdout.
@@ -15,7 +14,7 @@ process.stdin.on('data', async (chunk: string) => {
 
   for (const line of lines) {
     if (!line.trim()) continue;
-    let msg: { id: string; filePathBase64: string; vectorStats?: any; title?: string | null; artist?: string | null };
+    let msg: { id: string; filePathBase64: string; title?: string | null; artist?: string | null };
     try {
       msg = JSON.parse(line);
     } catch {

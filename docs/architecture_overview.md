@@ -54,10 +54,11 @@ Aurora’s scanner separates library ingestion into discrete phases:
    - Extracts tags with `music-metadata`.
    - Makes tracks visible quickly.
 3. **Analysis**
-   - Runs in worker-managed `tsx` child processes.
+   - Runs in pool-managed `node --import tsx` child processes.
    - Each worker keeps a persistent Python extractor alive.
-   - `ffmpeg` seeks to about 35% into the track and decodes short representative windows.
-   - Essentia TensorFlow models extract the recommendation features used by the engine.
+   - `ffmpeg` seeks to about 35% into the track and decodes one 15-second 44.1 kHz window, resampled in memory to 16 kHz for the models.
+   - Essentia TensorFlow models extract validated, versioned recommendation features. Missing or outdated versions are selected on the next analysis pass.
+   - The selected process count controls concurrency independently of native thread limits. Dedicated process groups let the pool stop Python/ffmpeg descendants on timeout, crash, or shutdown.
 
 This keeps the main server responsive during large library analysis runs.
 

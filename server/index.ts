@@ -20,6 +20,7 @@ dns.setDefaultResultOrder('ipv4first');
 import { requireAuth as jwtAuthMiddleware } from './middleware/auth';
 import { createRateLimiter } from './middleware/rateLimit';
 import { initDatabaseConnection, getSessionHistory } from './state';
+import { logScanner } from './services/loggingConfig';
 import { calculateNextInfinityTrack } from './services/recommendation.service';
 import {
   getConfiguredAllowedOrigins,
@@ -572,14 +573,14 @@ async function runAutoWalk() {
     if (enabled !== true && enabled !== 'true') return;
 
     if (scanStatus.isScanning) {
-      console.log('[Auto-Walk] Skipping — scan already in progress');
+      logScanner('[Auto-Walk] Skipping — scan already in progress');
       return;
     }
 
     const dirs = await getDirectories();
     if (dirs.length === 0) return;
 
-    console.log(`[Auto-Walk] Starting scheduled walk of ${dirs.length} folder(s)...`);
+    logScanner(`[Auto-Walk] Starting scheduled walk of ${dirs.length} folder(s)...`);
     const { broadcastScanStatus, scanStatus: ss } = await import('./state');
 
     ss.isScanning = true;
@@ -611,7 +612,7 @@ async function runAutoWalk() {
     ss.libraryChanged = totalAdded > 0 || totalRemoved > 0;
     broadcastScanStatus(true);
 
-    console.log(`[Auto-Walk] Complete: +${totalAdded} added, -${totalRemoved} removed`);
+    logScanner(`[Auto-Walk] Complete: +${totalAdded} added, -${totalRemoved} removed`);
   } catch (e) {
     console.error('[Auto-Walk] Scheduler error:', e);
   }

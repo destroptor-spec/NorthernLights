@@ -1,3 +1,4 @@
+import { workerLog } from './workerLog';
 import * as mm from 'music-metadata';
 import sharp from 'sharp';
 import { hashArt, resolveArtwork, encodeArt, artExists, ART_SIZES, ARTWORK_EXTRACTION_VERSION } from '../services/artCache';
@@ -383,7 +384,7 @@ process.stdin.on('data', async (chunk: string) => {
           artHash = await processArtwork(metadata, utf8Path, msg.knownArtHash);
           artworkVersion = ARTWORK_EXTRACTION_VERSION;
         } catch (artErr: any) {
-          process.stderr.write(`[scanTrack] art decode failed (${artErr?.message || artErr}), keeping metadata\n`);
+          workerLog('warn', `[scanTrack] art decode failed (${artErr?.message || artErr}), keeping metadata`);
         }
       }
 

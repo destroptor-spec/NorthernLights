@@ -1,3 +1,5 @@
+import { logScanner, logAnalyzer, logLoudness } from '../services/loggingConfig';
+import { analysisWorkerCount } from '../services/analysisResources';
 import { Router, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
@@ -404,7 +406,7 @@ async function processMetadataBatch(input: Array<Buffer | ScanItem>, concurrency
   const displacedArtHashes = new Set<string>();
 
   let currentConcurrency = Math.min(concurrency, total);
-  const pool = new ChildProcessPool(path.resolve(__dirname, '../workers/scanTrack.ts'), currentConcurrency);
+  const pool = new ChildProcessPool(path.resolve(__dirname, '../workers/scanTrack.ts'), currentConcurrency, undefined, 'scanner');
   await pool.init();
 
   let activeLoops = 0;
@@ -426,7 +428,7 @@ async function processMetadataBatch(input: Array<Buffer | ScanItem>, concurrency
             await new Promise(r => setTimeout(r, 5000));
           }
           if (!orchestrationActive) break;
-          console.log('[Scanner] Database reconnected. Resuming metadata batch.');
+          logScanner('[Scanner] Database reconnected. Resuming metadata batch.');
         }
 
         const item = items[i];
@@ -443,6 +445,7 @@ async function processMetadataBatch(input: Array<Buffer | ScanItem>, concurrency
         try {
           const jobPromise = pool.runJob({
             id: dbPath,
+            label: nameStr,
             payload: {
               id: dbPath,
               filePathBase64: dbPath,
@@ -587,7 +590,7 @@ async function processMetadataBatch(input: Array<Buffer | ScanItem>, concurrency
             }
 
             if (!metadata.genre || metadata.genre.length === 0) {
-              console.warn(`[Scanner] No genre found for "${nameStr}". Hop-cost logic will be restricted.`);
+              logScanner(`[Scanner] No genre found for "${nameStr}". Hop-cost logic will be restricted.`);
             }
           } else {
             console.warn(`Failed to parse metadata for ${nameStr}: ${result.error}`);
@@ -626,7 +629,7 @@ async function processMetadataBatch(input: Array<Buffer | ScanItem>, concurrency
       const newLimitConf = await getScannerConcurrency();
       const newLimit = Math.min(newLimitConf, total);
       if (newLimit !== currentConcurrency) {
-        console.log(`[Scanner] Dynamically scaling metadata concurrency ${currentConcurrency} -> ${newLimit}`);
+        logScanner(`[Scanner] Dynamically scaling metadata concurrency ${currentConcurrency} -> ${newLimit}`);
         updateConcurrency(newLimit);
       }
     } catch { /* ignore */ }
@@ -654,7 +657,7 @@ async function processMetadataBatch(input: Array<Buffer | ScanItem>, concurrency
   }
 
   const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log(`[Scanner] Phase: metadata - Duration: ${duration}s, Errors: ${errorCount}`);
+  logScanner(`[Scanner] Phase: metadata - Duration: ${duration}s, Errors: ${errorCount}`);
 }
 
 // ─── Phase 3: Parallel audio analysis (ffmpeg + Essentia) ────────────
@@ -663,20 +666,9 @@ async function getAnalysisConcurrency(): Promise<number> {
   try {
     const { getSystemSetting } = await import('../database');
     const setting = await getSystemSetting('audioAnalysisCpu');
-    switch (setting) {
-      case 'Background':   return 1;
-      case 'Balanced':     return 4;
-      case 'Performance':  return 8;
-      case 'Intensive':    return 16;
-      case 'Maximum': {
-        // Use all logical CPU cores reported by the OS
-        const { cpus } = await import('os');
-        return Math.max(1, cpus().length);
-      }
-      default: return 4; // Balanced
-    }
+    return analysisWorkerCount(setting);
   } catch {
-    return 4;
+    return analysisWorkerCount('Balanced');
   }
 }
 
@@ -685,21 +677,11 @@ async function processAnalysisBatch(tracks: { id: string; filePath: Buffer; titl
   let errorCount = 0;
   let featuresWritten = 0;
   const { settingsEmitter } = await import('../state');
-  const { getVectorStats } = await import('../database');
   let index = 0;
   const total = tracks.length;
 
-  // Fetch vector stats once for the entire batch instead of per-track
-  let vectorStats: any = null;
-  try {
-    vectorStats = await getVectorStats();
-    console.log(`[Analysis] Loaded vector stats for ${total} tracks (cached for batch)`);
-  } catch (err) {
-    console.warn('[Analysis] Failed to fetch vector stats, will use per-track fallback');
-  }
-
   let currentConcurrency = Math.min(concurrency, total);
-  const pool = new ChildProcessPool(path.resolve(__dirname, '../workers/analyzeTrack.ts'), currentConcurrency);
+  const pool = new ChildProcessPool(path.resolve(__dirname, '../workers/analyzeTrack.ts'), currentConcurrency, undefined, 'analyzer');
   await pool.init();
 
   let activeLoops = 0;
@@ -724,12 +706,12 @@ async function processAnalysisBatch(tracks: { id: string; filePath: Buffer; titl
         try {
           const jobPromise = pool.runJob({
             id: track.id,
+            label: displayName,
             payload: {
               id: track.id,
               filePathBase64: track.filePath.toString('base64'),
               title: track.title,
-              artist: track.artist || null,
-              vectorStats
+              artist: track.artist || null
             }
           });
 
@@ -784,7 +766,7 @@ async function processAnalysisBatch(tracks: { id: string; filePath: Buffer; titl
       const newLimitConf = await getAnalysisConcurrency();
       const newLimit = Math.min(newLimitConf, total);
       if (newLimit !== currentConcurrency) {
-        console.log(`[Analysis] Dynamically scaling worker concurrency ${currentConcurrency} -> ${newLimit}`);
+        logAnalyzer(`[Analysis] Dynamically scaling worker concurrency ${currentConcurrency} -> ${newLimit}`);
         updateConcurrency(newLimit);
       }
     } catch { /* ignore */ }
@@ -869,7 +851,7 @@ async function processLoudnessBatch(tracks: { id: string; filePath: Buffer; titl
     try {
       const newLimit = Math.min(await getAnalysisConcurrency(), total);
       if (newLimit !== currentConcurrency) {
-        console.log(`[Loudness] Dynamically scaling concurrency ${currentConcurrency} -> ${newLimit}`);
+        logLoudness(`[Loudness] Dynamically scaling concurrency ${currentConcurrency} -> ${newLimit}`);
         updateConcurrency(newLimit);
       }
     } catch { /* ignore */ }
@@ -920,7 +902,7 @@ router.post('/add', requireAdmin, async (req, res) => {
 
 // Trigger library scan (walk → metadata → analysis, all in one)
 router.post('/scan', requireAdmin, async (req, res) => {
-  console.log('Scan Request Received. Body:', JSON.stringify(req.body));
+  logScanner('Scan Request Received. Body:', JSON.stringify(req.body));
   const { path: dirPath } = req.body;
   if (!dirPath || typeof dirPath !== 'string') {
     return res.status(400).json({ error: 'Missing absolute path parameter in body' });
@@ -951,9 +933,9 @@ router.post('/scan', requireAdmin, async (req, res) => {
 
     await addDirectory(dirPath);
 
-    console.log(`[Scan] Starting scan for: ${dirPath}`);
+    logScanner(`[Scan] Starting scan for: ${dirPath}`);
     walkResult = await runSyncWalk(dirPath);
-    console.log(`[Scan] Completed for ${dirPath}: ${walkResult.added} added, ${walkResult.removed} removed`);
+    logScanner(`[Scan] Completed for ${dirPath}: ${walkResult.added} added, ${walkResult.removed} removed`);
 
     res.json({ 
       status: 'completed', 
@@ -980,7 +962,7 @@ export async function runSyncWalk(dirPath: string): Promise<{ removed: number; a
   // ── Walk ──
   const walkStartTime = Date.now();
   const walkedFiles = await collectAudioFiles(dirBuf);
-  console.log(`[Scanner] Phase: walk - Duration: ${((Date.now() - walkStartTime) / 1000).toFixed(1)}s`);
+  logScanner(`[Scanner] Phase: walk - Duration: ${((Date.now() - walkStartTime) / 1000).toFixed(1)}s`);
   const diskPaths = new Set(walkedFiles.map(f => f.buf.toString('base64')));
 
   // ── Diff against DB ──
@@ -1011,12 +993,12 @@ export async function runSyncWalk(dirPath: string): Promise<{ removed: number; a
       if (h) staleArtHashes.add(h);
     }
 
-    console.log(`[Scanner] Removing ${stalePaths.length} stale track(s) from ${dirPath}`);
+    logScanner(`[Scanner] Removing ${stalePaths.length} stale track(s) from ${dirPath}`);
     await deleteTracksByPaths(stalePaths);
     // Clean up any albums/artists/genres that now have zero tracks
     const purged = await purgeOrphanedEntities();
     if (purged.albums > 0 || purged.artists > 0 || purged.genres > 0) {
-      console.log(`[Scanner] Purged orphans after stale removal: ${purged.albums} albums, ${purged.artists} artists, ${purged.genres} genres`);
+      logScanner(`[Scanner] Purged orphans after stale removal: ${purged.albums} albums, ${purged.artists} artists, ${purged.genres} genres`);
     }
     if (staleArtHashes.size > 0) {
       try {
@@ -1054,13 +1036,13 @@ export async function runSyncWalk(dirPath: string): Promise<{ removed: number; a
   try {
     const { backfillTrackFileSizes } = await import('../database');
     const filled = await backfillTrackFileSizes();
-    if (filled > 0) console.log(`[Scanner] Backfilled file_size for ${filled} track(s)`);
+    if (filled > 0) logScanner(`[Scanner] Backfilled file_size for ${filled} track(s)`);
   } catch (e) {
     console.warn('[Scanner] file_size backfill failed:', e);
   }
 
   if (itemsToProcess.length === 0 && stalePaths.length === 0) {
-    console.log(`[Scanner] No changes detected in ${dirPath}`);
+    logScanner(`[Scanner] No changes detected in ${dirPath}`);
     return { removed: stalePaths.length, added: 0 };
   }
 
@@ -1073,7 +1055,7 @@ export async function runSyncWalk(dirPath: string): Promise<{ removed: number; a
     broadcastScanStatus(true);
     const metadataConcurrency = await getScannerConcurrency();
     await processMetadataBatch(itemsToProcess, metadataConcurrency);
-    console.log(`[Scanner] Metadata phase complete: ${itemsToProcess.length} new/changed file(s)`);
+    logScanner(`[Scanner] Metadata phase complete: ${itemsToProcess.length} new/changed file(s)`);
     await publishApiV1LibraryRevision({ source: 'syncWalk', added: itemsToProcess.length, removed: 0 });
 
     // ── Analysis ──
@@ -1089,9 +1071,9 @@ export async function runSyncWalk(dirPath: string): Promise<{ removed: number; a
       broadcastScanStatus(true);
       const concurrency = await getAnalysisConcurrency();
       await processAnalysisBatch(tracksNeedingAnalysis, concurrency);
-      console.log(`[Scanner] Analysis phase complete: ${tracksNeedingAnalysis.length} track(s) analyzed`);
+      logAnalyzer(`[Scanner] Analysis phase complete: ${tracksNeedingAnalysis.length} track(s) analyzed`);
     } else if (tracksNeedingAnalysis.length > 0) {
-      console.log(`[Scanner] Analysis deferred for ${tracksNeedingAnalysis.length} track(s): ML models are not ready`);
+      logAnalyzer(`[Scanner] Analysis deferred for ${tracksNeedingAnalysis.length} track(s): ML models are not ready`);
     }
 
     // ── Loudness (EBU R128) — after features so two full-decode passes don't contend.
@@ -1106,7 +1088,7 @@ export async function runSyncWalk(dirPath: string): Promise<{ removed: number; a
         scanStatus.currentFile = '';
         broadcastScanStatus(true);
         await processLoudnessBatch(tracksNeedingLoudness, await getAnalysisConcurrency());
-        console.log(`[Scanner] Loudness phase complete: ${tracksNeedingLoudness.length} track(s) measured`);
+        logLoudness(`[Scanner] Loudness phase complete: ${tracksNeedingLoudness.length} track(s) measured`);
       }
     }
   }
@@ -1127,7 +1109,7 @@ export async function runSyncWalk(dirPath: string): Promise<{ removed: number; a
   }
 
   const totalDuration = ((Date.now() - totalStartTime) / 1000).toFixed(1);
-  console.log(`[Scanner] Sync walk complete for ${dirPath}: ~${itemsToProcess.length} processed, -${stalePaths.length} removed (Total: ${totalDuration}s)`);
+  logScanner(`[Scanner] Sync walk complete for ${dirPath}: ~${itemsToProcess.length} processed, -${stalePaths.length} removed (Total: ${totalDuration}s)`);
   return { removed: stalePaths.length, added: itemsToProcess.length };
 }
 
@@ -1188,7 +1170,7 @@ router.post('/refresh-metadata', async (req, res) => {
       await processMetadataBatch(refreshItems, metadataConcurrency);
       
       const purged = await purgeOrphanedEntities();
-      console.log(`[Scanner] Purged orphaned entities after refresh: ${purged.artists} artists, ${purged.albums} albums, ${purged.genres} genres`);
+      logScanner(`[Scanner] Purged orphaned entities after refresh: ${purged.artists} artists, ${purged.albums} albums, ${purged.genres} genres`);
 
       resetScanStatus(true);
       await publishApiV1LibraryRevision({ source: 'metadataRefresh' });
@@ -1281,7 +1263,7 @@ router.post('/analyze', async (req, res) => {
 
     const concurrency = await getAnalysisConcurrency();
     await processAnalysisBatch(tracksToAnalyze, concurrency);
-    console.log(`[Analysis] Standalone analysis complete: ${tracksToAnalyze.length} tracks`);
+    logAnalyzer(`[Analysis] Standalone analysis complete: ${tracksToAnalyze.length} tracks`);
 
     // Trigger Genre Matrix regeneration after analysis
     setImmediate(() => {
@@ -1339,7 +1321,7 @@ router.post('/analyze/loudness', async (req, res) => {
     broadcastScanStatus(true);
 
     await processLoudnessBatch(tracks, await getAnalysisConcurrency());
-    console.log(`[Loudness] Standalone backfill complete: ${tracks.length} tracks`);
+    logLoudness(`[Loudness] Standalone backfill complete: ${tracks.length} tracks`);
     res.json({ status: 'completed', message: `Measured ${tracks.length} tracks`, count: tracks.length });
   } catch (error) {
     console.error('Loudness backfill error:', error);
@@ -1375,7 +1357,7 @@ router.post('/remove', requireAdmin, async (req, res) => {
     const staleTracks = await purgeOrphanedTracks();
     // 4. Clean up entity rows that now have zero tracks
     const purged = await purgeOrphanedEntities();
-    console.log(`[Scanner] Removed directory ${dirPath}. Purged ${staleTracks} stale tracks, ${purged.albums} albums, ${purged.artists} artists, ${purged.genres} genres`);
+    logScanner(`[Scanner] Removed directory ${dirPath}. Purged ${staleTracks} stale tracks, ${purged.albums} albums, ${purged.artists} artists, ${purged.genres} genres`);
     await publishApiV1LibraryRevision({ source: 'directoryRemoved' });
     res.json({ status: 'removed', staleTracks, purged });
   } catch (error) {
