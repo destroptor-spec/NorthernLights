@@ -1,3 +1,4 @@
+import type { ServerLoggingSetting } from '../../shared/logging';
 import { create, StateCreator } from 'zustand';
 import { persist, PersistOptions } from 'zustand/middleware';
 import type { TrackInfo } from '../utils/fileSystem';
@@ -685,6 +686,9 @@ export interface PlayerState {
   systemPlaylistConfig: Record<string, boolean>;
   hlsLoggingEnabled: boolean;
   ffmpegLoggingEnabled: boolean;
+  scannerLoggingEnabled: boolean;
+  analyzerLoggingEnabled: boolean;
+  loudnessLoggingEnabled: boolean;
   openSubsonicEnabled: boolean;
   // Loudness normalization (EBU R128). User-scoped so the server can gate
   // background measurement on the user's opt-in.
@@ -738,6 +742,7 @@ export interface PlayerState {
   setSettings: (settings: Partial<PlayerState>) => void;
   loadSettings: () => Promise<void>;
   saveSettings: () => Promise<void>;
+  setServerLogging: (key: ServerLoggingSetting, enabled: boolean) => Promise<void>;
   
   isInfinityMode: boolean;
   isFetchingInfinity: boolean;
@@ -1285,6 +1290,9 @@ export const usePlayerStore = create<PlayerState>()(
         systemPlaylistConfig: { ...defaultSystemPlaylistConfig },
         hlsLoggingEnabled: false,
         ffmpegLoggingEnabled: false,
+        scannerLoggingEnabled: false,
+        analyzerLoggingEnabled: false,
+        loudnessLoggingEnabled: false,
         openSubsonicEnabled: true,
         loudnessNormEnabled: false as boolean,
         loudnessTargetLufs: -18,
@@ -1668,6 +1676,9 @@ export const usePlayerStore = create<PlayerState>()(
                 systemPlaylistConfig: normalizeSystemPlaylistConfig(data.systemPlaylistConfig),
                 hlsLoggingEnabled: data.hlsLoggingEnabled === true,
                 ffmpegLoggingEnabled: data.ffmpegLoggingEnabled === true,
+                scannerLoggingEnabled: data.scannerLoggingEnabled === true,
+                analyzerLoggingEnabled: data.analyzerLoggingEnabled === true,
+                loudnessLoggingEnabled: data.loudnessLoggingEnabled === true,
                 openSubsonicEnabled: data.openSubsonicEnabled !== false,
                 loudnessNormEnabled: data.loudnessNormEnabled === true,
                 loudnessTargetLufs: typeof data.loudnessTargetLufs === 'number' ? data.loudnessTargetLufs : -18,
@@ -1741,6 +1752,21 @@ export const usePlayerStore = create<PlayerState>()(
           }
         },
 
+        // Logging toggles persist immediately. Exclude them from saveSettings's
+        // bulk payload so closing the dialog cannot overwrite an in-flight toggle.
+        setServerLogging: async (key, enabled) => {
+          const res = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...get().getAuthHeader() },
+            body: JSON.stringify({ [key]: enabled }),
+          });
+          if (!res.ok) {
+            const data = await res.json().catch(() => null);
+            throw new Error(data?.error || 'Could not save logging setting');
+          }
+          set({ [key]: enabled });
+        },
+
         saveSettings: async () => {
            try {
               const state = get();
@@ -1765,8 +1791,6 @@ export const usePlayerStore = create<PlayerState>()(
                 loudnessComputeMode: state.loudnessComputeMode,
                 hubGenerationSchedule: state.hubGenerationSchedule,
                 systemPlaylistConfig: state.systemPlaylistConfig,
-                hlsLoggingEnabled: state.hlsLoggingEnabled,
-                ffmpegLoggingEnabled: state.ffmpegLoggingEnabled,
                 openSubsonicEnabled: state.openSubsonicEnabled,
                 loudnessNormEnabled: state.loudnessNormEnabled,
                 loudnessTargetLufs: state.loudnessTargetLufs,

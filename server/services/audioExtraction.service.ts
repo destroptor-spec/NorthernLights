@@ -1,13 +1,16 @@
+import { workerLog } from '../workers/workerLog';
 import fs from 'fs';
 import path from 'path';
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import { MODELS_DIR } from './downloadModels';
+import { AUDIO_FEATURE_VERSION } from './audioFeatureVersion';
 
 export interface AudioFeatures {
   bpm: number;
   acoustic_vector: number[];
   embedding_vector: number[];
   is_simulated: boolean;
+  feature_version: number;
 }
 
 export interface AudioExtractionContext {
@@ -25,7 +28,6 @@ interface PythonWorkerResult {
 
 class PersistentPythonAnalyzer {
   private child: ChildProcessWithoutNullStreams | null = null;
-  private stdoutBuffer = '';
   private pending = new Map<string, {
     resolve: (result: PythonWorkerResult) => void;
     reject: (error: Error) => void;
@@ -53,8 +55,8 @@ class PersistentPythonAnalyzer {
       return;
     }
 
-    this.stdoutBuffer = '';
-    this.child = spawn(this.pythonExecutable, [
+    let stdoutBuffer = '';
+    const child = this.child = spawn(this.pythonExecutable, [
       this.extractorScript,
       '--worker',
       this.musicnnPb,
@@ -63,11 +65,12 @@ class PersistentPythonAnalyzer {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    this.child.stdout.setEncoding('utf8');
-    this.child.stdout.on('data', (chunk: string) => {
-      this.stdoutBuffer += chunk;
-      const lines = this.stdoutBuffer.split('\n');
-      this.stdoutBuffer = lines.pop() || '';
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      if (this.child !== child) return;
+      stdoutBuffer += chunk;
+      const lines = stdoutBuffer.split('\n');
+      stdoutBuffer = lines.pop() || '';
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
@@ -77,14 +80,16 @@ class PersistentPythonAnalyzer {
           this.pending.delete(result.id);
           pending.resolve(result);
         } catch (error: any) {
-          console.warn('[AudioExtract] Ignored malformed Python analyzer output:', error?.message || error);
+          workerLog('warn', `[AudioExtract] Ignored malformed Python analyzer output: ${error?.message || error}`);
         }
       }
     });
 
-    this.child.stderr.setEncoding('utf8');
-    this.child.stderr.on('data', (chunk: string) => {
-      process.stderr.write(`[AudioExtract:python] ${chunk}`);
+    let stderrTail = '';
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => {
+      stderrTail = (stderrTail + chunk).slice(-8192);
+      workerLog('debug', `[AudioExtract:python] ${chunk}`);
     });
 
     const rejectPending = (message: string) => {
@@ -95,15 +100,16 @@ class PersistentPythonAnalyzer {
       }
     };
 
-    this.child.on('error', (error) => {
-      rejectPending(`Python analyzer failed: ${error.message}`);
+    const fail = (message: string) => {
+      if (this.child !== child) return;
       this.child = null;
-    });
+      rejectPending(message);
+      child.kill('SIGKILL');
+    };
+    child.stdin.on('error', error => fail(`Python analyzer input failed: ${error.message}`));
+    child.on('error', error => fail(`Python analyzer failed: ${error.message}`));
+    child.on('exit', (code, signal) => fail(`Python analyzer exited (code=${code}, signal=${signal})${stderrTail ? `: ${stderrTail}` : ''}`));
 
-    this.child.on('exit', (code, signal) => {
-      rejectPending(`Python analyzer exited unexpectedly (code=${code ?? 'null'}, signal=${signal ?? 'null'})`);
-      this.child = null;
-    });
   }
 
   run(filePath: string, context?: AudioExtractionContext): Promise<PythonWorkerResult> {
@@ -127,7 +133,7 @@ class PersistentPythonAnalyzer {
 
   shutdown() {
     if (this.child && !this.child.killed) {
-      this.child.kill();
+      this.child.kill('SIGKILL');
     }
   }
 }
@@ -139,7 +145,8 @@ function buildSimulatedFeatures(): AudioFeatures {
     bpm: 120,
     acoustic_vector: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
     embedding_vector: new Array(1280).fill(0),
-    is_simulated: true
+    is_simulated: true,
+    feature_version: AUDIO_FEATURE_VERSION
   };
 }
 
@@ -148,13 +155,13 @@ function logTimings(context: AudioExtractionContext | undefined, timings: Record
   const label = context?.trackId || context?.title || 'unknown';
   const parts = [
     `total=${timings.total_ms ?? 'n/a'}ms`,
-    `load16=${timings.audio_16k_load_ms ?? 'n/a'}ms`,
+    `resample16=${timings.audio_16k_load_ms ?? 'n/a'}ms`,
     `effnet=${timings.effnet_ms ?? 'n/a'}ms`,
     `musicnn=${timings.musicnn_ms ?? 'n/a'}ms`,
     `load44=${timings.audio_44k_load_ms ?? 'n/a'}ms`,
     `dsp=${timings.dsp_ms ?? 'n/a'}ms`,
   ];
-  console.log(`[AudioExtract] Timing track=${label} ${parts.join(' ')}`);
+  workerLog('debug', `[AudioExtract] Timing track=${label} ${parts.join(' ')}`);
 }
 
 function logSimulatedFallback(filePath: string, context: AudioExtractionContext | undefined, reason: string) {
@@ -165,7 +172,7 @@ function logSimulatedFallback(filePath: string, context: AudioExtractionContext 
     filePath,
     reason,
   };
-  console.error(`[AudioExtract] Simulated fallback ${JSON.stringify(details)}`);
+  workerLog('error', `[AudioExtract] Simulated fallback ${JSON.stringify(details)}`);
 }
 
 export async function extractAudioFeatures(filePath: string, context?: AudioExtractionContext): Promise<AudioFeatures> {
@@ -180,10 +187,19 @@ export async function extractAudioFeatures(filePath: string, context?: AudioExtr
       throw new Error('Python analyzer returned no audio features');
     }
 
-    return result.audioFeatures;
+    const features = result.audioFeatures;
+    if (features.feature_version !== AUDIO_FEATURE_VERSION || features.is_simulated !== false
+      || !Number.isFinite(features.bpm) || features.bpm < 0
+      || !Array.isArray(features.acoustic_vector) || features.acoustic_vector.length !== 8
+      || features.acoustic_vector.some(value => !Number.isFinite(value) || value < 0 || value > 1)
+      || !Array.isArray(features.embedding_vector) || features.embedding_vector.length !== 1280
+      || features.embedding_vector.some(value => !Number.isFinite(value))
+      || !features.embedding_vector.some(value => value !== 0)) {
+      throw new Error('Python analyzer returned invalid audio features');
+    }
+    return features;
   } catch (error: any) {
     const reason = error?.message || String(error);
-    console.error(`[AudioExtract] Failed for ${filePath}:`, reason);
     logSimulatedFallback(filePath, context, reason);
 
     return buildSimulatedFeatures();

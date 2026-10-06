@@ -1,3 +1,4 @@
+import { logLoudness } from './loggingConfig';
 import { spawn } from 'child_process';
 import { initDB, setTrackLoudness, getUserSetting, getSystemSetting } from '../database';
 import { isPathAllowed } from '../state';
@@ -21,17 +22,28 @@ const MEASURE_TIMEOUT_MS = 120_000;
 export async function measureLoudness(fsPath: string): Promise<{ lufs: number; truePeakDbfs: number } | null> {
   if (!fsPath) return null;
   try {
-    if (!(await isPathAllowed(Buffer.from(fsPath, 'utf8')))) return null;
-  } catch {
+    if (!(await isPathAllowed(Buffer.from(fsPath, 'utf8')))) {
+      console.warn('[Loudness] Skipped path outside configured libraries:', fsPath);
+      return null;
+    }
+  } catch (error) {
+    console.warn('[Loudness] Unable to check library path:', error);
     return null;
   }
 
   return new Promise((resolve) => {
+    const startedAt = Date.now();
+    logLoudness('[Loudness] Measurement started', { filePath: fsPath });
     let settled = false;
-    const finish = (v: { lufs: number; truePeakDbfs: number } | null) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stderr = '';
+    const finish = (v: { lufs: number; truePeakDbfs: number } | null, reason?: string) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      const context = { filePath: fsPath, durationMs: Date.now() - startedAt };
+      if (v) logLoudness('[Loudness] Measurement completed', { ...context, ...v });
+      else console.warn('[Loudness] Measurement failed', { ...context, reason, stderr: stderr.slice(-4096) });
       resolve(v);
     };
 
@@ -42,36 +54,35 @@ export async function measureLoudness(fsPath: string): Promise<{ lufs: number; t
         ['-hide_banner', '-nostats', '-i', fsPath, '-af', 'loudnorm=print_format=json', '-f', 'null', '-'],
         { stdio: ['ignore', 'ignore', 'pipe'] },
       );
-    } catch {
-      return finish(null);
+    } catch (error) {
+      return finish(null, `Unable to start ffmpeg: ${String(error)}`);
     }
 
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       try { child.kill('SIGKILL'); } catch { /* already gone */ }
-      finish(null);
+      finish(null, `Timed out after ${MEASURE_TIMEOUT_MS}ms`);
     }, MEASURE_TIMEOUT_MS);
 
-    let stderr = '';
     child.stderr!.on('data', (d: Buffer) => {
       stderr += d.toString();
       // Bound memory on a pathological/long run; the JSON summary is at the end.
       if (stderr.length > 1_000_000) stderr = stderr.slice(-500_000);
     });
-    child.on('error', () => finish(null));
-    child.on('close', (code: number | null) => {
-      if (code !== 0) return finish(null);
+    child.on('error', error => finish(null, `ffmpeg error: ${error.message}`));
+    child.on('close', (code: number | null, signal: string | null) => {
+      if (code !== 0) return finish(null, `ffmpeg exited (code=${code}, signal=${signal})`);
       // loudnorm prints one flat JSON object last (no nested braces).
       const start = stderr.lastIndexOf('{');
       const end = stderr.lastIndexOf('}');
-      if (start === -1 || end <= start) return finish(null);
+      if (start === -1 || end <= start) return finish(null, 'Missing loudness summary');
       try {
         const parsed = JSON.parse(stderr.slice(start, end + 1));
         const lufs = Number(parsed.input_i);
         const truePeakDbfs = Number(parsed.input_tp);
-        if (!Number.isFinite(lufs) || !Number.isFinite(truePeakDbfs)) return finish(null);
+        if (!Number.isFinite(lufs) || !Number.isFinite(truePeakDbfs)) return finish(null, 'Silent audio or non-finite loudness result');
         finish({ lufs, truePeakDbfs });
       } catch {
-        finish(null);
+        finish(null, 'Invalid loudness summary');
       }
     });
   });

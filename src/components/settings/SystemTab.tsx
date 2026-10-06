@@ -1,3 +1,4 @@
+import { ServerLoggingSettings } from './ServerLoggingSettings';
 import React, { useEffect, useState, useCallback } from 'react';
 import { usePlayerStore } from '../../store/index';
 import { useToast } from '../../hooks/useToast';
@@ -73,8 +74,6 @@ export const SystemTab: React.FC = () => {
     const loudnessComputeMode = usePlayerStore(state => state.loudnessComputeMode);
     const hubGenerationSchedule = usePlayerStore(state => state.hubGenerationSchedule);
     const systemPlaylistConfig = usePlayerStore(state => state.systemPlaylistConfig);
-    const hlsLoggingEnabled = usePlayerStore(state => state.hlsLoggingEnabled);
-    const ffmpegLoggingEnabled = usePlayerStore(state => state.ffmpegLoggingEnabled);
     const openSubsonicEnabled = usePlayerStore(state => state.openSubsonicEnabled);
     const turnstileEnabled = usePlayerStore(state => state.turnstileEnabled);
     const turnstileSiteKey = usePlayerStore(state => state.turnstileSiteKey);
@@ -525,58 +524,7 @@ export const SystemTab: React.FC = () => {
                 </div>
             )}
 
-            {activeSubTab === 'logging' && (
-                <div className="space-y-6">
-                    <div>
-                        <h4 className="text-lg font-semibold text-[var(--color-text-primary)] mb-1">Server Console Logging</h4>
-                        <p className="text-xs text-[var(--color-text-muted)] mb-4 leading-relaxed">
-                            Toggle the noisy streaming pipeline logs that appear on the server console. Errors are always logged regardless of these settings. Defaults can also be set via <code className="text-[var(--color-text-primary)]">LOG_HLS</code> and <code className="text-[var(--color-text-primary)]">LOG_FFMPEG</code> in <code className="text-[var(--color-text-primary)]">.env</code>; changes here override the env defaults at runtime.
-                        </p>
-
-                        <div className="space-y-3">
-                            <div className="flex items-start justify-between gap-4 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] p-4">
-                                <div className="min-w-0">
-                                    <p className="text-sm font-semibold text-[var(--color-text-primary)]">HLS pipeline logs</p>
-                                    <p className="mt-1 text-xs leading-snug text-[var(--color-text-muted)]">
-                                        Verbose <code>[HLS DEBUG]</code> traces — segment requests, session readiness polls, and reaper events.
-                                    </p>
-                                </div>
-                                <button
-                                    type="button"
-                                    aria-pressed={hlsLoggingEnabled}
-                                    aria-label="Toggle HLS pipeline logs"
-                                    onClick={() => setSettings({ hlsLoggingEnabled: !hlsLoggingEnabled })}
-                                    className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${hlsLoggingEnabled ? 'bg-[var(--color-primary)]' : 'bg-gray-200 dark:bg-[var(--color-bg-tertiary)]'}`}
-                                >
-                                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${hlsLoggingEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
-                                </button>
-                            </div>
-
-                            <div className="flex items-start justify-between gap-4 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] p-4">
-                                <div className="min-w-0">
-                                    <p className="text-sm font-semibold text-[var(--color-text-primary)]">FFmpeg output</p>
-                                    <p className="mt-1 text-xs leading-snug text-[var(--color-text-muted)]">
-                                        FFmpeg <code>stderr</code> passthrough (the chatty banner/progress output streamed during transcoding and HLS sessions).
-                                    </p>
-                                </div>
-                                <button
-                                    type="button"
-                                    aria-pressed={ffmpegLoggingEnabled}
-                                    aria-label="Toggle FFmpeg output logs"
-                                    onClick={() => setSettings({ ffmpegLoggingEnabled: !ffmpegLoggingEnabled })}
-                                    className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${ffmpegLoggingEnabled ? 'bg-[var(--color-primary)]' : 'bg-gray-200 dark:bg-[var(--color-bg-tertiary)]'}`}
-                                >
-                                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${ffmpegLoggingEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
-                                </button>
-                            </div>
-                        </div>
-
-                        <p className="text-xs text-[var(--color-text-muted)] mt-4 leading-relaxed">
-                            Per-track HLS session logs are still written to <code>logs/hls-sessions/</code> on disk regardless of these toggles.
-                        </p>
-                    </div>
-                </div>
-            )}
+            {activeSubTab === 'logging' && <ServerLoggingSettings />}
 
             {activeSubTab === 'security' && (
                 <div className="space-y-6">

@@ -1,211 +1,206 @@
+import type { ProcessingLogChannel } from '../../shared/logging';
+import { logProcessing } from '../services/loggingConfig';
+import { forwardWorkerLog } from '../services/workerLogging';
 import { ChildProcess, spawn } from 'child_process';
-import path from 'path';
 
 export interface PoolJob {
-  id: string; // unique identifier for the job
-  payload: any;
+  id: string;
+  payload: unknown;
+  label?: string;
+}
+
+interface PendingJob {
+  job: PoolJob;
+  startedAt?: number;
+  resolve: (value: unknown) => void;
 }
 
 export class ChildProcessPool {
-  private workers: ChildProcess[] = [];
+  private workers = new Set<ChildProcess>();
   private freeWorkers: ChildProcess[] = [];
-  private jobQueue: { job: PoolJob; resolve: (val: any) => void }[] = [];
-  private workerTasks = new Map<ChildProcess, { id: string; resolve: (val: any) => void; startTime: number }>();
-  private activeCount = 0;
-  private pendingKills = 0;
+  private jobQueue: PendingJob[] = [];
+  private workerTasks = new Map<ChildProcess, PendingJob>();
   private terminated = false;
+  private stoppedGroups = new WeakSet<ChildProcess>();
+  private refillTimer?: ReturnType<typeof setTimeout>;
 
-  constructor(
-    private scriptPath: string,
-    private poolSize: number,
-    private cwd?: string
-  ) {}
+  constructor(private scriptPath: string, private poolSize: number, private cwd?: string, private logChannel?: ProcessingLogChannel) {}
 
-  public getActiveCount() {
-    return this.activeCount;
-  }
+  public getActiveCount() { return this.workerTasks.size; }
+  public getWorkerCount() { return this.workers.size; }
 
-  // Total spawned worker processes (idle + busy). Use this for UI display.
-  public getWorkerCount() {
-    return this.workers.length;
-  }
+  public async init() { this.fillPool(); }
 
-  public async init() {
-    for (let i = 0; i < this.poolSize; i++) {
-       this.spawnWorker();
-    }
+  private fillPool() {
+    if (this.terminated) return;
+    while (this.workers.size < this.poolSize) this.spawnWorker();
+    this.pump();
   }
 
   private spawnWorker() {
-    const tsxBin = path.resolve(__dirname, '../../node_modules/.bin/tsx');
-    const child = spawn(tsxBin, [this.scriptPath], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      cwd: this.cwd
+    // Avoid the tsx CLI's extra launcher process. Each worker owns a separate
+    // process group so a wedged Python/ffmpeg descendant can be killed with it.
+    const child = spawn(process.execPath, ['--import', 'tsx', this.scriptPath], {
+      stdio: ['pipe', 'pipe', 'pipe'], cwd: this.cwd,
+      detached: process.platform !== 'win32',
     });
-
-    let stdoutBuffer = '';
-    child.stdout?.setEncoding('utf8');
-    child.stdout?.on('data', (chunk) => {
-      stdoutBuffer += chunk;
-      const lines = stdoutBuffer.split('\n');
-      stdoutBuffer = lines.pop() || '';
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const result = JSON.parse(line);
-          this.handleResult(child, result);
-        } catch {
-          // ignore parse errors
-        }
-      }
-    });
-
-    child.stderr?.on('data', (data) => {
-       process.stderr.write(`[Worker ${path.basename(this.scriptPath)}] ${data.toString()}`);
-    });
-
-    child.on('error', (err) => {
-      console.error(`[Worker] Spawn error for ${this.scriptPath}: ${err.message}`);
-      this.workers = this.workers.filter(w => w !== child);
-      this.freeWorkers = this.freeWorkers.filter(w => w !== child);
-      const task = this.workerTasks.get(child);
-      if (task) {
-        task.resolve({ id: task.id, error: `Worker crashed: ${err.message}` });
-        this.workerTasks.delete(child);
-        this.activeCount--;
-      }
-      // Auto-respawn to keep pool at target size
-      if (!this.terminated && this.workers.length < this.poolSize) {
-        this.spawnWorker();
-        this.pump();
-      }
-    });
-
-    child.on('exit', () => {
-      this.workers = this.workers.filter(w => w !== child);
-      this.freeWorkers = this.freeWorkers.filter(w => w !== child);
-
-      // Auto-respawn to keep the pool at its target size.
-      // Skip if the pool is shutting down or if a deliberate shrink is pending.
-      if (!this.terminated && this.pendingKills === 0 && this.workers.length < this.poolSize) {
-        this.spawnWorker();
-        this.pump();
-      }
-    });
-
-    this.workers.push(child);
+    this.workers.add(child);
     this.freeWorkers.push(child);
+    let buffer = '';
+    child.stdout?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk: string) => {
+      buffer += chunk;
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        try { this.handleResult(child, JSON.parse(line)); } catch { /* Non-protocol log line. */ }
+      }
+    });
+    let stderrBuffer = '';
+    child.stderr?.setEncoding('utf8');
+    child.stderr?.on('data', (chunk: string) => {
+      if (!this.logChannel) { process.stderr.write(chunk); return; }
+      stderrBuffer += chunk;
+      const lines = stderrBuffer.split('\n');
+      stderrBuffer = lines.pop() || '';
+      for (const line of lines) forwardWorkerLog(this.logChannel, line);
+      if (stderrBuffer.length > 65536) {
+        forwardWorkerLog(this.logChannel, stderrBuffer);
+        stderrBuffer = '';
+      }
+    });
+    child.stderr?.on('end', () => {
+      if (this.logChannel && stderrBuffer) forwardWorkerLog(this.logChannel, stderrBuffer);
+    });
+    child.stdin?.on('error', error => this.failWorker(child, error.message));
+    child.on('error', error => this.failWorker(child, error.message));
+    // Kill descendants on exit so inherited pipes cannot prevent close. Settle
+    // on close, after final stdout has drained, to preserve a last valid reply.
+    child.on('exit', () => this.killGroup(child));
+    child.on('close', (code, signal) => this.failWorker(child, `Worker exited (code=${code}, signal=${signal})`));
+  }
+
+  private stopWorker(child: ChildProcess) {
+    if (!this.workers.delete(child)) return;
+    this.freeWorkers = this.freeWorkers.filter(worker => worker !== child);
+    this.killGroup(child);
+  }
+
+  private killGroup(child: ChildProcess) {
+    if (this.stoppedGroups.has(child)) return;
+    this.stoppedGroups.add(child);
+    if (!child.pid) return; // spawn failed, no process to stop
+    try {
+      if (process.platform === 'win32') {
+        const killer = spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' });
+        killer.on('error', () => child.kill('SIGKILL'));
+      } else {
+        // Only groups created by this pool are targeted. SIGKILL also stops a
+        // SIGSTOP'ed or native-inference-hung descendant; no delayed PID reuse.
+        process.kill(-child.pid, 'SIGKILL');
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
+        console.error('[Pool] Failed to stop worker group:', error);
+      }
+    }
+  }
+
+  private failWorker(child: ChildProcess, reason: string) {
+    if (!this.workers.has(child)) return; // error/close/write callback can race
+    const task = this.workerTasks.get(child);
+    this.workerTasks.delete(child);
+    this.stopWorker(child);
+    task?.resolve({ id: task.job.id, error: reason });
+    // Back off on startup failures instead of continuously spawning processes.
+    if (!this.terminated && !this.refillTimer) {
+      this.refillTimer = setTimeout(() => {
+        this.refillTimer = undefined;
+        this.fillPool();
+      }, 250);
+    }
+    this.pump();
   }
 
   public resize(newSize: number) {
-    if (newSize === this.poolSize) return;
-    
-    if (newSize > this.poolSize) {
-      const diff = newSize - this.poolSize;
-      for (let i = 0; i < diff; i++) {
-        this.spawnWorker();
-      }
-      this.poolSize = newSize;
-      this.pump();
-    } else {
-      const diff = this.poolSize - newSize;
-      this.poolSize = newSize;
-      this.pendingKills += diff;
-      
-      // Kill free workers immediately if possible
-      while (this.pendingKills > 0 && this.freeWorkers.length > 0) {
-        const worker = this.freeWorkers.pop()!;
-        worker.kill();
-        this.pendingKills--;
-      }
+    if (this.terminated) return;
+    if (!Number.isInteger(newSize) || newSize < 0) throw new Error('Invalid worker pool size');
+    this.poolSize = newSize;
+    while (this.workers.size > newSize && this.freeWorkers.length) {
+      this.stopWorker(this.freeWorkers[this.freeWorkers.length - 1]);
     }
+    // Busy surplus workers retire on completion. Growing again cancels that
+    // retirement automatically; there is no stale pending-kill counter.
+    this.fillPool();
   }
 
-  private handleResult(child: ChildProcess, result: any) {
+  private handleResult(child: ChildProcess, result: { id?: string }) {
     const task = this.workerTasks.get(child);
-    if (task && task.id === result.id) {
-       const duration = (Date.now() - task.startTime) / 1000;
-       console.log(`[Pool] Job ${task.id} completed in ${duration.toFixed(2)}s`);
-       
-       task.resolve(result);
-       this.workerTasks.delete(child);
-       this.activeCount--;
-       
-       if (this.pendingKills > 0) {
-         child.kill();
-         this.pendingKills--;
-       } else {
-         this.freeWorkers.push(child);
-         this.pump(); // Process next job
-       }
-    }
+    if (!task || result?.id !== task.job.id) return;
+    this.workerTasks.delete(child);
+    if (this.logChannel) logProcessing(this.logChannel, `[${this.logChannel}] Completed ${task.job.label || task.job.id} in ${Date.now() - (task.startedAt ?? Date.now())}ms`);
+    task.resolve(result);
+    if (this.stoppedGroups.has(child)) this.failWorker(child, 'Worker exited');
+    else if (this.workers.size > this.poolSize) this.stopWorker(child);
+    else this.freeWorkers.push(child);
+    this.pump();
   }
 
-  public runJob(job: PoolJob, timeoutMs = 300000): Promise<any> { // 5 min default
-    return new Promise((resolve) => {
+  public runJob(job: PoolJob, timeoutMs = 300000): Promise<any> {
+    if (this.terminated) return Promise.resolve({ id: job.id, error: 'Worker pool terminated' });
+    return new Promise(resolve => {
       let settled = false;
-      console.log(`[Pool] Starting job ${job.id} with ${timeoutMs}ms timeout`);
-      const timer = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        console.error(`[Pool] Job ${job.id} timed out after ${timeoutMs}ms`);
-        // Remove from queue if still pending
-        const qIdx = this.jobQueue.findIndex(j => j.job.id === job.id);
-        if (qIdx !== -1) {
-          console.error(`[Pool] Job ${job.id} was still in queue at position ${qIdx}`);
-          this.jobQueue.splice(qIdx, 1);
-        }
-        // Kill the worker if it was processing this job
-        for (const [worker, task] of this.workerTasks) {
-          if (task.id === job.id) {
-            console.error(`[Pool] Killing worker processing job ${job.id}`);
-            this.workerTasks.delete(worker);
-            this.activeCount--;
-            worker.kill();
-            break;
-          }
-        }
-        resolve({ id: job.id, error: `Job timed out after ${timeoutMs}ms` });
-        // Pump to dispatch queued jobs to respawned workers
-        this.pump();
-      }, timeoutMs);
-
-      const wrappedResolve = (val: any) => {
+      const pending: PendingJob = { job, resolve: value => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        resolve(val);
-      };
-
-      this.jobQueue.push({ job, resolve: wrappedResolve });
+        resolve(value);
+      } };
+      const timer = setTimeout(() => {
+        this.jobQueue = this.jobQueue.filter(queued => queued !== pending);
+        for (const [worker, task] of this.workerTasks) {
+          if (task === pending) {
+            this.failWorker(worker, `Job timed out after ${timeoutMs}ms`);
+            break;
+          }
+        }
+        pending.resolve({ id: job.id, error: `Job timed out after ${timeoutMs}ms` });
+      }, timeoutMs);
+      this.jobQueue.push(pending);
       this.pump();
     });
   }
 
   private pump() {
-    if (this.jobQueue.length > 0 && this.freeWorkers.length > 0) {
+    while (!this.terminated && this.jobQueue.length && this.freeWorkers.length) {
       const worker = this.freeWorkers.pop()!;
-      const { job, resolve } = this.jobQueue.shift()!;
-      this.activeCount++;
-      this.workerTasks.set(worker, { id: job.id, resolve, startTime: Date.now() });
-
-      if (worker.stdin && !worker.stdin.destroyed) {
-         worker.stdin.write(JSON.stringify(job.payload) + '\n');
-      } else {
-         resolve({ id: job.id, error: 'Child process stdin closed or destroyed' });
+      const task = this.jobQueue.shift()!;
+      task.startedAt = Date.now();
+      this.workerTasks.set(worker, task);
+      if (this.logChannel) logProcessing(this.logChannel, `[${this.logChannel}] Started ${task.job.label || task.job.id} (worker ${worker.pid})`);
+      if (!worker.stdin || worker.stdin.destroyed || !worker.stdin.writable) {
+        this.failWorker(worker, 'Child process stdin closed or destroyed');
+        continue;
+      }
+      try {
+        worker.stdin.write(JSON.stringify(task.job.payload) + '\n', error => {
+          if (error) this.failWorker(worker, error.message);
+        });
+      } catch (error) {
+        this.failWorker(worker, String(error));
       }
     }
   }
 
   public terminate() {
     this.terminated = true;
-    for (const worker of this.workers) {
-      worker.kill();
+    clearTimeout(this.refillTimer);
+    this.refillTimer = undefined;
+    for (const task of [...this.jobQueue, ...this.workerTasks.values()]) {
+      task.resolve({ id: task.job.id, error: 'Worker pool terminated' });
     }
-    this.workers = [];
-    this.freeWorkers = [];
     this.jobQueue = [];
     this.workerTasks.clear();
-    this.activeCount = 0;
+    for (const worker of this.workers) this.stopWorker(worker);
   }
 }
