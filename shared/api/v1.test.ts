@@ -30,6 +30,8 @@ describe('Aurora API v1 contracts', () => {
     expect(nextRecommendationSchema.safeParse({ sessionHistoryTrackIds: Array(201).fill('track') }).success).toBe(false);
     expect(nextRecommendationSchema.safeParse({ exclude: Array(201).fill('track') }).success).toBe(false);
     expect(nextRecommendationSchema.safeParse({ settings: { discoveryLevel: NaN } }).success).toBe(false);
+    expect(nextRecommendationSchema.safeParse({ seedTrackIds: Array(50).fill('track') }).success).toBe(true);
+    expect(nextRecommendationSchema.safeParse({ seedTrackIds: Array(51).fill('track') }).success).toBe(false);
     expect(nextRecommendationSchema.safeParse({ settings: { artistAmnesiaLimit: 2.5 } }).success).toBe(false);
   });
 

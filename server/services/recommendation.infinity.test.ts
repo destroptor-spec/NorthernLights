@@ -75,3 +75,26 @@ test('fallback searches past a page of duplicate editions without changing shuff
   expect(pages.map(([, values]) => values![2])).toEqual([0, 100]);
   expect(pages[0][1]![1]).toBe(pages[1][1]![1]);
 });
+
+test('queue seeds steer the centroid and genre anchor while history still blocks repeats', async () => {
+  seeds = [
+    { id: 'queued-a', acoustic_vector_8d: acoustic(0.2), embedding_vector: embedding, feature_version: 2 },
+    { id: 'queued-b', acoustic_vector_8d: acoustic(0.3), embedding_vector: embedding, feature_version: 2 },
+  ];
+  await calculateNextInfinityTrack(['heard-1', 'heard-2'], { artistAmnesiaLimit: 5 }, { seedTrackIds: ['queued-a', 'queued-b'] });
+  const calls = jest.mocked(queryWithRetry).mock.calls;
+  expect(calls.find(([sql]) => sql.includes('SELECT t.id, tf.acoustic_vector_8d'))![1]).toEqual(['queued-a', 'queued-b']);
+  expect(calls.find(([sql]) => sql.includes('AS genre') && !sql.includes('AS distance'))![1]).toEqual(['queued-b']);
+  const [, values] = calls.find(([sql]) => sql.includes('AS distance'))!;
+  // Centroid comes from the queue (energy 0.2–0.3), not the history rows.
+  expect(JSON.parse(values![0])[0]).toBeLessThan(0.3);
+  expect(values).toEqual(expect.arrayContaining(['heard-1', 'heard-2', 'queued-a', 'queued-b']));
+});
+
+test('only the last ten queue seeds are used', async () => {
+  const queue = Array.from({ length: 15 }, (_, i) => `q-${i}`);
+  await calculateNextInfinityTrack([], {}, { seedTrackIds: queue });
+  expect(jest.mocked(queryWithRetry).mock.calls.find(([sql]) => sql.includes('SELECT t.id, tf.acoustic_vector_8d'))![1])
+    .toEqual(queue.slice(-10));
+});
+

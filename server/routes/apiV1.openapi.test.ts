@@ -41,6 +41,8 @@ describe('Aurora API v1 OpenAPI inventory', () => {
     const request = document.components.schemas.NextRecommendationRequest;
     expect(request.properties.sessionHistoryTrackIds.maxItems).toBe(200);
     expect(request.properties.exclude.maxItems).toBe(200);
+    expect(request.properties.seedTrackIds.maxItems).toBe(50);
+    expect(request.required ?? []).not.toContain('seedTrackIds');
     expect(document.components.schemas.InfinitySettings.properties.discoveryLevel.maximum).toBe(100);
     expect(operation.responses['200'].content['application/json'].schema.properties.data)
       .toEqual(expect.objectContaining({ anyOf: expect.arrayContaining([{ $ref: '#/components/schemas/Track' }, { type: 'null' }]) }));

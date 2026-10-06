@@ -1886,6 +1886,10 @@ export const usePlayerStore = create<PlayerState>()(
             const payload = {
               sessionHistoryTrackIds: history,
               exclude: excludeTrackIds,
+              // The recommendation is appended, so it continues from the end of
+              // the queue as it stands now (Infinity picks included), not from
+              // whatever happened to play last.
+              seedTrackIds: state.playlist.slice(-10).map(track => track.id),
               settings: {
                 discoveryLevel: state.discoveryLevel,
                 genreStrictness: state.genreStrictness,

@@ -1105,6 +1105,16 @@
             "default": [],
             "description": "Track IDs already queued or otherwise excluded. Exclusions survive similarity relaxation and fallback."
           },
+          "seedTrackIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "maxItems": 50,
+            "description": "The end of the play queue, oldest to newest, ending with the track the recommendation will follow. When present it steers the recommendation instead of playback history; history still prevents repeats. Only the last 10 are used."
+          },
           "settings": {
             "$ref": "#/components/schemas/InfinitySettings"
           }

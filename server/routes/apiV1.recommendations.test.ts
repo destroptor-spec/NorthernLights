@@ -38,6 +38,11 @@ test('v1 merges playback-start context and exclusions, returning a path-free Tra
   expect(addToSessionHistory).not.toHaveBeenCalled();
 });
 
+test('queue seeds pass through to the engine alongside history', async () => {
+  await request({ sessionHistoryTrackIds: ['playing'], exclude: ['queued'], seedTrackIds: ['playing', 'queued'] });
+  expect(calculateNextInfinityTrack).toHaveBeenCalledWith(['older', 'previous', 'playing'], {}, { excludeTrackIds: ['queued'], seedTrackIds: ['playing', 'queued'] });
+});
+
 test('saved user tuning is resolved for existing clients; explicit zero overrides win', async () => {
   jest.mocked(getUserSetting).mockImplementation(async (userId, key) => {
     expect(userId).toBe('listener');
@@ -59,6 +64,7 @@ test.each([
   { sessionHistoryTrackIds: Array(201).fill('id') }, { exclude: Array(201).fill('id') },
   { settings: { discoveryLevel: '100' } }, { settings: { genreStrictness: 101 } },
   { settings: { artistAmnesiaLimit: -1 } }, { excludeTrackIds: ['legacy-field'] },
+  { seedTrackIds: Array(51).fill('id') }, { seedTrackIds: [''] },
 ])('rejects invalid v1 input with the standard error envelope: %p', async body => {
   const res = await request(body);
   expect(res.status).toHaveBeenCalledWith(400);
@@ -68,8 +74,8 @@ test.each([
 
 test('legacy adapter and v1 resolve identical engine arguments', async () => {
   jest.mocked(getUserSetting).mockResolvedValue(25);
-  await request({ sessionHistoryTrackIds: ['playing'], exclude: ['queued'] });
-  await request({ sessionHistoryTrackIds: ['playing'], excludeTrackIds: ['queued'] }, true);
+  await request({ sessionHistoryTrackIds: ['playing'], exclude: ['queued'], seedTrackIds: ['playing', 'queued'] });
+  await request({ sessionHistoryTrackIds: ['playing'], excludeTrackIds: ['queued'], seedTrackIds: ['playing', 'queued'] }, true);
   const calls = jest.mocked(calculateNextInfinityTrack).mock.calls;
   expect(calls[0]).toEqual(calls[1]);
 });

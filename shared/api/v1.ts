@@ -309,6 +309,8 @@ export const nextRecommendationSchema = z.object({
     .describe('Playback-start history, oldest to newest, including the playing track. Merged after older server history; does not record plays.'),
   exclude: z.array(OPAQUE_ID).max(200).default([])
     .describe('Track IDs already queued or otherwise excluded. Exclusions survive similarity relaxation and fallback.'),
+  seedTrackIds: z.array(OPAQUE_ID).max(50).optional()
+    .describe('The end of the play queue, oldest to newest, ending with the track the recommendation will follow. When present it steers the recommendation instead of playback history; history still prevents repeats. Only the last 10 are used.'),
   settings: infinitySettingsSchema.default({}),
 }).strict().meta({ id: 'NextRecommendationRequest' });
 

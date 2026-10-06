@@ -7,7 +7,7 @@ const SETTING_KEYS = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit']
 
 /** Shared by the listener API and the legacy browser compatibility adapter. */
 export async function getNextInfinityTrackForUser(userId: string | undefined, input: NextRecommendationRequest) {
-  const { sessionHistoryTrackIds: clientHistory = [], exclude = [], settings = {} } = input;
+  const { sessionHistoryTrackIds: clientHistory = [], exclude = [], seedTrackIds = [], settings = {} } = input;
   const serverHistory = userId ? getSessionHistory(userId) : [];
   // Playback-start context is newer than threshold-gated telemetry. This merge
   // is request-local: never manufacture play counts or rewrite another session.
@@ -23,5 +23,10 @@ export async function getNextInfinityTrackForUser(userId: string | undefined, in
       if (parsed.success && parsed.data !== undefined) saved[key] = parsed.data;
     }));
   }
-  return calculateNextInfinityTrack(history, { ...saved, ...settings }, { excludeTrackIds: exclude });
+  // The queue tail steers when a client sends it; history alone is the
+  // fallback for clients that predate seeds or hold no queue.
+  return calculateNextInfinityTrack(history, { ...saved, ...settings }, {
+    excludeTrackIds: exclude,
+    ...(seedTrackIds.length > 0 && { seedTrackIds }),
+  });
 }

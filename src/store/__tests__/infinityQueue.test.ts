@@ -131,7 +131,7 @@ describe('Infinity Mode through API v1', () => {
     isConnected.mockReturnValue(false);
     usePlayerStore.setState({ currentIndex: 1, sessionHistoryTrackIds: ['a'] });
     await usePlayerStore.getState().fetchNextInfinityTrack(true);
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ sessionHistoryTrackIds: ['a', 'b'], exclude: ['a', 'b'] });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ sessionHistoryTrackIds: ['a', 'b'], exclude: ['a', 'b'], seedTrackIds: ['a', 'b'] });
     expect(usePlayerStore.getState().playlist.map(t => t.id)).toEqual(['a', 'b', 'next']);
     const next = usePlayerStore.getState().playlist[2];
     expect(next.path).toBe('api-v1:next');
@@ -140,6 +140,27 @@ describe('Infinity Mode through API v1', () => {
     expect(new URL(next.url!).searchParams.get('quality')).toBe('auto');
     expect(new URL(next.rawUrl!).pathname).toBe('/api/v1/media/tracks/next');
     expect(new URL(next.rawUrl!).searchParams.get('token')).toBe('media-token');
+  });
+
+  it('seeds from the end of the queue, including Infinity picks, not from play history', async () => {
+    isConnected.mockReturnValue(false);
+    // Played x and y earlier, then reordered the queue; an earlier Infinity pick sits at the end.
+    usePlayerStore.setState({
+      playlist: [track('c'), track('a'), track('b'), { ...track('inf'), isInfinity: true }],
+      currentIndex: 3,
+      sessionHistoryTrackIds: ['x', 'y', 'inf'],
+    });
+    await usePlayerStore.getState().fetchNextInfinityTrack(true);
+    const payload = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(payload.seedTrackIds).toEqual(['c', 'a', 'b', 'inf']);
+    expect(payload.sessionHistoryTrackIds).toEqual(['x', 'y', 'inf']);
+  });
+
+  it('sends at most the last ten queue tracks as seeds', async () => {
+    isConnected.mockReturnValue(false);
+    usePlayerStore.setState({ playlist: Array.from({ length: 14 }, (_, i) => track(`t${i}`)), currentIndex: 13 });
+    await usePlayerStore.getState().fetchNextInfinityTrack(true);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).seedTrackIds).toEqual(Array.from({ length: 10 }, (_, i) => `t${i + 4}`));
   });
 
   it('refuses a duplicate recommendation response', async () => {

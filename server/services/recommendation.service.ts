@@ -2072,22 +2072,27 @@ export function buildPenaltyIds(
 export async function calculateNextInfinityTrack(
   sessionHistoryTrackIds: string[],
   settings: any = {},
-  options: { excludeTrackIds?: string[] } = {}
+  options: { excludeTrackIds?: string[]; seedTrackIds?: string[] } = {}
 ) {
+  // Seeds steer the recommendation: the end of the client's queue when it
+  // sends one, so reorders, removals and a new queue take effect at once.
+  // Playback history is only the fallback, and keeps its repeat-protection role.
+  const seedTrackIds = (options.seedTrackIds?.length ? options.seedTrackIds : sessionHistoryTrackIds).slice(-10);
   const excludeTrackIds = Array.from(new Set([
     ...(Array.isArray(options.excludeTrackIds) ? options.excludeTrackIds : []),
     ...sessionHistoryTrackIds.slice(-2),
+    ...(options.seedTrackIds?.length ? seedTrackIds : []),
   ]));
   const constraints = await getDynamicConstraints();
   
-  // 1. Fetch vectors for the last 10 tracks to compute the Weighted Decay Centroid
+  // 1. Fetch vectors for the seed tracks to compute the Weighted Decay Centroid
   let targetVector = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]; // safe fallback
   let recentVectors: number[][] = [];
   let seedFeatureVersion: number | null = null;
   const orderedEffnet: number[][] = [];
   
-  if (sessionHistoryTrackIds.length > 0) {
-    const last10Ids = sessionHistoryTrackIds.slice(-10);
+  if (seedTrackIds.length > 0) {
+    const last10Ids = seedTrackIds;
     // Maintain strict order
     const placeholders = last10Ids.map((_, i) => `$${i + 1}`).join(',');
     const vecRes = await queryWithRetry(`
@@ -2195,8 +2200,8 @@ export async function calculateNextInfinityTrack(
                       : constraints.historyPenaltySize;
                       
   let currentGenre = '';
-  if (sessionHistoryTrackIds.length > 0) {
-    const lastTrackId = sessionHistoryTrackIds[sessionHistoryTrackIds.length - 1];
+  if (seedTrackIds.length > 0) {
+    const lastTrackId = seedTrackIds[seedTrackIds.length - 1];
     const lastTrackRes = await queryWithRetry(`
       SELECT COALESCE(g.name, t.genre) AS genre
       FROM tracks t
