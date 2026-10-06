@@ -94,6 +94,8 @@ Pairing requests expire after ten minutes. Approval binds the request to the use
 | Discovery | `GET /hub`, `/hub/smart`; `POST /hub/artist-radio`, `/hub/custom`, `/recommendations/next` |
 | Listening state | `PUT /tracks/:id/loved`, `/tracks/:id/rating`; `POST /playback/reports`; `GET/PATCH /preferences` |
 
+`POST /recommendations/next` is the shared Infinity Mode endpoint. Its body is `{ sessionHistoryTrackIds?, exclude?, settings? }` (all optional, each ID array capped at 200): `sessionHistoryTrackIds` is the client's playback-start history (oldest → newest, including the playing track) and is merged after older server history for this request only — it never records plays; `exclude` lists queued/held track IDs; `settings` overrides saved `discoveryLevel`/`genreStrictness` (0–100) and `artistAmnesiaLimit` (integer 0–200). Returns `data: Track | null`; `null` means no eligible track remains. The legacy `POST /api/recommend` (body uses `excludeTrackIds`) is a thin compatibility wrapper over the same request handling.
+
 Track DTOs expose opaque IDs, normalized metadata, user annotations, MusicBrainz identifiers, artwork identity/URL, media ETag, format and size. They never expose the database's Base64-encoded path. Resource payloads are explicitly mapped rather than serializing database rows.
 
 Playlist `tracks` are entry objects shaped as `{ "track": Track, "addedAt": "ISO 8601 timestamp or null" }`. This preserves playlist ordering metadata without changing the meaning of a standalone Track. Full replacement validates every track and commits atomically; unavailable IDs return `409 TRACKS_UNAVAILABLE` without emptying the existing playlist.
@@ -923,10 +925,15 @@ Request the next track for Infinity Mode.
   ```json
   {
     "sessionHistoryTrackIds": ["id1", "id2"],
+    "excludeTrackIds": ["playing-id", "queued-id"],
     "settings": { "genreStrictness": 50 }
   }
   ```
 - **Returns**: `{ "track": { ...track metadata... } }`
+
+Browser history advances at playback start and takes precedence over delayed server playback telemetry. The server merges older session history into that request context without recording extra plays. Both ID arrays accept up to 200 entries; the recommendation history is bounded to the last 50. Queue exclusions remain active through similarity relaxation and fallback. Recent recordings/remastered copies are also excluded. Exhaustion returns `{ "track": null }` instead of repeating a protected song.
+
+While scanner reanalysis is incomplete, Infinity computes centroids and similarity candidates using the feature version of the newest valid analyzed seed. Version 1 and version 2 energy/dance coordinates are not compared or averaged together.
 
 ---
 

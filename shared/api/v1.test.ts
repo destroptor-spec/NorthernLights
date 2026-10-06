@@ -1,5 +1,6 @@
 import {
   appKeyCreateSchema,
+  nextRecommendationSchema,
   pairingExchangeSchema,
   playbackDescriptorSchema,
   playbackSessionDeleteSchema,
@@ -18,6 +19,20 @@ const track = {
 };
 
 describe('Aurora API v1 contracts', () => {
+  it('defaults recommendation context for existing clients and retains explicit zero tuning', () => {
+    expect(nextRecommendationSchema.parse({})).toEqual({ sessionHistoryTrackIds: [], exclude: [], settings: {} });
+    expect(nextRecommendationSchema.parse({ exclude: ['queued'], settings: { discoveryLevel: 0 } }))
+      .toEqual({ sessionHistoryTrackIds: [], exclude: ['queued'], settings: { discoveryLevel: 0 } });
+  });
+
+  it('bounds recommendation context and rejects invalid tuning', () => {
+    expect(nextRecommendationSchema.safeParse({ sessionHistoryTrackIds: Array(200).fill('track') }).success).toBe(true);
+    expect(nextRecommendationSchema.safeParse({ sessionHistoryTrackIds: Array(201).fill('track') }).success).toBe(false);
+    expect(nextRecommendationSchema.safeParse({ exclude: Array(201).fill('track') }).success).toBe(false);
+    expect(nextRecommendationSchema.safeParse({ settings: { discoveryLevel: NaN } }).success).toBe(false);
+    expect(nextRecommendationSchema.safeParse({ settings: { artistAmnesiaLimit: 2.5 } }).success).toBe(false);
+  });
+
   it('strips internal file paths from track resources', () => {
     const parsed = trackSchema.parse({ ...track, path: '/music/private/album.flac', pathB64: 'secret' });
     expect(parsed).not.toHaveProperty('path');

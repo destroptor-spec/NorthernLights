@@ -295,6 +295,23 @@ export const playbackReportSchema = z.object({
   positionMs: z.number().int().nonnegative().optional(),
 }).strict().meta({ id: 'PlaybackReport' });
 
+export const infinitySettingsSchema = z.object({
+  discoveryLevel: z.number().min(0).max(100).optional(),
+  genreStrictness: z.number().min(0).max(100).optional(),
+  artistAmnesiaLimit: z.number().int().min(0).max(200).optional(),
+}).passthrough().meta({
+  id: 'InfinitySettings',
+  description: 'Per-request overrides for saved user tuning. Omitted values use saved settings or engine defaults.',
+});
+
+export const nextRecommendationSchema = z.object({
+  sessionHistoryTrackIds: z.array(OPAQUE_ID).max(200).default([])
+    .describe('Playback-start history, oldest to newest, including the playing track. Merged after older server history; does not record plays.'),
+  exclude: z.array(OPAQUE_ID).max(200).default([])
+    .describe('Track IDs already queued or otherwise excluded. Exclusions survive similarity relaxation and fallback.'),
+  settings: infinitySettingsSchema.default({}),
+}).strict().meta({ id: 'NextRecommendationRequest' });
+
 export const listenerPreferencesSchema = z.object({
   streamingQuality: z.enum(['auto', '64k', '128k', '160k', '320k', 'source']),
   prebufferPolicy: z.enum(['off', 'conservative', 'aggressive']),
@@ -320,3 +337,4 @@ export type TrackLyrics = z.infer<typeof lyricsSchema>;
 export type PlaybackSession = z.infer<typeof playbackSessionSchema>;
 export type PlaybackSessionPatch = z.infer<typeof playbackSessionPatchSchema>;
 export type ListenerPreferences = z.infer<typeof listenerPreferencesSchema>;
+export type NextRecommendationRequest = z.input<typeof nextRecommendationSchema>;

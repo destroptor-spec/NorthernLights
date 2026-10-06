@@ -1080,6 +1080,60 @@
         ],
         "additionalProperties": false
       },
+      "NextRecommendationRequest": {
+        "type": "object",
+        "properties": {
+          "sessionHistoryTrackIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "maxItems": 200,
+            "default": [],
+            "description": "Playback-start history, oldest to newest, including the playing track. Merged after older server history; does not record plays."
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "maxItems": 200,
+            "default": [],
+            "description": "Track IDs already queued or otherwise excluded. Exclusions survive similarity relaxation and fallback."
+          },
+          "settings": {
+            "$ref": "#/components/schemas/InfinitySettings"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InfinitySettings": {
+        "type": "object",
+        "properties": {
+          "discoveryLevel": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "genreStrictness": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "artistAmnesiaLimit": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 200
+          }
+        },
+        "default": {},
+        "additionalProperties": {},
+        "description": "Per-request overrides for saved user tuning. Omitted values use saved settings or engine defaults."
+      },
       "PlaybackReport": {
         "type": "object",
         "properties": {
@@ -5928,6 +5982,7 @@
     "/recommendations/next": {
       "post": {
         "summary": "Choose the next infinity-mode track",
+        "description": "Uses playback-start history and queue exclusions without recording plays. Returns null when no eligible track remains.",
         "tags": [
           "Discovery"
         ],
@@ -5941,8 +5996,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "additionalProperties": {}
+                "$ref": "#/components/schemas/NextRecommendationRequest"
               }
             }
           }
@@ -5956,15 +6010,12 @@
                   "type": "object",
                   "properties": {
                     "data": {
-                      "allOf": [
+                      "anyOf": [
                         {
                           "$ref": "#/components/schemas/Track"
                         },
                         {
-                          "type": [
-                            "object",
-                            "null"
-                          ]
+                          "type": "null"
                         }
                       ]
                     },

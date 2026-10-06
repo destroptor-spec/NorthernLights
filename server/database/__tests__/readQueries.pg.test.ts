@@ -111,6 +111,23 @@ describeDb('database read queries', () => {
     }
   });
 
+  it.each([true, false])('Infinity reads stored vectors by version and never repeats excluded tracks (embedding=%s)', async withEmbedding => {
+    const ids = [0, 1, 2].map(index => `${TRACK_ID}${index}`);
+    const features = { bpm: 120, acoustic_vector: [0.7, 0.1, 0.1, 0.5, 0.1, 0.1, 0.1, 0.6], embedding_vector: withEmbedding ? [1, ...Array(1279).fill(0)] : undefined };
+    try {
+      await db.addTrackFeatures(ids[0], { ...features, feature_version: 2 });
+      await db.addTrackFeatures(ids[1], { ...features, feature_version: 1 });
+      await db.addTrackFeatures(ids[2], { ...features, acoustic_vector: [0.71, ...features.acoustic_vector.slice(1)], feature_version: 2 });
+      const { calculateNextInfinityTrack } = await import('../../services/recommendation.service');
+      const next = await calculateNextInfinityTrack([ids[0]], { discoveryLevel: 0 });
+      // The old-version row is closer numerically, but has different semantics.
+      expect(next?.id).toBe(ids[2]);
+      await expect(calculateNextInfinityTrack([ids[0], ids[2]], { artistAmnesiaLimit: 0 }, { excludeTrackIds: [ids[1]] })).resolves.toBeUndefined();
+    } finally {
+      await pool.query('DELETE FROM track_features WHERE track_id = ANY($1::text[])', [ids]);
+    }
+  });
+
   // The outage itself. First page alone would have caught it, but the cursor
   // page is what the ORDER BY cast guarantees, so both are asserted.
   describe('keyset pagination (the 2026-09-02 outage)', () => {

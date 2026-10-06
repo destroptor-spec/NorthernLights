@@ -19,9 +19,9 @@ import { spawn } from 'child_process';
 dns.setDefaultResultOrder('ipv4first');
 import { requireAuth as jwtAuthMiddleware } from './middleware/auth';
 import { createRateLimiter } from './middleware/rateLimit';
-import { initDatabaseConnection, getSessionHistory } from './state';
+import { initDatabaseConnection } from './state';
 import { logScanner } from './services/loggingConfig';
-import { calculateNextInfinityTrack } from './services/recommendation.service';
+import recommendRoutes from './routes/recommend.routes';
 import {
   getConfiguredAllowedOrigins,
   isCorsOriginAllowed,
@@ -447,25 +447,7 @@ app.use('/api', concertsRoutes);
 app.use('/api/filter', filterRoutes);
 
 // Recommend (Infinity Mode next track)
-app.post('/api/recommend', async (req, res) => {
-  try {
-    const userId = req.user?.userId;
-    const { sessionHistoryTrackIds: clientHistory, settings } = req.body;
-
-    const history = userId
-      ? getSessionHistory(userId)
-      : (clientHistory || []);
-
-    const nextTrack = await calculateNextInfinityTrack(
-      history,
-      settings || {}
-    );
-    res.json({ track: nextTrack });
-  } catch (error) {
-    console.error('Infinity recommendation error:', error);
-    res.status(500).json({ error: 'Failed to compute next track' });
-  }
-});
+app.use('/api', recommendRoutes);
 
 // Health check
 app.get('/api/health', async (req, res) => {

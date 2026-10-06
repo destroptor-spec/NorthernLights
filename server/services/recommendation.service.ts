@@ -2074,30 +2074,43 @@ export async function calculateNextInfinityTrack(
   settings: any = {},
   options: { excludeTrackIds?: string[] } = {}
 ) {
-  const excludeTrackIds = Array.isArray(options.excludeTrackIds) ? options.excludeTrackIds : [];
+  const excludeTrackIds = Array.from(new Set([
+    ...(Array.isArray(options.excludeTrackIds) ? options.excludeTrackIds : []),
+    ...sessionHistoryTrackIds.slice(-2),
+  ]));
   const constraints = await getDynamicConstraints();
   
   // 1. Fetch vectors for the last 10 tracks to compute the Weighted Decay Centroid
   let targetVector = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]; // safe fallback
   let recentVectors: number[][] = [];
+  let seedFeatureVersion: number | null = null;
+  const orderedEffnet: number[][] = [];
   
   if (sessionHistoryTrackIds.length > 0) {
     const last10Ids = sessionHistoryTrackIds.slice(-10);
     // Maintain strict order
     const placeholders = last10Ids.map((_, i) => `$${i + 1}`).join(',');
     const vecRes = await queryWithRetry(`
-      SELECT t.id, tf.acoustic_vector_8d
+      SELECT t.id, tf.acoustic_vector_8d, tf.embedding_vector, tf.feature_version
       FROM tracks t JOIN track_features tf ON t.id = tf.track_id
       WHERE t.id IN (${placeholders}) AND tf.acoustic_vector_8d IS NOT NULL
         AND tf.is_simulated = FALSE
     `, last10Ids);
 
-    // Map rows back to the ordered last10 array
+    // Version 1 used saturated energy and the "happy" tag where version 2
+    // stores RMS energy and the "dance" tag. Never average or compare those
+    // incompatible acoustic coordinates while a library is being reanalyzed.
+    const orderedRows = last10Ids.map(id => vecRes.rows.find(row => row.id === id));
+    const newestSeed = orderedRows.filter(row => parseNumericVector(row?.acoustic_vector_8d, 8)).at(-1);
+    seedFeatureVersion = newestSeed?.feature_version ?? null;
     for (const id of last10Ids) {
       const row = vecRes.rows.find((r: any) => r.id === id) as any;
+      if (row?.feature_version !== seedFeatureVersion) continue;
       const acousticVector = parseNumericVector(row?.acoustic_vector_8d, 8);
       if (acousticVector) {
         recentVectors.push(acousticVector);
+        const embeddingVector = parseNumericVector(row.embedding_vector, 1280);
+        if (embeddingVector?.some(value => value !== 0)) orderedEffnet.push(embeddingVector);
       }
     }
 
@@ -2158,34 +2171,16 @@ export async function calculateNextInfinityTrack(
 
   // Compute EffNet embedding centroid (weighted decay, same lambda) for the last-10 window
   let effnetVectorStr: string | null = null;
-  if (sessionHistoryTrackIds.length > 0) {
-    const last10Ids = sessionHistoryTrackIds.slice(-10);
-    const placeholders2 = last10Ids.map((_, i) => `$${i + 1}`).join(',');
-    const effnetRes = await queryWithRetry(`
-      SELECT t.id, tf.embedding_vector
-      FROM tracks t JOIN track_features tf ON t.id = tf.track_id
-      WHERE t.id IN (${placeholders2}) AND tf.embedding_vector IS NOT NULL
-        AND tf.is_simulated = FALSE
-    `, last10Ids);
-    if (effnetRes.rows.length > 0) {
-      const lambda = 0.8;
-      const effnetTarget = new Array(1280).fill(0);
-      let effnetWeightSum = 0;
-      const orderedEffnet: number[][] = [];
-      for (const id of last10Ids) {
-        const row = effnetRes.rows.find((r: any) => r.id === id) as any;
-        const embeddingVector = parseNumericVector(row?.embedding_vector, 1280);
-        if (embeddingVector) orderedEffnet.push(embeddingVector);
-      }
-      if (orderedEffnet.length > 0) {
-        for (let i = 0; i < orderedEffnet.length; i++) {
-          const weight = Math.pow(lambda, orderedEffnet.length - 1 - i);
-          effnetWeightSum += weight;
-          for (let j = 0; j < 1280; j++) effnetTarget[j] += orderedEffnet[i][j] * weight;
-        }
-        effnetVectorStr = `[${effnetTarget.map(v => v / effnetWeightSum).join(',')}]`;
-      }
+  if (orderedEffnet.length > 0) {
+    const lambda = 0.8;
+    const effnetTarget = new Array(1280).fill(0);
+    let effnetWeightSum = 0;
+    for (let i = 0; i < orderedEffnet.length; i++) {
+      const weight = Math.pow(lambda, orderedEffnet.length - 1 - i);
+      effnetWeightSum += weight;
+      for (let j = 0; j < 1280; j++) effnetTarget[j] += orderedEffnet[i][j] * weight;
     }
+    effnetVectorStr = `[${effnetTarget.map(v => v / effnetWeightSum).join(',')}]`;
   }
 
   // Apply Frontend Settings for Engine Tuning
@@ -2238,9 +2233,10 @@ export async function calculateNextInfinityTrack(
         WHERE tf.acoustic_vector_8d IS NOT NULL AND tf.embedding_vector IS NOT NULL
         AND tf.is_simulated = FALSE${christmasExclusionSql('t')}
         ${renumberedHistory}
+        AND ($${penaltyIds.length + 4}::integer IS NULL OR tf.feature_version = $${penaltyIds.length + 4})
         ORDER BY distance ASC
         LIMIT $${penaltyIds.length + 3}
-      `, [vectorStr, effnetVectorStr, ...penaltyIds, overFetchLimit]);
+      `, [vectorStr, effnetVectorStr, ...penaltyIds, overFetchLimit, seedFeatureVersion]);
     } else {
       res = await queryWithRetry(`
         SELECT t.*, COALESCE(g.name, t.genre) AS genre,
@@ -2250,14 +2246,15 @@ export async function calculateNextInfinityTrack(
         LEFT JOIN genres g ON g.id = t.genre_id
         WHERE tf.acoustic_vector_8d IS NOT NULL AND tf.is_simulated = FALSE${christmasExclusionSql('t')}
         ${historyClause ? `AND ${historyClause.replace(/^WHERE /, '')}` : ''}
+        AND ($${penaltyIds.length + 3}::integer IS NULL OR tf.feature_version = $${penaltyIds.length + 3})
         ORDER BY distance ASC
         LIMIT $${penaltyIds.length + 2}
-      `, [vectorStr, ...penaltyIds, overFetchLimit]);
+      `, [vectorStr, ...penaltyIds, overFetchLimit, seedFeatureVersion]);
     }
 
     if (res.rows.length > 0) {
       // Step 4.2: Apply Hop Cost
-      const scored = res.rows.map((row: any) => {
+      const scored = res.rows.filter(row => Number.isFinite(row.distance)).map((row: any) => {
         const hopCost = genreMatrixService.getHopCost(currentGenre, row.genre || '');
         const finalScore = row.distance * Math.pow(1 + hopCost, genreWeight / 3.0);
         return { ...row, hopCost, originalDistance: row.distance, finalScore };
@@ -2297,18 +2294,24 @@ export async function calculateNextInfinityTrack(
     penaltySize = Math.max(0, Math.floor(penaltySize / 2));
   }
 
-  // Handle absolute pool exhaustion gracefully. Prefer genuinely analyzed
-  // tracks — simulated-fallback features are barred from Infinity unless the
-  // library holds nothing else.
+  // Exhaustion can relax similarity, never queue/recent-song exclusions.
+  // Scan fallback candidates in bounded pages so duplicate editions cannot
+  // hide a usable track, without loading the entire library into memory.
   if (finalCandidates.length === 0) {
-      const randomFallback = await queryWithRetry(`
+    const fallbackShuffleSeed = Math.random().toString();
+    for (let offset = 0; ; offset += 100) {
+      const fallback = await queryWithRetry(`
         SELECT t.* FROM tracks t
         LEFT JOIN track_features tf ON tf.track_id = t.id
-        WHERE TRUE${christmasExclusionSql('t')}
-        ORDER BY (tf.track_id IS NOT NULL AND tf.is_simulated = FALSE) DESC, RANDOM()
-        LIMIT 1
-      `);
-      return randomFallback.rows[0];
+        WHERE NOT (t.id = ANY($1::text[]))${christmasExclusionSql('t')}
+        ORDER BY (tf.acoustic_vector_8d IS NOT NULL AND tf.is_simulated = FALSE) DESC,
+                 md5(t.id || $2), t.id
+        LIMIT 100 OFFSET $3
+      `, [dedupeHistoryIds, fallbackShuffleSeed, offset]);
+      const next = fallback.rows.find(candidate => !historyMetadata.some(previous => isSameSong(previous, candidate)));
+      if (next) return next;
+      if (fallback.rows.length < 100) return undefined;
+    }
   }
 
   // Wander Factor: Pick a track from the final candidates using a weighted randomizer

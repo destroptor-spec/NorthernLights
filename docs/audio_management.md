@@ -236,6 +236,8 @@ Version 2 corrects the dance tag and energy mapping and uses a single decode plu
 
 The extractor uses fixed per-feature mappings and L2-normalized embeddings. It does not use library-wide z-score statistics; the unused batch statistics query and worker payload have been removed.
 
+Infinity reads acoustic and embedding seed vectors together and restricts similarity comparisons to the newest valid seed's feature version. This prevents mixing version 1's saturated energy/happy-tag values with version 2's RMS energy/dance-tag values during reanalysis. If that version has no eligible neighbors, the fallback can choose another unplayed track without comparing incompatible coordinates; queued/recent tracks and their duplicate editions remain excluded.
+
 ### Scanner verification
 
 ```bash
