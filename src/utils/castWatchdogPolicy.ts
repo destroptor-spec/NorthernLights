@@ -139,3 +139,60 @@ export function chooseTransportAction(intent: TransportIntent, state: TransportS
   }
   return state === 'playing' ? 'satisfied' : 'play';
 }
+
+/**
+ * How far the sender may carry the position on its own before giving up.
+ *
+ * Receiver updates arrive every 5s, so a cap of 12s tolerates two missed ones
+ * and then stops. Without it, a session that stops reporting entirely would
+ * run the progress bar to the end of the track while the room is silent —
+ * confidently wrong, which is worse than visibly stuck.
+ */
+export const POSITION_EXTRAPOLATION_CAP_MS = 12_000;
+
+/** How often the sender redraws an interpolated position. */
+export const POSITION_TICK_MS = 500;
+
+/**
+ * Advance a known-good position by wall-clock between receiver updates.
+ *
+ * While the RemotePlayer stream is alive it emits CURRENT_TIME_CHANGED about
+ * once a second and the progress bar moves on its own. Once it dies, #66 made
+ * the position correct but left it arriving only with the 5s watchdog
+ * hydration and the 5s aurora-status broadcast. Prod 2026-10-06 measured the
+ * result precisely: 40 consecutive updates, each +4.98s to +5.01s over a
+ * matching wall-clock gap, no backward steps. Correct at every sample and a
+ * visible staircase in between.
+ *
+ * This fills the gaps by arithmetic on the receiver's own value. The dead
+ * RemotePlayer is never consulted — an anchor is only ever set from a trusted
+ * update, and interpolating must not re-anchor, or the error compounds.
+ *
+ * Only advances while the receiver says it is playing, so a pause from the TV
+ * remote over-runs by at most one 5s cycle before the next real value snaps it
+ * back.
+ */
+export function interpolatePosition(input: {
+  anchorPosition: number;
+  anchorAtMs: number;
+  nowMs: number;
+  playing: boolean;
+  duration?: number | null;
+  maxExtrapolationMs?: number;
+}): number {
+  const anchor = input.anchorPosition;
+  if (typeof anchor !== 'number' || !isFinite(anchor) || anchor < 0) return 0;
+  if (!input.playing) return anchor;
+
+  const elapsed = input.nowMs - input.anchorAtMs;
+  if (!isFinite(elapsed) || elapsed <= 0) return anchor;
+
+  const cap = input.maxExtrapolationMs ?? POSITION_EXTRAPOLATION_CAP_MS;
+  const advanced = anchor + Math.min(elapsed, cap) / 1000;
+
+  const duration = input.duration;
+  if (typeof duration === 'number' && isFinite(duration) && duration > 0) {
+    return Math.min(advanced, duration);
+  }
+  return advanced;
+}

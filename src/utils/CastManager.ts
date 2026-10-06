@@ -1,8 +1,10 @@
 import { playbackManager } from './PlaybackManager';
 import { usePlayerStore } from '../store';
 import {
+    POSITION_TICK_MS,
     REMOTE_PLAYER_STALE_MS,
     chooseTransportAction,
+    interpolatePosition,
     isRemotePlayerStreamStale,
     pickRemotePosition,
     shouldReleaseRemoteMedia,
@@ -137,6 +139,11 @@ export class CastManager {
     // events for 29 minutes). CURRENT_TIME_CHANGED fires every second during
     // healthy playback, so a silent-while-playing stream is detectably dead.
     private statusWatchdogTimer: ReturnType<typeof setInterval> | null = null;
+    // Carries the progress bar between receiver updates once the RemotePlayer
+    // event stream dies; see runPositionTick().
+    private positionTickTimer: ReturnType<typeof setInterval> | null = null;
+    private positionAnchor: { position: number; atMs: number } | null = null;
+    private lastKnownDuration = 0;
     private lastRemotePlayerEventAt = 0;
     private lastCastStateChangeAt = 0;
     private lastWatchdogRecoveryLogAt = 0;
@@ -286,6 +293,64 @@ export class CastManager {
         this.statusWatchdogTimer = setInterval(() => {
             void this.runStatusWatchdogTick();
         }, 5000);
+        if (this.positionTickTimer === null) {
+            this.positionTickTimer = setInterval(() => this.runPositionTick(), POSITION_TICK_MS);
+        }
+    }
+
+    /**
+     * Publish a position from a trusted source and anchor the interpolator on
+     * it. Interpolated ticks deliberately do not come through here:
+     * re-anchoring on our own extrapolation would compound its error.
+     */
+    private publishPosition(position: number, atMs: number = Date.now()) {
+        this.positionAnchor = { position, atMs };
+        this.onTimeUpdate?.(position);
+    }
+
+    /**
+     * Drop the anchor when the track changes. Extrapolating the old track's
+     * position into the new one would march the bar forward and then snap it
+     * backwards when the next real value lands — worse than holding still for
+     * the up-to-5s until that value arrives.
+     */
+    private invalidatePositionAnchor() {
+        this.positionAnchor = null;
+        this.lastKnownDuration = 0;
+    }
+
+    private publishDuration(duration: number) {
+        this.lastKnownDuration = duration;
+        this.onDuration?.(duration);
+    }
+
+    /**
+     * Fill the gaps between receiver updates while the RemotePlayer stream is
+     * dead.
+     *
+     * #66 made the position correct in that state but left it arriving only
+     * with the 5s watchdog hydration and the 5s aurora-status broadcast. Prod
+     * 2026-10-06 measured 40 consecutive updates at +4.98s to +5.01s over
+     * matching wall-clock gaps with no backward steps — correct at every
+     * sample, a visible staircase in between.
+     *
+     * A live RemotePlayer already drives this once a second, so this stays out
+     * of its way entirely and the two never fight.
+     */
+    private runPositionTick() {
+        if (!this.isConnected()) return;
+        const anchor = this.positionAnchor;
+        if (!anchor) return;
+        if (!isRemotePlayerStreamStale(this.msSinceRemotePlayerEvent())) return;
+        if (usePlayerStore.getState().playbackState !== 'playing') return;
+
+        this.onTimeUpdate?.(interpolatePosition({
+            anchorPosition: anchor.position,
+            anchorAtMs: anchor.atMs,
+            nowMs: Date.now(),
+            playing: true,
+            duration: this.lastKnownDuration || null,
+        }));
     }
 
     private stopStatusWatchdog() {
@@ -293,6 +358,11 @@ export class CastManager {
             clearInterval(this.statusWatchdogTimer);
             this.statusWatchdogTimer = null;
         }
+        if (this.positionTickTimer !== null) {
+            clearInterval(this.positionTickTimer);
+            this.positionTickTimer = null;
+        }
+        this.positionAnchor = null;
     }
 
     /**
@@ -861,6 +931,7 @@ export class CastManager {
             const index = state.playlist.findIndex((track) => track.queueEntryId === status.queueEntryId);
             if (index >= 0 && index !== state.currentIndex) {
                 this.logCast('ok', 'aurora-status: syncing track index', `from=${state.currentIndex} to=${index} entryId=${status.queueEntryId}`);
+                this.invalidatePositionAnchor();
                 this.onTrackChange?.(index);
             }
         }
@@ -877,10 +948,10 @@ export class CastManager {
         // still apply unconditionally below.
         if (isRemotePlayerStreamStale(now - this.lastRemotePlayerEventAt)) {
             if (typeof status.duration === 'number' && isFinite(status.duration) && status.duration > 0) {
-                this.onDuration?.(status.duration);
+                this.publishDuration(status.duration);
             }
             if (typeof status.currentTime === 'number' && isFinite(status.currentTime) && status.currentTime >= 0) {
-                this.onTimeUpdate?.(status.currentTime);
+                this.publishPosition(status.currentTime);
             }
         }
         if (status.playerState === 'PLAYING') {
@@ -1568,14 +1639,14 @@ export class CastManager {
                 () => {
                     this.lastRemotePlayerEventAt = Date.now();
                     this.lastRemoteEvidenceAt = Date.now();
-                    this.onTimeUpdate?.(this.player.currentTime);
+                    this.publishPosition(this.player.currentTime);
                 }
             );
 
             this.playerController.addEventListener(
                 cast.framework.RemotePlayerEventType.DURATION_CHANGED,
                 () => {
-                    this.onDuration?.(this.player.duration);
+                    this.publishDuration(this.player.duration);
                 }
             );
 
@@ -2057,8 +2128,8 @@ export class CastManager {
         // reports that directly — 'none' means neither side offered a value
         // worth publishing, so the previous one stands.
         if (trackSynced && choice.source !== 'none') {
-            if (choice.duration !== null) this.onDuration?.(choice.duration);
-            if (choice.currentTime !== null) this.onTimeUpdate?.(choice.currentTime);
+            if (choice.duration !== null) this.publishDuration(choice.duration);
+            if (choice.currentTime !== null) this.publishPosition(choice.currentTime);
         }
 
         const playerState = mediaSession.playerState || this.player?.playerState;
@@ -2146,6 +2217,7 @@ export class CastManager {
         if (sessionIndex !== null) {
             if (sessionIndex !== state.currentIndex) {
                 this.logCast('ok', 'Syncing sender track index from Cast session', `from=${state.currentIndex} to=${sessionIndex}`);
+                this.invalidatePositionAnchor();
                 this.onTrackChange?.(sessionIndex);
             }
             return true;
