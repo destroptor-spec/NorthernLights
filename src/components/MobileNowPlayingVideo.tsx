@@ -35,6 +35,9 @@ function MobileNowPlayingVideo({ videoId, onPhaseChange }: Props) {
 
     let cancelled = false;
     let revealed = false;
+    let ready = false;
+    let failed = false;
+    let autoplayBlocked = false;
     let player: YTPlayer | null = null;
     let driftTimer: number | undefined;
     let revealTimer: number | undefined;
@@ -52,8 +55,19 @@ function MobileNowPlayingVideo({ videoId, onPhaseChange }: Props) {
       if (!cancelled) onPhaseChangeRef.current(phase);
     };
 
+    const retryAutoplay = () => {
+      if (cancelled || failed || !ready || !autoplayBlocked || !player) return;
+      if (usePlayerStore.getState().playbackState !== 'playing') return;
+      autoplayBlocked = false;
+      player.mute();
+      player.playVideo();
+    };
+    // Retry inside a user gesture if the phone denied scripted playback.
+    const surface = host.closest('.mobile-now-playing-shell') ?? host;
+    surface.addEventListener('pointerup', retryAutoplay);
+
     const reveal = () => {
-      if (revealed || cancelled) return;
+      if (revealed || cancelled || failed) return;
       revealed = true;
       if (revealTimer) window.clearInterval(revealTimer);
       // Correct the buffering-induced lag: the audio kept advancing while the
@@ -91,6 +105,7 @@ function MobileNowPlayingVideo({ videoId, onPhaseChange }: Props) {
           events: {
             onReady: (e) => {
               if (cancelled) return;
+              ready = true;
               const p = e.target;
               p.mute(); // belt-and-braces: never play audio
               const audioTime = usePlaybackTimeStore.getState().currentTime || 0;
@@ -99,17 +114,28 @@ function MobileNowPlayingVideo({ videoId, onPhaseChange }: Props) {
               if (usePlayerStore.getState().playbackState === 'playing') p.playVideo();
             },
             onStateChange: (e) => {
-              if (cancelled) return;
+              if (cancelled || failed) return;
               if (e.data === YT.PlayerState.PLAYING) {
                 // Playing => buffered enough to render. Reveal with a cross-fade.
                 reveal();
               } else if (e.data === YT.PlayerState.ENDED) {
                 // Video finished before the track did → fade back to cover art.
                 setPhase('ended');
+                revealed = false;
               }
             },
             // Non-embeddable / age-restricted / removed video → silent cover fallback.
-            onError: () => setPhase('none'),
+            onError: () => {
+              failed = true;
+              setPhase('none');
+              window.clearInterval(revealTimer);
+              window.clearInterval(driftTimer);
+            },
+            onAutoplayBlocked: () => {
+              autoplayBlocked = true;
+              revealed = false;
+              setPhase('none');
+            },
           },
         });
 
@@ -118,7 +144,7 @@ function MobileNowPlayingVideo({ videoId, onPhaseChange }: Props) {
         unsubPlayback = usePlayerStore.subscribe((state) => {
           if (state.playbackState === lastPlayback) return;
           lastPlayback = state.playbackState;
-          if (!player) return;
+          if (!player || !ready || failed) return;
           if (state.playbackState === 'playing') player.playVideo();
           else player.pauseVideo();
         });
@@ -126,13 +152,13 @@ function MobileNowPlayingVideo({ videoId, onPhaseChange }: Props) {
         // Safety-net reveal: poll for the player actually playing, in case the
         // onStateChange PLAYING event is missed.
         revealTimer = window.setInterval(() => {
-          if (revealed || !player) return;
+          if (revealed || !player || !ready || failed || autoplayBlocked) return;
           if (player.getPlayerState?.() === YT.PlayerState.PLAYING) reveal();
         }, REVEAL_POLL_INTERVAL_MS);
 
         // Coarse drift correction once the video is showing.
         driftTimer = window.setInterval(() => {
-          if (!player || !revealed) return;
+          if (!player || !ready || !revealed || failed) return;
           if (usePlayerStore.getState().playbackState !== 'playing') return;
           const audioTime = usePlaybackTimeStore.getState().currentTime || 0;
           const videoTime = player.getCurrentTime?.() ?? 0;
@@ -148,12 +174,14 @@ function MobileNowPlayingVideo({ videoId, onPhaseChange }: Props) {
       if (driftTimer) window.clearInterval(driftTimer);
       if (revealTimer) window.clearInterval(revealTimer);
       unsubPlayback?.();
+      surface.removeEventListener('pointerup', retryAutoplay);
       try {
         player?.destroy();
       } catch {
         /* player may already be torn down */
       }
       player = null;
+      target.remove();
     };
   }, [videoId]);
 

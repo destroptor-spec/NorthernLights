@@ -8,6 +8,8 @@ import {
   getArtistVideosCache,
   replaceArtistVideos,
   getMusicVideosForArtist,
+  getMusicVideoByTrackId,
+  getTrackById,
   isCompilationArtistName,
   type MusicVideoRow,
 } from '../database';
@@ -382,7 +384,19 @@ export async function refreshArtistVideos(artistId: string): Promise<{ count: nu
 
 // Fetch only if the cache is stale (or missing). Videos rarely change, so the
 // default TTL is generous.
-export async function refreshArtistVideosIfStale(artistId: string, ttlDays?: number): Promise<{ refreshed: boolean; reason: string }> {
+const artistRefreshes = new Map<string, Promise<{ refreshed: boolean; reason: string }>>();
+
+export function refreshArtistVideosIfStale(artistId: string, ttlDays?: number): Promise<{ refreshed: boolean; reason: string }> {
+  const pending = artistRefreshes.get(artistId);
+  if (pending) return pending;
+  const refresh = refreshArtistVideosIfStaleOnce(artistId, ttlDays).finally(() => {
+    artistRefreshes.delete(artistId);
+  });
+  artistRefreshes.set(artistId, refresh);
+  return refresh;
+}
+
+async function refreshArtistVideosIfStaleOnce(artistId: string, ttlDays?: number): Promise<{ refreshed: boolean; reason: string }> {
   const ttl = typeof ttlDays === 'number' && ttlDays > 0
     ? ttlDays
     : (await getSystemSetting('youtubeCacheTtlDays')) as number | null ?? 14;
@@ -398,6 +412,24 @@ export async function refreshArtistVideosIfStale(artistId: string, ttlDays?: num
     return { refreshed: true, reason: 'stale' };
   }
   return { refreshed: false, reason: 'fresh' };
+}
+
+// Now Playing must be able to populate matches without an artist-page visit.
+// Existing matches are free; misses reuse the same bounded channel lookup,
+// cache freshness and daily budget as the artist rail.
+export async function getMusicVideoForTrack(trackId: string) {
+  if (!(await isYouTubeEnabled())) return null;
+  const cached = await getMusicVideoByTrackId(trackId);
+  if (cached) return cached;
+  const track = await getTrackById(trackId);
+  if (!track?.artistId) return null;
+  try {
+    await refreshArtistVideosIfStale(track.artistId);
+  } catch {
+    // Provider errors or exhausted quota must not interrupt music playback.
+    return null;
+  }
+  return getMusicVideoByTrackId(trackId);
 }
 
 export async function testYouTubeConnection(): Promise<{ ok: boolean; error?: string; sample?: string }> {

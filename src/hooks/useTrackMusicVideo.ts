@@ -3,14 +3,10 @@ import { usePlayerStore } from '../store/index';
 import type { TrackInfo } from '../utils/fileSystem';
 
 // Resolves the YouTube video id matched to the current track, for the mobile
-// now-playing background. The lookup is quota-free (a cached DB read on the
-// server). Gated on the user setting, YouTube being enabled, and not casting —
+// now-playing background. The server reuses cached matches and refreshes the
+// artist's matches when needed, within its TTL and quota limits.
+// Gated on the user setting, YouTube being enabled, and not casting —
 // when those don't hold we never fetch and report no video.
-//
-// Results are memoised per track id (including "no match", stored as null) so
-// reopening the now-playing view or revisiting a track doesn't refetch.
-
-const videoIdCache = new Map<string, string | null>();
 
 export function useTrackMusicVideo(track: TrackInfo | null): { videoId: string | null } {
   const youtubeEnabled = usePlayerStore((s) => s.youtubeEnabled);
@@ -21,18 +17,13 @@ export function useTrackMusicVideo(track: TrackInfo | null): { videoId: string |
   const trackId = track?.id ?? null;
   const enabled = youtubeEnabled && mobileVideoBackgrounds && !castConnected && !!trackId;
 
-  const [videoId, setVideoId] = useState<string | null>(
-    trackId && videoIdCache.has(trackId) ? videoIdCache.get(trackId)! : null,
-  );
+  // Keep the result tied to its track. Never render the previous track's video
+  // while a new lookup is pending, or retain a missing match across visits.
+  const [match, setMatch] = useState<{ trackId: string; videoId: string | null } | null>(null);
 
   useEffect(() => {
     if (!enabled || !trackId) {
-      setVideoId(null);
-      return;
-    }
-
-    if (videoIdCache.has(trackId)) {
-      setVideoId(videoIdCache.get(trackId)!);
+      setMatch(null);
       return;
     }
 
@@ -48,12 +39,11 @@ export function useTrackMusicVideo(track: TrackInfo | null): { videoId: string |
         if (!res.ok) throw new Error(`track-video ${res.status}`);
         const data = await res.json();
         const id: string | null = data?.video?.video_id || null;
-        videoIdCache.set(trackId, id);
-        if (!cancelled) setVideoId(id);
+        if (!cancelled) setMatch({ trackId, videoId: id });
       } catch (err) {
         if (cancelled || (err as Error)?.name === 'AbortError') return;
         // Treat lookup failures as "no video" — the cover background is the fallback.
-        if (!cancelled) setVideoId(null);
+        setMatch(null);
       }
     })();
 
@@ -63,5 +53,5 @@ export function useTrackMusicVideo(track: TrackInfo | null): { videoId: string |
     };
   }, [enabled, trackId, getAuthHeader]);
 
-  return { videoId: enabled ? videoId : null };
+  return { videoId: enabled && match?.trackId === trackId ? match.videoId : null };
 }
