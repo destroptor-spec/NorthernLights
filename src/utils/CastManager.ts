@@ -1,6 +1,12 @@
 import { playbackManager } from './PlaybackManager';
 import { usePlayerStore } from '../store';
-import { shouldReleaseRemoteMedia } from './castWatchdogPolicy';
+import {
+    REMOTE_PLAYER_STALE_MS,
+    chooseTransportAction,
+    isRemotePlayerStreamStale,
+    pickRemotePosition,
+    shouldReleaseRemoteMedia,
+} from './castWatchdogPolicy';
 import { applyCastStreamingQualityToHlsUrl, applyStreamingQualityToHlsUrl } from './streaming';
 import { createQueueEntryId, ensureQueueEntryIds } from './queue';
 import type { TrackInfo } from './fileSystem';
@@ -869,7 +875,7 @@ export class CastManager {
         //
         // Track identity and play state are discrete and authoritative, so they
         // still apply unconditionally below.
-        if (now - this.lastRemotePlayerEventAt > 3000) {
+        if (isRemotePlayerStreamStale(now - this.lastRemotePlayerEventAt)) {
             if (typeof status.duration === 'number' && isFinite(status.duration) && status.duration > 0) {
                 this.onDuration?.(status.duration);
             }
@@ -936,6 +942,95 @@ export class CastManager {
 
     private getHydratableMediaSession(mediaSession: any | null = this.getMediaSession()): any | null {
         return mediaSession || this.getRemotePlayerMediaSession();
+    }
+
+    private msSinceRemotePlayerEvent(): number {
+        return Date.now() - this.lastRemotePlayerEventAt;
+    }
+
+    /**
+     * BUFFERING counts as playing here: a receiver mid-buffer is on its way to
+     * audible, so a pause has real work to do. mapCastPlayerState() folds it
+     * into 'stopped', which is right for UI labelling and wrong for transport.
+     */
+    private normalizeTransportState(playerState: unknown): 'playing' | 'paused' | 'stopped' {
+        if (playerState === chrome.cast.media.PlayerState.PAUSED) return 'paused';
+        if (playerState === chrome.cast.media.PlayerState.PLAYING
+            || playerState === chrome.cast.media.PlayerState.BUFFERING) return 'playing';
+        return 'stopped';
+    }
+
+    /**
+     * Route a transport command through the media session rather than the
+     * RemotePlayer controller.
+     *
+     * RemotePlayerController acts on the local RemotePlayer, so once that event
+     * stream dies its commands go nowhere — silently, without throwing. Prod
+     * 2026-09-02 21:56: play/pause did nothing for minutes while the watchdog
+     * pulled media status successfully every 5s, and the receiver logged no
+     * PAUSE at all. The live media session sitting right next to the dead
+     * player is the thing that still works.
+     *
+     * Returns false when the caller should fall back to the controller, which
+     * stays the path for a healthy stream: it is the SDK's own, and it keeps
+     * RemotePlayer's local state coherent.
+     */
+    private tryTransportViaMediaSession(label: string, intent: 'play' | 'pause' | 'toggle'): boolean {
+        if (!isRemotePlayerStreamStale(this.msSinceRemotePlayerEvent())) return false;
+
+        const mediaSession = this.getMediaSession();
+        if (!mediaSession || typeof mediaSession.play !== 'function' || typeof mediaSession.pause !== 'function') {
+            this.logCast(
+                'warn',
+                `Cast ${label} cannot reach the receiver`,
+                `playerSilentMs=${this.msSinceRemotePlayerEvent()} staleAfterMs=${REMOTE_PLAYER_STALE_MS} mediaSession=${mediaSession ? 'present' : 'none'}`,
+            );
+            return false;
+        }
+
+        const playerState = mediaSession.playerState;
+        const action = chooseTransportAction(intent, this.normalizeTransportState(playerState));
+        if (action === 'satisfied') {
+            this.logCast('ok', `Cast ${label} already satisfied`, `playerState=${playerState || 'unknown'}`);
+            return true;
+        }
+
+        try {
+            const request = action === 'pause'
+                ? (chrome.cast?.media?.PauseRequest ? new chrome.cast.media.PauseRequest() : null)
+                : (chrome.cast?.media?.PlayRequest ? new chrome.cast.media.PlayRequest() : null);
+            mediaSession[action](
+                request,
+                () => this.logCast('ok', `Cast ${label} via media session`, `action=${action}`),
+                (error: unknown) => this.handleControlError(`${label} via media session`, error),
+            );
+            return true;
+        } catch (error) {
+            this.handleControlError(`${label} via media session`, error);
+            return false;
+        }
+    }
+
+    private trySeekViaMediaSession(time: number): boolean {
+        if (!isRemotePlayerStreamStale(this.msSinceRemotePlayerEvent())) return false;
+
+        const mediaSession = this.getMediaSession();
+        if (!mediaSession || typeof mediaSession.seek !== 'function') return false;
+        const request = chrome.cast?.media?.SeekRequest ? new chrome.cast.media.SeekRequest() : null;
+        if (!request) return false;
+
+        try {
+            request.currentTime = time;
+            mediaSession.seek(
+                request,
+                () => this.logCast('ok', 'Cast seek via media session', `time=${time.toFixed(1)}`),
+                (error: unknown) => this.handleControlError('seek via media session', error),
+            );
+            return true;
+        } catch (error) {
+            this.handleControlError('seek via media session', error);
+            return false;
+        }
     }
 
     private schedulePreservedSessionRejoin(sessionId: string, reason: string) {
@@ -1878,8 +1973,8 @@ export class CastManager {
         sessionIndex: number | null = this.resolveTrackIndexFromSession(mediaSession, playlist)
     ): {
         track: Partial<TrackInfo> & { title?: string; artist?: string; album?: string; artUrl?: string; duration?: number };
-        position: number;
-        duration: number;
+        position: number | null;
+        duration: number | null;
         playbackState: 'playing' | 'paused' | 'stopped';
     } | null {
         if (!mediaSession) return null;
@@ -1887,14 +1982,14 @@ export class CastManager {
         const media = mediaSession.media || {};
         const metadata = media.metadata || {};
         const storeTrack = sessionIndex !== null ? playlist[sessionIndex] : null;
-        const duration =
-            (typeof this.player?.duration === 'number' && isFinite(this.player.duration) && this.player.duration > 0
-                ? this.player.duration
-                : metadata.duration || storeTrack?.duration || 0) || 0;
-        const position =
-            (typeof this.player?.currentTime === 'number' && isFinite(this.player.currentTime) && this.player.currentTime >= 0
-                ? this.player.currentTime
-                : mediaSession.currentTime || 0) || 0;
+        const choice = pickRemotePosition({
+            playerTime: this.player?.currentTime,
+            playerDuration: this.player?.duration,
+            sessionTime: mediaSession.currentTime,
+            sessionDuration: media.duration,
+            fallbackDuration: metadata.duration || storeTrack?.duration,
+            msSinceRemotePlayerEvent: this.msSinceRemotePlayerEvent(),
+        });
         const playerState = mediaSession.playerState || this.player?.playerState;
 
         return {
@@ -1904,10 +1999,10 @@ export class CastManager {
                 artist: storeTrack?.artist || metadata.artist || 'Unknown Artist',
                 album: storeTrack?.album || metadata.albumName || '',
                 artUrl: storeTrack?.artUrl || this.getImageUrlFromMediaSession(mediaSession),
-                duration,
+                duration: choice.duration ?? storeTrack?.duration,
             },
-            position,
-            duration,
+            position: choice.currentTime,
+            duration: choice.duration,
             playbackState: this.mapCastPlayerState(playerState),
         };
     }
@@ -1920,9 +2015,11 @@ export class CastManager {
         if (!snapshot) return;
         playbackManager.syncMediaSessionFromTrack(snapshot.track, {
             playbackState: snapshot.playbackState,
-            position: snapshot.position,
-            duration: snapshot.duration,
-            forcePosition: true,
+            position: snapshot.position ?? undefined,
+            duration: snapshot.duration ?? undefined,
+            // Forcing a position we do not trust would push the frozen value
+            // onto the lock screen as well as the in-app bar.
+            forcePosition: snapshot.position !== null,
         });
     }
 
@@ -1943,18 +2040,25 @@ export class CastManager {
         } catch { /* ignore */ }
 
         const trackSynced = this.syncCurrentTrackFromSession(mediaSession);
-        const duration =
-            (typeof this.player?.duration === 'number' && isFinite(this.player.duration) && this.player.duration > 0
-                ? this.player.duration
-                : mediaSession.media?.metadata?.duration) || 0;
-        const currentTime =
-            (typeof this.player?.currentTime === 'number' && isFinite(this.player.currentTime) && this.player.currentTime >= 0
-                ? this.player.currentTime
-                : mediaSession.currentTime) || 0;
+        const choice = pickRemotePosition({
+            playerTime: this.player?.currentTime,
+            playerDuration: this.player?.duration,
+            sessionTime: mediaSession.currentTime,
+            sessionDuration: mediaSession.media?.duration,
+            fallbackDuration: mediaSession.media?.metadata?.duration,
+            msSinceRemotePlayerEvent: this.msSinceRemotePlayerEvent(),
+        });
 
-        if (trackSynced && this.doesSessionTrackMatchStore()) {
-            this.onDuration?.(duration);
-            this.onTimeUpdate?.(currentTime);
+        // The guard here used to be doesSessionTrackMatchStore(), which cannot
+        // fail in this position: syncCurrentTrackFromSession has just written
+        // the store's index from this same session, so re-deriving it and
+        // comparing always agrees. What the guard was reaching for is that the
+        // position belongs to the track we synced to, and pickRemotePosition
+        // reports that directly — 'none' means neither side offered a value
+        // worth publishing, so the previous one stands.
+        if (trackSynced && choice.source !== 'none') {
+            if (choice.duration !== null) this.onDuration?.(choice.duration);
+            if (choice.currentTime !== null) this.onTimeUpdate?.(choice.currentTime);
         }
 
         const playerState = mediaSession.playerState || this.player?.playerState;
@@ -1967,7 +2071,12 @@ export class CastManager {
         this.syncBrowserMediaSessionFromCast(mediaSession);
 
         console.log(`[Cast] Hydrated sender from remote session (${reason})`);
-        this.logCast('ok', `Hydrated sender from remote session: ${reason}`, `trackSynced=${trackSynced} playerState=${playerState || 'unknown'} time=${currentTime} duration=${duration}`);
+        this.logCast(
+            'ok',
+            `Hydrated sender from remote session: ${reason}`,
+            `trackSynced=${trackSynced} playerState=${playerState || 'unknown'} time=${choice.currentTime ?? 'none'} `
+            + `duration=${choice.duration ?? 'none'} source=${choice.source} playerSilentMs=${this.msSinceRemotePlayerEvent()}`,
+        );
         return trackSynced;
     }
 
@@ -2660,30 +2769,41 @@ export class CastManager {
     }
 
     public playOrPause() {
+        if (this.tryTransportViaMediaSession('play-or-pause', 'toggle')) return;
         try {
-            if (this.playerController) {
-                this.playerController.playOrPause();
+            if (!this.playerController) {
+                this.logCast('warn', 'Cast play/pause ignored: no RemotePlayer controller');
+                return;
             }
+            this.playerController.playOrPause();
         } catch (error) {
             this.handleControlError('play-or-pause', error);
         }
     }
 
     public pause() {
+        if (this.tryTransportViaMediaSession('pause', 'pause')) return;
         try {
-            if (this.playerController && !this.player.isPaused) {
-                this.playerController.playOrPause();
+            if (!this.playerController) {
+                this.logCast('warn', 'Cast pause ignored: no RemotePlayer controller');
+                return;
             }
+            if (this.player?.isPaused) return;
+            this.playerController.playOrPause();
         } catch (error) {
             this.handleControlError('pause', error);
         }
     }
 
     public resume() {
+        if (this.tryTransportViaMediaSession('resume', 'play')) return;
         try {
-            if (this.playerController && this.player.isPaused) {
-                this.playerController.playOrPause();
+            if (!this.playerController) {
+                this.logCast('warn', 'Cast resume ignored: no RemotePlayer controller');
+                return;
             }
+            if (!this.player?.isPaused) return;
+            this.playerController.playOrPause();
         } catch (error) {
             this.handleControlError('resume', error);
         }
@@ -2700,11 +2820,14 @@ export class CastManager {
     }
 
     public seek(time: number) {
+        if (this.trySeekViaMediaSession(time)) return;
         try {
-            if (this.playerController) {
-                this.player.currentTime = time;
-                this.playerController.seek();
+            if (!this.playerController) {
+                this.logCast('warn', 'Cast seek ignored: no RemotePlayer controller');
+                return;
             }
+            this.player.currentTime = time;
+            this.playerController.seek();
         } catch (error) {
             this.handleControlError('seek', error);
         }
