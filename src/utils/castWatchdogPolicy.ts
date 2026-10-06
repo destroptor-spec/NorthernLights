@@ -302,6 +302,9 @@ export function decideSeek(input: {
 /** Capability a receiver advertises in aurora-status once it accepts aurora.control. */
 export const RECEIVER_CONTROL_CAP = 'control';
 
+/** Capability a receiver advertises once it accepts aurora.queue.insert. */
+export const RECEIVER_QUEUE_INSERT_CAP = 'queue-insert';
+
 /**
  * Whether transport can be sent to the receiver over the aurora namespace.
  *
@@ -315,9 +318,11 @@ export function receiverControlAvailable(input: {
   caps?: unknown;
   statusAgeMs: number;
   freshMs: number;
+  /** Which capability is needed; transport by default. */
+  capability?: string;
 }): boolean {
   if (!(input.statusAgeMs >= 0 && input.statusAgeMs < input.freshMs)) return false;
-  return Array.isArray(input.caps) && input.caps.includes(RECEIVER_CONTROL_CAP);
+  return Array.isArray(input.caps) && input.caps.includes(input.capability ?? RECEIVER_CONTROL_CAP);
 }
 
 /**
@@ -329,4 +334,45 @@ export function transportStateFromPlayerState(playerState: unknown): TransportSt
   if (playerState === 'PAUSED') return 'paused';
   if (playerState === 'PLAYING' || playerState === 'BUFFERING') return 'playing';
   return 'stopped';
+}
+
+/** Custom-namespace messages are capped at 64 KB; stay well clear of it. */
+export const RECEIVER_MESSAGE_MAX_BYTES = 60_000;
+
+/**
+ * Turn a sender-built queue item into what the receiver can hand straight to
+ * QueueManager.insertItems.
+ *
+ * The Stage 0 spike (2026-09-02, on the NAD) proved insertItems accepts a
+ * plain JSON copy of a queue item with its itemId removed: the SDK assigned a
+ * fresh id and placed it where asked. This produces exactly that shape from the
+ * item the sender already builds for queueAppendItem — the same contentId,
+ * codec, token and segment format that path has always sent, so a track added
+ * over the channel plays exactly as one added through the media session would.
+ *
+ * Returns null for anything without a playable contentId: inserting it would
+ * put a dead item in the device queue, which stops playback when reached.
+ */
+export function toReceiverQueueItem(item: unknown): Record<string, unknown> | null {
+  if (!item || typeof item !== 'object') return null;
+  let copy: Record<string, unknown>;
+  try {
+    copy = JSON.parse(JSON.stringify(item));
+  } catch {
+    return null;
+  }
+  const media = copy.media as Record<string, unknown> | undefined;
+  if (!media || typeof media.contentId !== 'string' || media.contentId === '') return null;
+
+  // The SDK assigns itemId; a stale or null one would collide or be rejected.
+  delete copy.itemId;
+  stripNulls(copy);
+  stripNulls(media);
+  return copy;
+}
+
+function stripNulls(record: Record<string, unknown>): void {
+  for (const key of Object.keys(record)) {
+    if (record[key] === null || record[key] === undefined) delete record[key];
+  }
 }
