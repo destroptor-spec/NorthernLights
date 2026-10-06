@@ -56,6 +56,12 @@ export interface RemotePositionSources {
   sessionDuration?: unknown;
   /** Metadata or store duration, used only when nothing better exists. */
   fallbackDuration?: unknown;
+  /**
+   * The "session" was built locally from RemotePlayer because the SDK had no
+   * media session. Its fields are the RemotePlayer's own, so they carry no
+   * information from the receiver and must not be treated as if they did.
+   */
+  sessionIsSynthetic?: boolean;
   msSinceRemotePlayerEvent: number;
   staleAfterMs?: number;
 }
@@ -94,9 +100,15 @@ export function pickRemotePosition(input: RemotePositionSources): RemotePosition
 
   const playerTime = positionValue(input.playerTime);
   const playerDuration = durationValue(input.playerDuration);
-  const sessionTime = positionValue(input.sessionTime);
-  const sessionDuration = durationValue(input.sessionDuration);
-  const fallbackDuration = durationValue(input.fallbackDuration);
+  // Prod 2026-10-06 12:03: with no SDK media session, the watchdog hydrated
+  // from a session synthesised out of the dead RemotePlayer, and #66 read its
+  // frozen currentTime=0 and stale 206.22s duration as receiver data — the
+  // original bug, labelled source=media-session. A synthetic session is the
+  // RemotePlayer, so it is ignored exactly when the RemotePlayer is.
+  const syntheticAndStale = input.sessionIsSynthetic === true && stale;
+  const sessionTime = syntheticAndStale ? null : positionValue(input.sessionTime);
+  const sessionDuration = syntheticAndStale ? null : durationValue(input.sessionDuration);
+  const fallbackDuration = syntheticAndStale ? null : durationValue(input.fallbackDuration);
 
   const duration = stale
     ? sessionDuration ?? fallbackDuration
@@ -285,4 +297,36 @@ export function decideSeek(input: {
     return { action: 'refuse', reason: 'beyond-end', trackDuration };
   }
   return { action: 'seek', time: target };
+}
+
+/** Capability a receiver advertises in aurora-status once it accepts aurora.control. */
+export const RECEIVER_CONTROL_CAP = 'control';
+
+/**
+ * Whether transport can be sent to the receiver over the aurora namespace.
+ *
+ * Requires a recent status that advertises the capability. A receiver cached
+ * from before the channel existed still accepts messages on the namespace —
+ * it is registered — but nothing listens, so a command would vanish exactly
+ * as silently as the failure it replaces. Without the capability the sender
+ * keeps today's behaviour.
+ */
+export function receiverControlAvailable(input: {
+  caps?: unknown;
+  statusAgeMs: number;
+  freshMs: number;
+}): boolean {
+  if (!(input.statusAgeMs >= 0 && input.statusAgeMs < input.freshMs)) return false;
+  return Array.isArray(input.caps) && input.caps.includes(RECEIVER_CONTROL_CAP);
+}
+
+/**
+ * Map a receiver-reported player state onto what a transport decision needs.
+ * BUFFERING counts as playing: a receiver mid-buffer is on its way to audible,
+ * so a pause has real work to do.
+ */
+export function transportStateFromPlayerState(playerState: unknown): TransportState {
+  if (playerState === 'PAUSED') return 'paused';
+  if (playerState === 'PLAYING' || playerState === 'BUFFERING') return 'playing';
+  return 'stopped';
 }
