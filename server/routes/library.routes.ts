@@ -1,4 +1,5 @@
 import { logScanner, logAnalyzer, logLoudness } from '../services/loggingConfig';
+import { decideStaleRemoval, partitionStaleByFailures, walkAudioFiles, type RemovalSkipReason, type WalkedFile } from '../services/libraryWalk';
 import { analysisWorkerCount } from '../services/analysisResources';
 import { Router, Response } from 'express';
 import fs from 'fs';
@@ -331,43 +332,6 @@ router.post('/love', async (req, res) => {
 });
 
 // ─── Phase 1: Recursive directory walk ────────────────────────────────
-interface WalkedFile {
-  buf: Buffer;
-  mtime: number; // epoch ms, floored
-  size: number;  // bytes
-}
-
-async function collectAudioFiles(dirBuf: Buffer, results: WalkedFile[] = []): Promise<WalkedFile[]> {
-  const sep = Buffer.from(path.sep);
-  let entries: Buffer[];
-  try {
-    entries = await fs.promises.readdir(dirBuf, { encoding: 'buffer' });
-  } catch {
-    return results;
-  }
-
-  await Promise.all(entries.map(async (nameBuffer) => {
-    const fullBuf = Buffer.concat([
-      dirBuf,
-      dirBuf[dirBuf.length - 1] === sep[0] ? Buffer.alloc(0) : sep,
-      nameBuffer,
-    ]);
-    let stat: fs.Stats;
-    try {
-      stat = await fs.promises.stat(fullBuf);
-    } catch {
-      return;
-    }
-    if (stat.isDirectory()) {
-      await collectAudioFiles(fullBuf, results);
-    } else if (stat.isFile() && nameBuffer.toString('utf8').match(/\.(mp3|wav|ogg|flac|m4a|aac|wma)$/i)) {
-      results.push({ buf: fullBuf, mtime: Math.floor(stat.mtimeMs), size: stat.size });
-    }
-  }));
-
-  return results;
-}
-
 // ─── Phase 2: Parallel metadata extraction (ID3 tags only, no audio analysis) ─
 async function getScannerConcurrency(): Promise<number> {
   try {
@@ -920,7 +884,7 @@ router.post('/scan', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Scan already in progress' });
   }
 
-  let walkResult: { added: number; removed: number } | null = null;
+  let walkResult: { added: number; removed: number; removalSkipped?: RemovalSkipReason | 'unreadable-paths' } | null = null;
   try {
     scanStatus.isScanning = true;
     scanStatus.scannedFiles = 0;
@@ -937,13 +901,17 @@ router.post('/scan', requireAdmin, async (req, res) => {
     walkResult = await runSyncWalk(dirPath);
     logScanner(`[Scan] Completed for ${dirPath}: ${walkResult.added} added, ${walkResult.removed} removed`);
 
+    const skipNote = walkResult.removalSkipped
+      ? ` Some missing tracks were kept because their folders could not be read (${walkResult.removalSkipped}).`
+      : '';
     res.json({ 
       status: 'completed', 
       added: walkResult.added, 
       removed: walkResult.removed,
-      message: walkResult.added > 0 || walkResult.removed > 0 
+      removalSkipped: walkResult.removalSkipped ?? null,
+      message: (walkResult.added > 0 || walkResult.removed > 0 
         ? `Added ${walkResult.added} tracks, removed ${walkResult.removed} stale`
-        : 'No changes detected'
+        : 'No changes detected') + skipNote
     });
   } catch (error) {
     console.error('Scan init error:', error);
@@ -955,13 +923,22 @@ router.post('/scan', requireAdmin, async (req, res) => {
 
 // ─── Sync Walk: diff disk vs DB, remove stale, scan new ───────────────
 // Exported so the auto-walk scheduler in server/index.ts can reuse it.
-export async function runSyncWalk(dirPath: string): Promise<{ removed: number; added: number }> {
+export async function runSyncWalk(
+  dirPath: string,
+  options: { unattended?: boolean } = {},
+): Promise<{ removed: number; added: number; removalSkipped?: RemovalSkipReason | 'unreadable-paths' }> {
   const totalStartTime = Date.now();
   const dirBuf = Buffer.from(dirPath, 'utf8');
 
   // ── Walk ──
   const walkStartTime = Date.now();
-  const walkedFiles = await collectAudioFiles(dirBuf);
+  const walk = await walkAudioFiles(dirBuf);
+  const walkedFiles: WalkedFile[] = walk.files;
+  if (walk.failures.length > 0) {
+    // Always logged: an incomplete walk is what used to delete libraries.
+    const sample = walk.failures.slice(0, 3).map((f) => `${f.op} ${f.code} ${f.path}`).join('; ');
+    console.warn(`[Scanner] Walk of ${dirPath} could not read ${walk.failures.length} path(s): ${sample}${walk.failures.length > 3 ? '; …' : ''}`);
+  }
   logScanner(`[Scanner] Phase: walk - Duration: ${((Date.now() - walkStartTime) / 1000).toFixed(1)}s`);
   const diskPaths = new Set(walkedFiles.map(f => f.buf.toString('base64')));
 
@@ -970,6 +947,7 @@ export async function runSyncWalk(dirPath: string): Promise<{ removed: number; a
   const existingMeta = await getPathsWithMeta(); // Map<base64, { mtime, artHash }>
 
   const stalePaths: string[] = [];
+  let knownCount = 0;
   for (const existingPath of existingMeta.keys()) {
     // Only consider tracks that belong to this directory (byte-level prefix check)
     const fileBuf = Buffer.from(existingPath, 'base64');
@@ -977,6 +955,7 @@ export async function runSyncWalk(dirPath: string): Promise<{ removed: number; a
       fileBuf.slice(0, dirBuf.length).equals(dirBuf);
     const atBoundary = fileBuf.length === dirBuf.length || fileBuf[dirBuf.length] === 0x2F;
     if (!prefixMatches || !atBoundary) continue;
+    knownCount++;
 
     // If this path is no longer on disk, mark for removal
     if (!diskPaths.has(existingPath)) {
@@ -984,16 +963,47 @@ export async function runSyncWalk(dirPath: string): Promise<{ removed: number; a
     }
   }
 
+  // Deleting a track cascades to its playlist entries, loves, play stats and
+  // audio features, and nothing restores them if the file reappears — so only
+  // remove on positive evidence. Tracks under a path the walk could not read
+  // are held; the rest must also pass decideStaleRemoval.
+  const allStalePaths = stalePaths.splice(0);
+  const { removable, held } = partitionStaleByFailures(
+    allStalePaths.map((b64) => Buffer.from(b64, 'base64')),
+    walk.failures,
+  );
+  stalePaths.push(...removable.map((buf) => buf.toString('base64')));
+  if (held.length > 0) {
+    console.warn(`[Scanner] Keeping ${held.length} missing track(s) under unreadable path(s) in ${dirPath}; they will be checked again on the next walk.`);
+  }
+  const removal = decideStaleRemoval({
+    staleCount: stalePaths.length,
+    knownCount,
+    walkedCount: walkedFiles.length,
+    unattended: options.unattended === true,
+  });
+  let removedCount = 0;
+  let removalSkipped: RemovalSkipReason | 'unreadable-paths' | undefined = held.length > 0 ? 'unreadable-paths' : undefined;
+  if (stalePaths.length > 0 && !removal.remove) {
+    removalSkipped = removal.reason;
+    console.warn(`[Scanner] NOT removing ${stalePaths.length} missing track(s) from ${dirPath}: ${removal.reason} — ${removal.detail}. `
+      + (removal.reason === 'too-many'
+        ? 'If the library was reorganised, run a manual scan to remove them.'
+        : 'Check the library is mounted; they will be removed by a later walk if they are really gone.'));
+  }
+
   // Remove stale DB entries (collect their art hashes first so we can clean up
   // any now-orphaned encoded covers afterwards).
-  if (stalePaths.length > 0) {
+  if (stalePaths.length > 0 && removal.remove) {
+    removedCount = stalePaths.length;
     const staleArtHashes = new Set<string>();
     for (const p of stalePaths) {
       const h = existingMeta.get(p)?.artHash;
       if (h) staleArtHashes.add(h);
     }
 
-    logScanner(`[Scanner] Removing ${stalePaths.length} stale track(s) from ${dirPath}`);
+    // Not behind LOG_SCANNER: a removal destroys user data, so it is always on record.
+    console.log(`[Scanner] Removing ${stalePaths.length} stale track(s) from ${dirPath} (${knownCount} known, ${walkedFiles.length} on disk)`);
     await deleteTracksByPaths(stalePaths);
     // Clean up any albums/artists/genres that now have zero tracks
     const purged = await purgeOrphanedEntities();
@@ -1041,9 +1051,9 @@ export async function runSyncWalk(dirPath: string): Promise<{ removed: number; a
     console.warn('[Scanner] file_size backfill failed:', e);
   }
 
-  if (itemsToProcess.length === 0 && stalePaths.length === 0) {
+  if (itemsToProcess.length === 0 && removedCount === 0) {
     logScanner(`[Scanner] No changes detected in ${dirPath}`);
-    return { removed: stalePaths.length, added: 0 };
+    return { removed: 0, added: 0, removalSkipped };
   }
 
   if (itemsToProcess.length > 0) {
@@ -1094,7 +1104,7 @@ export async function runSyncWalk(dirPath: string): Promise<{ removed: number; a
   }
 
   // Trigger Genre Matrix regeneration after any change
-  if (itemsToProcess.length > 0 || stalePaths.length > 0) {
+  if (itemsToProcess.length > 0 || removedCount > 0) {
     setImmediate(() => {
       genreMatrixService.runDiffAndGenerate()
         .catch(e => console.error('[Genre Matrix] Post-scan categorization failed:', e));
@@ -1109,8 +1119,8 @@ export async function runSyncWalk(dirPath: string): Promise<{ removed: number; a
   }
 
   const totalDuration = ((Date.now() - totalStartTime) / 1000).toFixed(1);
-  logScanner(`[Scanner] Sync walk complete for ${dirPath}: ~${itemsToProcess.length} processed, -${stalePaths.length} removed (Total: ${totalDuration}s)`);
-  return { removed: stalePaths.length, added: itemsToProcess.length };
+  logScanner(`[Scanner] Sync walk complete for ${dirPath}: ~${itemsToProcess.length} processed, -${removedCount} removed (Total: ${totalDuration}s)`);
+  return { removed: removedCount, added: itemsToProcess.length, removalSkipped };
 }
 
 // Trigger standalone analysis (no scan — analyzes tracks missing features)
