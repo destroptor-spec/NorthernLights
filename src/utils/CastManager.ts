@@ -3,10 +3,13 @@ import { usePlayerStore } from '../store';
 import {
     POSITION_TICK_MS,
     REMOTE_PLAYER_STALE_MS,
+    SEEK_STATUS_FRESH_MS,
     chooseTransportAction,
+    decideSeek,
     interpolatePosition,
     isRemotePlayerStreamStale,
     pickRemotePosition,
+    reconcileDuration,
     shouldReleaseRemoteMedia,
 } from './castWatchdogPolicy';
 import { applyCastStreamingQualityToHlsUrl, applyStreamingQualityToHlsUrl } from './streaming';
@@ -144,6 +147,7 @@ export class CastManager {
     private positionTickTimer: ReturnType<typeof setInterval> | null = null;
     private positionAnchor: { position: number; atMs: number } | null = null;
     private lastKnownDuration = 0;
+    private lastDurationCorrectionLogAt = 0;
     private lastRemotePlayerEventAt = 0;
     private lastCastStateChangeAt = 0;
     private lastWatchdogRecoveryLogAt = 0;
@@ -320,8 +324,41 @@ export class CastManager {
     }
 
     private publishDuration(duration: number) {
-        this.lastKnownDuration = duration;
-        this.onDuration?.(duration);
+        const view = this.getReceiverTrackView();
+        const resolved = reconcileDuration({
+            candidate: duration,
+            receiverDuration: view.duration,
+            receiverIsCurrentTrack: view.isCurrentTrack,
+        });
+        if (resolved === null) return;
+        if (resolved !== duration) {
+            const now = Date.now();
+            if (now - this.lastDurationCorrectionLogAt > 10000) {
+                this.lastDurationCorrectionLogAt = now;
+                this.logCast('warn', 'Corrected stale Cast duration from receiver', `published=${resolved.toFixed(2)} rejected=${Number(duration).toFixed(2)}`);
+            }
+        }
+        this.lastKnownDuration = resolved;
+        this.onDuration?.(resolved);
+    }
+
+    /**
+     * What a recent receiver status says about the track the store believes is
+     * current. The status carries the receiver's own decoded duration and the
+     * queue entry it is actually playing, so it can vouch for — or contradict —
+     * the sender's view without going through RemotePlayer.
+     */
+    private getReceiverTrackView(): { duration: number | undefined; isCurrentTrack: boolean; isDifferentTrack: boolean } {
+        const status = this.lastAuroraStatus;
+        const fresh = !!status && Date.now() - this.lastAuroraStatusAt < SEEK_STATUS_FRESH_MS;
+        const state = usePlayerStore.getState();
+        const currentEntry = state.currentIndex !== null ? state.playlist[state.currentIndex]?.queueEntryId || null : null;
+        const receiverEntry = fresh ? status?.queueEntryId || null : null;
+        return {
+            duration: fresh ? status?.duration : undefined,
+            isCurrentTrack: !!receiverEntry && receiverEntry === currentEntry,
+            isDifferentTrack: !!receiverEntry && !!currentEntry && receiverEntry !== currentEntry,
+        };
     }
 
     /**
@@ -953,6 +990,20 @@ export class CastManager {
             if (typeof status.currentTime === 'number' && isFinite(status.currentTime) && status.currentTime >= 0) {
                 this.publishPosition(status.currentTime);
             }
+        } else if (this.lastKnownDuration > 0) {
+            // Duration is discrete, so unlike position it cannot drag the bar
+            // back and forth — and a live RemotePlayer can still be reporting
+            // the previous item's length after a queue reload (prod 2026-10-06
+            // 11:45: 206.22s published for a 123s track). Correct it only when
+            // the receiver disagrees materially, so a healthy session sees no
+            // extra publishes at all.
+            const view = this.getReceiverTrackView();
+            const resolved = reconcileDuration({
+                candidate: this.lastKnownDuration,
+                receiverDuration: view.duration,
+                receiverIsCurrentTrack: view.isCurrentTrack,
+            });
+            if (resolved !== null && resolved !== this.lastKnownDuration) this.publishDuration(resolved);
         }
         if (status.playerState === 'PLAYING') {
             this.onPlayStateChange?.(true);
@@ -2892,6 +2943,31 @@ export class CastManager {
     }
 
     public seek(time: number) {
+        const view = this.getReceiverTrackView();
+        const state = usePlayerStore.getState();
+        const decision = decideSeek({
+            target: time,
+            receiverDuration: view.duration,
+            receiverIsCurrentTrack: view.isCurrentTrack,
+            receiverOnDifferentTrack: view.isDifferentTrack,
+            catalogDuration: state.currentIndex !== null ? state.playlist[state.currentIndex]?.duration : undefined,
+        });
+        if (decision.action === 'refuse') {
+            this.logCast(
+                'warn',
+                'Cast seek refused',
+                `reason=${decision.reason} target=${Number(time).toFixed(1)} trackDuration=${decision.trackDuration?.toFixed(2) ?? 'unknown'} `
+                + `barDuration=${this.lastKnownDuration.toFixed(2)}`,
+            );
+            // The bar was drawn against the wrong length; give it the right one
+            // so the next drag lands where it is aimed.
+            if (decision.trackDuration !== null && decision.reason !== 'track-mismatch') {
+                this.lastKnownDuration = decision.trackDuration;
+                this.onDuration?.(decision.trackDuration);
+            }
+            return;
+        }
+        time = decision.time;
         if (this.trySeekViaMediaSession(time)) return;
         try {
             if (!this.playerController) {

@@ -196,3 +196,93 @@ export function interpolatePosition(input: {
   }
   return advanced;
 }
+
+/**
+ * Durations closer than this are the same track measured two ways — the
+ * receiver's decoded length against RemotePlayer's or the catalogue's differ
+ * by a fraction of a second. Anything wider means one side describes a
+ * different track.
+ */
+export const DURATION_DISAGREEMENT_SEC = 2;
+
+/** A seek this close to the end would finish the track, so it is not sent. */
+export const SEEK_END_MARGIN_SEC = 1;
+
+/** How old a receiver status may be and still vouch for the current track. */
+export const SEEK_STATUS_FRESH_MS = 12_000;
+
+/**
+ * Pick the duration to publish, letting the receiver overrule a value that
+ * belongs to a different track.
+ *
+ * The progress bar is scaled by the last published duration, so a stale one
+ * mis-scales every seek. Prod 2026-10-06 11:45: after a queue reload put
+ * "Fuck Her Gently" (123s) back on the receiver, RemotePlayer still reported
+ * the previous item's 206.22s, and hydration published it because the event
+ * stream was alive. The bar was drawn against 206s, a drag to ~70% sent a seek
+ * to 144.1s, and the receiver ran off the end of a 123s track.
+ *
+ * Only a receiver status for the track the store believes is current may
+ * overrule — straight after a track change the status can still describe the
+ * old one, and then the incoming value is the better guess.
+ */
+export function reconcileDuration(input: {
+  candidate: unknown;
+  receiverDuration: unknown;
+  receiverIsCurrentTrack: boolean;
+  toleranceSec?: number;
+}): number | null {
+  const candidate = durationValue(input.candidate);
+  const receiver = input.receiverIsCurrentTrack ? durationValue(input.receiverDuration) : null;
+  if (receiver === null) return candidate;
+  if (candidate === null) return receiver;
+  const tolerance = input.toleranceSec ?? DURATION_DISAGREEMENT_SEC;
+  return Math.abs(candidate - receiver) > tolerance ? receiver : candidate;
+}
+
+export type SeekRefusal = 'invalid-target' | 'track-mismatch' | 'beyond-end';
+
+export type SeekDecision =
+  | { action: 'seek'; time: number }
+  | { action: 'refuse'; reason: SeekRefusal; trackDuration: number | null };
+
+/**
+ * Decide whether a seek target is safe to send.
+ *
+ * Seeking at or past the end makes the receiver finish the track and advance,
+ * which is the skip. A correctly scaled bar cannot produce such a target, so
+ * one arriving means the bar was drawn against another track's duration.
+ * Refusing does nothing audible; sending skips a song the listener wanted. The
+ * caller republishes the true duration so the next drag lands right.
+ *
+ * The track's real length comes from the receiver when a fresh status vouches
+ * for the current track, otherwise from the catalogue — never from
+ * RemotePlayer, whose duration is the value that went stale.
+ *
+ * Before #66 a seek while the event stream was dead was silently swallowed, so
+ * this desync existed but could not skip anything. #66 made those seeks
+ * arrive, and they arrived with the wrong target.
+ */
+export function decideSeek(input: {
+  target: unknown;
+  receiverDuration?: unknown;
+  receiverIsCurrentTrack: boolean;
+  receiverOnDifferentTrack: boolean;
+  catalogDuration?: unknown;
+  endMarginSec?: number;
+}): SeekDecision {
+  const receiver = input.receiverIsCurrentTrack ? durationValue(input.receiverDuration) : null;
+  const trackDuration = receiver ?? durationValue(input.catalogDuration);
+
+  const target = positionValue(input.target);
+  if (target === null) return { action: 'refuse', reason: 'invalid-target', trackDuration };
+
+  // The bar describes one track and the receiver is playing another: any
+  // target is relative to the wrong song.
+  if (input.receiverOnDifferentTrack) return { action: 'refuse', reason: 'track-mismatch', trackDuration };
+
+  if (trackDuration !== null && target > trackDuration - (input.endMarginSec ?? SEEK_END_MARGIN_SEC)) {
+    return { action: 'refuse', reason: 'beyond-end', trackDuration };
+  }
+  return { action: 'seek', time: target };
+}
