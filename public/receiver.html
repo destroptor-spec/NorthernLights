@@ -1071,6 +1071,10 @@
           playerState: playerManager.getPlayerState() || null,
           currentTime: playerManager.getCurrentTimeSec ? playerManager.getCurrentTimeSec() : 0,
           duration: playerManager.getDurationSec ? playerManager.getDurationSec() : 0,
+          // Lets the sender tell this receiver from one cached before
+          // aurora.control existed: both accept messages on the namespace,
+          // but only this one acts on them.
+          caps: ['control'],
           ts: Date.now()
         };
       }
@@ -1105,6 +1109,72 @@
               ' time=' + Math.floor(payload.currentTime || 0)
           );
         }
+      }
+
+      // Sender -> receiver transport on the same namespace. The sender's
+      // chrome.cast.media.Media object can vanish for long stretches while this
+      // receiver plays on — prod 2026-10-06 11:45: ~18s, seven play/pause
+      // presses lost — and the SDK offers no way to get it back. This channel
+      // stays up throughout (it is what keeps aurora-status flowing), so
+      // commands sent over it reach playerManager regardless.
+      //
+      // No status is broadcast from here: setPlayerState already broadcasts on
+      // the state change this causes, and broadcasting before it lands would
+      // report the old state and flicker the sender's play button.
+      function handleAuroraControl(event) {
+        var data = event && event.data;
+        if (typeof data === 'string') {
+          try { data = JSON.parse(data); } catch (parseError) { return; }
+        }
+        if (!data || data.type !== 'aurora.control') return;
+
+        var action = data.action;
+        var ok = true;
+        var detail = '';
+        try {
+          if (action === 'pause') {
+            playerManager.pause();
+          } else if (action === 'play') {
+            playerManager.play();
+          } else if (action === 'seek') {
+            var time = Number(data.time);
+            var duration = playerManager.getDurationSec ? playerManager.getDurationSec() : 0;
+            if (!isFinite(time) || time < 0) {
+              ok = false;
+              detail = 'invalid-time';
+            } else if (duration > 0 && time > duration - 1) {
+              // Seeking onto the last second finishes the track and advances —
+              // the skip the sender's guard exists to prevent. Hold the line
+              // here as well, against the receiver's own duration.
+              ok = false;
+              detail = 'beyond-end duration=' + duration.toFixed(2);
+            } else {
+              playerManager.seek(time);
+              detail = 'time=' + time.toFixed(1);
+            }
+          } else {
+            ok = false;
+            detail = 'unknown-action';
+          }
+        } catch (controlError) {
+          ok = false;
+          detail = safeStringify(controlError);
+        }
+
+        postServerLog(
+          ok ? 'ok' : 'warn',
+          '[' + LOG_TAG + '] aurora-control ' + (action || 'unknown'),
+          'ok=' + ok + (detail ? ' ' + detail : '') + ' requestId=' + (data.requestId || 'none')
+        );
+        try {
+          context.sendCustomMessage(AURORA_STATUS_NS, event.senderId, {
+            type: 'aurora.control.ack',
+            requestId: data.requestId || null,
+            action: action || null,
+            ok: ok,
+            detail: detail
+          });
+        } catch (ackError) { /* the state-change broadcast still carries the outcome */ }
       }
 
       function getMetadata(mediaInfo) {
@@ -1609,6 +1679,15 @@
       // Must be declared before context.start(), or sends fail CHANNEL_ERROR.
       receiverOptions.customNamespaces = {};
       receiverOptions.customNamespaces[AURORA_STATUS_NS] = cast.framework.system.MessageType.JSON;
+      // Listen on the same namespace for sender commands. Registered before
+      // start() alongside the declaration, as the SDK requires. Guarded: this
+      // runs ahead of context.start(), so a throw here must cost the control
+      // channel, never the receiver booting at all.
+      try {
+        context.addCustomMessageListener(AURORA_STATUS_NS, handleAuroraControl);
+      } catch (listenerError) {
+        log('warn', LOG_TAG, 'aurora-control listener failed: ' + safeStringify(listenerError));
+      }
       receiverOptions.supportedCommands =
         cast.framework.messages.Command.ALL_BASIC_MEDIA |
         cast.framework.messages.Command.QUEUE_NEXT |

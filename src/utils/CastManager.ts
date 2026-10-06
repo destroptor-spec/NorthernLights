@@ -9,8 +9,10 @@ import {
     interpolatePosition,
     isRemotePlayerStreamStale,
     pickRemotePosition,
+    receiverControlAvailable,
     reconcileDuration,
     shouldReleaseRemoteMedia,
+    transportStateFromPlayerState,
 } from './castWatchdogPolicy';
 import { applyCastStreamingQualityToHlsUrl, applyStreamingQualityToHlsUrl } from './streaming';
 import { createQueueEntryId, ensureQueueEntryIds } from './queue';
@@ -43,6 +45,8 @@ export interface AuroraReceiverStatus {
   playerState?: string | null;
   currentTime?: number;
   duration?: number;
+  /** Capabilities of the receiver build; 'control' means it accepts aurora.control. */
+  caps?: string[];
   ts?: number;
 }
 
@@ -148,6 +152,8 @@ export class CastManager {
     private positionAnchor: { position: number; atMs: number } | null = null;
     private lastKnownDuration = 0;
     private lastDurationCorrectionLogAt = 0;
+    private auroraControlRequestId = 0;
+    private auroraControlCapLoggedSid: string | null = null;
     private lastRemotePlayerEventAt = 0;
     private lastCastStateChangeAt = 0;
     private lastWatchdogRecoveryLogAt = 0;
@@ -331,7 +337,7 @@ export class CastManager {
             receiverIsCurrentTrack: view.isCurrentTrack,
         });
         if (resolved === null) return;
-        if (resolved !== duration) {
+        if (resolved !== duration && typeof duration === 'number' && isFinite(duration) && duration > 0) {
             const now = Date.now();
             if (now - this.lastDurationCorrectionLogAt > 10000) {
                 this.lastDurationCorrectionLogAt = now;
@@ -937,7 +943,20 @@ export class CastManager {
                 } catch {
                     return; // malformed payload — ignore rather than throw in a listener
                 }
-                if (status && status.type === 'aurora.status') this.applyAuroraStatus(status);
+                if (status && status.type === 'aurora.status') {
+                    if (status.caps?.includes('control') && this.auroraControlCapLoggedSid !== sessionId) {
+                        this.auroraControlCapLoggedSid = sessionId;
+                        this.logCast('ok', 'Receiver accepts aurora-control', `sid=${sessionId || 'unknown'}`);
+                    }
+                    this.applyAuroraStatus(status);
+                } else if (status && (status as { type?: string }).type === 'aurora.control.ack') {
+                    const ack = status as unknown as { action?: string; ok?: boolean; detail?: string; requestId?: number };
+                    this.logCast(
+                        ack.ok ? 'ok' : 'warn',
+                        `Cast ${ack.action || 'control'} acknowledged by receiver`,
+                        `ok=${Boolean(ack.ok)} requestId=${ack.requestId ?? 'none'}${ack.detail ? ` ${ack.detail}` : ''}`,
+                    );
+                }
             });
             this.logCast('ok', 'Attached aurora-status listener', `sid=${sessionId || 'unknown'}`);
         } catch (error) {
@@ -1098,10 +1117,15 @@ export class CastManager {
      * RemotePlayer's local state coherent.
      */
     private tryTransportViaMediaSession(label: string, intent: 'play' | 'pause' | 'toggle'): boolean {
+        const mediaSession = this.getMediaSession();
+        const hasMediaSession = !!mediaSession && typeof mediaSession.play === 'function' && typeof mediaSession.pause === 'function';
+        // With no media session the controller has nothing to act on either,
+        // whatever the RemotePlayer stream is doing — so this check comes
+        // before the staleness gate, not after it.
+        if (!hasMediaSession && this.tryTransportViaReceiverChannel(label, intent)) return true;
         if (!isRemotePlayerStreamStale(this.msSinceRemotePlayerEvent())) return false;
 
-        const mediaSession = this.getMediaSession();
-        if (!mediaSession || typeof mediaSession.play !== 'function' || typeof mediaSession.pause !== 'function') {
+        if (!hasMediaSession) {
             this.logCast(
                 'warn',
                 `Cast ${label} cannot reach the receiver`,
@@ -1133,11 +1157,67 @@ export class CastManager {
         }
     }
 
+    /**
+     * Transport for when the SDK has no media session at all.
+     *
+     * #66 routed transport through the media session once RemotePlayer died,
+     * which works while that object exists. Prod 2026-10-06 11:45 showed it
+     * can vanish for ~18s with the receiver playing throughout: seven presses,
+     * every one mediaSession=none. The SDK documents no way to re-acquire it —
+     * the watchdog's GET_STATUS probe ran 53 times that day without bringing
+     * it back, and it returned only when a new track loaded. The aurora
+     * namespace stays up in exactly that state, so commands go over it.
+     *
+     * The action is decided here from the receiver's last reported state, with
+     * the same policy as the media-session path.
+     */
+    private tryTransportViaReceiverChannel(label: string, intent: 'play' | 'pause' | 'toggle'): boolean {
+        if (!this.isReceiverControlAvailable()) return false;
+        const playerState = this.lastAuroraStatus?.playerState;
+        const action = chooseTransportAction(intent, transportStateFromPlayerState(playerState));
+        if (action === 'satisfied') {
+            this.logCast('ok', `Cast ${label} already satisfied`, `playerState=${playerState || 'unknown'} via=receiver-channel`);
+            return true;
+        }
+        return this.sendReceiverControl(action);
+    }
+
+    private isReceiverControlAvailable(): boolean {
+        return receiverControlAvailable({
+            caps: this.lastAuroraStatus?.caps,
+            statusAgeMs: Date.now() - this.lastAuroraStatusAt,
+            freshMs: this.auroraStatusFreshMs,
+        });
+    }
+
+    private sendReceiverControl(action: 'play' | 'pause' | 'seek', extra: { time?: number } = {}): boolean {
+        if (!this.isReceiverControlAvailable()) return false;
+        const session = this.castContext?.getCurrentSession?.() || null;
+        if (!session || typeof session.sendMessage !== 'function') return false;
+
+        const requestId = ++this.auroraControlRequestId;
+        const detail = `action=${action} requestId=${requestId}${typeof extra.time === 'number' ? ` time=${extra.time.toFixed(1)}` : ''}`;
+        try {
+            session.sendMessage(AURORA_STATUS_NAMESPACE, { type: 'aurora.control', action, requestId, ...extra })
+                .then(() => this.logCast('ok', `Cast ${action} via receiver channel`, detail))
+                .catch((error: unknown) => this.handleControlError(`${action} via receiver channel`, error));
+            return true;
+        } catch (error) {
+            this.handleControlError(`${action} via receiver channel`, error);
+            return false;
+        }
+    }
+
     private trySeekViaMediaSession(time: number): boolean {
+        const mediaSession = this.getMediaSession();
+        const hasMediaSession = !!mediaSession && typeof mediaSession.seek === 'function';
+        if (!hasMediaSession && this.sendReceiverControl('seek', { time })) return true;
         if (!isRemotePlayerStreamStale(this.msSinceRemotePlayerEvent())) return false;
 
-        const mediaSession = this.getMediaSession();
-        if (!mediaSession || typeof mediaSession.seek !== 'function') return false;
+        if (!hasMediaSession) {
+            this.logCast('warn', 'Cast seek cannot reach the receiver', `playerSilentMs=${this.msSinceRemotePlayerEvent()} mediaSession=none`);
+            return false;
+        }
         const request = chrome.cast?.media?.SeekRequest ? new chrome.cast.media.SeekRequest() : null;
         if (!request) return false;
 
@@ -2104,12 +2184,15 @@ export class CastManager {
         const media = mediaSession.media || {};
         const metadata = media.metadata || {};
         const storeTrack = sessionIndex !== null ? playlist[sessionIndex] : null;
+        const synthetic = mediaSession.__source === 'remote-player';
         const choice = pickRemotePosition({
             playerTime: this.player?.currentTime,
             playerDuration: this.player?.duration,
             sessionTime: mediaSession.currentTime,
             sessionDuration: media.duration,
-            fallbackDuration: metadata.duration || storeTrack?.duration,
+            // The catalogue length is real even when the session is not.
+            fallbackDuration: synthetic ? storeTrack?.duration : metadata.duration || storeTrack?.duration,
+            sessionIsSynthetic: synthetic,
             msSinceRemotePlayerEvent: this.msSinceRemotePlayerEvent(),
         });
         const playerState = mediaSession.playerState || this.player?.playerState;
@@ -2168,6 +2251,7 @@ export class CastManager {
             sessionTime: mediaSession.currentTime,
             sessionDuration: mediaSession.media?.duration,
             fallbackDuration: mediaSession.media?.metadata?.duration,
+            sessionIsSynthetic: mediaSession.__source === 'remote-player',
             msSinceRemotePlayerEvent: this.msSinceRemotePlayerEvent(),
         });
 
