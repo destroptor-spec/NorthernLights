@@ -35,6 +35,10 @@ jest.mock('../services/scopedToken.service', () => ({
 jest.mock('../services/debugLogger.service', () => ({
   writeDebugLog: jest.fn(),
 }));
+const setTrackLovedAndSync = jest.fn();
+jest.mock('../services/lovedTrack.service', () => ({
+  setTrackLovedAndSync: (...args: unknown[]) => setTrackLovedAndSync(...args),
+}));
 jest.mock('../services/lastfm.service', () => ({
   scrobbleTracks: jest.fn(),
   updateNowPlaying: jest.fn(),
@@ -76,6 +80,7 @@ import {
   sendProviderScrobbleReports,
   subsonicError,
   subsonicSuccess,
+  setSubsonicSongsStarred,
 } from './subsonic.routes';
 
 const databaseMock = jest.requireMock('../database') as { getUserSetting: jest.Mock };
@@ -654,5 +659,68 @@ describe('describeRangeHeader', () => {
   it('flags anything that is not a byte range rather than echoing it', () => {
     expect(describeRangeHeader('items=0-10')).toBe('malformed');
     expect(describeRangeHeader('../../etc/passwd')).toBe('malformed');
+  });
+});
+
+/**
+ * Symfonium stars and unstars through OpenSubsonic. That path used to write
+ * the flag directly, so a love made there never reached Last.fm or
+ * MusicBrainz, unlike one made in the web app. It now goes through the same
+ * setTrackLovedAndSync as the web app and API v1.
+ */
+describe('setSubsonicSongsStarred', () => {
+  beforeEach(() => {
+    setTrackLovedAndSync.mockReset();
+    setTrackLovedAndSync.mockResolvedValue([{ provider: 'lastfm', status: 'ok' }]);
+  });
+
+  it('stars through the shared love-and-sync path', async () => {
+    expect(await setSubsonicSongsStarred('u1', ['abc'], true)).toEqual({});
+    expect(setTrackLovedAndSync).toHaveBeenCalledWith('u1', 'abc', true, { source: 'openSubsonic' });
+  });
+
+  it('unstars the same way', async () => {
+    await setSubsonicSongsStarred('u1', ['abc'], false);
+    expect(setTrackLovedAndSync).toHaveBeenCalledWith('u1', 'abc', false, { source: 'openSubsonic' });
+  });
+
+  it('accepts the song ids Aurora itself hands to Symfonium', async () => {
+    const encoded = String(mapTrackToSubsonic({ id: 'L3Zhci9tdXNpYy9hLmZsYWM=', title: 'A', artist: 'B' }).id);
+    expect(encoded.startsWith('song:')).toBe(true);
+    await setSubsonicSongsStarred('u1', [encoded], true);
+    expect(setTrackLovedAndSync).toHaveBeenCalledWith('u1', 'L3Zhci9tdXNpYy9hLmZsYWM=', true, { source: 'openSubsonic' });
+  });
+
+  it('honours every id, not just the first', async () => {
+    await setSubsonicSongsStarred('u1', ['a', 'b', 'c'], true);
+    expect(setTrackLovedAndSync.mock.calls.map((call) => call[1])).toEqual(['a', 'b', 'c']);
+  });
+
+  it('stars a repeated id once', async () => {
+    await setSubsonicSongsStarred('u1', ['a', 'a'], true);
+    expect(setTrackLovedAndSync).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a missing id as Subsonic error 10', async () => {
+    expect(await setSubsonicSongsStarred('u1', [], true)).toEqual({ error: { code: 10, message: 'Required parameter is missing: id' } });
+    expect(setTrackLovedAndSync).not.toHaveBeenCalled();
+  });
+
+  it('reports an unknown song as error 70 instead of failing in the database', async () => {
+    setTrackLovedAndSync.mockResolvedValue(null);
+    expect(await setSubsonicSongsStarred('u1', ['missing'], true)).toEqual({ error: { code: 70, message: 'Song not found' } });
+  });
+
+  it('succeeds when at least one of several ids exists', async () => {
+    setTrackLovedAndSync.mockImplementation(async (_u: string, id: string) => (id === 'real' ? [] : null));
+    expect(await setSubsonicSongsStarred('u1', ['missing', 'real'], true)).toEqual({});
+  });
+
+  it('keeps the star and logs when a provider sync fails', async () => {
+    setTrackLovedAndSync.mockResolvedValue([{ provider: 'lastfm', status: 'failed', error: '503' }]);
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(await setSubsonicSongsStarred('u1', ['abc'], true)).toEqual({});
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('provider sync failed for lastfm'));
+    warn.mockRestore();
   });
 });

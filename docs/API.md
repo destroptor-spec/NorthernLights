@@ -336,6 +336,8 @@ GET /rest/unstar.view?id=song:track-id&apiKey=aurora_sub_...
 GET /rest/setRating.view?id=song:track-id&rating=5&apiKey=aurora_sub_...
 ```
 
+`star`/`unstar` use the same implementation as the web app and `PUT /api/v1/tracks/:id/loved`: the love is stored, then mirrored to Last.fm (love/unlove) and MusicBrainz (rating 100/0) when connected. Provider failures are logged and never fail the request. Several `id` parameters may be given; a missing `id` returns error `10`, and error `70` is returned only when none of the ids exist. Albums and artists (`albumId`/`artistId`) cannot be starred.
+
 Known unsupported areas are intentionally limited to empty successful compatibility responses: podcasts, internet radio, shares, chat, bookmarks, videos/captions, avatars, and jukebox control. Unsupported non-stubbed endpoints return OpenSubsonic error `70`.
 
 ---
