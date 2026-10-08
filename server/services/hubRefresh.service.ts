@@ -5,7 +5,7 @@ import {
   getUserRecentTracks,
   getUserSetting,
 } from '../database';
-import { generateHubConcepts, HubCollection } from './llm.service';
+import { generateCustomPlaylist, generateHubConcepts, HubCollection } from './llm.service';
 import { getHubCollections } from './recommendation.service';
 import { publishApiV1Event } from './apiV1Events.service';
 
@@ -167,6 +167,40 @@ export async function runLlmHubRegeneration(
   } finally {
     runningRefreshes.delete(userId);
   }
+}
+
+const CUSTOM_PLAYLIST_ATTEMPTS = 3;
+
+/**
+ * Turn a listener's prompt into a saved custom playlist. The LLM's concept can
+ * fail outright or name genres the library can't match (the matcher marks it
+ * `dropped`), so this retries up to three times with a short backoff. Returns
+ * the newly saved collection, or null when every attempt failed.
+ */
+export async function generateCustomHubPlaylist(
+  userId: string,
+  prompt: string,
+  opts: { tracksPerPlaylist?: number; retryDelayMs?: number } = {},
+): Promise<any | null> {
+  const retryDelayMs = opts.retryDelayMs ?? 2000;
+  const hubSettings = await getLlmPlaylistSettings(userId);
+  const existingIds = new Set((await getPlaylists(userId)).map((playlist: any) => playlist.id));
+
+  for (let attempt = 1; attempt <= CUSTOM_PLAYLIST_ATTEMPTS; attempt++) {
+    const concept = await generateCustomPlaylist(prompt);
+    if (concept) {
+      const saved = await getHubCollections([concept], userId, {
+        ...hubSettings,
+        ...(opts.tracksPerPlaylist ? { llmTracksPerPlaylist: opts.tracksPerPlaylist } : {}),
+        llmGenerationSource: 'custom',
+      });
+      const playlist = saved.find((candidate: any) => candidate.isLlmGenerated && candidate.id && !existingIds.has(candidate.id));
+      if (playlist && !(concept as any).dropped) return playlist;
+      console.warn(`[LLM Hub] Custom concept failed/dropped on attempt ${attempt}. Retrying...`);
+      if (attempt < CUSTOM_PLAYLIST_ATTEMPTS) await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+  }
+  return null;
 }
 
 export function queueLlmHubRefreshForUser(userId: string, source: HubGenerationSource = 'login') {

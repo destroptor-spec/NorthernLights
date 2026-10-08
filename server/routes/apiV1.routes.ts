@@ -51,12 +51,12 @@ import {
 import { isPathAllowed, pathToBuffer, addToSessionHistory } from '../state';
 import { getHubCollections } from '../services/recommendation.service';
 import { getNextInfinityTrackForUser } from '../services/infinityRequest.service';
-import { generateCustomPlaylist } from '../services/llm.service';
-import { getLlmPlaylistSettings, queueLlmHubRefreshForUser } from '../services/hubRefresh.service';
+import { generateCustomHubPlaylist, queueLlmHubRefreshForUser, runLlmHubRegeneration } from '../services/hubRefresh.service';
 import {
   computeSmartHubBundle,
   evaluateArtistRadioEligibility,
   generateArtistRadio,
+  queueSmartHubRefreshForUser,
 } from '../services/smartHub.service';
 import { createRateLimiter } from '../middleware/rateLimit';
 import {
@@ -766,13 +766,37 @@ router.delete('/playlists/:id', async (req, res) => {
 });
 
 router.get('/hub', async (req, res) => {
-  queueLlmHubRefreshForUser(req.apiV1!.userId, 'hub-view');
+  // A background re-poll passes queueRefresh=false: it only wants the
+  // collections a refresh queued by the first view has produced since.
+  if (req.query.queueRefresh !== 'false') {
+    queueLlmHubRefreshForUser(req.apiV1!.userId, 'hub-view');
+    queueSmartHubRefreshForUser(req.apiV1!.userId);
+  }
   const collections = await getHubCollections([], req.apiV1!.userId);
   dataResponse(req, res, await hydrateTrackContainers(collections, req.apiV1!.userId));
 });
 
 router.get('/hub/smart', async (req, res) => {
   dataResponse(req, res, await hydrateTrackContainers(await computeSmartHubBundle(req.apiV1!.userId), req.apiV1!.userId));
+});
+
+router.post('/hub/regenerate', async (req, res) => {
+  const input = parseBody(z.object({ force: z.boolean().optional() }).strict(), req, res);
+  if (!input) return;
+  const result: { skipped?: boolean; reason?: string; generated?: number } =
+    await runLlmHubRegeneration(req.apiV1!.userId, { force: input.force === true, source: 'manual' });
+  dataResponse(req, res, {
+    skipped: result.skipped === true,
+    reason: result.reason ?? null,
+    generated: result.generated ?? 0,
+  });
+});
+
+router.get('/hub/artist-radio/eligibility', async (req, res) => {
+  const artistId = typeof req.query.artistId === 'string' ? req.query.artistId : '';
+  if (!artistId) return sendApiV1Error(req, res, 400, 'VALIDATION_FAILED', 'artistId is required.');
+  const { eligible, reason, targetLength } = await evaluateArtistRadioEligibility(req.apiV1!.userId, artistId);
+  dataResponse(req, res, { eligible, reason: reason ?? null, targetLength: targetLength ?? null });
 });
 
 router.post('/hub/artist-radio', async (req, res) => {
@@ -790,17 +814,8 @@ router.post('/hub/artist-radio', async (req, res) => {
 router.post('/hub/custom', async (req, res) => {
   const input = parseBody(z.object({ prompt: z.string().trim().min(1).max(1000), count: z.number().int().min(1).max(100).optional() }).strict(), req, res);
   if (!input) return;
-  const concept = await generateCustomPlaylist(input.prompt);
-  if (!concept) return sendApiV1Error(req, res, 503, 'CUSTOM_PLAYLIST_FAILED', 'Aurora could not create a playlist for that prompt.');
-  const existing = new Set((await getPlaylists(req.apiV1!.userId)).map((playlist: any) => playlist.id));
-  const settings = await getLlmPlaylistSettings(req.apiV1!.userId);
-  const saved = await getHubCollections([concept], req.apiV1!.userId, {
-    ...settings,
-    ...(input.count ? { llmTracksPerPlaylist: input.count } : {}),
-    llmGenerationSource: 'custom',
-  });
-  const playlist = saved.find((candidate: any) => candidate.id && !existing.has(candidate.id));
-  if (!playlist) return sendApiV1Error(req, res, 503, 'CUSTOM_PLAYLIST_FAILED', 'Aurora could not match that prompt to the library.');
+  const playlist = await generateCustomHubPlaylist(req.apiV1!.userId, input.prompt, { tracksPerPlaylist: input.count });
+  if (!playlist) return sendApiV1Error(req, res, 503, 'CUSTOM_PLAYLIST_FAILED', 'Aurora could not match that prompt to the library. Try rephrasing it.');
   const meta = await getPlaylistByIdReadable(playlist.id, req.apiV1!.userId);
   const tracks = await getPlaylistTracks(playlist.id, req.apiV1!.userId);
   publishApiV1Event(req.apiV1!.userId, 'playlist.changed', { playlistId: playlist.id, action: 'generated' });
