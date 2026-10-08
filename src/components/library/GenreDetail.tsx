@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { usePlayerStore } from '../../store/index';
-import { useEntityTracks } from '../../hooks/useEntityTracks';
+import { useApiV1EntityTracks } from '../../hooks/useApiV1TrackList';
 import { TrackInfo } from '../../utils/fileSystem';
 import { AlbumCard, AlbumCardSkeleton } from './AlbumCard';
 import { BackButton } from './BackButton';
@@ -39,8 +39,8 @@ export const GenreDetail: React.FC = () => {
 
     // Tracks come from the canonical primary + secondary association endpoint,
     // not from raw-tag substring matching or the in-memory library.
-    const { tracks: genreTracks, loading: genreTracksLoading } = useEntityTracks(
-        genreId ? `/api/genres/${encodeURIComponent(genreId)}` : null,
+    const { tracks: genreTracks, loading: genreTracksLoading } = useApiV1EntityTracks(
+        genreId ? `/genres/${encodeURIComponent(genreId)}` : null,
     );
 
     const { imageUrl } = useExternalImage(() => genreName ? fetchGenreImage(genreName) : Promise.resolve(undefined), [genreName]);

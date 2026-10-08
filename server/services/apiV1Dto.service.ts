@@ -82,6 +82,7 @@ export function mapTrackV1(row: any): Track {
       trackId: nullableString(row.mbTrackId ?? row.mb_track_id),
       albumId: nullableString(row.mbAlbumId ?? row.mb_album_id),
       artistId: nullableString(row.mbArtistId ?? row.mb_artist_id),
+      albumArtistId: nullableString(row.mbAlbumArtistId ?? row.mb_album_artist_id),
       releaseGroupId: nullableString(row.mbReleaseGroupId ?? row.mb_release_group_id),
       workId: nullableString(row.mbWorkId ?? row.mb_work_id),
     },

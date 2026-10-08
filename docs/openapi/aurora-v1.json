@@ -357,6 +357,12 @@
                   "null"
                 ]
               },
+              "albumArtistId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "releaseGroupId": {
                 "type": [
                   "string",
@@ -375,6 +381,7 @@
               "trackId",
               "albumId",
               "artistId",
+              "albumArtistId",
               "releaseGroupId",
               "workId"
             ]

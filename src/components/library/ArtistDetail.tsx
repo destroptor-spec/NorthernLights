@@ -5,6 +5,8 @@ import { TrackInfo } from '../../utils/fileSystem';
 import { normalizeArtistIdentityKey, parseArtistsForDisplay, trackMatchesArtist } from '../../utils/artistUtils';
 import { useKnownArtistKeys } from '../../hooks/useKnownArtistKeys';
 import { useEntityTracks } from '../../hooks/useEntityTracks';
+import { useApiV1EntityTracks } from '../../hooks/useApiV1TrackList';
+import type { AlbumSummary, ArtistSummary } from '../../api/auroraApi';
 import { useArtistData } from '../../hooks/useArtistData';
 import { useArtistTopTracks } from '../../hooks/useArtistTopTracks';
 import { AlbumArt } from '../AlbumArt';
@@ -127,16 +129,11 @@ type SimilarArtist = {
     matchScore: number;
 };
 
-// Album row from `ownedAlbums` on /api/artists/:id — albums a VA
-// pseudo-artist owns by album-artist name, shipped without their tracks.
-type OwnedAlbumRow = {
-    id: string;
-    title?: string;
-    artist_name?: string;
-    image_url?: string | null;
-    edition_label?: string | null;
-    track_count?: number;
-    art_hash?: string | null;
+// `ownedAlbums` on API v1 /artists/:id — albums a VA pseudo-artist owns by
+// album-artist name, shipped without their tracks.
+type ArtistDetailMeta = {
+    artist: ArtistSummary;
+    ownedAlbums: AlbumSummary[];
 };
 
 const SimilarArtistRow: React.FC<{ artist: SimilarArtist }> = ({ artist }) => {
@@ -299,11 +296,8 @@ export const ArtistDetail: React.FC = () => {
     // server-side. Source for the album art/track maps below.
     // `ownedAlbums` is only populated for VA pseudo-artists: albums they own
     // as lean album rows, since shipping every VA comp track is untenable.
-    const { tracks: artistTracks, meta: artistMeta, loading: artistTracksLoading } = useEntityTracks<{
-        name?: string;
-        ownedAlbums?: OwnedAlbumRow[];
-    }>(
-        artistId ? `/api/artists/${encodeURIComponent(artistId)}` : null,
+    const { tracks: artistTracks, meta: artistMeta, loading: artistTracksLoading } = useApiV1EntityTracks<ArtistDetailMeta>(
+        artistId ? `/artists/${encodeURIComponent(artistId)}` : null,
     );
     // "Appears on" / collaborations — server-computed so it works without the
     // full library (falls back to the library-derived list below when empty).
@@ -355,7 +349,7 @@ export const ArtistDetail: React.FC = () => {
     // from /api/artists/:id. The endpoint resolves merged artists and includes
     // credit-only artists (composers, lyricists, …) that aren't in the in-memory
     // list, so credited-author links resolve instead of showing "Artist not found".
-    const artistName = artistInfo?.name || artistMeta?.name || '';
+    const artistName = artistInfo?.name || artistMeta?.artist.name || '';
 
     // Get MusicBrainz artist ID from the first track that has one. Only
     // trust tracks credited to this artist — the endpoint also returns
@@ -648,7 +642,7 @@ export const ArtistDetail: React.FC = () => {
         for (const al of artistMeta?.ownedAlbums || []) {
             if (al.id && !albumSet.has(al.id)) {
                 albumSet.add(al.id);
-                totalTracks += al.track_count || 0;
+                totalTracks += al.trackCount || 0;
             }
         }
         return { totalTracks, totalAlbums: albumSet.size, totalDuration };
@@ -742,18 +736,18 @@ export const ArtistDetail: React.FC = () => {
         const owned = artistMeta?.ownedAlbums || [];
         if (owned.length === 0) return releaseGroups.compilations;
         const token = mediaAccessToken || authToken || '';
-        const artHashUrl = (al: OwnedAlbumRow) =>
-            al.art_hash ? `/api/art?hash=${al.art_hash}${token ? `&token=${token}` : ''}` : undefined;
+        const artHashUrl = (al: AlbumSummary) =>
+            al.artworkId ? `/api/art?hash=${al.artworkId}${token ? `&token=${token}` : ''}` : undefined;
         const seen = new Set(releaseGroups.compilations.map(a => a.albumId).filter(Boolean));
         const extra = owned.filter(al => al.id && !seen.has(al.id)).map(al => ({
             title: al.title || 'Unknown Album',
-            artist: al.artist_name || artistName,
-            artUrl: artUrlByAlbumId.get(al.id) || artHashUrl(al) || al.image_url || undefined,
+            artist: al.artistName || artistName,
+            artUrl: artUrlByAlbumId.get(al.id) || artHashUrl(al) || al.imageUrl || undefined,
             albumId: al.id,
-            editionLabel: al.edition_label || undefined,
+            editionLabel: al.editionLabel || undefined,
             type: 'Compilation' as const,
             tracks: tracksByAlbumId.get(al.id) || [],
-            trackCount: al.track_count,
+            trackCount: al.trackCount,
         }));
         return [...releaseGroups.compilations, ...extra]
             .sort((a, b) => a.title.localeCompare(b.title));

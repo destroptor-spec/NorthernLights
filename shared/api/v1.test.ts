@@ -15,7 +15,7 @@ const track = {
   bitrate: 1000, format: 'FLAC', lossless: true, fileSize: 42, mediaEtag: 'etag',
   artistId: 'artist-1', albumId: 'album-1', genreId: 'genre-1', loved: false, rating: 0,
   playCount: 0, lastPlayedAt: null, artworkId: null, artworkUrl: null,
-  musicBrainz: { recordingId: null, trackId: null, albumId: null, artistId: null, releaseGroupId: null, workId: null },
+  musicBrainz: { recordingId: null, trackId: null, albumId: null, artistId: null, albumArtistId: null, releaseGroupId: null, workId: null },
 };
 
 describe('Aurora API v1 contracts', () => {

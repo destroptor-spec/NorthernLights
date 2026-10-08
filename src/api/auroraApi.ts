@@ -181,6 +181,7 @@ export function toLegacyTrack(track: Track, mediaToken: string, quality: string)
     mbTrackId: track.musicBrainz.trackId || undefined,
     mbAlbumId: track.musicBrainz.albumId || undefined,
     mbArtistId: track.musicBrainz.artistId || undefined,
+    mbAlbumArtistId: track.musicBrainz.albumArtistId || undefined,
     mbReleaseGroupId: track.musicBrainz.releaseGroupId || undefined,
     mbWorkId: track.musicBrainz.workId || undefined,
     url: absolute(`/api/stream/${encodeURIComponent(track.id)}/playlist.m3u8?quality=${encodeURIComponent(quality)}${tokenQuery}`),

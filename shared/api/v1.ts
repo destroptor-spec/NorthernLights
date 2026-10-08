@@ -96,6 +96,7 @@ export const trackSchema = z.object({
     trackId: z.string().nullable(),
     albumId: z.string().nullable(),
     artistId: z.string().nullable(),
+    albumArtistId: z.string().nullable(),
     releaseGroupId: z.string().nullable(),
     workId: z.string().nullable(),
   }),
