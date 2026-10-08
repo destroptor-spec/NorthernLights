@@ -1212,6 +1212,50 @@
         ],
         "additionalProperties": false
       },
+      "Me": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/AuroraUser"
+          },
+          "client": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "The calling client: the X-Aurora-Client-Id it sent, or a server-assigned id."
+              },
+              "name": {
+                "type": "string"
+              },
+              "authKind": {
+                "type": "string",
+                "enum": [
+                  "jwt",
+                  "appKey",
+                  "scoped"
+                ]
+              },
+              "scope": {
+                "type": "string",
+                "enum": [
+                  "listener"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "authKind",
+              "scope"
+            ]
+          }
+        },
+        "required": [
+          "user",
+          "client"
+        ]
+      },
       "AppKeyCreate": {
         "type": "object",
         "properties": {
@@ -2160,8 +2204,7 @@
                   "type": "object",
                   "properties": {
                     "data": {
-                      "type": "object",
-                      "additionalProperties": {}
+                      "$ref": "#/components/schemas/Me"
                     },
                     "meta": {
                       "type": "object",

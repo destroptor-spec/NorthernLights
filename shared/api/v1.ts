@@ -32,6 +32,16 @@ export const userSchema = z.object({
   role: z.enum(['admin', 'user']),
 }).meta({ id: 'AuroraUser' });
 
+export const meSchema = z.object({
+  user: userSchema,
+  client: z.object({
+    id: z.string().describe('The calling client: the X-Aurora-Client-Id it sent, or a server-assigned id.'),
+    name: z.string(),
+    authKind: z.enum(['jwt', 'appKey', 'scoped']),
+    scope: z.literal('listener'),
+  }),
+}).meta({ id: 'Me' });
+
 export const clientSchema = z.object({
   id: z.string().uuid(),
   clientId: z.string().uuid(),
@@ -375,6 +385,7 @@ export const genreDetailSchema = z.object({
 
 export type ApiError = z.infer<typeof apiErrorSchema>;
 export type AuroraUser = z.infer<typeof userSchema>;
+export type Me = z.infer<typeof meSchema>;
 export type AuroraClient = z.infer<typeof clientSchema>;
 export type Track = z.infer<typeof trackSchema>;
 export type ArtistSummary = z.infer<typeof artistSummarySchema>;
