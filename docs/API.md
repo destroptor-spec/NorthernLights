@@ -96,6 +96,8 @@ Pairing requests expire after ten minutes. Approval binds the request to the use
 
 `POST /recommendations/next` is the shared Infinity Mode endpoint. Its body is `{ sessionHistoryTrackIds?, exclude?, seedTrackIds?, settings? }` (all optional; history and exclusions capped at 200 IDs, seeds at 50): `sessionHistoryTrackIds` is the client's playback-start history (oldest → newest, including the playing track) and is merged after older server history for this request only — it never records plays; `exclude` lists queued/held track IDs; `seedTrackIds` is the end of the play queue (oldest → newest, ending with the track the recommendation will follow) — when present, its last 10 IDs steer the similarity centroid, energy/dance trend and genre anchor, so Infinity continues from the queue rather than from whatever played last; without it the engine seeds from history as before. Seeds are never recommended back. `settings` overrides saved `discoveryLevel`/`genreStrictness` (0–100) and `artistAmnesiaLimit` (integer 0–200; shown as "Repeat Protection" — it blocks the last N played *tracks*, not artists, and is never relaxed when the search widens). Genre strictness is skipped when the anchor track has no genre tag. Returns `data: Track | null`; `null` means no eligible track remains. The legacy `POST /api/recommend` (body uses `excludeTrackIds`) is a thin compatibility wrapper over the same request handling.
 
+`PUT /tracks/:id/loved` stores the flag and then mirrors it to connected providers — a Last.fm love/unlove and a MusicBrainz rating of 100/0 — returning `data: { trackId, loved, providers }`, where each provider entry is `{ provider, status: 'ok' | 'skipped' | 'failed', reason?, error? }`. A provider failure never undoes the local write. The web route `POST /api/library/love` and this endpoint share one implementation. `POST /playback/reports` takes `{ eventId, trackId, kind: 'played' | 'skipped' | 'nowPlaying', occurredAt?, positionMs? }`; `eventId` must be a UUID and makes the report idempotent — a repeated id is answered with `status: 'duplicate'` and counted once. The web client reports plays and skips here and omits `occurredAt`, so the server stamps receipt time.
+
 Track DTOs expose opaque IDs, normalized metadata, user annotations, MusicBrainz identifiers, artwork identity/URL, media ETag, format and size. They never expose the database's Base64-encoded path. Resource payloads are explicitly mapped rather than serializing database rows.
 
 Playlist `tracks` are entry objects shaped as `{ "track": Track, "addedAt": "ISO 8601 timestamp or null" }`. This preserves playlist ordering metadata without changing the meaning of a standalone Track. Full replacement validates every track and commits atomically; unavailable IDs return `409 TRACKS_UNAVAILABLE` without emptying the existing playlist.
@@ -333,6 +335,8 @@ GET /rest/star.view?id=song:track-id&apiKey=aurora_sub_...
 GET /rest/unstar.view?id=song:track-id&apiKey=aurora_sub_...
 GET /rest/setRating.view?id=song:track-id&rating=5&apiKey=aurora_sub_...
 ```
+
+`star`/`unstar` use the same implementation as the web app and `PUT /api/v1/tracks/:id/loved`: the love is stored, then mirrored to Last.fm (love/unlove) and MusicBrainz (rating 100/0) when connected — unless the listener has turned off **Settings → Scrobbling → OpenSubsonic Clients → "Sync loved/liked songs across all platforms"** (`subsonicProviderLoveSyncEnabled`, on by default; also exposed in `GET/PATCH /api/v1/preferences`), in which case the star is stored locally only. Provider failures are logged and never fail the request. Several `id` parameters may be given; a missing `id` returns error `10`, and error `70` is returned only when none of the ids exist. Albums and artists (`albumId`/`artistId`) cannot be starred.
 
 Known unsupported areas are intentionally limited to empty successful compatibility responses: podcasts, internet radio, shares, chat, bookmarks, videos/captions, avatars, and jukebox control. Unsupported non-stubbed endpoints return OpenSubsonic error `70`.
 
@@ -726,7 +730,7 @@ Get per-directory statistics.
   ```
 
 ### [POST] `/api/library/love`
-Toggle loved status of a track for the current user, optionally syncing to Last.fm and/or MusicBrainz.
+Toggle loved status of a track for the current user, optionally syncing to Last.fm and/or MusicBrainz. The web client now uses `PUT /api/v1/tracks/:id/loved`, which shares this route's implementation; this route remains for compatibility. A failed provider is reported as `{ "provider": "lastfm", "status": "failed", "error": "…" }`.
 - **Example Request**:
   ```json
   {

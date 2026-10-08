@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { setTrackLovedAndSync } from '../services/lovedTrack.service';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -735,9 +736,11 @@ router.put('/tracks/:id/loved', async (req, res) => {
   if (!input) return;
   const track = await getApiV1TrackById(req.apiV1!.userId, req.params.id);
   if (!track) return sendApiV1Error(req, res, 404, 'TRACK_NOT_FOUND', 'Track not found.');
-  await setTrackLovedForUser(req.apiV1!.userId, req.params.id, input.loved);
-  publishApiV1Event(req.apiV1!.userId, 'annotation.changed', { trackId: req.params.id, loved: input.loved });
-  dataResponse(req, res, { trackId: req.params.id, loved: input.loved });
+  // Same path as the web route: stores the flag, then mirrors it to Last.fm
+  // and MusicBrainz. Provider failures are reported, never fatal.
+  const providers = await setTrackLovedAndSync(req.apiV1!.userId, req.params.id, input.loved);
+  if (!providers) return sendApiV1Error(req, res, 404, 'TRACK_NOT_FOUND', 'Track not found.');
+  dataResponse(req, res, { trackId: req.params.id, loved: input.loved, providers });
 });
 
 router.put('/tracks/:id/rating', async (req, res) => {
@@ -781,7 +784,7 @@ router.post('/playback/reports', async (req, res) => {
 const preferenceDefaults = {
   streamingQuality: 'auto', prebufferPolicy: 'conservative', playedThresholdPercent: 50,
   loudnessNormEnabled: false, loudnessTargetLufs: -18, loudnessPreampDb: 0,
-  loudnessMode: 'track', subsonicProviderScrobbleEnabled: false,
+  loudnessMode: 'track', subsonicProviderScrobbleEnabled: false, subsonicProviderLoveSyncEnabled: true,
 } as const;
 
 router.get('/preferences', async (req, res) => {

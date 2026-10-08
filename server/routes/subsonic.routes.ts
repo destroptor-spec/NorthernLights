@@ -6,7 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import * as mm from 'music-metadata';
 import { spawn } from 'child_process';
-import { initDB, touchSubsonicApiKey, getActiveSubsonicApiKeyByPrefix, updateSubsonicApiKeyHash, getPlaylists, getPlaylistTracks, getPlaylistMeta, createPlaylist, addTracksToPlaylist, deletePlaylist, recordPlaybackForUser, setTrackLovedForUser, setTrackRatingForUser, getUserSetting, setUserSetting, getSystemSetting, getArtworkInfoForPath } from '../database';
+import { initDB, touchSubsonicApiKey, getActiveSubsonicApiKeyByPrefix, updateSubsonicApiKeyHash, getPlaylists, getPlaylistTracks, getPlaylistMeta, createPlaylist, addTracksToPlaylist, deletePlaylist, recordPlaybackForUser, setTrackRatingForUser, getUserSetting, setUserSetting, getSystemSetting, getArtworkInfoForPath } from '../database';
 import { fetchCandidatePool, computeArtistCentroids } from '../services/candidatePool.service';
 import { isPathAllowed, pathToBuffer } from '../state';
 import { maybeMeasureLoudnessForUser } from '../services/loudness.service';
@@ -22,6 +22,7 @@ import type { LbTrack } from '../services/listenbrainz.service';
 import { resolveArtwork } from '../services/artCache';
 import { providerArtworkProxyPath, resolveProviderArtworkUrl } from '../services/artworkFallback.service';
 import { publishApiV1Event } from '../services/apiV1Events.service';
+import { setTrackLovedAndSync } from '../services/lovedTrack.service';
 
 const router = Router();
 const SUBSONIC_VERSION = '1.16.1';
@@ -37,6 +38,7 @@ const OPEN_SUBSONIC_ENABLED_CACHE_MS = 2_000;
 const PLAYQUEUE_SETTING_KEY = 'subsonic:playqueue';
 const EFFNET_SIMILARITY_WEIGHT = 0.55;
 const SUBSONIC_PROVIDER_SCROBBLE_SETTING_KEY = 'subsonicProviderScrobbleEnabled';
+const SUBSONIC_PROVIDER_LOVE_SYNC_SETTING_KEY = 'subsonicProviderLoveSyncEnabled';
 
 type SubsonicContext = {
   userId: string;
@@ -48,7 +50,7 @@ type SubsonicContext = {
   authKind: 'apiKey' | 'mediaToken';
 };
 
-type SubsonicErrorCode = 41 | 42 | 43 | 44 | 50 | 70;
+type SubsonicErrorCode = 10 | 41 | 42 | 43 | 44 | 50 | 70;
 type ProviderScrobbleTrack = LfmTrack & LbTrack;
 export type SubsonicScrobbleEvent = {
   rawId: string;
@@ -483,6 +485,44 @@ function songId(id: string) {
   if (id.startsWith('song:')) return id.slice(5);
   return id;
 }
+/**
+ * OpenSubsonic `star` / `unstar` for songs, through the same implementation as
+ * the web app and API v1 — so a love from Symfonium reaches Last.fm and
+ * MusicBrainz too. It used to write the flag directly and skip provider sync.
+ *
+ * Provider sync follows the listener's "Sync loved/liked songs across all
+ * platforms" preference (see isSubsonicLoveSyncEnabled).
+ *
+ * Every `id` parameter is honoured, as the Subsonic spec allows several; only
+ * the first used to be. Provider failures are logged rather than returned:
+ * the Subsonic response has nowhere to put them, and the local star stands.
+ * Albums and artists (`albumId` / `artistId`) remain unsupported, as before.
+ */
+export async function setSubsonicSongsStarred(
+  userId: string,
+  rawIds: string[],
+  starred: boolean,
+): Promise<{ error?: { code: SubsonicErrorCode; message: string } }> {
+  const trackIds = Array.from(new Set(rawIds.map((raw) => {
+    try { return songId(raw); } catch { return ''; }
+  }).filter(Boolean)));
+  if (trackIds.length === 0) return { error: { code: 10, message: 'Required parameter is missing: id' } };
+
+  const syncProviders = await isSubsonicLoveSyncEnabled(userId);
+  let found = 0;
+  for (const trackId of trackIds) {
+    const providers = await setTrackLovedAndSync(userId, trackId, starred, { source: 'openSubsonic', syncProviders });
+    if (!providers) continue;
+    found++;
+    const failed = providers.filter((provider) => provider.status === 'failed');
+    if (failed.length > 0) {
+      console.warn(`[Subsonic] ${starred ? 'star' : 'unstar'} ${trackId}: provider sync failed for ${failed.map((f) => f.provider).join(', ')}`);
+    }
+  }
+  if (found === 0) return { error: { code: 70, message: 'Song not found' } };
+  return {};
+}
+
 function subsonicArtistId(id: string) { return `artist:${id}`; }
 function subsonicAlbumId(id: string) { return `album:${id}`; }
 function subsonicSongId(id: string) { return `song:v1:${encodeSongId(id)}`; }
@@ -528,6 +568,19 @@ function settingEnabled(value: unknown): boolean {
 
 export async function isSubsonicProviderScrobbleBridgeEnabled(userId: string): Promise<boolean> {
   return settingEnabled(await getUserSetting(userId, SUBSONIC_PROVIDER_SCROBBLE_SETTING_KEY));
+}
+
+/**
+ * "Sync loved/liked songs across all platforms" — whether a star from an
+ * OpenSubsonic client is mirrored to Last.fm and MusicBrainz.
+ *
+ * On unless explicitly turned off. Unlike the scrobble bridge (off by
+ * default, because a client that scrobbles itself would be counted twice),
+ * loving the same song twice is harmless, so syncing is the safe default.
+ */
+export async function isSubsonicLoveSyncEnabled(userId: string): Promise<boolean> {
+  const value = await getUserSetting(userId, SUBSONIC_PROVIDER_LOVE_SYNC_SETTING_KEY);
+  return value === null || value === undefined ? true : settingEnabled(value);
 }
 
 function positiveInt(value: unknown): number | undefined {
@@ -1665,13 +1718,11 @@ async function handleAnnotations(req: Request, res: Response, method: string, ct
   const id = getParam(req, 'id') || '';
   switch (method) {
     case 'star':
-      await setTrackLovedForUser(ctx.userId, songId(id), true);
-      publishApiV1Event(ctx.userId, 'annotation.changed', { trackId: songId(id), loved: true, source: 'openSubsonic' });
+    case 'unstar': {
+      const result = await setSubsonicSongsStarred(ctx.userId, getParamList(req, 'id'), method === 'star');
+      if (result.error) return sendError(req, res, result.error.code, result.error.message);
       return sendSubsonic(req, res, subsonicSuccess({}));
-    case 'unstar':
-      await setTrackLovedForUser(ctx.userId, songId(id), false);
-      publishApiV1Event(ctx.userId, 'annotation.changed', { trackId: songId(id), loved: false, source: 'openSubsonic' });
-      return sendSubsonic(req, res, subsonicSuccess({}));
+    }
     case 'setrating': {
       const rating = parseInt(getParam(req, 'rating') || '0', 10);
       const normalizedRating = Number.isFinite(rating) ? rating : 0;

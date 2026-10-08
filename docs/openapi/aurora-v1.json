@@ -952,6 +952,10 @@
           },
           "subsonicProviderScrobbleEnabled": {
             "type": "boolean"
+          },
+          "subsonicProviderLoveSyncEnabled": {
+            "type": "boolean",
+            "description": "Mirror stars from OpenSubsonic clients to Last.fm and MusicBrainz. Defaults to true."
           }
         },
         "required": [
@@ -962,7 +966,8 @@
           "loudnessTargetLufs",
           "loudnessPreampDb",
           "loudnessMode",
-          "subsonicProviderScrobbleEnabled"
+          "subsonicProviderScrobbleEnabled",
+          "subsonicProviderLoveSyncEnabled"
         ]
       },
       "TrackLyrics": {
@@ -6672,6 +6677,10 @@
                   },
                   "subsonicProviderScrobbleEnabled": {
                     "type": "boolean"
+                  },
+                  "subsonicProviderLoveSyncEnabled": {
+                    "type": "boolean",
+                    "description": "Mirror stars from OpenSubsonic clients to Last.fm and MusicBrainz. Defaults to true."
                   }
                 }
               }
