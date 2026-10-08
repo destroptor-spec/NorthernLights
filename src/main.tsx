@@ -1,13 +1,12 @@
-/// <reference types="vite-plugin-pwa/client" />
+/// <reference types="vite/client" />
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import './index.css';
 import './utils/pwaInstall';
-import { registerSW } from 'virtual:pwa-register';
 import { usePlayerStore } from './store';
-import { setPwaUpdateHandler } from './utils/pwaUpdate';
+import { createPwaUpdateHandler, reloadAppOnce, setPwaUpdateHandler, startPwaUpdateChecks, watchPwaUpdates } from './utils/pwaUpdate';
 import { OriginAccessGate } from './components/OriginAccessGate';
 
 // Auto-recover from stale lazy chunks. After a deploy the hashed route chunks
@@ -23,17 +22,25 @@ window.addEventListener('vite:preloadError', (event) => {
   if (Date.now() - last < 10000) return;
   event.preventDefault();
   sessionStorage.setItem(RELOAD_KEY, String(Date.now()));
-  window.location.reload();
+  reloadAppOnce();
 });
 
-// Register the PWA service worker
-const updateServiceWorker = registerSW({
-  immediate: true,
-  onNeedRefresh() {
-    usePlayerStore.getState().setPendingUpdate(true);
-  },
-});
-setPwaUpdateHandler(() => updateServiceWorker(true));
+// Vite generates the worker; native lifecycle events drive the prompt and
+// activation. Avoid the plugin's heuristic update classification/reload paths.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  const serviceWorker = navigator.serviceWorker;
+  const controllerAtLoad = serviceWorker.controller;
+  void serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' }).then((registration) => {
+    setPwaUpdateHandler(createPwaUpdateHandler(registration, serviceWorker, reloadAppOnce, controllerAtLoad));
+    watchPwaUpdates(registration, serviceWorker, () => usePlayerStore.getState().setPendingUpdate(true));
+    if (controllerAtLoad && serviceWorker.controller !== controllerAtLoad) {
+      usePlayerStore.getState().setPendingUpdate(true);
+    }
+    startPwaUpdateChecks(registration);
+  }).catch((error: unknown) => {
+    console.error('[PWA] Service worker registration failed.', error);
+  });
+}
 
 interface ErrorBoundaryState {
   hasError: boolean;
