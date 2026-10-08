@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { usePlayerStore } from '../../store/index';
 import { useToast } from '../../hooks/useToast';
-import { User, Shield, Clock, Link, Check, Trash2, Plus, Copy, AlertCircle } from 'lucide-react';
+import { User, Shield, Crown, Clock, Link, Check, Trash2, Plus, Copy, AlertCircle } from 'lucide-react';
+import { accountProtection, ACCOUNT_PROTECTION_MESSAGES } from '../../../shared/accountProtection';
 
 interface UserType {
     id: string;
     username: string;
     role: string;
+    is_owner?: boolean;
     created_at: number;
     last_login_at: number;
 }
@@ -134,7 +136,8 @@ export const AdminDashboard: React.FC = () => {
                 showToast(`Deleted user ${username}`, 'success');
                 fetchUsers();
             } else {
-                showToast('Failed to delete user', 'error');
+                const data = await res.json().catch(() => null);
+                showToast(data?.error || 'Failed to delete user', 'error');
             }
         } catch (e) {
             showToast('Network error', 'error');
@@ -235,7 +238,12 @@ export const AdminDashboard: React.FC = () => {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-[var(--glass-border)]">
-                                {users.map(u => (
+                                {users.map(u => {
+                                    const protection = accountProtection(
+                                        { role: u.role, isOwner: u.is_owner === true },
+                                        users.filter(x => x.role === 'admin').length,
+                                    );
+                                    return (
                                     <tr key={u.id} className="hover:bg-[var(--glass-bg)] transition-colors">
                                         <td className="px-4 py-3 font-medium text-[var(--color-text-primary)]">{u.username}</td>
                                         <td className="px-4 py-3">
@@ -243,6 +251,12 @@ export const AdminDashboard: React.FC = () => {
                                                 {u.role === 'admin' ? <Shield size={10} className="mr-1" /> : <User size={10} className="mr-1" />}
                                                 {u.role.toUpperCase()}
                                             </span>
+                                            {u.is_owner && (
+                                                <span className="ml-1.5 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-primary/10 text-primary border border-primary/20" title="Server owner">
+                                                    <Crown size={10} className="mr-1" aria-hidden="true" />
+                                                    OWNER
+                                                </span>
+                                            )}
                                         </td>
                                         <td className="px-4 py-3 text-[var(--color-text-muted)] text-xs hidden md:table-cell">
                                             {new Date(u.created_at).toLocaleDateString()}
@@ -251,14 +265,18 @@ export const AdminDashboard: React.FC = () => {
                                             {u.last_login_at ? new Date(u.last_login_at).toLocaleString() : 'Never'}
                                         </td>
                                         <td className="px-4 py-3 text-right">
-                                            {u.id !== currentUser?.id && (
-                                                <button onClick={() => deleteUser(u.id, u.username)} className="p-1.5 text-red-400 hover:bg-red-400/10 rounded transition-colors" title="Delete User">
+                                            {u.id !== currentUser?.id && !protection && (
+                                                <button onClick={() => deleteUser(u.id, u.username)} className="p-1.5 text-red-400 hover:bg-red-400/10 rounded transition-colors" title="Delete User" aria-label={`Delete ${u.username}`}>
                                                     <Trash2 size={16} />
                                                 </button>
                                             )}
+                                            {u.id !== currentUser?.id && protection && (
+                                                <span className="sr-only">{ACCOUNT_PROTECTION_MESSAGES[protection]}</span>
+                                            )}
                                         </td>
                                     </tr>
-                                ))}
+                                    );
+                                })}
                             </tbody>
                         </table>
                     </div>

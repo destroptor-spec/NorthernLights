@@ -11,6 +11,7 @@ import KeyboardHint from './components/KeyboardHint';
 import { usePlayerStore } from './store/index';
 import { RefreshCw, WifiOff } from 'lucide-react';
 import { ToastContainer } from './components/ToastContainer';
+import { fetchCurrentUser } from './utils/currentUser';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { useSSE } from './hooks/useSSE';
 import { useToast } from './hooks/useToast';
@@ -227,14 +228,8 @@ const App: React.FC = () => {
       const token = usePlayerStore.getState().authToken;
       if (!token) return;
       try {
-        const res = await fetch('/api/auth/me', {
-          headers: usePlayerStore.getState().getAuthHeader(),
-        });
-        if (!res.ok) return;
-        const data = await res.json().catch(() => null);
-        if (!cancelled && data?.user) {
-          usePlayerStore.setState({ currentUser: data.user });
-        }
+        const user = await fetchCurrentUser(usePlayerStore.getState().getAuthHeader());
+        if (!cancelled) usePlayerStore.setState({ currentUser: user });
       } catch {
         // Network and database health are handled separately.
       }

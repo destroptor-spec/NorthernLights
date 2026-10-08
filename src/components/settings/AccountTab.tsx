@@ -1,9 +1,16 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { KeyRound, ShieldAlert, UserRound } from 'lucide-react';
 import { usePlayerStore } from '../../store/index';
 import { useToast } from '../../hooks/useToast';
 import { ConfirmModal } from '../ConfirmModal';
 import { PromptModal } from '../PromptModal';
+import type { AccountProtection } from '../../../shared/accountProtection';
+
+// Why this account can't be deleted, in the owner's own words.
+const OWN_ACCOUNT_PROTECTION: Record<AccountProtection, string> = {
+    owner: 'You own this Aurora server, so this account can\'t be deleted.',
+    'last-admin': 'You\'re the only admin. Make another user an admin before deleting this account.',
+};
 
 interface AccountTabProps {
     onClose: () => void;
@@ -18,6 +25,19 @@ export const AccountTab: React.FC<AccountTabProps> = ({ onClose }) => {
 
     const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; confirmLabel?: string; onConfirm: () => void } | null>(null);
     const [promptDialog, setPromptDialog] = useState<{ title: string; label?: string; placeholder?: string; inputType?: React.HTMLInputTypeAttribute; autoComplete?: string; confirmLabel?: string; onSubmit: (value: string) => void } | null>(null);
+
+    // undefined while loading, so the delete button never flashes up for an
+    // account that can't use it. A failed lookup shows it: the server still
+    // refuses a protected deletion.
+    const [protection, setProtection] = useState<AccountProtection | null | undefined>(undefined);
+    useEffect(() => {
+        let cancelled = false;
+        fetch('/api/auth/account-protection', { headers: getAuthHeader() })
+            .then(res => (res.ok ? res.json() : { protection: null }))
+            .then(data => { if (!cancelled) setProtection(data?.protection ?? null); })
+            .catch(() => { if (!cancelled) setProtection(null); });
+        return () => { cancelled = true; };
+    }, [getAuthHeader]);
 
     const username = currentUser?.username || 'User';
     const roleLabel = currentUser?.role || 'listener';
@@ -151,11 +171,15 @@ export const AccountTab: React.FC<AccountTabProps> = ({ onClose }) => {
                         <ShieldAlert size={17} aria-hidden="true" />
                         <h4>Danger Zone</h4>
                     </div>
-                    <p>Permanently delete this account and all associated data.</p>
+                    <p>{protection
+                        ? OWN_ACCOUNT_PROTECTION[protection]
+                        : 'Permanently delete this account and all associated data.'}</p>
                 </div>
-                <button type="button" onClick={requestAccountDeletion} className="btn btn-danger account-danger__action">
-                    Delete Account
-                </button>
+                {protection === null && (
+                    <button type="button" onClick={requestAccountDeletion} className="btn btn-danger account-danger__action">
+                        Delete Account
+                    </button>
+                )}
             </section>
 
             {confirmDialog && (

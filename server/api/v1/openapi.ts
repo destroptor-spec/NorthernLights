@@ -13,6 +13,7 @@ import {
   genreSchema,
   hubRegenerationSchema,
   listenerPreferencesSchema,
+  meSchema,
   nextRecommendationSchema,
   lyricsSchema,
   pairingExchangeSchema,
@@ -112,7 +113,7 @@ path({
   responses: { 200: { description: 'Complete audio stream' }, 206: { description: 'Audio byte range' }, 401: { description: 'Invalid media token', content: json(schemas.ApiError) }, 404: { description: 'Media unavailable', content: json(schemas.ApiError) } },
 });
 
-path({ method: 'get', path: '/me', summary: 'Get the authenticated user and client', tags: ['Authentication'], security: authed, responses: ok(unknownObject) });
+path({ method: 'get', path: '/me', summary: 'Get the authenticated user and client', tags: ['Authentication'], security: authed, responses: ok(meSchema) });
 path({ method: 'get', path: '/artwork/{hash}', summary: 'Get cached cover artwork', tags: ['Library'], security: authed, request: { params: z.object({ hash: z.string() }), query: z.object({ size: z.coerce.number().optional(), token: z.string().optional() }) }, responses: { 200: { description: 'AVIF artwork', content: { 'image/avif': { schema: { type: 'string', contentEncoding: 'binary' } } } }, 401: { description: 'Authentication failed', content: json(schemas.ApiError) }, 404: { description: 'Artwork unavailable', content: json(schemas.ApiError) } } });
 path({ method: 'get', path: '/app-keys', summary: 'List dedicated Aurora app keys', description: 'Requires a browser JWT session.', tags: ['Authentication'], security: authed, responses: ok(z.array(schemas.Client)) });
 path({ method: 'post', path: '/app-keys', summary: 'Create a dedicated Aurora app key', description: 'The secret is returned once. Requires a browser JWT session.', tags: ['Authentication'], security: authed, request: { body: { required: true, content: json(appKeyCreateSchema) } }, responses: created(unknownObject) });
