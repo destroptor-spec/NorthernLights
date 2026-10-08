@@ -1,7 +1,8 @@
 import { Router } from 'express';
-import { listUsers, createUser, getUserByUsername, updateUser, deleteUser, listInvites, createInvite, getInvite, deleteInvite, cleanupOrphanedPlaylists, getDatabaseStats, getPoolStats } from '../database';
+import { listUsers, createUser, getUserByUsername, updateUser, changeProtectedAccount, listInvites, createInvite, getInvite, deleteInvite, cleanupOrphanedPlaylists, getDatabaseStats, getPoolStats } from '../database';
 import { hashPassword } from '../services/auth.service';
 import { requireAdmin } from '../middleware/auth';
+import { ACCOUNT_PROTECTION_MESSAGES } from '../../shared/accountProtection';
 import { getContainerStatus, startContainer, stopContainer, createContainer, recreateContainer, getConfiguredDatabaseInfo, ContainerConfig } from '../services/containerControl.service';
 import { dbConnected, setDbConnected, initDatabaseConnection, mbdbStatus, mbdbClients } from '../state';
 import { mbdbService } from '../services/mbdb.service';
@@ -143,7 +144,15 @@ router.put('/users/:id', adminMutationRateLimit, requireAdmin, async (req, res) 
       if (role !== 'admin' && role !== 'user') {
         return res.status(400).json({ error: 'Role must be admin or user' });
       }
-      fields.role = role;
+      if (role === 'admin') fields.role = role;
+    }
+
+    // Demotion goes through the owner / last-admin guard before any other
+    // change is applied, so a refused request changes nothing.
+    if (role === 'user') {
+      const result = await changeProtectedAccount(id as string, 'demote');
+      if (result === 'not-found') return res.status(404).json({ error: 'User not found' });
+      if (result !== 'done') return res.status(403).json({ error: ACCOUNT_PROTECTION_MESSAGES[result], protection: result });
     }
 
     await updateUser(id as string, fields);
@@ -160,7 +169,9 @@ router.delete('/users/:id', adminMutationRateLimit, requireAdmin, async (req, re
     if (id === req.user!.userId) {
       return res.status(400).json({ error: 'Cannot delete your own account' });
     }
-    await deleteUser(id as string);
+    const result = await changeProtectedAccount(id as string, 'delete');
+    if (result === 'not-found') return res.status(404).json({ error: 'User not found' });
+    if (result !== 'done') return res.status(403).json({ error: ACCOUNT_PROTECTION_MESSAGES[result], protection: result });
     res.json({ status: 'deleted' });
   } catch (error) {
     console.error('User delete error:', error);

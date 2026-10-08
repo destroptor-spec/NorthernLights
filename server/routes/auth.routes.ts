@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import crypto from 'crypto';
 import fs from 'fs';
-import { hasUsers, createUser, getUserByUsername, getUserById, updateUser, deleteUser, updateLastLogin, createInvite, getInvite, isInviteValid, incrementInviteUses, createSubsonicApiKey, listSubsonicApiKeys, revokeSubsonicApiKey, rotateSubsonicApiKey, deleteRevokedSubsonicApiKey, getDirectories, getSystemSetting, setSystemSetting } from '../database';
+import { hasUsers, createUser, getUserByUsername, getUserById, updateUser, changeProtectedAccount, getAccountProtection, updateLastLogin, createInvite, getInvite, isInviteValid, incrementInviteUses, createSubsonicApiKey, listSubsonicApiKeys, revokeSubsonicApiKey, rotateSubsonicApiKey, deleteRevokedSubsonicApiKey, getDirectories, getSystemSetting, setSystemSetting } from '../database';
 import { hashPassword, verifyPassword, verifyDummyPassword, generateToken, JwtPayload } from '../services/auth.service';
 import { generateScopedToken } from '../services/scopedToken.service';
 import { logAuthEvent } from '../services/authLog.service';
@@ -10,6 +10,7 @@ import { queueLlmHubRefreshForUser } from '../services/hubRefresh.service';
 import { createRateLimiter } from '../middleware/rateLimit';
 import { getTrustedClientIp } from '../middleware/clientIp';
 import { requireAdmin } from '../middleware/auth';
+import { ACCOUNT_PROTECTION_MESSAGES } from '../../shared/accountProtection';
 
 const router = Router();
 const MIN_PASSWORD_LENGTH = 12;
@@ -236,7 +237,7 @@ router.post('/setup/complete', authPublicMutationRateLimit, async (req, res) => 
       setSystemSetting(SETUP_COMPLETED_KEY, false),
       setSystemSetting(SETUP_STEP_KEY, 'analysis'),
     ]);
-    const user = await createUser(username, passwordHash, 'admin');
+    const user = await createUser(username, passwordHash, 'admin', { isOwner: true });
     const auth = await buildAuthResponse({ userId: user.id, username: user.username, role: user.role });
     clearAuthAttempts(req, 'setup', username);
     res.json({ status: 'account_created', nextStep: 'analysis', ...auth, user: { id: user.id, username: user.username, role: user.role } });
@@ -374,6 +375,18 @@ router.get('/me', authStatusRateLimit, (req, res) => {
   res.json({ user: req.user });
 });
 
+// Whether the signed-in account can be deleted: the server owner and the last
+// admin can't be. My Account hides "Delete account" when this is set.
+router.get('/account-protection', authStatusRateLimit, async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+  try {
+    res.json({ protection: await getAccountProtection(req.user.userId) });
+  } catch (error) {
+    console.error('Account protection lookup error:', error);
+    res.status(500).json({ error: 'Failed to check account' });
+  }
+});
+
 // Change password
 router.post('/change-password', authAccountMutationRateLimit, async (req, res) => {
   try {
@@ -473,17 +486,10 @@ router.delete('/delete-account', authAccountMutationRateLimit, async (req, res) 
     const valid = await verifyPassword(password, user.password_hash);
     if (!valid) return res.status(401).json({ error: 'Incorrect password' });
 
-    // Don't allow deleting the last admin
-    if (user.role === 'admin') {
-      const { listUsers } = await import('../database');
-      const users = await listUsers();
-      const adminCount = users.filter((u: any) => u.role === 'admin').length;
-      if (adminCount <= 1) {
-        return res.status(400).json({ error: 'Cannot delete the last admin account' });
-      }
-    }
-
-    await deleteUser(user.id);
+    // The server owner and the last admin can't delete themselves.
+    const result = await changeProtectedAccount(user.id, 'delete');
+    if (result === 'not-found') return res.status(404).json({ error: 'User not found' });
+    if (result !== 'done') return res.status(403).json({ error: ACCOUNT_PROTECTION_MESSAGES[result], protection: result });
     res.json({ status: 'deleted' });
   } catch (error) {
     console.error('Account deletion error:', error);

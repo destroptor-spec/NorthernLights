@@ -8,6 +8,7 @@ import { normalizeGenreIdentity } from '../utils/genreIdentity';
 // shared/artistCredit.ts). Re-exported so existing `import('../database')`
 // consumers (e.g. library.routes) keep resolving `splitArtistNames` here.
 import { splitArtistNames, uniqueArtistNames } from '../../shared/artistCredit';
+import { accountProtection, type AccountProtection } from '../../shared/accountProtection';
 export { splitArtistNames };
 
 let pool: Pool | null = null;
@@ -738,6 +739,13 @@ export async function initDB(): Promise<Pool> {
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           last_login_at TIMESTAMPTZ
         );
+        -- The server owner: the account the setup wizard created. At most one.
+        -- Servers set up before the flag existed get their oldest admin.
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS is_owner BOOLEAN NOT NULL DEFAULT FALSE;
+        CREATE UNIQUE INDEX IF NOT EXISTS users_single_owner_idx ON users (is_owner) WHERE is_owner;
+        UPDATE users SET is_owner = TRUE
+          WHERE id = (SELECT id FROM users WHERE role = 'admin' ORDER BY created_at, id LIMIT 1)
+            AND NOT EXISTS (SELECT 1 FROM users WHERE is_owner);
 
         CREATE TABLE IF NOT EXISTS invites (
           token TEXT PRIMARY KEY DEFAULT encode(gen_random_bytes(32), 'hex'),
@@ -5378,13 +5386,14 @@ export async function setSystemSetting(key: string, value: any) {
 // USER MANAGEMENT
 // ==========================================
 
-export async function createUser(username: string, passwordHash: string, role: string = 'user') {
+export async function createUser(username: string, passwordHash: string, role: string = 'user', opts: { isOwner?: boolean } = {}) {
   const db = await initDB();
+  // Ownership is claimed only while the server has no owner yet.
   const res = await db.query(`
-    INSERT INTO users (username, password_hash, role)
-    VALUES ($1, $2, $3)
+    INSERT INTO users (username, password_hash, role, is_owner)
+    VALUES ($1, $2, $3, $4::boolean AND NOT EXISTS (SELECT 1 FROM users WHERE is_owner))
     RETURNING *
-  `, [username, passwordHash, role]);
+  `, [username, passwordHash, role, opts.isOwner === true]);
   return res.rows[0] as any;
 }
 
@@ -5402,7 +5411,7 @@ export async function getUserByUsername(username: string) {
 
 export async function listUsers() {
   const db = await initDB();
-  const res = await db.query('SELECT id, username, role, created_at, last_login_at FROM users ORDER BY created_at ASC');
+  const res = await db.query('SELECT id, username, role, is_owner, created_at, last_login_at FROM users ORDER BY created_at ASC');
   return res.rows;
 }
 
@@ -5429,6 +5438,53 @@ export async function updateLastLogin(id: string) {
 export async function deleteUser(id: string) {
   const db = await initDB();
   await db.query('DELETE FROM users WHERE id = $1', [id]);
+}
+
+/** Whether an account is protected from deletion and demotion right now. */
+export async function getAccountProtection(id: string): Promise<AccountProtection | null> {
+  const db = await initDB();
+  const res = await db.query(`
+    SELECT role, is_owner, (SELECT COUNT(*)::int FROM users WHERE role = 'admin') AS admin_count
+    FROM users WHERE id = $1
+  `, [id]);
+  const row = res.rows[0];
+  return row ? accountProtection({ role: row.role, isOwner: row.is_owner === true }, row.admin_count) : null;
+}
+
+export type ProtectedAccountChange = 'done' | 'not-found' | AccountProtection;
+
+/**
+ * Delete an account, or demote it to a listener, unless it is the owner or
+ * the last admin. Runs under a lock on the admin rows so two admins removing
+ * each other at the same moment can't both succeed and leave none.
+ */
+export async function changeProtectedAccount(id: string, change: 'delete' | 'demote'): Promise<ProtectedAccountChange> {
+  const db = await initDB();
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`SELECT id FROM users WHERE role = 'admin' FOR UPDATE`);
+    const res = await client.query(`
+      SELECT role, is_owner, (SELECT COUNT(*)::int FROM users WHERE role = 'admin') AS admin_count
+      FROM users WHERE id = $1 FOR UPDATE
+    `, [id]);
+    const row = res.rows[0];
+    if (!row) { await client.query('ROLLBACK'); return 'not-found'; }
+    // Demoting a listener is a no-op, never blocked.
+    const blocked = change === 'demote' && row.role !== 'admin'
+      ? null
+      : accountProtection({ role: row.role, isOwner: row.is_owner === true }, row.admin_count);
+    if (blocked) { await client.query('ROLLBACK'); return blocked; }
+    if (change === 'delete') await client.query('DELETE FROM users WHERE id = $1', [id]);
+    else await client.query(`UPDATE users SET role = 'user' WHERE id = $1`, [id]);
+    await client.query('COMMIT');
+    return 'done';
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function hasUsers(): Promise<boolean> {
