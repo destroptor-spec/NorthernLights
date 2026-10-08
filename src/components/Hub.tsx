@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { usePlayerStore } from '../store';
 import { Play, Pin, PinOff, Disc3, Sparkles, Wand2, Radio, Repeat, Rewind, Sunrise, Sun, Moon, Sunset, User2, ListMusic, Loader2 } from 'lucide-react';
 import type { TrackInfo } from '../utils/fileSystem';
+import { auroraApiRequest, type Track } from '../api/auroraApi';
+import { toPlayableTracks } from '../utils/playableTracks';
 import type { Playlist, LastOpenedAlbum } from '../store';
 import { useDominantColor } from '../hooks/useDominantColor';
 import { buildRolledCoverGradient } from '../utils/coverGradient';
@@ -983,7 +985,6 @@ export const Hub: React.FC = () => {
   const albumCount = usePlayerStore((s) => s.albums.length);
   const authToken = usePlayerStore((s) => s.authToken);
   const mediaAccessToken = usePlayerStore((s) => s.mediaAccessToken);
-  const hydrateTracks = usePlayerStore((s) => s.hydrateTracks);
   // The library is "present" once the entity lists load (entity-first); Hub's
   // own data is server-side, so it shouldn't wait for the full track array.
   const hasLibrary = library.length > 0 || albumCount > 0;
@@ -992,6 +993,7 @@ export const Hub: React.FC = () => {
   const togglePin = usePlayerStore((s) => s.togglePin);
   const currentUser = usePlayerStore((s) => s.currentUser);
   const fetchPlaylistsFromServer = usePlayerStore((s) => s.fetchPlaylistsFromServer);
+  const addToast = usePlayerStore((s) => s.addToast);
   const playlists = usePlayerStore((s) => s.playlists);
   const playAtIndex = usePlayerStore((s) => s.playAtIndex);
   const llmBaseUrl = usePlayerStore((s) => s.llmBaseUrl);
@@ -1016,20 +1018,17 @@ export const Hub: React.FC = () => {
   const collectionsSignatureRef = useRef('');
   const smartBundleSignatureRef = useRef('');
 
-  // Prefer the fully-hydrated library track when present; otherwise hydrate the
-  // server-embedded track (build stream/art URLs) so Hub works and plays
-  // correctly even before the background track list loads.
-  const resolveTracks = useCallback((rawTracks: any[]): TrackInfo[] =>
-    (rawTracks || [])
-      .map((t: any) => library.find((lt) => lt.id === t.id) || hydrateTracks([t])[0])
-      .filter(Boolean) as TrackInfo[], [library, hydrateTracks]);
+  // Prefer the fully-hydrated library track when present; otherwise convert
+  // the server's v1 track (stream/art URLs with the media token) so Hub works
+  // and plays correctly even before the background track list loads.
+  const resolveTracks = useCallback((apiTracks: Track[] | undefined): TrackInfo[] =>
+    toPlayableTracks(apiTracks || [])
+      .map((t) => library.find((lt) => lt.id === t.id) || t), [library]);
 
   const fetchSmartBundle = useCallback(async (options: { background?: boolean } = {}) => {
     if (!options.background) setIsSmartLoading(true);
     try {
-      const res = await fetch('/api/hub/smart', { headers: getAuthHeader() });
-      if (!res.ok) return;
-      const data = await res.json();
+      const data = await auroraApiRequest<any>('/hub/smart', getAuthHeader());
       const resolve = (raw: any) =>
         raw ? { ...raw, tracks: resolveTracks(raw.tracks) } : null;
       const orNull = (col: HubCollection | null) =>
@@ -1131,8 +1130,9 @@ export const Hub: React.FC = () => {
       tracks = library.filter((t: any) => (tile.type === 'album' ? t.albumId : t.artistId) === tile.id);
       if (tracks.length === 0) {
         try {
-          const res = await fetch(`/api/${tile.type === 'album' ? 'albums' : 'artists'}/${encodeURIComponent(tile.id)}`, { headers: getAuthHeader() });
-          if (res.ok) tracks = hydrateTracks((await res.json()).tracks || []);
+          const entity = await auroraApiRequest<{ tracks: Track[] }>(
+            `/${tile.type === 'album' ? 'albums' : 'artists'}/${encodeURIComponent(tile.id)}`, getAuthHeader());
+          tracks = toPlayableTracks(entity.tracks || []);
         } catch { /* leave empty */ }
       }
       if (tile.type === 'album') {
@@ -1176,13 +1176,11 @@ export const Hub: React.FC = () => {
     if (radioLoadingId) return;
     setRadioLoadingId(candidate.artistId);
     try {
-      const res = await fetch('/api/hub/artist-radio', {
+      const playlist = await auroraApiRequest<{ id: string }>('/hub/artist-radio', getAuthHeader(), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ artistId: candidate.artistId }),
       });
-      if (!res.ok) throw new Error('Failed to load artist radio');
-      const { playlist } = await res.json();
       // Make the smart playlist visible to the playlist store before navigating
       await fetchPlaylistsFromServer();
       if (playlist?.id) {
@@ -1199,28 +1197,19 @@ export const Hub: React.FC = () => {
   const fetchHubData = useCallback(async (options: { background?: boolean } = {}) => {
     if (!options.background) setIsLoading(true);
     try {
-      const url = options.background ? '/api/hub?queueRefresh=false' : '/api/hub';
-      const res = await fetch(url, { headers: getAuthHeader() });
+      const url = options.background ? '/hub?queueRefresh=false' : '/hub';
+      const data = await auroraApiRequest<any[]>(url, getAuthHeader());
+      const mappedCollections = (data || [])
+        .map((col: any) => ({ ...col, tracks: resolveTracks(col.tracks) }))
+        .filter((col: any) => col.tracks.length > 0);
 
-      if (res.ok) {
-        const data = await res.json();
-        const mappedCollections = data.collections
-          .map((col: any) => ({
-            ...col,
-            tracks: col.tracks
-              .map((t: any) => library.find((lt) => lt.id === t.id) || hydrateTracks([t])[0])
-              .filter(Boolean),
-          }))
-          .filter((col: any) => col.tracks.length > 0);
-
-        const nextSignature = getCollectionsSignature(mappedCollections);
-        const didChange = collectionsSignatureRef.current !== nextSignature;
-        collectionsSignatureRef.current = nextSignature;
-        setCollections((prev) => (getCollectionsSignature(prev) === nextSignature ? prev : mappedCollections));
-        // System playlists are persisted server-side during the hub fetch.
-        // Refresh the playlist store so PlaylistDetail can resolve them by ID.
-        if (didChange) void fetchPlaylistsFromServer();
-      }
+      const nextSignature = getCollectionsSignature(mappedCollections);
+      const didChange = collectionsSignatureRef.current !== nextSignature;
+      collectionsSignatureRef.current = nextSignature;
+      setCollections((prev) => (getCollectionsSignature(prev) === nextSignature ? prev : mappedCollections));
+      // System playlists are persisted server-side during the hub fetch.
+      // Refresh the playlist store so PlaylistDetail can resolve them by ID.
+      if (didChange) void fetchPlaylistsFromServer();
       setHubFetchError('');
     } catch (e) {
       console.error('Failed to load hub data', e);
@@ -1228,7 +1217,7 @@ export const Hub: React.FC = () => {
     } finally {
       if (!options.background) setIsLoading(false);
     }
-  }, [fetchPlaylistsFromServer, getAuthHeader, library, hydrateTracks]);
+  }, [fetchPlaylistsFromServer, getAuthHeader, resolveTracks]);
 
   const handleOpenSmartPlaylist = async (collection: HubCollection | null | undefined) => {
     if (!collection?.id || openingSmartPlaylistId) return;
@@ -1281,24 +1270,19 @@ export const Hub: React.FC = () => {
   const handleGeneratePlaylists = async () => {
     setIsGenerating(true);
     setGenerationError('');
+    // The request waits for the LLM, which can take a minute or more.
+    addToast('Regenerating hub playlists… this can take a minute.', 'info');
     try {
-      const authHeaders = getAuthHeader();
-      const res = await fetch('/api/hub/regenerate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders },
-        body: JSON.stringify({ force: true }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to generate playlists.');
-      }
+      const data = await auroraApiRequest<{ skipped: boolean; reason: string | null; generated: number }>(
+        '/hub/regenerate', getAuthHeader(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: true }) });
       if (data.skipped) {
         throw new Error(data.reason || 'Playlist generation was skipped.');
       }
-      if (typeof data.generated === 'number' && data.generated < 1) {
+      if (data.generated < 1) {
         throw new Error('No playlists were generated. Check your LLM configuration and genre mappings.');
       }
       await fetchHubData();
+      addToast(`Hub refreshed. ${data.generated} playlist${data.generated === 1 ? '' : 's'} generated.`, 'success');
     } catch (e: any) {
       console.error('Failed to generate playlists', e);
       setGenerationError(e.message || 'Failed to generate playlists.');

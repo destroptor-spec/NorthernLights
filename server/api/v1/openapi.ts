@@ -6,10 +6,12 @@ import {
   apiErrorSchema,
   appKeyCreateSchema,
   artistDetailSchema,
+  artistRadioEligibilitySchema,
   artistSummarySchema,
   clientSchema,
   genreDetailSchema,
   genreSchema,
+  hubRegenerationSchema,
   listenerPreferencesSchema,
   nextRecommendationSchema,
   lyricsSchema,
@@ -143,8 +145,10 @@ path({ method: 'patch', path: '/playlists/{id}/state', summary: 'Update playlist
 path({ method: 'post', path: '/playlists/{id}/share', summary: 'Create or revoke a share link', tags: ['Playlists'], security: authed, request: { params: idParams, body: { required: true, content: json(z.object({ enabled: z.boolean() })) } }, responses: ok(unknownObject) });
 path({ method: 'delete', path: '/playlists/{id}', summary: 'Delete a playlist', tags: ['Playlists'], security: authed, request: { params: idParams }, responses: noContent() });
 
-path({ method: 'get', path: '/hub', summary: 'Get listener hub collections', tags: ['Discovery'], security: authed, responses: ok(unknownObject) });
+path({ method: 'get', path: '/hub', summary: 'Get listener hub collections', tags: ['Discovery'], security: authed, request: { query: z.object({ queueRefresh: z.enum(['true', 'false']).optional().describe('Pass false on background re-polls so the view does not queue another hub refresh.') }) }, responses: ok(unknownObject) });
 path({ method: 'get', path: '/hub/smart', summary: 'Get deterministic smart sections', tags: ['Discovery'], security: authed, responses: ok(unknownObject) });
+path({ method: 'post', path: '/hub/regenerate', summary: 'Regenerate the listener\'s AI hub playlists', tags: ['Discovery'], security: authed, request: { body: { required: false, content: json(z.object({ force: z.boolean().optional().describe('Regenerate even when the hub playlists are still fresh, replacing them.') })) } }, responses: ok(hubRegenerationSchema) });
+path({ method: 'get', path: '/hub/artist-radio/eligibility', summary: 'Whether an artist radio can be built', tags: ['Discovery'], security: authed, request: { query: z.object({ artistId: z.string() }) }, responses: ok(artistRadioEligibilitySchema) });
 path({ method: 'post', path: '/hub/artist-radio', summary: 'Generate artist radio', tags: ['Discovery'], security: authed, request: { body: { required: true, content: json(z.object({ artistId: z.string(), limit: z.number().int().optional() })) } }, responses: ok(schemas.Playlist) });
 path({ method: 'post', path: '/hub/custom', summary: 'Generate a prompt-driven playlist', tags: ['Discovery'], security: authed, request: { body: { required: true, content: json(z.object({ prompt: z.string(), count: z.number().int().optional() })) } }, responses: created(schemas.Playlist) });
 path({ method: 'post', path: '/recommendations/next', summary: 'Choose the next infinity-mode track', description: 'Uses playback-start history and queue exclusions without recording plays. Returns null when no eligible track remains.', tags: ['Discovery'], security: authed, request: { body: { required: true, content: json(nextRecommendationSchema) } }, responses: ok(z.union([schemas.Track, z.null()])) });

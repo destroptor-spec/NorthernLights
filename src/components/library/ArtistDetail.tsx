@@ -6,7 +6,8 @@ import { normalizeArtistIdentityKey, parseArtistsForDisplay, trackMatchesArtist 
 import { useKnownArtistKeys } from '../../hooks/useKnownArtistKeys';
 import { useEntityTracks } from '../../hooks/useEntityTracks';
 import { useApiV1EntityTracks } from '../../hooks/useApiV1TrackList';
-import type { AlbumSummary, ArtistSummary } from '../../api/auroraApi';
+import { auroraApiRequest, type AlbumSummary, type ArtistSummary, type Playlist as ApiPlaylist } from '../../api/auroraApi';
+import { toPlayableTracks } from '../../utils/playableTracks';
 import { useArtistData } from '../../hooks/useArtistData';
 import { useArtistTopTracks } from '../../hooks/useArtistTopTracks';
 import { AlbumArt } from '../AlbumArt';
@@ -284,7 +285,6 @@ export const ArtistDetail: React.FC = () => {
     const artists = usePlayerStore((s) => s.artists);
     const albums = usePlayerStore((s) => s.albums);
     const setPlaylist = usePlayerStore((s) => s.setPlaylist);
-    const hydrateTracks = usePlayerStore((s) => s.hydrateTracks);
     const getAuthHeader = usePlayerStore((s) => s.getAuthHeader);
     const isLibraryLoading = usePlayerStore((s) => s.isLibraryLoading);
     const mediaAccessToken = usePlayerStore((s) => s.mediaAccessToken);
@@ -403,18 +403,16 @@ export const ArtistDetail: React.FC = () => {
         if (!artistId || radioLoading) return;
         setRadioLoading(true);
         try {
-            const res = await fetch('/api/hub/artist-radio', {
+            const playlist = await auroraApiRequest<ApiPlaylist>('/hub/artist-radio', getAuthHeader(), {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ artistId }),
             });
-            if (!res.ok) throw new Error('Failed to load radio');
-            const { playlist } = await res.json();
-            // Hydrate the server tracks (builds stream + art URLs from path/artHash).
+            // Convert the server tracks (stream + art URLs with the media token).
             // The in-memory `library` is empty in the main app, so mapping against
             // it would leave raw, art-less tracks in the queue until a reload
             // rebuilt them from the persisted snapshot.
-            const tracks = hydrateTracks(playlist?.tracks || []);
+            const tracks = toPlayableTracks((playlist?.tracks || []).map((entry) => entry.track));
             if (tracks.length > 0) setPlaylist(tracks, 0, artistId ? { kind: 'radio', id: artistId } : null);
         } catch (e) {
             console.error('[Artist Radio] Failed to start radio', e);
@@ -430,12 +428,10 @@ export const ArtistDetail: React.FC = () => {
         }
         let cancelled = false;
         setRadioEligibility({ checking: true, eligible: false });
-        fetch(`/api/hub/artist-radio-eligibility?artistId=${encodeURIComponent(artistId)}`, { headers: getAuthHeader() })
-            .then(res => res.ok ? res.json() : null)
+        auroraApiRequest<{ eligible: boolean; reason: string | null }>(
+            `/hub/artist-radio/eligibility?artistId=${encodeURIComponent(artistId)}`, getAuthHeader())
             .then(data => {
-                if (cancelled) return;
-                if (data) setRadioEligibility({ checking: false, eligible: !!data.eligible, reason: data.reason });
-                else setRadioEligibility({ checking: false, eligible: false });
+                if (!cancelled) setRadioEligibility({ checking: false, eligible: !!data.eligible, reason: data.reason ?? undefined });
             })
             .catch(() => {
                 if (!cancelled) setRadioEligibility({ checking: false, eligible: false });

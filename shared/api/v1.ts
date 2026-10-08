@@ -330,6 +330,18 @@ export const listenerPreferencesSchema = z.object({
     .describe('Mirror stars from OpenSubsonic clients to Last.fm and MusicBrainz. Defaults to true.'),
 }).meta({ id: 'ListenerPreferences' });
 
+export const hubRegenerationSchema = z.object({
+  skipped: z.boolean().describe('True when nothing was generated, for example because a refresh is already running or no LLM is configured.'),
+  reason: z.string().nullable().describe('Why the regeneration was skipped.'),
+  generated: z.number().int().nonnegative().describe('Number of hub playlists created.'),
+}).meta({ id: 'HubRegeneration' });
+
+export const artistRadioEligibilitySchema = z.object({
+  eligible: z.boolean(),
+  reason: z.string().nullable().describe('Why no radio can be built, when not eligible.'),
+  targetLength: z.number().int().nonnegative().nullable(),
+}).meta({ id: 'ArtistRadioEligibility' });
+
 export const artistDetailSchema = z.object({
   artist: artistSummarySchema,
   details: z.object({
