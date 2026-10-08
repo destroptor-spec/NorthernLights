@@ -5,16 +5,24 @@ jest.mock('../database', () => ({
   getAccountProtection: jest.fn(),
   getUserByUsername: jest.fn(),
   updateUser: jest.fn(),
+  hasUsers: jest.fn(),
+  createUser: jest.fn(),
+  setSystemSetting: jest.fn(),
 }));
 jest.mock('../services/auth.service', () => ({
   ...jest.requireActual('../services/auth.service'),
   verifyPassword: jest.fn(async () => true),
   hashPassword: jest.fn(async () => 'hash'),
+  generateToken: jest.fn(async () => 'token'),
+}));
+jest.mock('../services/scopedToken.service', () => ({
+  ...jest.requireActual('../services/scopedToken.service'),
+  generateScopedToken: jest.fn(async () => 'scoped'),
 }));
 import type { Request, Response } from 'express';
 import adminRouter from './admin.routes';
 import authRouter from './auth.routes';
-import { changeProtectedAccount, getAccountProtection, getUserByUsername, updateUser } from '../database';
+import { changeProtectedAccount, createUser, getAccountProtection, getUserByUsername, hasUsers, updateUser } from '../database';
 
 /**
  * Removing an account goes through the owner / last-admin guard on every
@@ -48,6 +56,13 @@ describe('DELETE /api/auth/delete-account', () => {
     const res = await call(authRouter, 'delete', '/delete-account', { user: adminUser, body: { password: 'pw' } });
     expect(res.json).toHaveBeenCalledWith({ status: 'deleted' });
   });
+});
+
+it('the setup wizard creates the server owner', async () => {
+  jest.mocked(hasUsers).mockResolvedValue(false);
+  jest.mocked(createUser).mockResolvedValue({ id: 'u1', username: 'andreas', role: 'admin' } as never);
+  await call(authRouter, 'post', '/setup/complete', { body: { username: 'andreas', password: 'a-long-enough-password' } });
+  expect(createUser).toHaveBeenCalledWith('andreas', 'hash', 'admin', { isOwner: true });
 });
 
 it('GET /api/auth/account-protection reports the signed-in account', async () => {

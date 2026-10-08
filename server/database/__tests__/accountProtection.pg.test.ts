@@ -85,7 +85,16 @@ describeDb('account protection', () => {
   it('never lets two admins removing each other at once leave none', async () => {
     const a = await db.createUser('a', 'x', 'admin');
     const b = await db.createUser('b', 'x', 'admin');
-    const results = await Promise.all([db.changeProtectedAccount(a.id, 'delete'), db.changeProtectedAccount(b.id, 'delete')]);
+    // Hold the admin rows so both removals queue up and then start together:
+    // without the guard's lock each would count two admins and both succeed.
+    const holder = await pool.connect();
+    await holder.query('BEGIN');
+    await holder.query(`SELECT id FROM users WHERE role = 'admin' FOR UPDATE`);
+    const removals = Promise.all([db.changeProtectedAccount(a.id, 'delete'), db.changeProtectedAccount(b.id, 'delete')]);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await holder.query('COMMIT');
+    holder.release();
+    const results = await removals;
     expect([...results].sort()).toEqual(['done', 'last-admin']);
     expect((await pool.query(`SELECT COUNT(*)::int AS n FROM users WHERE role = 'admin'`)).rows[0].n).toBe(1);
   });

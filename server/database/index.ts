@@ -5470,10 +5470,7 @@ export async function changeProtectedAccount(id: string, change: 'delete' | 'dem
     `, [id]);
     const row = res.rows[0];
     if (!row) { await client.query('ROLLBACK'); return 'not-found'; }
-    // Demoting a listener is a no-op, never blocked.
-    const blocked = change === 'demote' && row.role !== 'admin'
-      ? null
-      : accountProtection({ role: row.role, isOwner: row.is_owner === true }, row.admin_count);
+    const blocked = accountProtection({ role: row.role, isOwner: row.is_owner === true }, row.admin_count);
     if (blocked) { await client.query('ROLLBACK'); return blocked; }
     if (change === 'delete') await client.query('DELETE FROM users WHERE id = $1', [id]);
     else await client.query(`UPDATE users SET role = 'user' WHERE id = $1`, [id]);
