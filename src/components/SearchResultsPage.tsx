@@ -3,6 +3,8 @@ import { Disc3, MoreHorizontal, Music2, Play, RefreshCw, Search, UserRound } fro
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { usePlayerStore } from '../store';
 import { TrackInfo } from '../utils/fileSystem';
+import { AuroraApiError, auroraApiRequest, type AlbumSummary, type ArtistSummary, type Track } from '../api/auroraApi';
+import { toPlayableTracks } from '../utils/playableTracks';
 import { prefetchAlbumDetail, prefetchArtistDetail } from '../utils/routePrefetch';
 import { AlbumArt } from './AlbumArt';
 import { ArtistInitial } from './library/ArtistInitial';
@@ -11,11 +13,11 @@ import { buildArtistLinkMap, getTrackArtistDisplayNames, resolveArtistLink, reso
 
 type RankedResultType = 'artist' | 'album' | 'track';
 
-interface RankedApiResult {
-    type: RankedResultType;
-    relevance: number;
-    item: Record<string, unknown>;
-}
+/** GET /api/v1/search/ranked: items are v1 DTOs. */
+type RankedApiResult =
+    | { type: 'artist'; relevance: number; item: ArtistSummary }
+    | { type: 'album'; relevance: number; item: AlbumSummary }
+    | { type: 'track'; relevance: number; item: Track };
 
 interface RankedApiResponse {
     results: RankedApiResult[];
@@ -46,25 +48,34 @@ function getResultKey(result: RankedResult): string {
     return `${result.type}:${result.item.id}`;
 }
 
-function hydrateRankedResults(
+/**
+ * Convert v1 ranked hits into the page's own result shapes, which the
+ * rendering below was written against: tracks become playable TrackInfo,
+ * artists and albums keep the snake_case fields the cards read.
+ */
+export function hydrateRankedResults(
     rows: RankedApiResult[],
-    hydrateTracks: (tracks: TrackInfo[]) => TrackInfo[],
+    toTracks: (tracks: Track[]) => TrackInfo[] = toPlayableTracks,
 ): RankedResult[] {
     const results: RankedResult[] = [];
 
     for (const row of rows) {
         if (!row || !row.item || typeof row.item.id !== 'string') continue;
         if (row.type === 'track') {
-            const track = hydrateTracks([row.item as unknown as TrackInfo])[0];
+            const track = toTracks([row.item])[0];
             if (track) results.push({ type: 'track', relevance: row.relevance, item: track });
             continue;
         }
         if (row.type === 'artist' && typeof row.item.name === 'string') {
-            results.push({ type: 'artist', relevance: row.relevance, item: row.item as unknown as ArtistResultItem });
+            results.push({ type: 'artist', relevance: row.relevance, item: { id: row.item.id, name: row.item.name, image_url: row.item.imageUrl } });
             continue;
         }
         if (row.type === 'album') {
-            results.push({ type: 'album', relevance: row.relevance, item: row.item as unknown as AlbumResultItem });
+            results.push({
+                type: 'album',
+                relevance: row.relevance,
+                item: { id: row.item.id, title: row.item.title, artist_name: row.item.artistName, image_url: row.item.imageUrl },
+            });
         }
     }
 
@@ -274,7 +285,6 @@ const SearchPageSkeleton = () => (
 export const SearchResultsPage: React.FC = () => {
     const [searchParams] = useSearchParams();
     const query = (searchParams.get('q') || '').trim();
-    const hydrateTracks = usePlayerStore(state => state.hydrateTracks);
     const getAuthHeader = usePlayerStore(state => state.getAuthHeader);
     const setPlaylist = usePlayerStore(state => state.setPlaylist);
     const openContextMenu = usePlayerStore(state => state.openContextMenu);
@@ -300,20 +310,22 @@ export const SearchResultsPage: React.FC = () => {
         setError(null);
 
         const params = new URLSearchParams({
-            mode: 'ranked',
             q: query,
             limit: String(SEARCH_BATCH_SIZE),
         });
         if (cursor) params.set('cursor', cursor);
 
         try {
-            const response = await fetch(`/api/library/search?${params.toString()}`, {
-                headers: getAuthHeader(),
-                signal: controller.signal,
-            });
-            if (!response.ok) throw new Error(response.status === 400 ? 'This search link is no longer valid.' : 'Search could not be loaded.');
-            const data = await response.json() as RankedApiResponse;
-            const incoming = hydrateRankedResults(Array.isArray(data.results) ? data.results : [], hydrateTracks);
+            let data: RankedApiResponse;
+            try {
+                data = await auroraApiRequest<RankedApiResponse>(`/search/ranked?${params.toString()}`, getAuthHeader(), { signal: controller.signal });
+            } catch (requestError) {
+                if (controller.signal.aborted) throw requestError;
+                throw new Error(requestError instanceof AuroraApiError && requestError.status === 400
+                    ? 'This search link is no longer valid.'
+                    : 'Search could not be loaded.');
+            }
+            const incoming = hydrateRankedResults(Array.isArray(data?.results) ? data.results : []);
 
             setResults(previous => {
                 if (replace) return incoming;
@@ -331,7 +343,7 @@ export const SearchResultsPage: React.FC = () => {
                 setLoading(false);
             }
         }
-    }, [getAuthHeader, hydrateTracks, query]);
+    }, [getAuthHeader, query]);
 
     useEffect(() => {
         requestRef.current?.abort();

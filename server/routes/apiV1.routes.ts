@@ -35,6 +35,8 @@ import {
   recordPlaybackForUser,
   recordSkipForUser,
   searchLibrary,
+  searchLibraryRanked,
+  InvalidSearchCursorError,
   setPlaylistShare,
   setTrackLovedForUser,
   setTrackRatingForUser,
@@ -557,17 +559,63 @@ router.get('/tracks/:id/lyrics', async (req, res) => {
   }
 });
 
+/** A search limit from the query string, clamped to 1–100; `fallback` when absent or unusable. */
+function searchLimit(raw: unknown, fallback: number): number {
+  const requested = typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : NaN;
+  return Math.min(100, Math.max(1, Number.isFinite(requested) ? Math.trunc(requested) : fallback));
+}
+
 router.get('/search', async (req, res) => {
   const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
   if (!query) return dataResponse(req, res, { artists: [], albums: [], tracks: [] });
-  const requestedLimit = typeof req.query.limit === 'string' ? Number(req.query.limit) : 50;
-  const limit = Math.min(100, Math.max(1, Number.isFinite(requestedLimit) ? Math.trunc(requestedLimit) : 50));
-  const result = await searchLibrary(query, req.apiV1!.userId, { artistLimit: limit, albumLimit: limit, trackLimit: limit });
+  // `limit` applies to every type; artistLimit/albumLimit/trackLimit override
+  // it per type, so a quick-search dropdown can ask for 5 / 5 / 10.
+  const limit = searchLimit(req.query.limit, 50);
+  const result = await searchLibrary(query, req.apiV1!.userId, {
+    artistLimit: searchLimit(req.query.artistLimit, limit),
+    albumLimit: searchLimit(req.query.albumLimit, limit),
+    trackLimit: searchLimit(req.query.trackLimit, limit),
+  });
   dataResponse(req, res, {
     artists: result.artists.map(mapArtistSummaryV1),
     albums: result.albums.map(mapAlbumSummaryV1),
     tracks: await getApiV1TracksByIds(req.apiV1!.userId, result.tracks.map((track: any) => String(track.id))),
   });
+});
+
+/**
+ * One relevance-ordered list across artists, albums and tracks, paginated by
+ * an opaque cursor — what the full search results page shows. Items use the
+ * same DTOs as GET /search; track hits go through the v1 track lookup, so the
+ * database path the ranking query returns never leaves the server.
+ */
+router.get('/search/ranked', async (req, res) => {
+  const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  if (!query) return dataResponse(req, res, { results: [], nextCursor: null });
+  const cursor = typeof req.query.cursor === 'string' && req.query.cursor !== '' ? req.query.cursor : undefined;
+  let ranked;
+  try {
+    ranked = await searchLibraryRanked(query, req.apiV1!.userId, { limit: searchLimit(req.query.limit, 30), cursor });
+  } catch (error) {
+    if (error instanceof InvalidSearchCursorError) {
+      return sendApiV1Error(req, res, 400, 'INVALID_CURSOR', 'This search page is no longer valid.');
+    }
+    throw error;
+  }
+  const trackIds = ranked.results.filter((hit) => hit.type === 'track').map((hit) => String((hit.item as any).id));
+  const tracks = new Map((await getApiV1TracksByIds(req.apiV1!.userId, trackIds)).map((track) => [track.id, track]));
+  type RankedHit =
+    | { type: 'artist'; relevance: number; item: ReturnType<typeof mapArtistSummaryV1> }
+    | { type: 'album'; relevance: number; item: ReturnType<typeof mapAlbumSummaryV1> }
+    | { type: 'track'; relevance: number; item: Awaited<ReturnType<typeof getApiV1TracksByIds>>[number] };
+  const results = ranked.results.flatMap((hit): RankedHit[] => {
+    const item = hit.item as any;
+    if (hit.type === 'artist') return [{ type: 'artist', relevance: hit.relevance, item: mapArtistSummaryV1(item) }];
+    if (hit.type === 'album') return [{ type: 'album', relevance: hit.relevance, item: mapAlbumSummaryV1(item) }];
+    const track = tracks.get(String(item.id));
+    return track ? [{ type: 'track', relevance: hit.relevance, item: track }] : [];
+  });
+  dataResponse(req, res, { results, nextCursor: ranked.nextCursor });
 });
 
 router.get('/playlists', async (req, res) => {

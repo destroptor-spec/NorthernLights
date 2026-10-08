@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { usePlayerStore } from '../store/index';
-import { auroraApiRequest, toLegacyTrack, type Track } from '../api/auroraApi';
+import { auroraApiRequest, type Track } from '../api/auroraApi';
+import { toPlayableTracks } from '../utils/playableTracks';
 import type { TrackInfo } from '../utils/fileSystem';
 
 /**
@@ -22,9 +23,7 @@ export function useApiV1TrackList(path: string | null): { tracks: TrackInfo[]; l
     auroraApiRequest<Track[]>(path, store.getAuthHeader())
       .then((tracks) => {
         if (cancelled) return;
-        const { mediaAccessToken, authToken, streamingQuality } = usePlayerStore.getState();
-        const token = mediaAccessToken || authToken || '';
-        setState({ tracks: (tracks || []).map((track) => toLegacyTrack(track, token, streamingQuality)), loading: false });
+        setState({ tracks: toPlayableTracks(tracks || []), loading: false });
       })
       .catch(() => { if (!cancelled) setState({ tracks: [], loading: false }); });
     return () => { cancelled = true; };
