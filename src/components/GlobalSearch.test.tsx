@@ -24,6 +24,18 @@ jest.mock('./LoveButton', () => ({
 
 const { GlobalSearch } = require('./GlobalSearch') as typeof import('./GlobalSearch');
 
+// A complete API v1 Track; search now returns these instead of raw rows.
+const v1Track = (overrides: Record<string, unknown>) => ({
+  id: 'track-1', title: 'Track', artist: null, albumArtist: null, artists: [], album: null,
+  genre: null, genres: [], durationSeconds: 100, trackNumber: null, discNumber: null, year: null,
+  releaseType: null, compilation: false, bitrate: null, format: 'FLAC', lossless: true, fileSize: null,
+  mediaEtag: null, artistId: null, albumId: null, genreId: null, loved: false, rating: 0, playCount: 0,
+  lastPlayedAt: null, artworkId: null, artworkUrl: null,
+  musicBrainz: { recordingId: null, trackId: null, albumId: null, artistId: null, releaseGroupId: null, workId: null },
+  ...overrides,
+});
+const v1Ok = (data: unknown) => ({ ok: true, status: 200, json: async () => ({ data, meta: { requestId: 'test' } }), headers: { get: () => null } });
+
 const LocationProbe = () => {
   const location = useLocation();
   return <output data-testid="location">{location.pathname}{location.search}</output>;
@@ -40,21 +52,11 @@ function renderGlobalSearch() {
 }
 
 function groupedTrackResponse() {
-  return {
-    ok: true,
-    json: async () => ({
-      artists: [],
-      albums: [],
-      tracks: [{
-        id: 'track-1',
-        path: 'track-1.flac',
-        title: 'Exact Track',
-        artist: 'NTO',
-        album: 'Exact Album',
-        albumId: 'album-1',
-      }],
-    }),
-  };
+  return v1Ok({
+    artists: [],
+    albums: [],
+    tracks: [v1Track({ id: 'track-1', title: 'Exact Track', artist: 'NTO', artists: ['NTO'], album: 'Exact Album', albumId: 'album-1' })],
+  });
 }
 
 describe('GlobalSearch navigation', () => {
@@ -102,6 +104,7 @@ describe('GlobalSearch navigation', () => {
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'NTO' } });
 
     fireEvent.click(await screen.findByRole('button', { name: 'Play Exact Track' }));
+    expect(String((globalThis.fetch as jest.Mock).mock.calls[0][0])).toBe('/api/v1/search?q=NTO&artistLimit=5&albumLimit=5&trackLimit=10');
     expect(mockStoreState.setPlaylist).toHaveBeenCalledWith([
       expect.objectContaining({ id: 'track-1' }),
     ], 0);

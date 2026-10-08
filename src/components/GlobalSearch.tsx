@@ -4,6 +4,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { usePlayerStore } from '../store';
 import { Search as SearchIcon, X, Play, MoreHorizontal, ArrowLeft } from 'lucide-react';
 import { TrackInfo } from '../utils/fileSystem';
+import { auroraApiRequest, type AlbumSummary, type ArtistSummary, type Track } from '../api/auroraApi';
+import { toPlayableTracks } from '../utils/playableTracks';
 import { AlbumArt } from './AlbumArt';
 import { ArtistInitial } from './library/ArtistInitial';
 import { LoveButton } from './LoveButton';
@@ -245,6 +247,24 @@ const SearchResults = React.memo(function SearchResults({
 
 // ─── main component ───────────────────────────────────────────────────────────
 
+
+/**
+ * Map GET /api/v1/search into the dropdown's shapes. Album cards read
+ * `artist`/`artUrl`, which v1 names `artistName`/`imageUrl`.
+ */
+export function mapQuickSearchResults(data: { artists?: ArtistSummary[]; albums?: AlbumSummary[]; tracks?: Track[] }) {
+    return {
+        matchedArtists: (data.artists || []).map((a) => ({ name: a.name, id: a.id })),
+        matchedAlbums: (data.albums || []).map((a) => ({
+            title: a.title || 'Unknown Album',
+            artist: a.artistName || 'Unknown Artist',
+            id: a.id,
+            artUrl: a.imageUrl || undefined,
+        })),
+        matchedTracks: toPlayableTracks(data.tracks || []),
+    };
+}
+
 export const GlobalSearch: React.FC = () => {
     const setPlaylist = usePlayerStore((state: any) => state.setPlaylist);
     const openContextMenu = usePlayerStore((state: any) => state.openContextMenu);
@@ -420,21 +440,14 @@ export const GlobalSearch: React.FC = () => {
         const ac = new AbortController();
         setSearchLoading(true);
         const authHeaders = usePlayerStore.getState().getAuthHeader();
-        fetch(`/api/library/search?q=${encodeURIComponent(term)}&artistLimit=5&albumLimit=5&trackLimit=10`, { headers: authHeaders, signal: ac.signal })
-            .then(r => (r.ok ? r.json() : null))
+        auroraApiRequest<{ artists: ArtistSummary[]; albums: AlbumSummary[]; tracks: Track[] }>(
+            `/search?q=${encodeURIComponent(term)}&artistLimit=5&albumLimit=5&trackLimit=10`,
+            authHeaders,
+            { signal: ac.signal },
+        )
             .then(data => {
                 if (!data) { setSearchResults(EMPTY_SEARCH_MATCHES); setSearchLoading(false); return; }
-                const hydrate = usePlayerStore.getState().hydrateTracks;
-                setSearchResults({
-                    matchedArtists: (data.artists || []).map((a: any) => ({ name: a.name, id: a.id })),
-                    matchedAlbums: (data.albums || []).map((a: any) => ({
-                        title: a.title || 'Unknown Album',
-                        artist: a.artist_name || 'Unknown Artist',
-                        id: a.id,
-                        artUrl: a.image_url || undefined,
-                    })),
-                    matchedTracks: hydrate(data.tracks || []),
-                });
+                setSearchResults(mapQuickSearchResults(data));
                 setSearchLoading(false);
             })
             .catch(() => { if (!ac.signal.aborted) { setSearchResults(EMPTY_SEARCH_MATCHES); setSearchLoading(false); } });

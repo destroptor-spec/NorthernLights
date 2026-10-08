@@ -24,6 +24,18 @@ jest.mock('./LoveButton', () => ({
 
 const { SearchResultsPage } = require('./SearchResultsPage') as typeof import('./SearchResultsPage');
 
+// A complete API v1 Track; search now returns these instead of raw rows.
+const v1Track = (overrides: Record<string, unknown>) => ({
+  id: 'track-1', title: 'Track', artist: null, albumArtist: null, artists: [], album: null,
+  genre: null, genres: [], durationSeconds: 100, trackNumber: null, discNumber: null, year: null,
+  releaseType: null, compilation: false, bitrate: null, format: 'FLAC', lossless: true, fileSize: null,
+  mediaEtag: null, artistId: null, albumId: null, genreId: null, loved: false, rating: 0, playCount: 0,
+  lastPlayedAt: null, artworkId: null, artworkUrl: null,
+  musicBrainz: { recordingId: null, trackId: null, albumId: null, artistId: null, releaseGroupId: null, workId: null },
+  ...overrides,
+});
+const v1Ok = (data: unknown) => ({ ok: true, status: 200, json: async () => ({ data, meta: { requestId: 'test' } }), headers: { get: () => null } });
+
 const LocationProbe = () => {
   const location = useLocation();
   return <output data-testid="location">{location.pathname}{location.search}</output>;
@@ -67,27 +79,17 @@ describe('SearchResultsPage', () => {
   });
 
   it('keeps artwork playback separate from album navigation', async () => {
-    (globalThis.fetch as jest.Mock).mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        results: [{
-          type: 'track',
-          relevance: 100,
-          item: {
-            id: 'track-1',
-            path: 'track-1.flac',
-            title: 'Exact Track',
-            artist: 'NTO',
-            artistId: 'artist-1',
-            album: 'Exact Album',
-            albumId: 'album-1',
-          },
-        }],
-        nextCursor: null,
-      }),
-    });
+    (globalThis.fetch as jest.Mock).mockResolvedValue(v1Ok({
+      results: [{
+        type: 'track',
+        relevance: 100,
+        item: v1Track({ id: 'track-1', title: 'Exact Track', artist: 'NTO', artists: ['NTO'], artistId: 'artist-1', album: 'Exact Album', albumId: 'album-1' }),
+      }],
+      nextCursor: null,
+    }));
 
     renderSearch();
+    expect(String((globalThis.fetch as jest.Mock).mock.calls[0][0])).toMatch(/^\/api\/v1\/search\/ranked\?/);
     fireEvent.click(await screen.findByRole('button', { name: 'Play Exact Track' }));
     expect(mockStoreState.setPlaylist).toHaveBeenCalledWith([
       expect.objectContaining({ id: 'track-1' }),
@@ -103,20 +105,14 @@ describe('SearchResultsPage', () => {
 
   it('loads the next mixed batch when the sentinel enters view', async () => {
     (globalThis.fetch as jest.Mock)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          results: [{ type: 'artist', relevance: 100, item: { id: 'artist-1', name: 'NTO' } }],
-          nextCursor: 'next-cursor',
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          results: [{ type: 'album', relevance: 80, item: { id: 'album-1', title: 'Apnea', artist_name: 'NTO' } }],
-          nextCursor: null,
-        }),
-      });
+      .mockResolvedValueOnce(v1Ok({
+        results: [{ type: 'artist', relevance: 100, item: { id: 'artist-1', name: 'NTO', imageUrl: null } }],
+        nextCursor: 'next-cursor',
+      }))
+      .mockResolvedValueOnce(v1Ok({
+        results: [{ type: 'album', relevance: 80, item: { id: 'album-1', title: 'Apnea', artistName: 'NTO', imageUrl: null } }],
+        nextCursor: null,
+      }));
 
     renderSearch();
     expect(await screen.findByText('NTO')).toBeTruthy();
@@ -128,7 +124,7 @@ describe('SearchResultsPage', () => {
 
     expect(await screen.findByText('Apnea')).toBeTruthy();
     const secondUrl = String((globalThis.fetch as jest.Mock).mock.calls[1][0]);
-    expect(secondUrl).toContain('mode=ranked');
+    expect(secondUrl).toMatch(/^\/api\/v1\/search\/ranked\?/);
     expect(secondUrl).toContain('cursor=next-cursor');
     expect(screen.getByRole('link', { name: 'NTO' }).getAttribute('href')).toBe('/library/artist/artist-1');
     expect(screen.getByText('Showing all confident matches')).toBeTruthy();
