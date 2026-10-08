@@ -13,7 +13,8 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'prompt',
-      injectRegister: 'auto',
+      // main.tsx owns registration and activation; don't inject another client.
+      injectRegister: false,
       manifest: {
         name: 'NorthernLights',
         short_name: 'NorthernLights',
@@ -92,6 +93,7 @@ export default defineConfig({
         ]
       },
       workbox: {
+        skipWaiting: false,
         clientsClaim: true,
         // Drop precaches from previous builds when a new SW activates.
         cleanupOutdatedCaches: true,
