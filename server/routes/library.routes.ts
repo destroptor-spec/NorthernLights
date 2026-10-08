@@ -1,4 +1,5 @@
 import { logScanner, logAnalyzer, logLoudness } from '../services/loggingConfig';
+import { setTrackLovedAndSync } from '../services/lovedTrack.service';
 import { decideStaleRemoval, partitionStaleByFailures, walkAudioFiles, type RemovalSkipReason, type WalkedFile } from '../services/libraryWalk';
 import { analysisWorkerCount } from '../services/analysisResources';
 import { Router, Response } from 'express';
@@ -6,12 +7,10 @@ import fs from 'fs';
 import path from 'path';
 import { ChildProcessPool } from '../workers/processPool';
 import * as mm from 'music-metadata';
-import { addDirectory, addTrack, addTrackFeatures, getTracksWithoutFeatures, getTracksWithSimulatedFeatures, getSimulatedFeatureTracks, getTrackCountWithFeatures, getAllTracks, getTrackById, getDirectories, removeDirectory, removeTracksByDirectory, getOrCreateArtist, getOrCreateAlbum, getOrCreateGenre, getAllArtists, getAllAlbums, getAllGenres, getPathsWithMeta, countTracksByArtHash, deleteTracksByPaths, purgeOrphanedEntities, recordUnparsedTrack, purgeOrphanedTracks, setTrackLovedForUser, getUserSetting, getSystemSetting, normalizeArtistNames, getPrimaryArtistName, normalizeArtistIdentityKey, setTrackCredits, isCompilationArtistName, setTrackLoudness, getTracksWithoutLoudness, getTracksWithFailedLoudness } from '../database';
+import { addDirectory, addTrack, addTrackFeatures, getTracksWithoutFeatures, getTracksWithSimulatedFeatures, getSimulatedFeatureTracks, getTrackCountWithFeatures, getAllTracks, getDirectories, removeDirectory, removeTracksByDirectory, getOrCreateArtist, getOrCreateAlbum, getOrCreateGenre, getAllArtists, getAllAlbums, getAllGenres, getPathsWithMeta, countTracksByArtHash, deleteTracksByPaths, purgeOrphanedEntities, recordUnparsedTrack, purgeOrphanedTracks, getSystemSetting, normalizeArtistNames, getPrimaryArtistName, normalizeArtistIdentityKey, setTrackCredits, isCompilationArtistName, setTrackLoudness, getTracksWithoutLoudness, getTracksWithFailedLoudness } from '../database';
 import { measureLoudness } from '../services/loudness.service';
 import { cleanupOrphanArt } from '../services/artCache';
 import { genreMatrixService } from '../services/genreMatrix.service';
-import { loveTrack, unloveTrack } from '../services/lastfm.service';
-import { submitMbRecordingRating } from '../services/musicbrainz.service';
 import { scanStatus, scanClients, broadcastScanStatus } from '../state';
 import { requireAdmin } from '../middleware/auth';
 import { startMbCreditsEnrichment, getMbCreditsProgress, startGeniusCreditsEnrichment, getGeniusCreditsProgress } from '../services/creditsEnrichment.service';
@@ -19,7 +18,7 @@ import { enrichArtistImages, enrichArtistImagesInBackground } from '../services/
 import { getCreditsStatus, refreshArtistAudioProfiles, searchLibrary, searchLibraryRanked, InvalidSearchCursorError, getExistingTrackIds } from '../database';
 import { createRateLimiter } from '../middleware/rateLimit';
 import { areAnalysisModelsReady } from '../services/downloadModels';
-import { publishApiV1Event, publishApiV1LibraryRevision } from '../services/apiV1Events.service';
+import { publishApiV1LibraryRevision } from '../services/apiV1Events.service';
 
 const router = Router();
 
@@ -290,39 +289,9 @@ router.post('/love', async (req, res) => {
       return res.status(400).json({ error: 'loved must be a boolean' });
     }
 
-    const track = await getTrackById(trackId);
-    if (!track) return res.status(404).json({ error: 'Track not found' });
-
-    await setTrackLovedForUser(userId, trackId, loved);
-    publishApiV1Event(userId, 'annotation.changed', { trackId, loved, source: 'web' });
-
-    const syncJobs: Array<Promise<{ provider: string; status: 'ok' | 'skipped'; reason?: string }>> = [];
-
-    const lastFmConnected = await getUserSetting(userId, 'lastFmConnected');
-    if ((lastFmConnected === true || lastFmConnected === 'true') && track.artist && track.title) {
-      syncJobs.push(
-        (loved ? loveTrack(userId, track.artist, track.title) : unloveTrack(userId, track.artist, track.title))
-          .then(() => ({ provider: 'lastfm', status: 'ok' as const }))
-      );
-    } else {
-      syncJobs.push(Promise.resolve({ provider: 'lastfm', status: 'skipped' as const, reason: 'not_connected_or_missing_metadata' }));
-    }
-
-    const musicBrainzConnected = await getSystemSetting('musicBrainzConnected');
-    if ((musicBrainzConnected === true || musicBrainzConnected === 'true') && track.mbRecordingId) {
-      syncJobs.push(
-        submitMbRecordingRating(track.mbRecordingId, loved ? 100 : 0)
-          .then(() => ({ provider: 'musicbrainz', status: 'ok' as const }))
-      );
-    } else {
-      syncJobs.push(Promise.resolve({ provider: 'musicbrainz', status: 'skipped' as const, reason: 'not_connected_or_missing_recording_mbid' }));
-    }
-
-    const settled = await Promise.allSettled(syncJobs);
-    const providers = settled.map((result) => {
-      if (result.status === 'fulfilled') return result.value;
-      return { provider: 'unknown', status: 'failed', error: result.reason?.message || 'Provider sync failed' };
-    });
+    // Shared with API v1, so every client syncs loves to providers the same way.
+    const providers = await setTrackLovedAndSync(userId, trackId, loved, { source: 'web' });
+    if (!providers) return res.status(404).json({ error: 'Track not found' });
 
     res.json({ status: 'ok', loved, providers });
   } catch (error: any) {

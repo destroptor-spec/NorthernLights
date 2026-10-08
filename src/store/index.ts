@@ -26,6 +26,7 @@ import type { ToastType } from '../components/Toast';
 import {
   auroraApiAllPages,
   auroraApiRequest,
+  createUuid,
   fetchNextRecommendation,
   toLegacyTrack,
   type AlbumSummary as ApiV1Album,
@@ -364,6 +365,24 @@ const mapApiV1Genre = (genre: ApiV1Genre): EntityInfo => ({
   id: genre.id,
   name: genre.name,
 });
+
+/**
+ * Report a play or skip through API v1 — the same path any other client uses,
+ * so plays are counted once, however they are recorded.
+ *
+ * Each report carries a fresh eventId; the server ignores a repeat of the same
+ * id, which makes a retried request safe. No `occurredAt`: the server stamps
+ * receipt time, as the legacy route did, so a skewed client clock cannot
+ * misplace plays in history or Wrapped. Fire-and-forget: telemetry must never
+ * disturb playback.
+ */
+function reportPlayback(authHeaders: Record<string, string>, trackId: string, kind: 'played' | 'skipped'): void {
+  auroraApiRequest('/playback/reports', authHeaders, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ eventId: createUuid(), trackId, kind }),
+  }).catch((error: unknown) => console.warn(`Playback ${kind} report failed:`, error));
+}
 
 const mapApiV1Playlist = (
   playlist: ApiV1Playlist,
@@ -2317,14 +2336,15 @@ export const usePlayerStore = create<PlayerState>()(
 
           try {
             const authHeaders = get().getAuthHeader();
-            const res = await fetch('/api/library/love', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', ...authHeaders },
-              body: JSON.stringify({ trackId: track.id, loved: nextLoved }),
-            });
-            if (!res.ok) throw new Error(`Love update failed with status ${res.status}`);
-
-            const data = await res.json().catch(() => null);
+            const data = await auroraApiRequest<{ providers?: Array<{ status?: string }> }>(
+              `/tracks/${encodeURIComponent(track.id)}/loved`,
+              authHeaders,
+              {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ loved: nextLoved }),
+              },
+            );
             const failedProviders = Array.isArray(data?.providers)
               ? data.providers.filter((provider: any) => provider.status === 'failed')
               : [];
@@ -2942,22 +2962,12 @@ export const usePlayerStore = create<PlayerState>()(
           // configured "played" threshold (see onTimeUpdate). The rolling
           // session history is pushed separately at playback start so
           // Infinity-mode dedup doesn't have to wait for the threshold.
-          const authHeaders = get().getAuthHeader();
-          fetch('/api/playback/record', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...authHeaders },
-            body: JSON.stringify({ trackId })
-          }).catch((e: Error) => console.warn('Telemetry record failed:', e));
+          reportPlayback(get().getAuthHeader(), trackId, 'played');
         },
 
         recordSkip: (trackId: string) => {
           // Fire-and-forget telemetry to backend
-          const authHeaders = get().getAuthHeader();
-          fetch('/api/playback/skip', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...authHeaders },
-            body: JSON.stringify({ trackId })
-          }).catch((e: Error) => console.warn('Telemetry skip failed:', e));
+          reportPlayback(get().getAuthHeader(), trackId, 'skipped');
         },
 
         toasts: [],
