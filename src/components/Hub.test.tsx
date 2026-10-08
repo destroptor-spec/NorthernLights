@@ -74,6 +74,22 @@ it('plays a collection with v1 tracks converted to playable ones', async () => {
   expect(tracks[0].url).toContain('token=media');
 });
 
+it('fills the discover rail with the system mixes from v1 and plays them', async () => {
+  routes['GET /api/v1/hub'] = [
+    { id: 'engine_genre-stale_trance', title: 'Rediscover Trance', isSystem: true, isLlmGenerated: false, tracks: [apiTrack('t2')] },
+    { id: 'engine_vault_x', title: 'The Vault', isSystem: true, isLlmGenerated: false, tracks: [apiTrack('t3')] },
+  ];
+  renderHub();
+  const rail = await screen.findByLabelText('discover');
+  const card = await within(rail).findByText('Rediscover Trance');
+  expect(within(rail).queryByText('The Vault')).toBeNull();
+  const cardRoot = card.closest('[role="button"]') as HTMLElement;
+  fireEvent.click(within(cardRoot).getByLabelText('play'));
+  await waitFor(() => expect(setPlaylist).toHaveBeenCalled());
+  expect(setPlaylist.mock.calls[0][0].map((t: { id: string }) => t.id)).toEqual(['t2']);
+  expect(setPlaylist.mock.calls[0][0][0].url).toContain('token=media');
+});
+
 it('regenerates through v1 with a JSON body and shows why it was skipped', async () => {
   routes['GET /api/v1/hub'] = [];
   routes['POST /api/v1/hub/regenerate'] = { skipped: true, reason: 'Refresh already running', generated: 0 };
