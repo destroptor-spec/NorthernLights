@@ -61,3 +61,23 @@ describe('Aurora API v1 DTO mapping', () => {
     expect(playlist.tracks[0]).toEqual({ track, addedAt: '2026-08-30T10:00:00.000Z' });
   });
 });
+
+/**
+ * `readOnly` tells a v1 client whether a playlist's title, description and
+ * tracks can be changed. It follows shared/playlistPermissions.ts, so a
+ * client that honours it and the server that enforces it agree.
+ */
+describe('Playlist readOnly follows the shared permission rule', () => {
+  const map = (row: Record<string, unknown>) =>
+    mapPlaylistV1({ id: 'p1', title: 'P', user_id: 'listener', tracks: [], ...row }, 'listener', new Map());
+
+  it.each([
+    ['manual', { is_system: false, is_llm_generated: false, generation_source: 'manual' }, false],
+    ['custom AI mix', { is_system: false, is_llm_generated: true, generation_source: 'custom' }, false],
+    ['Hub collection', { is_system: false, is_llm_generated: true, generation_source: 'hub' }, true],
+    ['system', { is_system: true, is_llm_generated: false, generation_source: 'daylist' }, true],
+    ["someone else's", { is_system: false, is_llm_generated: false, generation_source: 'manual', user_id: 'other' }, true],
+  ])('%s → readOnly %s', async (_name, row, readOnly) => {
+    expect((await map(row)).readOnly).toBe(readOnly);
+  });
+});

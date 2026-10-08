@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { playlistPermissions } from '../../../shared/playlistPermissions';
 import { useNavigate } from 'react-router-dom';
 import { usePlayerStore } from '../../store';
 import {
@@ -372,8 +373,18 @@ export const Playlists: React.FC = () => {
   const activePlaylist = activeMenu
     ? playlists.find((p) => p.id === activeMenu.playlist.id) ?? activeMenu.playlist
     : null;
+  // The same rule the server enforces (shared/playlistPermissions.ts): pin works
+  // on everything you own, delete on everything but system playlists.
+  const activePermissions = activePlaylist
+    ? playlistPermissions({
+        isOwner: activePlaylist.isOwner !== false,
+        isSystem: !!activePlaylist.isSystem,
+        isLlmGenerated: !!activePlaylist.isLlmGenerated,
+        generationSource: activePlaylist.generationSource,
+      })
+    : null;
 
-  // `playlists` holds the current user's own playlists (from GET /api/playlists);
+  // `playlists` holds the current user's own playlists (from GET /api/v1/playlists);
   // a discovered playlist opened by URL also gets upserted there with isOwner:false
   // — exclude those so the own-playlist rails stay strictly the user's own.
   const ownPlaylists = playlists.filter((p) => p.isOwner !== false);
@@ -486,11 +497,11 @@ export const Playlists: React.FC = () => {
           if (activePlaylist && activePlaylist.tracks.length > 0)
             setPlaylist(activePlaylist.tracks, 0);
         }}
-        onPinToggle={activePlaylist
+        onPinToggle={activePlaylist && activePermissions?.pin
           ? () => togglePin(activePlaylist.id!, !activePlaylist.pinned)
           : undefined
         }
-        onDelete={activePlaylist && !activePlaylist.isSystem
+        onDelete={activePlaylist && activePermissions?.delete
           ? () => deletePlaylist(activePlaylist.id!)
           : undefined
         }

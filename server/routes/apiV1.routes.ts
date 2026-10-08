@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { playlistPermissions, type PlaylistPermissions } from '../../shared/playlistPermissions';
 import { setTrackLovedAndSync } from '../services/lovedTrack.service';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -610,14 +611,30 @@ router.post('/playlists', async (req, res) => {
   dataResponse(req, res, await mapPlaylistV1({ ...meta, tracks: [] }, req.apiV1!.userId), 201);
 });
 
-async function ownedEditablePlaylist(req: Request, res: Response) {
+/**
+ * Load the caller's own playlist and check the requested actions against the
+ * shared rule in shared/playlistPermissions.ts — the same rule the web client
+ * uses to decide which controls to show.
+ *
+ * This used to refuse every change to any system or AI-generated playlist,
+ * while the web UI (following the legacy routes) offered edits, sharing,
+ * pinning and deletion on AI playlists and pinning on system ones; once the
+ * web client moved those calls onto v1 they failed as read-only.
+ */
+async function ownedPlaylistAllowing(req: Request, res: Response, actions: Array<keyof PlaylistPermissions>) {
   const meta = await getPlaylistByIdForUser(routeParam(req, 'id'), req.apiV1!.userId);
   if (!meta) {
     sendApiV1Error(req, res, 404, 'PLAYLIST_NOT_FOUND', 'Playlist not found.');
     return null;
   }
-  if (meta.isSystem || meta.isLlmGenerated) {
-    sendApiV1Error(req, res, 403, 'PLAYLIST_READ_ONLY', 'This playlist is read-only.');
+  const permissions = playlistPermissions({
+    isOwner: true,
+    isSystem: Boolean(meta.isSystem),
+    isLlmGenerated: Boolean(meta.isLlmGenerated),
+    generationSource: meta.generationSource,
+  });
+  if (!actions.every((action) => permissions[action])) {
+    sendApiV1Error(req, res, 403, 'PLAYLIST_READ_ONLY', 'This playlist does not allow that change.');
     return null;
   }
   return meta;
@@ -625,7 +642,7 @@ async function ownedEditablePlaylist(req: Request, res: Response) {
 
 router.put('/playlists/:id/tracks', async (req, res) => {
   const input = parseBody(z.object({ trackIds: z.array(z.string().min(1)).max(10_000) }).strict(), req, res);
-  if (!input || !(await ownedEditablePlaylist(req, res))) return;
+  if (!input || !(await ownedPlaylistAllowing(req, res, ['editTracks']))) return;
   try {
     await addTracksToPlaylist(req.params.id, input.trackIds);
   } catch (error) {
@@ -644,7 +661,7 @@ router.put('/playlists/:id/tracks', async (req, res) => {
 
 router.patch('/playlists/:id', async (req, res) => {
   const input = parseBody(z.object({ title: z.string().trim().min(1).max(200).optional(), description: z.string().max(2000).nullable().optional() }).strict().refine((value) => Object.keys(value).length > 0), req, res);
-  if (!input || !(await ownedEditablePlaylist(req, res))) return;
+  if (!input || !(await ownedPlaylistAllowing(req, res, ['rename']))) return;
   await updatePlaylistMeta(req.params.id, req.apiV1!.userId, input);
   const meta = await getPlaylistByIdReadable(req.params.id, req.apiV1!.userId);
   const tracks = await getPlaylistTracks(req.params.id, req.apiV1!.userId);
@@ -654,7 +671,11 @@ router.patch('/playlists/:id', async (req, res) => {
 
 router.patch('/playlists/:id/state', async (req, res) => {
   const input = parseBody(z.object({ pinned: z.boolean().optional(), private: z.boolean().optional() }).strict().refine((value) => Object.keys(value).length > 0), req, res);
-  if (!input || !(await ownedEditablePlaylist(req, res))) return;
+  if (!input) return;
+  const stateActions: Array<keyof PlaylistPermissions> = [];
+  if (input.pinned !== undefined) stateActions.push('pin');
+  if (input.private !== undefined) stateActions.push('setPrivacy');
+  if (!(await ownedPlaylistAllowing(req, res, stateActions))) return;
   if (input.pinned !== undefined) await togglePlaylistPin(req.params.id, req.apiV1!.userId, input.pinned);
   if (input.private !== undefined) await togglePlaylistPrivacy(req.params.id, req.apiV1!.userId, input.private);
   const meta = await getPlaylistByIdReadable(req.params.id, req.apiV1!.userId);
@@ -665,7 +686,7 @@ router.patch('/playlists/:id/state', async (req, res) => {
 
 router.post('/playlists/:id/share', async (req, res) => {
   const input = parseBody(z.object({ enabled: z.boolean() }).strict(), req, res);
-  if (!input || !(await ownedEditablePlaylist(req, res))) return;
+  if (!input || !(await ownedPlaylistAllowing(req, res, ['share']))) return;
   const result = await setPlaylistShare(req.params.id, req.apiV1!.userId, input.enabled, crypto.randomBytes(18).toString('base64url'));
   if (!result) return sendApiV1Error(req, res, 404, 'PLAYLIST_NOT_FOUND', 'Playlist not found.');
   publishApiV1Event(req.apiV1!.userId, 'playlist.changed', { playlistId: req.params.id, action: 'shareUpdated' });
@@ -676,7 +697,7 @@ router.post('/playlists/:id/share', async (req, res) => {
 });
 
 router.delete('/playlists/:id', async (req, res) => {
-  if (!(await ownedEditablePlaylist(req, res))) return;
+  if (!(await ownedPlaylistAllowing(req, res, ['delete']))) return;
   await deletePlaylist(req.params.id, req.apiV1!.userId);
   publishApiV1Event(req.apiV1!.userId, 'playlist.changed', { playlistId: req.params.id, action: 'deleted' });
   res.status(204).end();

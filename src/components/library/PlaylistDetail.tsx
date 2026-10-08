@@ -45,7 +45,9 @@ import { parseArtistsForDisplay } from '../../utils/artistUtils';
 import { useKnownArtistKeys } from '../../hooks/useKnownArtistKeys';
 import type { TrackInfo } from '../../utils/fileSystem';
 import { getSuggestedPlaylistTracks } from '../../utils/playlistSuggestions';
-import { useEntityTracks } from '../../hooks/useEntityTracks';
+import { useApiV1TrackList } from '../../hooks/useApiV1TrackList';
+import { auroraApiRequest } from '../../api/auroraApi';
+import { playlistPermissions } from '../../../shared/playlistPermissions';
 import { useNowPlayingState } from '../../hooks/useNowPlaying';
 import { NowPlayingBadge } from '../now-playing/NowPlayingBadge';
 import { NowPlayingBars } from '../now-playing/NowPlayingBars';
@@ -497,8 +499,8 @@ export const PlaylistDetail: React.FC = () => {
   // Suggestion candidates come from a bounded server pool (tracks related to
   // this playlist by artist/genre/album-artist) instead of the full in-memory
   // library; the overlap scoring below ranks them the same way.
-  const { tracks: suggestionPool } = useEntityTracks(
-    playlistId ? `/api/playlists/${encodeURIComponent(playlistId)}/suggestions` : null,
+  const { tracks: suggestionPool } = useApiV1TrackList(
+    playlistId ? `/playlists/${encodeURIComponent(playlistId)}/suggestions` : null,
   );
   const artists = usePlayerStore((state) => state.artists);
   const setPlaylist = usePlayerStore((state) => state.setPlaylist);
@@ -575,13 +577,22 @@ export const PlaylistDetail: React.FC = () => {
   const isSystemPlaylist = !!playlist?.isSystem;
   // Ownership mirrors the Playlists tab: a playlist is the current user's unless
   // the server explicitly flagged it isOwner:false. Every playlist from
-  // GET /api/playlists is the user's own by construction (so isOwner is absent
+  // GET /api/v1/playlists is the user's own by construction (so isOwner is absent
   // there); only discovered playlists from other users carry isOwner:false. This
   // avoids depending on currentUser.id being populated/matching, which broke
   // editing your own playlists. The backend still enforces owner-only writes.
   const isOwner = !!playlist && playlist.isOwner !== false;
   // Anyone may listen; only the owner of a non-system playlist may edit it.
-  const canEdit = isOwner && !isSystemPlaylist;
+  // The same rule the server enforces — see shared/playlistPermissions.ts.
+  // Hub collections can be shared, pinned and deleted but not reshaped;
+  // system playlists can only be pinned.
+  const permissions = playlistPermissions({
+    isOwner,
+    isSystem: isSystemPlaylist,
+    isLlmGenerated: !!playlist?.isLlmGenerated,
+    generationSource: playlist?.generationSource,
+  });
+  const canEditTracks = permissions.editTracks;
   const playlistTracks = playlist?.tracks || [];
   const trackListRef = useRef<HTMLDivElement>(null);
   const deferredPlaylistTracks = useDeferredValue(playlistTracks);
@@ -728,17 +739,15 @@ export const PlaylistDetail: React.FC = () => {
 
   const handleShare = useCallback(async () => {
     if (!playlist?.id) return;
-    const share = (enable: boolean) =>
-      fetch(`/api/playlists/${playlist.id}/share`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-        body: JSON.stringify({ enable }),
-      });
+    const share = (enabled: boolean) =>
+      auroraApiRequest<{ enabled: boolean; sharePath: string | null }>(
+        `/playlists/${encodeURIComponent(playlist.id!)}/share`,
+        getAuthHeader(),
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) },
+      );
     try {
-      const res = await share(true);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      if (!data.sharePath) throw new Error('No share path');
+      const data = await share(true);
+      if (!data?.sharePath) throw new Error('No share path');
       const url = `${window.location.origin}${data.sharePath}`;
       try { await navigator.clipboard.writeText(url); } catch { /* clipboard blocked — toast still shows the action */ }
       addToast('Public link copied to clipboard.', 'success', {
@@ -746,8 +755,7 @@ export const PlaylistDetail: React.FC = () => {
         duration: 8000,
         onAction: async () => {
           try {
-            const off = await share(false);
-            if (!off.ok) throw new Error(`HTTP ${off.status}`);
+            await share(false);
             addToast('Sharing disabled.', 'info');
           } catch {
             addToast('Failed to disable sharing.', 'error');
@@ -785,7 +793,7 @@ export const PlaylistDetail: React.FC = () => {
     }
   }, [playlist?.id, playlist?.isPrivate, togglePlaylistPrivacy, addToast]);
 
-  const renderPlaylistTrackRow = useCallback((track: TrackInfo, index: number, readOnly = !canEdit) => {
+  const renderPlaylistTrackRow = useCallback((track: TrackInfo, index: number, readOnly = !canEditTracks) => {
     const itemId = sortableItems[index];
     if (!playlist || !itemId) return null;
 
@@ -811,7 +819,7 @@ export const PlaylistDetail: React.FC = () => {
     getArtistLink,
     handleMoveTrack,
     handlePlayFromIndex,
-    canEdit,
+    canEditTracks,
     openContextMenu,
     playbackState,
     playlist,
@@ -909,7 +917,7 @@ export const PlaylistDetail: React.FC = () => {
             </div>
 
             <div className="flex flex-wrap items-center gap-3 my-2">
-              {canEdit ? (
+              {permissions.rename ? (
                 <InlineEditableText
                   value={playlist.title}
                   ariaLabel="Edit playlist name"
@@ -943,7 +951,7 @@ export const PlaylistDetail: React.FC = () => {
               </span>
             </h2>
 
-            {canEdit ? (
+            {permissions.rename ? (
               <div className="mb-4 mt-2 w-full max-w-3xl">
                 <InlineEditableText
                   value={playlist.description || ''}
@@ -975,7 +983,7 @@ export const PlaylistDetail: React.FC = () => {
                   Play Playlist
                 </span>
               </button>
-              {canEdit && playlist.id && (
+              {permissions.share && playlist.id && (
                 <button
                   onClick={handleShare}
                   className="btn btn-ghost btn-lg"
@@ -987,7 +995,7 @@ export const PlaylistDetail: React.FC = () => {
                   </span>
                 </button>
               )}
-              {canEdit && playlist.id && (
+              {permissions.setPrivacy && playlist.id && (
                 <button
                   onClick={handleTogglePrivacy}
                   className="btn btn-ghost btn-lg"
@@ -1025,13 +1033,13 @@ export const PlaylistDetail: React.FC = () => {
 
           {playlistTracks.length === 0 ? (
             <div className="px-6 py-12 text-center text-[var(--color-text-secondary)] border-b border-black/5 dark:border-white/5">
-              {canEdit
+              {canEditTracks
                 ? 'Add tracks from the library to start shaping this playlist.'
                 : isSystemPlaylist
                   ? 'No tracks yet — listen to a few songs and check back soon.'
                   : 'This playlist is empty.'}
             </div>
-          ) : !canEdit ? (
+          ) : !canEditTracks ? (
             <div
               ref={trackListRef}
               className={shouldVirtualizePlaylistRows ? 'max-h-[70vh] overflow-y-auto overflow-x-hidden hide-scrollbar pr-1' : undefined}
@@ -1122,7 +1130,7 @@ export const PlaylistDetail: React.FC = () => {
           )}
         </div>
 
-        {canEdit && suggestionEntries.length > 0 && (
+        {canEditTracks && suggestionEntries.length > 0 && (
           <div className="pt-2">
             <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
               <div className="min-w-0">

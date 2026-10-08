@@ -1,4 +1,5 @@
 import React, { useRef, useCallback, useState } from 'react';
+import { saveQueueAsPlaylist } from '../utils/saveQueueAsPlaylist';
 import { usePlayerStore } from '../store';
 import { ChevronLeft, ChevronRight, ListPlus, ListX, Loader2 } from 'lucide-react';
 import { QueueList, useClearQueueWithUndo } from './QueueList';
@@ -30,8 +31,7 @@ const PlaylistSidebarInner: React.FC = () => {
   const handleClearQueue = useClearQueueWithUndo();
 
   const handleSaveQueue = useCallback(async (title: string) => {
-    const trackIds = playlist.map((track) => track.id).filter(Boolean);
-    if (trackIds.length === 0) {
+    if (!playlist.some((track) => track.id)) {
       setIsSavePromptOpen(false);
       addToast('Queue is empty.', 'error');
       return;
@@ -39,31 +39,7 @@ const PlaylistSidebarInner: React.FC = () => {
 
     setIsSavingQueue(true);
     try {
-      const authHeaders = getAuthHeader();
-      const createRes = await fetch('/api/playlists', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders },
-        body: JSON.stringify({
-          title,
-          description: `Saved from play queue with ${trackIds.length} ${trackIds.length === 1 ? 'track' : 'tracks'}.`,
-        }),
-      });
-
-      const created = await createRes.json().catch(() => ({}));
-      if (!createRes.ok || !created.id) {
-        throw new Error(created.error || 'Failed to create playlist.');
-      }
-
-      const tracksRes = await fetch(`/api/playlists/${created.id}/tracks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders },
-        body: JSON.stringify({ trackIds }),
-      });
-      const tracksPayload = await tracksRes.json().catch(() => ({}));
-      if (!tracksRes.ok) {
-        throw new Error(tracksPayload.error || 'Failed to save queue tracks.');
-      }
-
+      await saveQueueAsPlaylist(title, playlist.map((track) => track.id), getAuthHeader());
       await fetchPlaylistsFromServer();
       setIsSavePromptOpen(false);
       addToast(`Saved "${title}" to playlists.`, 'success');
