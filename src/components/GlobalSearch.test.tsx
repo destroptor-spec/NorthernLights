@@ -31,7 +31,7 @@ const v1Track = (overrides: Record<string, unknown>) => ({
   releaseType: null, compilation: false, bitrate: null, format: 'FLAC', lossless: true, fileSize: null,
   mediaEtag: null, artistId: null, albumId: null, genreId: null, loved: false, rating: 0, playCount: 0,
   lastPlayedAt: null, artworkId: null, artworkUrl: null,
-  musicBrainz: { recordingId: null, trackId: null, albumId: null, artistId: null, releaseGroupId: null, workId: null },
+  musicBrainz: { recordingId: null, trackId: null, albumId: null, artistId: null, albumArtistId: null, releaseGroupId: null, workId: null },
   ...overrides,
 });
 const v1Ok = (data: unknown) => ({ ok: true, status: 200, json: async () => ({ data, meta: { requestId: 'test' } }), headers: { get: () => null } });

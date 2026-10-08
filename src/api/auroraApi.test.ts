@@ -42,13 +42,25 @@ describe('Aurora web API client', () => {
       releaseType: null, compilation: false, bitrate: null, format: 'FLAC', lossless: true, fileSize: null,
       mediaEtag: null, artistId: null, albumId: null, genreId: null, loved: false, rating: 0, playCount: 0,
       lastPlayedAt: null, artworkId: null, artworkUrl: null,
-      musicBrainz: { recordingId: null, trackId: null, albumId: null, artistId: null, releaseGroupId: null, workId: null },
+      musicBrainz: { recordingId: null, trackId: null, albumId: null, artistId: null, albumArtistId: null, releaseGroupId: null, workId: null },
     } satisfies Track;
     const adapted = toLegacyTrack(track, 'media-token', 'auto');
     expect(adapted.path).toBe('api-v1:t1');
     expect(adapted.rawUrl).toContain('/api/v1/media/tracks/t1');
     expect(new URL(adapted.url!)).toBeInstanceOf(URL);
     expect(new URL(adapted.rawUrl!)).toBeInstanceOf(URL);
+  });
+
+  it('keeps the MusicBrainz ids the detail pages derive artist identity from', () => {
+    const track = {
+      id: 't1', title: 'Track', artist: 'Artist', albumArtist: null, artists: ['Artist'], album: 'Album',
+      genre: null, genres: [], durationSeconds: 10, trackNumber: null, discNumber: null, year: null,
+      releaseType: null, compilation: false, bitrate: null, format: 'FLAC', lossless: true, fileSize: null,
+      mediaEtag: null, artistId: null, albumId: null, genreId: null, loved: false, rating: 0, playCount: 0,
+      lastPlayedAt: null, artworkId: null, artworkUrl: null,
+      musicBrainz: { recordingId: null, trackId: null, albumId: null, artistId: 'performer', albumArtistId: 'owner', releaseGroupId: null, workId: null },
+    } satisfies Track;
+    expect(toLegacyTrack(track, '', 'auto')).toMatchObject({ mbArtistId: 'performer', mbAlbumArtistId: 'owner' });
   });
 
   it('preserves playlist timestamps while producing Cast-resolvable media URLs', () => {
@@ -58,7 +70,7 @@ describe('Aurora web API client', () => {
       releaseType: null, compilation: false, bitrate: null, format: 'FLAC', lossless: true, fileSize: null,
       mediaEtag: null, artistId: null, albumId: null, genreId: null, loved: false, rating: 0, playCount: 0,
       lastPlayedAt: null, artworkId: 'cover', artworkUrl: '/api/v1/artwork/cover',
-      musicBrainz: { recordingId: null, trackId: null, albumId: null, artistId: null, releaseGroupId: null, workId: null },
+      musicBrainz: { recordingId: null, trackId: null, albumId: null, artistId: null, albumArtistId: null, releaseGroupId: null, workId: null },
     } satisfies Track;
     const playlist = {
       id: 'p1', title: 'List', description: null, ownerUsername: 'alice', isOwner: true,

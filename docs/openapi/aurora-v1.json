@@ -357,6 +357,12 @@
                   "null"
                 ]
               },
+              "albumArtistId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "releaseGroupId": {
                 "type": [
                   "string",
@@ -375,6 +381,7 @@
               "trackId",
               "albumId",
               "artistId",
+              "albumArtistId",
               "releaseGroupId",
               "workId"
             ]
@@ -518,6 +525,13 @@
           },
           "compilation": {
             "type": "boolean"
+          },
+          "editionLabel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Edition or release variant such as \"Deluxe Edition\", when the album is one of several editions."
           }
         },
         "required": [
@@ -530,7 +544,8 @@
           "trackCount",
           "artworkId",
           "imageUrl",
-          "compilation"
+          "compilation",
+          "editionLabel"
         ]
       },
       "Genre": {
@@ -565,6 +580,136 @@
           "trackCount",
           "aliasCount",
           "imageUrl"
+        ]
+      },
+      "ArtistDetail": {
+        "type": "object",
+        "properties": {
+          "artist": {
+            "$ref": "#/components/schemas/ArtistSummary"
+          },
+          "details": {
+            "type": "object",
+            "properties": {
+              "bio": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "disambiguation": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "musicBrainzId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "links": {},
+              "lifeSpanEnd": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "bio",
+              "disambiguation",
+              "musicBrainzId",
+              "lifeSpanEnd"
+            ]
+          },
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Track"
+            },
+            "description": "Credited tracks first, then tracks on albums the artist owns as album artist without a performer credit."
+          },
+          "ownedAlbums": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AlbumSummary"
+            },
+            "description": "Albums owned by the Various Artists pseudo-artist. Always empty for real artists."
+          }
+        },
+        "required": [
+          "artist",
+          "details",
+          "tracks",
+          "ownedAlbums"
+        ]
+      },
+      "AlbumDetail": {
+        "type": "object",
+        "properties": {
+          "album": {
+            "$ref": "#/components/schemas/AlbumSummary"
+          },
+          "details": {
+            "type": "object",
+            "properties": {
+              "description": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "tags": {},
+              "musicBrainzId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "editionLabel": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "description",
+              "musicBrainzId",
+              "editionLabel"
+            ]
+          },
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Track"
+            }
+          }
+        },
+        "required": [
+          "album",
+          "details",
+          "tracks"
+        ]
+      },
+      "GenreDetail": {
+        "type": "object",
+        "properties": {
+          "genre": {
+            "$ref": "#/components/schemas/Genre"
+          },
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Track"
+            }
+          }
+        },
+        "required": [
+          "genre",
+          "tracks"
         ]
       },
       "Playlist": {
@@ -3287,8 +3432,7 @@
                   "type": "object",
                   "properties": {
                     "data": {
-                      "type": "object",
-                      "additionalProperties": {}
+                      "$ref": "#/components/schemas/ArtistDetail"
                     },
                     "meta": {
                       "type": "object",
@@ -3552,8 +3696,7 @@
                   "type": "object",
                   "properties": {
                     "data": {
-                      "type": "object",
-                      "additionalProperties": {}
+                      "$ref": "#/components/schemas/AlbumDetail"
                     },
                     "meta": {
                       "type": "object",
@@ -3817,8 +3960,7 @@
                   "type": "object",
                   "properties": {
                     "data": {
-                      "type": "object",
-                      "additionalProperties": {}
+                      "$ref": "#/components/schemas/GenreDetail"
                     },
                     "meta": {
                       "type": "object",

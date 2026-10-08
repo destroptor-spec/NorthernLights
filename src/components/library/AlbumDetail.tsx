@@ -4,7 +4,7 @@ import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { usePlayerStore } from '../../store/index';
 import { AlbumArt } from '../AlbumArt';
 import { AlbumCoverDisc } from './AlbumCoverDisc';
-import { useEntityTracks } from '../../hooks/useEntityTracks';
+import { useApiV1EntityTracks } from '../../hooks/useApiV1TrackList';
 import { parseArtistsForDisplay } from '../../utils/artistUtils';
 import { useKnownArtistKeys } from '../../hooks/useKnownArtistKeys';
 import { formatDuration, formatTime } from '../../utils/formatTime';
@@ -519,8 +519,8 @@ export const AlbumDetail: React.FC = () => {
 
     // Album tracks come from the per-album endpoint instead of filtering the
     // in-memory library, so the album view no longer depends on the full track set.
-    const { tracks: albumTracks, loading: albumTracksLoading } = useEntityTracks(
-        albumId ? `/api/albums/${encodeURIComponent(albumId)}` : null,
+    const { tracks: albumTracks, loading: albumTracksLoading } = useApiV1EntityTracks(
+        albumId ? `/albums/${encodeURIComponent(albumId)}` : null,
     );
     const albums = usePlayerStore(state => state.albums);
     const artists = usePlayerStore(state => state.artists);

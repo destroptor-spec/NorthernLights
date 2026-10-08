@@ -15,7 +15,7 @@ const track = (id: string): Track => ({
   releaseType: null, compilation: false, bitrate: null, format: 'FLAC', lossless: true, fileSize: null,
   mediaEtag: null, artistId: null, albumId: null, genreId: null, loved: false, rating: 0, playCount: 0,
   lastPlayedAt: null, artworkId: null, artworkUrl: null,
-  musicBrainz: { recordingId: null, trackId: null, albumId: null, artistId: null, releaseGroupId: null, workId: null },
+  musicBrainz: { recordingId: null, trackId: null, albumId: null, artistId: null, albumArtistId: null, releaseGroupId: null, workId: null },
 });
 const artist = { id: 'a1', name: 'Tove Lo', imageUrl: 'https://img/a1' } as ArtistSummary;
 const album = { id: 'b1', title: 'Queen of the Clouds', artistName: 'Tove Lo', imageUrl: 'https://img/b1' } as AlbumSummary;
