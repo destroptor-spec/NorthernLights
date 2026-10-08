@@ -136,6 +136,7 @@ export const SystemTab: React.FC = () => {
             confirmLabel: 'Reset Hub',
             onConfirm: async () => {
                 setConfirmDialog(null);
+                addToast('Resetting Hub… regenerating playlists can take a minute.', 'info');
                 try {
                     // Same endpoint as the Hub's own generate button. It waits for
                     // the regeneration, so the toast can report what happened.

@@ -38,6 +38,7 @@ test('forces a regeneration through v1 with a JSON body', async () => {
   expect(new Headers(init.headers).get('Content-Type')).toBe('application/json');
   expect(JSON.parse(init.body)).toEqual({ force: true });
   expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/hub'))).toBe(false);
+  expect(usePlayerStore.getState().toasts[0].message).toBe('Resetting Hub… regenerating playlists can take a minute.');
   await waitFor(() => expect(usePlayerStore.getState().toasts.map((t) => t.message)).toContain('Hub reset. 3 playlists generated.'));
 });
 

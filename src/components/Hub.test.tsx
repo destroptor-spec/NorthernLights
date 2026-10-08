@@ -49,7 +49,7 @@ beforeEach(() => {
   usePlayerStore.setState({
     library: [], albums: [{ id: 'al1', title: 'Album' }], playlists: [],
     authToken: 'jwt', mediaAccessToken: 'media', streamingQuality: 'auto',
-    llmBaseUrl: 'http://llm', llmModelName: 'model',
+    llmBaseUrl: 'http://llm', llmModelName: 'model', toasts: [],
     setPlaylist, fetchPlaylistsFromServer: jest.fn(async () => {}),
   } as never);
 });
@@ -99,6 +99,15 @@ it('regenerates through v1 with a JSON body and shows why it was skipped', async
   const [, init] = callTo('POST /api/v1/hub/regenerate')!;
   expect(new Headers(init!.headers).get('Content-Type')).toBe('application/json');
   expect(JSON.parse(String(init!.body))).toEqual({ force: true });
+});
+
+it('toasts when regeneration starts and how many playlists it made', async () => {
+  routes['POST /api/v1/hub/regenerate'] = { skipped: false, reason: null, generated: 4 };
+  renderHub();
+  fireEvent.click(await screen.findByLabelText('refresh hub'));
+  const messages = () => usePlayerStore.getState().toasts.map((t) => t.message);
+  expect(messages()).toContain('Regenerating hub playlists… this can take a minute.');
+  await waitFor(() => expect(messages()).toContain('Hub refreshed. 4 playlists generated.'));
 });
 
 it('opens an artist radio through v1 with a JSON body', async () => {

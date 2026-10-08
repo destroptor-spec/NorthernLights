@@ -993,6 +993,7 @@ export const Hub: React.FC = () => {
   const togglePin = usePlayerStore((s) => s.togglePin);
   const currentUser = usePlayerStore((s) => s.currentUser);
   const fetchPlaylistsFromServer = usePlayerStore((s) => s.fetchPlaylistsFromServer);
+  const addToast = usePlayerStore((s) => s.addToast);
   const playlists = usePlayerStore((s) => s.playlists);
   const playAtIndex = usePlayerStore((s) => s.playAtIndex);
   const llmBaseUrl = usePlayerStore((s) => s.llmBaseUrl);
@@ -1269,6 +1270,8 @@ export const Hub: React.FC = () => {
   const handleGeneratePlaylists = async () => {
     setIsGenerating(true);
     setGenerationError('');
+    // The request waits for the LLM, which can take a minute or more.
+    addToast('Regenerating hub playlists… this can take a minute.', 'info');
     try {
       const data = await auroraApiRequest<{ skipped: boolean; reason: string | null; generated: number }>(
         '/hub/regenerate', getAuthHeader(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: true }) });
@@ -1279,6 +1282,7 @@ export const Hub: React.FC = () => {
         throw new Error('No playlists were generated. Check your LLM configuration and genre mappings.');
       }
       await fetchHubData();
+      addToast(`Hub refreshed. ${data.generated} playlist${data.generated === 1 ? '' : 's'} generated.`, 'success');
     } catch (e: any) {
       console.error('Failed to generate playlists', e);
       setGenerationError(e.message || 'Failed to generate playlists.');
