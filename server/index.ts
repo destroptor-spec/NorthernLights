@@ -19,6 +19,7 @@ import { spawn } from 'child_process';
 dns.setDefaultResultOrder('ipv4first');
 import { requireAuth as jwtAuthMiddleware } from './middleware/auth';
 import { createRateLimiter } from './middleware/rateLimit';
+import { createFrontendStaticRouter } from './middleware/frontendStatic';
 import { initDatabaseConnection } from './state';
 import { logScanner } from './services/loggingConfig';
 import recommendRoutes from './routes/recommend.routes';
@@ -264,14 +265,7 @@ if (fs.existsSync(distPath)) {
   // an app CSP on this page has broken casting twice (boot, then every LOAD).
   const receiverPath = path.join(distPath, 'receiver.html');
 
-  app.use(express.static(distPath, {
-    index: false,
-    setHeaders: (res, filePath) => {
-      if (filePath === receiverPath) {
-        res.removeHeader('Content-Security-Policy');
-      }
-    },
-  }));
+  app.use(createFrontendStaticRouter(distPath));
 
   // Serve custom Cast receiver HTML at /cast-receiver
   if (fs.existsSync(receiverPath)) {
@@ -364,6 +358,7 @@ if (fs.existsSync(distPath)) {
     if (!baseHtml) return res.status(500).send('Server error');
 
     const html = baseHtml.replace('</head>', `${metaInjection}\n  </head>`);
+    res.setHeader('Cache-Control', 'no-cache');
     res.type('html').send(html);
   });
 
@@ -372,6 +367,7 @@ if (fs.existsSync(distPath)) {
     if (req.path.startsWith('/api') || req.path.startsWith('/rest')) {
       return next();
     }
+    res.setHeader('Cache-Control', 'no-cache');
     if (cachedIndexHtml) {
       res.type('html').send(cachedIndexHtml);
     } else {

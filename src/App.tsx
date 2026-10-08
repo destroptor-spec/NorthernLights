@@ -346,14 +346,24 @@ const App: React.FC = () => {
     window.history.replaceState({}, '', cleanUrl);
   }, [addToast]);
 
-  const handleApplyPwaUpdate = React.useCallback(() => {
+  const [isApplyingUpdate, setIsApplyingUpdate] = React.useState(false);
+  const [updateError, setUpdateError] = React.useState<string | null>(null);
+  const handleApplyPwaUpdate = React.useCallback(async () => {
+    if (isApplyingUpdate) return;
+    setIsApplyingUpdate(true);
+    setUpdateError(null);
     // Snapshot where we are so the new build can pick up from the same track and
     // position. This works mid-playback too: restoreFromContinuitySnapshot() runs
     // on the next load and resumes (the browser may require a tap to actually
     // start audio after a reload, but nothing is lost).
-    playbackManager.persistContinuitySnapshot();
-    void applyPendingPwaUpdate();
-  }, []);
+    try {
+      playbackManager.persistContinuitySnapshot();
+      await applyPendingPwaUpdate();
+    } catch (error) {
+      setUpdateError(error instanceof Error ? error.message : 'Unable to apply the update. Please try again.');
+      setIsApplyingUpdate(false);
+    }
+  }, [isApplyingUpdate]);
 
   const isSidebarOpen = usePlayerStore((s) => s.isSidebarOpen);
   const setIsSidebarOpen = usePlayerStore((s) => s.setIsSidebarOpen);
@@ -661,21 +671,26 @@ const App: React.FC = () => {
         {pendingUpdate && (
           <div className="fixed bottom-6 left-6 z-[10001] flex items-center gap-3 px-5 py-3.5 rounded-2xl border shadow-2xl backdrop-blur-xl bg-[var(--glass-bg)] border-primary/30 max-w-[360px]">
             <div className="flex-1">
-              <p className="text-sm font-medium text-[var(--color-text-primary)]">Update Available</p>
-              <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">Reload to get the latest version.</p>
+              <p className="text-sm font-medium text-[var(--color-text-primary)]">{isApplyingUpdate ? 'Updating…' : 'Update Available'}</p>
+              <p role="status" className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                {updateError || (isApplyingUpdate ? 'Your app will reload when ready.' : 'Reload to get the latest version.')}
+              </p>
             </div>
             <button
               onClick={() => setPendingUpdate(false)}
+              disabled={isApplyingUpdate}
               className="btn btn-ghost btn-sm"
             >
               Later
             </button>
             <button
               onClick={handleApplyPwaUpdate}
+              disabled={isApplyingUpdate}
+              aria-busy={isApplyingUpdate}
               className="btn btn-primary btn-sm flex items-center gap-1.5"
             >
-              <RefreshCw size={14} />
-              Reload
+              <RefreshCw size={14} className={isApplyingUpdate ? 'motion-safe:animate-spin' : undefined} />
+              {isApplyingUpdate ? 'Updating…' : updateError ? 'Retry' : 'Reload'}
             </button>
           </div>
         )}
