@@ -38,6 +38,7 @@ const OPEN_SUBSONIC_ENABLED_CACHE_MS = 2_000;
 const PLAYQUEUE_SETTING_KEY = 'subsonic:playqueue';
 const EFFNET_SIMILARITY_WEIGHT = 0.55;
 const SUBSONIC_PROVIDER_SCROBBLE_SETTING_KEY = 'subsonicProviderScrobbleEnabled';
+const SUBSONIC_PROVIDER_LOVE_SYNC_SETTING_KEY = 'subsonicProviderLoveSyncEnabled';
 
 type SubsonicContext = {
   userId: string;
@@ -489,6 +490,9 @@ function songId(id: string) {
  * the web app and API v1 — so a love from Symfonium reaches Last.fm and
  * MusicBrainz too. It used to write the flag directly and skip provider sync.
  *
+ * Provider sync follows the listener's "Sync loved/liked songs across all
+ * platforms" preference (see isSubsonicLoveSyncEnabled).
+ *
  * Every `id` parameter is honoured, as the Subsonic spec allows several; only
  * the first used to be. Provider failures are logged rather than returned:
  * the Subsonic response has nowhere to put them, and the local star stands.
@@ -504,9 +508,10 @@ export async function setSubsonicSongsStarred(
   }).filter(Boolean)));
   if (trackIds.length === 0) return { error: { code: 10, message: 'Required parameter is missing: id' } };
 
+  const syncProviders = await isSubsonicLoveSyncEnabled(userId);
   let found = 0;
   for (const trackId of trackIds) {
-    const providers = await setTrackLovedAndSync(userId, trackId, starred, { source: 'openSubsonic' });
+    const providers = await setTrackLovedAndSync(userId, trackId, starred, { source: 'openSubsonic', syncProviders });
     if (!providers) continue;
     found++;
     const failed = providers.filter((provider) => provider.status === 'failed');
@@ -563,6 +568,19 @@ function settingEnabled(value: unknown): boolean {
 
 export async function isSubsonicProviderScrobbleBridgeEnabled(userId: string): Promise<boolean> {
   return settingEnabled(await getUserSetting(userId, SUBSONIC_PROVIDER_SCROBBLE_SETTING_KEY));
+}
+
+/**
+ * "Sync loved/liked songs across all platforms" — whether a star from an
+ * OpenSubsonic client is mirrored to Last.fm and MusicBrainz.
+ *
+ * On unless explicitly turned off. Unlike the scrobble bridge (off by
+ * default, because a client that scrobbles itself would be counted twice),
+ * loving the same song twice is harmless, so syncing is the safe default.
+ */
+export async function isSubsonicLoveSyncEnabled(userId: string): Promise<boolean> {
+  const value = await getUserSetting(userId, SUBSONIC_PROVIDER_LOVE_SYNC_SETTING_KEY);
+  return value === null || value === undefined ? true : settingEnabled(value);
 }
 
 function positiveInt(value: unknown): number | undefined {

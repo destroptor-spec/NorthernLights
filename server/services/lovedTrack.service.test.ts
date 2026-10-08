@@ -108,6 +108,25 @@ describe('setTrackLovedAndSync', () => {
     expect(order[0]).toBe('db');
   });
 
+  it('stores the love but contacts no provider when sync is off', async () => {
+    connected();
+    const providers = await setTrackLovedAndSync('u1', 't1', true, { syncProviders: false });
+    expect(setTrackLovedForUser).toHaveBeenCalledWith('u1', 't1', true);
+    expect(loveTrack).not.toHaveBeenCalled();
+    expect(submitMbRecordingRating).not.toHaveBeenCalled();
+    expect(providers).toEqual([
+      { provider: 'lastfm', status: 'skipped', reason: 'sync_disabled' },
+      { provider: 'musicbrainz', status: 'skipped', reason: 'sync_disabled' },
+    ]);
+  });
+
+  it('syncs unless told not to', async () => {
+    connected();
+    await setTrackLovedAndSync('u1', 't1', true, { syncProviders: true });
+    await setTrackLovedAndSync('u1', 't1', true, {});
+    expect(loveTrack).toHaveBeenCalledTimes(2);
+  });
+
   it('returns null and writes nothing for an unknown track', async () => {
     getTrackById.mockResolvedValue(null);
     expect(await setTrackLovedAndSync('u1', 'missing', true)).toBeNull();

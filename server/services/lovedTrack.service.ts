@@ -27,7 +27,15 @@ export async function setTrackLovedAndSync(
   userId: string,
   trackId: string,
   loved: boolean,
-  options: { source?: string } = {},
+  options: {
+    source?: string;
+    /**
+     * False stores the love locally and contacts no provider. OpenSubsonic
+     * stars pass the listener's "Sync loved/liked songs across all platforms"
+     * preference here; the web app and API v1 always sync.
+     */
+    syncProviders?: boolean;
+  } = {},
 ): Promise<ProviderSyncResult[] | null> {
   const track = await getTrackById(trackId);
   if (!track) return null;
@@ -36,6 +44,13 @@ export async function setTrackLovedAndSync(
   publishApiV1Event(userId, 'annotation.changed', options.source
     ? { trackId, loved, source: options.source }
     : { trackId, loved });
+
+  if (options.syncProviders === false) {
+    return [
+      { provider: 'lastfm', status: 'skipped', reason: 'sync_disabled' },
+      { provider: 'musicbrainz', status: 'skipped', reason: 'sync_disabled' },
+    ];
+  }
 
   const jobs: Array<{ provider: 'lastfm' | 'musicbrainz'; run: (() => Promise<unknown>) | null; reason: string }> = [
     {

@@ -672,23 +672,55 @@ describe('setSubsonicSongsStarred', () => {
   beforeEach(() => {
     setTrackLovedAndSync.mockReset();
     setTrackLovedAndSync.mockResolvedValue([{ provider: 'lastfm', status: 'ok' }]);
+    databaseMock.getUserSetting.mockReset();
+    databaseMock.getUserSetting.mockResolvedValue(null);
+  });
+
+  describe('"Sync loved/liked songs across all platforms"', () => {
+    const syncedWith = () => setTrackLovedAndSync.mock.calls[0][3].syncProviders;
+
+    it('syncs when the listener has never touched the setting', async () => {
+      await setSubsonicSongsStarred('u1', ['abc'], true);
+      expect(databaseMock.getUserSetting).toHaveBeenCalledWith('u1', 'subsonicProviderLoveSyncEnabled');
+      expect(syncedWith()).toBe(true);
+    });
+
+    it('stars locally only when it is turned off', async () => {
+      for (const off of [false, 'false']) {
+        setTrackLovedAndSync.mockClear();
+        databaseMock.getUserSetting.mockResolvedValue(off);
+        await setSubsonicSongsStarred('u1', ['abc'], true);
+        expect(syncedWith()).toBe(false);
+      }
+    });
+
+    it('syncs when it is turned on explicitly', async () => {
+      databaseMock.getUserSetting.mockResolvedValue('true');
+      await setSubsonicSongsStarred('u1', ['abc'], true);
+      expect(syncedWith()).toBe(true);
+    });
+
+    it('reads the preference once for a batch', async () => {
+      await setSubsonicSongsStarred('u1', ['a', 'b', 'c'], true);
+      expect(databaseMock.getUserSetting).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('stars through the shared love-and-sync path', async () => {
     expect(await setSubsonicSongsStarred('u1', ['abc'], true)).toEqual({});
-    expect(setTrackLovedAndSync).toHaveBeenCalledWith('u1', 'abc', true, { source: 'openSubsonic' });
+    expect(setTrackLovedAndSync).toHaveBeenCalledWith('u1', 'abc', true, { source: 'openSubsonic', syncProviders: true });
   });
 
   it('unstars the same way', async () => {
     await setSubsonicSongsStarred('u1', ['abc'], false);
-    expect(setTrackLovedAndSync).toHaveBeenCalledWith('u1', 'abc', false, { source: 'openSubsonic' });
+    expect(setTrackLovedAndSync).toHaveBeenCalledWith('u1', 'abc', false, { source: 'openSubsonic', syncProviders: true });
   });
 
   it('accepts the song ids Aurora itself hands to Symfonium', async () => {
     const encoded = String(mapTrackToSubsonic({ id: 'L3Zhci9tdXNpYy9hLmZsYWM=', title: 'A', artist: 'B' }).id);
     expect(encoded.startsWith('song:')).toBe(true);
     await setSubsonicSongsStarred('u1', [encoded], true);
-    expect(setTrackLovedAndSync).toHaveBeenCalledWith('u1', 'L3Zhci9tdXNpYy9hLmZsYWM=', true, { source: 'openSubsonic' });
+    expect(setTrackLovedAndSync).toHaveBeenCalledWith('u1', 'L3Zhci9tdXNpYy9hLmZsYWM=', true, { source: 'openSubsonic', syncProviders: true });
   });
 
   it('honours every id, not just the first', async () => {

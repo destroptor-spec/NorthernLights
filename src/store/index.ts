@@ -650,6 +650,8 @@ export interface PlayerState {
   listenBrainzConnected: boolean;
   listenBrainzUsername: string;
   subsonicProviderScrobbleEnabled: boolean;
+  /** Mirror OpenSubsonic stars to Last.fm and MusicBrainz. Defaults on. */
+  subsonicProviderLoveSyncEnabled: boolean;
   geniusApiKey: string;
   musicBrainzEnabled: boolean;
   musicBrainzClientId: string;
@@ -853,6 +855,7 @@ export interface PlayerState {
   setListenBrainzConnected: (connected: boolean) => void;
   setListenBrainzUsername: (username: string) => void;
   setSubsonicProviderScrobbleEnabled: (enabled: boolean) => void;
+  setSubsonicProviderLoveSyncEnabled: (enabled: boolean) => void;
   setGeniusApiKey: (key: string) => void;
   setMusicBrainzEnabled: (enabled: boolean) => void;
   setMusicBrainzClientId: (id: string) => void;
@@ -1241,6 +1244,7 @@ export const usePlayerStore = create<PlayerState>()(
         listenBrainzConnected: false as boolean,
         listenBrainzUsername: '',
         subsonicProviderScrobbleEnabled: false as boolean,
+        subsonicProviderLoveSyncEnabled: true as boolean,
         geniusApiKey: '',
         musicBrainzEnabled: false as boolean,
         musicBrainzClientId: '',
@@ -1721,6 +1725,8 @@ export const usePlayerStore = create<PlayerState>()(
                 listenBrainzConnected: data.listenBrainzConnected ?? false,
                 listenBrainzUsername: data.listenBrainzUsername || '',
                 subsonicProviderScrobbleEnabled: data.subsonicProviderScrobbleEnabled === true,
+                // On unless explicitly turned off — an unset value means never changed.
+                subsonicProviderLoveSyncEnabled: data.subsonicProviderLoveSyncEnabled !== false && data.subsonicProviderLoveSyncEnabled !== 'false',
                 geniusApiKey: data.geniusApiKey || '',
                 musicBrainzEnabled: data.musicBrainzEnabled ?? false,
                 musicBrainzClientId: data.musicBrainzClientId || '',
@@ -1825,6 +1831,7 @@ export const usePlayerStore = create<PlayerState>()(
                 lastFmScrobbleEnabled: state.lastFmScrobbleEnabled,
                 listenBrainzScrobbleEnabled: state.listenBrainzScrobbleEnabled,
                 subsonicProviderScrobbleEnabled: state.subsonicProviderScrobbleEnabled,
+                subsonicProviderLoveSyncEnabled: state.subsonicProviderLoveSyncEnabled,
                 geniusApiKey: state.geniusApiKey,
                 musicBrainzEnabled: state.musicBrainzEnabled,
                 musicBrainzClientId: state.musicBrainzClientId,
@@ -2945,6 +2952,7 @@ export const usePlayerStore = create<PlayerState>()(
         setListenBrainzConnected: (connected: boolean) => set({ listenBrainzConnected: connected }),
         setListenBrainzUsername: (username: string) => set({ listenBrainzUsername: username }),
         setSubsonicProviderScrobbleEnabled: (enabled: boolean) => set({ subsonicProviderScrobbleEnabled: enabled }),
+        setSubsonicProviderLoveSyncEnabled: (enabled: boolean) => set({ subsonicProviderLoveSyncEnabled: enabled }),
         setGeniusApiKey: (key: string) => set({ geniusApiKey: key }),
         setMusicBrainzEnabled: (enabled: boolean) => set({ musicBrainzEnabled: enabled }),
         setMusicBrainzClientId: (id: string) => set({ musicBrainzClientId: id }),
@@ -3020,6 +3028,7 @@ export const usePlayerStore = create<PlayerState>()(
         listenBrainzConnected: state.listenBrainzConnected,
         listenBrainzUsername: state.listenBrainzUsername,
         subsonicProviderScrobbleEnabled: state.subsonicProviderScrobbleEnabled,
+        subsonicProviderLoveSyncEnabled: state.subsonicProviderLoveSyncEnabled,
         geniusApiKey: state.geniusApiKey,
         musicBrainzEnabled: state.musicBrainzEnabled,
         musicBrainzClientId: state.musicBrainzClientId,

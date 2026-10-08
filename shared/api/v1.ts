@@ -323,6 +323,8 @@ export const listenerPreferencesSchema = z.object({
   loudnessPreampDb: z.number().min(-12).max(12),
   loudnessMode: z.enum(['track', 'album']),
   subsonicProviderScrobbleEnabled: z.boolean(),
+  subsonicProviderLoveSyncEnabled: z.boolean()
+    .describe('Mirror stars from OpenSubsonic clients to Last.fm and MusicBrainz. Defaults to true.'),
 }).meta({ id: 'ListenerPreferences' });
 
 export type ApiError = z.infer<typeof apiErrorSchema>;

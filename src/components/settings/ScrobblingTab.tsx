@@ -20,6 +20,8 @@ export const ScrobblingTab: React.FC = () => {
     const setListenBrainzUsername = usePlayerStore(state => state.setListenBrainzUsername);
     const setListenBrainzScrobbleEnabled = usePlayerStore(state => state.setListenBrainzScrobbleEnabled);
     const subsonicProviderScrobbleEnabled = usePlayerStore(state => state.subsonicProviderScrobbleEnabled);
+    const subsonicProviderLoveSyncEnabled = usePlayerStore(state => state.subsonicProviderLoveSyncEnabled);
+    const setSubsonicProviderLoveSyncEnabled = usePlayerStore(state => state.setSubsonicProviderLoveSyncEnabled);
     const setSubsonicProviderScrobbleEnabled = usePlayerStore(state => state.setSubsonicProviderScrobbleEnabled);
 
     const { addToast } = useToast();
@@ -215,9 +217,25 @@ export const ScrobblingTab: React.FC = () => {
                                 type="button"
                                 role="switch"
                                 aria-checked={subsonicProviderScrobbleEnabled}
+                                aria-label="Bridge Subsonic scrobbles"
                                 onClick={() => setSubsonicProviderScrobbleEnabled(!subsonicProviderScrobbleEnabled)}
                                 className="account-switch"
                                 data-state={subsonicProviderScrobbleEnabled ? 'on' : 'off'}
+                            >
+                                <span className="account-switch__thumb" />
+                            </button>
+                        </div>
+
+                        <div className="account-provider__setting">
+                            <span>Sync loved/liked songs across all platforms</span>
+                            <button
+                                type="button"
+                                role="switch"
+                                aria-checked={subsonicProviderLoveSyncEnabled}
+                                aria-label="Sync loved/liked songs across all platforms"
+                                onClick={() => setSubsonicProviderLoveSyncEnabled(!subsonicProviderLoveSyncEnabled)}
+                                className="account-switch"
+                                data-state={subsonicProviderLoveSyncEnabled ? 'on' : 'off'}
                             >
                                 <span className="account-switch__thumb" />
                             </button>
