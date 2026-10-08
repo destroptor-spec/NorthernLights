@@ -16,7 +16,8 @@ const respond = (status: number, body: unknown) =>
 
 it('asks v1 /me with the session header and returns { id, username, role }', async () => {
   respond(200, { data: {
-    user: { id: 'u-1', username: 'andreas', role: 'admin' },
+    // A field v1 might add later stays out of the persisted currentUser.
+    user: { id: 'u-1', username: 'andreas', role: 'admin', avatarUrl: 'https://x/a.png' },
     client: { id: 'web:u-1', name: 'Aurora Web', authKind: 'jwt', scope: 'listener' },
   } });
   await expect(fetchCurrentUser({ Authorization: 'Bearer jwt' })).resolves.toEqual({ id: 'u-1', username: 'andreas', role: 'admin' });
