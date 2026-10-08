@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { playlistPermissions } from '../../../shared/playlistPermissions';
 import { useNavigate } from 'react-router-dom';
 import { usePlayerStore } from '../../store';
+import { AuroraApiError, auroraApiRequest } from '../../api/auroraApi';
 import {
   Play, Plus, Sparkles, X, Loader2,
   Disc3, MoreHorizontal, Pin,
@@ -187,17 +188,19 @@ const GeneratePlaylistModal: React.FC<{ onClose: () => void; onGenerated: () => 
     setError('');
     setSuccess('');
     try {
-      const res = await fetch('/api/hub/generate-custom', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-        body: JSON.stringify({ prompt: prompt.trim() }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || 'Generation failed. Check your LLM configuration in Settings.');
+      let playlist: { title?: string };
+      try {
+        playlist = await auroraApiRequest<{ title?: string }>('/hub/custom', getAuthHeader(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: prompt.trim() }),
+        });
+      } catch (err) {
+        if (!(err instanceof AuroraApiError)) throw err;
+        setError(err.message || 'Generation failed. Check your LLM configuration in Settings.');
         return;
       }
-      setSuccess(`✓ "${data.playlist?.title || 'Your new playlist'}" has been created!`);
+      setSuccess(`✓ "${playlist?.title || 'Your new playlist'}" has been created!`);
       await fetchPlaylistsFromServer();
       setTimeout(() => { onGenerated(); onClose(); }, 1500);
     } catch {

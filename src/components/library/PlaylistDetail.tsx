@@ -80,12 +80,8 @@ function buildBackdropTiles(artUrls: string[]): Array<string | null> {
 }
 
 function getSmartPlaylistPreparationUrl(playlistId: string): string | null {
-  if (playlistId.startsWith('smart_daylist_')) return '/api/hub/daylist';
-  if (playlistId.startsWith('smart_on-repeat_')) return '/api/hub/on-repeat';
-  if (playlistId.startsWith('smart_repeat-rewind_')) return '/api/hub/repeat-rewind';
-  if (playlistId.startsWith('smart_seasonal-rewind_') || playlistId.startsWith('smart_year-rewind_')) {
-    return '/api/hub/smart';
-  }
+  // The smart bundle computes (and persists) every one of these playlists.
+  if (/^smart_(daylist|on-repeat|repeat-rewind|seasonal-rewind|year-rewind)_/.test(playlistId)) return '/hub/smart';
   return null;
 }
 
@@ -546,7 +542,7 @@ export const PlaylistDetail: React.FC = () => {
       if (!found && preparationUrl) {
         setIsPreparingGeneratedPlaylist(true);
         try {
-          await fetch(preparationUrl, { headers: getAuthHeader() });
+          await auroraApiRequest(preparationUrl, getAuthHeader());
           if (!cancelled) {
             found = await fetchPlaylistFromServer(playlistId);
           }
