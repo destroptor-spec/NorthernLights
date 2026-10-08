@@ -3,6 +3,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { usePlayerStore } from '../../store/index';
 import { useToast } from '../../hooks/useToast';
 import { ConfirmModal } from '../ConfirmModal';
+import { auroraApiRequest } from '../../api/auroraApi';
 
 type SystemSubTab = 'processing' | 'hub' | 'service' | 'logging' | 'security';
 
@@ -136,13 +137,17 @@ export const SystemTab: React.FC = () => {
             onConfirm: async () => {
                 setConfirmDialog(null);
                 try {
-                    const authHeaders = getAuthHeader();
-                    await fetch('/api/hub/regenerate', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', ...authHeaders },
-                        body: JSON.stringify({ force: true })
-                    });
-                    addToast('Hub reset triggered. Playlists are being regenerated in the background.', 'success');
+                    // Same endpoint as the Hub's own generate button. It waits for
+                    // the regeneration, so the toast can report what happened.
+                    const result = await auroraApiRequest<{ skipped: boolean; reason: string | null; generated: number }>(
+                        '/hub/regenerate', getAuthHeader(),
+                        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: true }) },
+                    );
+                    if (result.skipped) {
+                        addToast(`Hub reset skipped: ${result.reason || 'nothing to do'}.`, 'info');
+                    } else {
+                        addToast(`Hub reset. ${result.generated} playlist${result.generated === 1 ? '' : 's'} generated.`, 'success');
+                    }
                 } catch(e) {
                     console.error(e);
                     addToast('Failed to request reset', 'error');
