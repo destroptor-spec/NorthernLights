@@ -120,6 +120,18 @@ Playlist `generationSource` names the family that produced a playlist, which `is
 
 The field is always present. Rows written before the column existed, and any value outside this set, are reported as `system`, `hub` or `manual` to match whatever `isSystem`/`isGenerated` imply — so clients can treat the enum as closed.
 
+What an owner may change depends on the kind, by one rule shared by the server and the web client (`shared/playlistPermissions.ts`):
+
+| Kind | Rename, description, tracks | Share | Pin | Privacy | Delete |
+| --- | --- | --- | --- | --- | --- |
+| `manual` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `custom` (prompt-made AI mix) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `hub` and any other AI playlist | — | ✓ | ✓ | ✓ | ✓ |
+| system kinds (`daylist`, `artist-radio`, `wrapped`, …) | — | — | ✓ | — | — |
+| another listener's playlist | — | — | — | — | — |
+
+A Hub collection is rebuilt on a schedule under the same id, so renames and track edits would be overwritten; deleting one lasts until the next rebuild. `PATCH /playlists/:id`, `PUT /playlists/:id/tracks`, `POST /playlists/:id/share`, `PATCH /playlists/:id/state` (`pinned` and `private` checked separately) and `DELETE /playlists/:id` refuse a disallowed change with `403 PLAYLIST_READ_ONLY`. `readOnly` on a Playlist is true when its title, description and tracks cannot be changed. OpenSubsonic `updatePlaylist` and `deletePlaylist` follow the same rule.
+
 Playback reports carry a caller-generated UUID `eventId`; retrying the same event is idempotent. `nowPlaying`, `played`, and `skipped` are distinct report kinds.
 
 ### Playback sources

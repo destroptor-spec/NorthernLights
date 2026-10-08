@@ -1,4 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
+import { playlistPermissions } from '../../shared/playlistPermissions';
 import { getTrustedClientIp } from '../middleware/clientIp';
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
@@ -1688,7 +1689,9 @@ async function handlePlaylists(req: Request, res: Response, method: string, ctx:
       const id = getParam(req, 'playlistId') || getParam(req, 'id') || '';
       const meta = await getPlaylistMeta(id);
       if (!meta) return sendError(req, res, 70, 'Playlist not found');
-      if (meta.isSystem || meta.isLlmGenerated) return sendError(req, res, 50, 'Generated playlists are read-only');
+      if (!playlistPermissions({ isOwner: true, isSystem: meta.isSystem, isLlmGenerated: meta.isLlmGenerated, generationSource: meta.generationSource }).editTracks) {
+        return sendError(req, res, 50, 'This playlist is read-only');
+      }
       if (meta.userId !== ctx.userId && ctx.role !== 'admin') return sendError(req, res, 50, 'Playlist belongs to another user');
       const existing = await getPlaylistTracks(id, ctx.userId);
       const removeIndexes = new Set(getParamList(req, 'songIndexToRemove').map((value) => parseInt(value, 10)).filter(Number.isFinite));
@@ -1703,7 +1706,9 @@ async function handlePlaylists(req: Request, res: Response, method: string, ctx:
       const id = getParam(req, 'id') || '';
       const meta = await getPlaylistMeta(id);
       if (!meta) return sendError(req, res, 70, 'Playlist not found');
-      if (meta.isSystem || meta.isLlmGenerated) return sendError(req, res, 50, 'Generated playlists are read-only');
+      if (!playlistPermissions({ isOwner: true, isSystem: meta.isSystem, isLlmGenerated: meta.isLlmGenerated, generationSource: meta.generationSource }).delete) {
+        return sendError(req, res, 50, 'This playlist cannot be deleted');
+      }
       if (meta.userId !== ctx.userId && ctx.role !== 'admin') return sendError(req, res, 50, 'Playlist belongs to another user');
       await deletePlaylist(id, ctx.role === 'admin' ? null : ctx.userId);
       publishApiV1Event(meta.userId || ctx.userId, 'playlist.changed', { playlistId: id, action: 'deleted', source: 'openSubsonic' });

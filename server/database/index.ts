@@ -5074,12 +5074,18 @@ export async function getPublicPlaylistByShareToken(token: string): Promise<
   return { name: pl.title, description: pl.description ?? null, trackCount: tracks.length, tracks };
 }
 
-export async function getPlaylistMeta(playlistId: string): Promise<{ userId: string | null; isSystem: boolean; isLlmGenerated: boolean } | null> {
+export async function getPlaylistMeta(playlistId: string): Promise<{ userId: string | null; isSystem: boolean; isLlmGenerated: boolean; generationSource: string | null } | null> {
   const db = await initDB();
-  const res = await db.query('SELECT user_id, is_system, is_llm_generated FROM playlists WHERE id = $1', [playlistId]);
+  const res = await db.query('SELECT user_id, is_system, is_llm_generated, generation_source FROM playlists WHERE id = $1', [playlistId]);
   if (res.rows.length === 0) return null;
   const row = res.rows[0] as any;
-  return { userId: row.user_id || null, isSystem: !!row.is_system, isLlmGenerated: !!row.is_llm_generated };
+  return {
+    userId: row.user_id || null,
+    isSystem: !!row.is_system,
+    isLlmGenerated: !!row.is_llm_generated,
+    // Tells a prompt-made custom mix from a Hub collection; see shared/playlistPermissions.ts.
+    generationSource: row.generation_source || null,
+  };
 }
 
 export async function deleteSystemPlaylistsForUser(userId: string) {

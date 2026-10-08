@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { playlistPermissions } from '../../shared/playlistPermissions';
 import { initDB } from '../database';
 import { playlistGenerationSourceSchema } from '../../shared/api/v1';
 import type { AlbumSummary, ArtistSummary, Genre, Playlist, Track } from '../../shared/api/v1';
@@ -192,7 +193,17 @@ export async function mapPlaylistV1(row: any, userId: string, prefetchedTracks?:
     generationSource: source.success ? source.data : isSystem ? 'system' : generated ? 'hub' : 'manual',
     pinned: Boolean(row.pinned),
     private: Boolean(row.isPrivate ?? row.is_private),
-    readOnly: isSystem || generated || !isOwner,
+    // Content (title, description, tracks) is editable only where the shared
+    // rule allows both — see shared/playlistPermissions.ts.
+    readOnly: (() => {
+      const permissions = playlistPermissions({
+        isOwner,
+        isSystem,
+        isLlmGenerated: generated,
+        generationSource: source.success ? source.data : null,
+      });
+      return !(permissions.rename && permissions.editTracks);
+    })(),
     createdAt: iso(row.createdAt ?? row.created_at),
     tracks: entries,
   };
