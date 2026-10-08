@@ -1,11 +1,14 @@
 import { OpenAPIRegistry, OpenApiGeneratorV31 } from '@asteasolutions/zod-to-openapi';
 import { z, type ZodType } from 'zod';
 import {
+  albumDetailSchema,
   albumSummarySchema,
   apiErrorSchema,
   appKeyCreateSchema,
+  artistDetailSchema,
   artistSummarySchema,
   clientSchema,
+  genreDetailSchema,
   genreSchema,
   listenerPreferencesSchema,
   nextRecommendationSchema,
@@ -40,6 +43,9 @@ const schemas = {
   Artist: registry.register('ArtistSummary', artistSummarySchema),
   Album: registry.register('AlbumSummary', albumSummarySchema),
   Genre: registry.register('Genre', genreSchema),
+  ArtistDetail: registry.register('ArtistDetail', artistDetailSchema),
+  AlbumDetail: registry.register('AlbumDetail', albumDetailSchema),
+  GenreDetail: registry.register('GenreDetail', genreDetailSchema),
   Playlist: registry.register('Playlist', playlistSchema),
   PlaybackDescriptor: registry.register('PlaybackDescriptor', playbackDescriptorSchema),
   PlaybackSession: registry.register('PlaybackSession', playbackSessionSchema),
@@ -116,11 +122,11 @@ path({ method: 'delete', path: '/pairing/requests/{code}', summary: 'Cancel an a
 path({ method: 'post', path: '/auth/scoped-token', summary: 'Mint a short-lived scoped token', tags: ['Authentication'], security: authed, request: { body: { required: true, content: json(z.object({ scope: z.enum(['media', 'sse', 'receiver']), expiresIn: z.enum(['5m', '15m', '1h', '12h']).optional() })) } }, responses: ok(unknownObject) });
 
 path({ method: 'get', path: '/artists', summary: 'List artists', tags: ['Library'], security: authed, request: { query: cursorQuery }, responses: paged(z.array(schemas.Artist)) });
-path({ method: 'get', path: '/artists/{id}', summary: 'Get an artist and tracks', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(unknownObject) });
+path({ method: 'get', path: '/artists/{id}', summary: 'Get an artist and tracks', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(schemas.ArtistDetail) });
 path({ method: 'get', path: '/albums', summary: 'List albums', tags: ['Library'], security: authed, request: { query: cursorQuery }, responses: paged(z.array(schemas.Album)) });
-path({ method: 'get', path: '/albums/{id}', summary: 'Get an album and tracks', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(unknownObject) });
+path({ method: 'get', path: '/albums/{id}', summary: 'Get an album and tracks', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(schemas.AlbumDetail) });
 path({ method: 'get', path: '/genres', summary: 'List genres', tags: ['Library'], security: authed, request: { query: cursorQuery }, responses: paged(z.array(schemas.Genre)) });
-path({ method: 'get', path: '/genres/{id}', summary: 'Get a genre and tracks', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(unknownObject) });
+path({ method: 'get', path: '/genres/{id}', summary: 'Get a genre and tracks', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(schemas.GenreDetail) });
 path({ method: 'get', path: '/tracks/{id}', summary: 'Get one path-free track resource', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(schemas.Track) });
 path({ method: 'get', path: '/tracks/{id}/lyrics', summary: 'Get embedded synced or unsynced lyrics', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(schemas.Lyrics) });
 path({ method: 'get', path: '/search', summary: 'Search the listener library', tags: ['Library'], security: authed, request: { query: z.object({ q: z.string().min(1), limit: z.coerce.number().int().min(1).max(100).optional(), artistLimit: z.coerce.number().int().min(1).max(100).optional(), albumLimit: z.coerce.number().int().min(1).max(100).optional(), trackLimit: z.coerce.number().int().min(1).max(100).optional() }) }, responses: ok(unknownObject) });

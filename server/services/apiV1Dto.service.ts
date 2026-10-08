@@ -118,6 +118,7 @@ export function mapAlbumSummaryV1(row: any): AlbumSummary {
     // <img> request to a protected API URL.
     imageUrl: nullableString(row.image_url ?? row.imageUrl),
     compilation: Boolean(row.is_compilation ?? row.isCompilation),
+    editionLabel: nullableString(row.edition_label ?? row.editionLabel),
   };
 }
 

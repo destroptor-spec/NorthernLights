@@ -29,6 +29,8 @@ import {
   getTrackLoudnessByIds,
   getTracksByAlbum,
   getTracksByArtist,
+  getUncreditedTracksOnOwnedAlbums,
+  getAlbumsOwnedByArtistName,
   getTracksByGenre,
   getUserSetting,
   initDB,
@@ -454,8 +456,19 @@ router.get('/artists', async (req, res) => {
 router.get('/artists/:id', async (req, res) => {
   const artist = await getArtistById(req.params.id);
   if (!artist) return sendApiV1Error(req, res, 404, 'ARTIST_NOT_FOUND', 'Artist not found.');
-  const rawTracks = await getTracksByArtist(req.params.id, req.apiV1!.userId);
-  const tracks = await getApiV1TracksByIds(req.apiV1!.userId, rawTracks.map((track: any) => String(track.id)));
+  const userId = req.apiV1!.userId;
+  // Same shape as the legacy artist page: DJ mixes and compilations the
+  // artist owns as album artist without a performer credit are appended after
+  // the credited tracks; the Various Artists pseudo-artist owns hundreds of
+  // comps, so it gets album rows instead of their tracks.
+  const isVaPseudo = Boolean(artist.is_va_pseudo);
+  const [creditedTracks, ownedAlbumTracks, ownedAlbumRows] = await Promise.all([
+    getTracksByArtist(req.params.id, userId),
+    isVaPseudo ? Promise.resolve([]) : getUncreditedTracksOnOwnedAlbums(req.params.id, artist.name, userId),
+    isVaPseudo ? getAlbumsOwnedByArtistName(artist.name) : Promise.resolve([]),
+  ]);
+  const trackIds = [...new Set([...creditedTracks, ...ownedAlbumTracks].map((track: any) => String(track.id)))];
+  const tracks = await getApiV1TracksByIds(userId, trackIds);
   dataResponse(req, res, {
     artist: mapArtistSummaryV1(artist),
     details: stripServerFields({
@@ -466,6 +479,7 @@ router.get('/artists/:id', async (req, res) => {
       lifeSpanEnd: artist.lifespan_end || null,
     }),
     tracks,
+    ownedAlbums: ownedAlbumRows.map(mapAlbumSummaryV1),
   });
 });
 

@@ -123,6 +123,8 @@ export const albumSummarySchema = z.object({
   artworkId: z.string().nullable(),
   imageUrl: z.string().nullable(),
   compilation: z.boolean(),
+  editionLabel: z.string().nullable()
+    .describe('Edition or release variant such as "Deluxe Edition", when the album is one of several editions.'),
 }).meta({ id: 'AlbumSummary' });
 
 export const genreSchema = z.object({
@@ -327,6 +329,37 @@ export const listenerPreferencesSchema = z.object({
     .describe('Mirror stars from OpenSubsonic clients to Last.fm and MusicBrainz. Defaults to true.'),
 }).meta({ id: 'ListenerPreferences' });
 
+export const artistDetailSchema = z.object({
+  artist: artistSummarySchema,
+  details: z.object({
+    bio: z.string().nullable(),
+    disambiguation: z.string().nullable(),
+    musicBrainzId: z.string().nullable(),
+    links: z.unknown().nullable(),
+    lifeSpanEnd: z.string().nullable(),
+  }),
+  tracks: z.array(trackSchema)
+    .describe('Credited tracks first, then tracks on albums the artist owns as album artist without a performer credit.'),
+  ownedAlbums: z.array(albumSummarySchema)
+    .describe('Albums owned by the Various Artists pseudo-artist. Always empty for real artists.'),
+}).meta({ id: 'ArtistDetail' });
+
+export const albumDetailSchema = z.object({
+  album: albumSummarySchema,
+  details: z.object({
+    description: z.string().nullable(),
+    tags: z.unknown().nullable(),
+    musicBrainzId: z.string().nullable(),
+    editionLabel: z.string().nullable(),
+  }),
+  tracks: z.array(trackSchema),
+}).meta({ id: 'AlbumDetail' });
+
+export const genreDetailSchema = z.object({
+  genre: genreSchema,
+  tracks: z.array(trackSchema),
+}).meta({ id: 'GenreDetail' });
+
 export type ApiError = z.infer<typeof apiErrorSchema>;
 export type AuroraUser = z.infer<typeof userSchema>;
 export type AuroraClient = z.infer<typeof clientSchema>;
@@ -334,6 +367,9 @@ export type Track = z.infer<typeof trackSchema>;
 export type ArtistSummary = z.infer<typeof artistSummarySchema>;
 export type AlbumSummary = z.infer<typeof albumSummarySchema>;
 export type Genre = z.infer<typeof genreSchema>;
+export type ArtistDetail = z.infer<typeof artistDetailSchema>;
+export type AlbumDetail = z.infer<typeof albumDetailSchema>;
+export type GenreDetail = z.infer<typeof genreDetailSchema>;
 export type PlaylistGenerationSource = z.infer<typeof playlistGenerationSourceSchema>;
 export type Playlist = z.infer<typeof playlistSchema>;
 export type PlaybackDescriptor = z.infer<typeof playbackDescriptorSchema>;
