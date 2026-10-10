@@ -808,6 +808,15 @@
 
       var MAX_LINES = 80;
       var VERBOSE_NETWORK_LOGS = false;
+      // A live choice must survive auto-advance through items carrying old customData.
+      var liveDiagnosticsOverride = null;
+
+      function applyDiagnosticsVerbose(enabled) {
+        receiverDiagnosticsVerbose = enabled;
+        VERBOSE_NETWORK_LOGS = enabled;
+        setDebugAccessVisible(enabled);
+        postDiagnosticMarker('receiver-diagnostics-verbosity', 'enabled=' + enabled);
+      }
       var receiverDiagnosticsVerbose = false;
       var UI_PROGRESS_INTERVAL_MS = 2000;
       var BUFFERING_BANNER_DELAY_MS = 900;
@@ -1038,7 +1047,7 @@
       // The point is to learn from a real session whether the channel opens,
       // whether sends succeed, and — the crux — whether queueEntryId is
       // actually present here. See issue #56.
-      var AURORA_STATUS_NS = 'urn:x-cast:dk.onecloud.aurora.status';
+      var AURORA_STATUS_NS = 'urn:x-cast:aurora.status';
       var auroraStatusSends = 0;
       var auroraStatusErrors = 0;
       var auroraStatusMissingId = 0;
@@ -1074,7 +1083,8 @@
           // Lets the sender tell this receiver from one cached before
           // aurora.control existed: both accept messages on the namespace,
           // but only this one acts on them.
-          caps: ['control', 'queue-insert'],
+          caps: ['control', 'queue-insert', 'diagnostics'],
+          diagnosticsVerbose: receiverDiagnosticsVerbose,
           ts: Date.now()
         };
       }
@@ -1260,7 +1270,17 @@
           try { data = JSON.parse(data); } catch (parseError) { return; }
         }
         if (!data || typeof data.type !== 'string') return;
-        if (data.type === 'aurora.control') {
+        if (data.type === 'aurora.diagnostics') {
+          if (typeof data.enabled !== 'boolean') return;
+          liveDiagnosticsOverride = data.enabled;
+          applyDiagnosticsVerbose(data.enabled);
+          try {
+            context.sendCustomMessage(AURORA_STATUS_NS, event.senderId, {
+              type: 'aurora.diagnostics.ack', requestId: data.requestId, enabled: data.enabled
+            });
+          } catch (ackError) { /* repeated diagnostics commands are idempotent */ }
+          broadcastAuroraStatus('diagnostics');
+        } else if (data.type === 'aurora.control') {
           handleAuroraControl(event, data);
         } else if (data.type === 'aurora.queue.insert') {
           handleAuroraQueueInsert(event, data);
@@ -1605,12 +1625,10 @@
             if (!media) return;
             currentAuthToken = (media.customData && media.customData.token) || currentAuthToken || '';
             if (media.customData && typeof media.customData.diagnosticsVerbose === 'boolean') {
-              var nextDiagnosticsVerbose = media.customData.diagnosticsVerbose;
+              var nextDiagnosticsVerbose = liveDiagnosticsOverride === null
+                ? media.customData.diagnosticsVerbose : liveDiagnosticsOverride;
               if (receiverDiagnosticsVerbose !== nextDiagnosticsVerbose || VERBOSE_NETWORK_LOGS !== nextDiagnosticsVerbose) {
-                receiverDiagnosticsVerbose = nextDiagnosticsVerbose;
-                VERBOSE_NETWORK_LOGS = nextDiagnosticsVerbose;
-                setDebugAccessVisible(receiverDiagnosticsVerbose);
-                postDiagnosticMarker('receiver-diagnostics-verbosity', 'enabled=' + receiverDiagnosticsVerbose);
+                applyDiagnosticsVerbose(nextDiagnosticsVerbose);
               }
             }
 

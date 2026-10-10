@@ -37,6 +37,20 @@ test('failed saves keep the switch unchanged and report the error', async () => 
   expect((analyzer as HTMLButtonElement).disabled).toBe(false);
 });
 
+test('HLS level uses the persisted flag and stays unchanged on a failed save', async () => {
+  render(<ServerLoggingSettings />);
+  const level = screen.getByRole('combobox', { name: 'HLS diagnostics' }) as HTMLSelectElement;
+  fetchMock.mockResolvedValueOnce({ ok: true });
+  fireEvent.change(level, { target: { value: 'detailed' } });
+  await waitFor(() => expect(level.value).toBe('detailed'));
+  expect(fetchMock).toHaveBeenCalledWith('/api/settings', expect.objectContaining({ body: JSON.stringify({ hlsLoggingEnabled: true }) }));
+  fetchMock.mockResolvedValueOnce({ ok: false, json: async () => ({ error: 'Save failed' }) });
+  fireEvent.change(level, { target: { value: 'normal' } });
+  await waitFor(() => expect(level.disabled).toBe(false));
+  expect(level.value).toBe('detailed');
+  expect(usePlayerStore.getState().toasts).toEqual([expect.objectContaining({ message: 'Save failed' })]);
+});
+
 test('saved logging settings are loaded and excluded from dialog-close bulk saves', async () => {
   fetchMock.mockResolvedValue({ ok: true, json: async () => ({ scannerLoggingEnabled: true, analyzerLoggingEnabled: true, loudnessLoggingEnabled: true }) });
   await usePlayerStore.getState().loadSettings();

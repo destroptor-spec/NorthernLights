@@ -1,3 +1,4 @@
+import { resolveLoggingPreferences } from '../utils/loggingPreferences';
 import type { ServerLoggingSetting } from '../../shared/logging';
 import { create, StateCreator } from 'zustand';
 import { persist, PersistOptions } from 'zustand/middleware';
@@ -673,6 +674,7 @@ export interface PlayerState {
   authExpiredUsername: string;
   streamingQuality: 'auto' | '64k' | '128k' | '160k' | '320k' | 'source';
   playbackDebugLogging: boolean;
+  castDebugLogging: boolean;
   prebufferPolicy: PrebufferPolicy;
 
   // Current User State
@@ -1280,6 +1282,7 @@ export const usePlayerStore = create<PlayerState>()(
         authExpiredUsername: '',
         streamingQuality: 'auto' as 'auto' | '64k' | '128k' | '160k' | '320k' | 'source',
         playbackDebugLogging: false as boolean,
+        castDebugLogging: false as boolean,
         prebufferPolicy: 'conservative' as PrebufferPolicy,
         currentUser: null as { id: string; username: string; role: string } | null,
 
@@ -1644,7 +1647,9 @@ export const usePlayerStore = create<PlayerState>()(
           set((state: PlayerState) => ({ ...state, ...settings }));
           if (settings.playbackDebugLogging !== undefined) {
             setPlaybackDebugLogging(settings.playbackDebugLogging);
-            castManager.setDiagnosticsVerbose(settings.playbackDebugLogging);
+          }
+          if (settings.castDebugLogging !== undefined) {
+            castManager.setDiagnosticsVerbose(settings.castDebugLogging);
           }
           if (settings.prebufferPolicy && settings.prebufferPolicy !== previousPrebufferPolicy) {
             playbackManager.clearPreparedAudio();
@@ -3013,6 +3018,10 @@ export const usePlayerStore = create<PlayerState>()(
       name: "player-store",
       // Only persist lightweight user settings, NOT the library.
       // The library is always fetched fresh from the server on boot.
+      merge: (persisted, current) => {
+        const saved = (persisted || {}) as Partial<PlayerState>;
+        return { ...current, ...saved, ...resolveLoggingPreferences(saved) };
+      },
       partialize: (state: PlayerState) => ({
         volume: state.volume,
         shuffle: state.shuffle,
@@ -3051,6 +3060,7 @@ export const usePlayerStore = create<PlayerState>()(
         } : {}),
         streamingQuality: state.streamingQuality,
         playbackDebugLogging: state.playbackDebugLogging,
+        castDebugLogging: state.castDebugLogging,
         prebufferPolicy: state.prebufferPolicy,
         // Persisted locally too (though server-synced) so normalization applies
         // instantly on reload, before loadSettings round-trips.
@@ -3074,7 +3084,7 @@ export const usePlayerStore = create<PlayerState>()(
       }),
       onRehydrateStorage: () => (state) => {
         setPlaybackDebugLogging(state?.playbackDebugLogging === true);
-        castManager.setDiagnosticsVerbose(state?.playbackDebugLogging === true);
+        castManager.setDiagnosticsVerbose(state?.castDebugLogging === true);
         // A freshly-loaded page has no audio playing — the persisted 'playing'
         // state would otherwise show a zombie play/pause UI and make
         // restoreFromContinuitySnapshot() bail (it skips when state is already

@@ -20,7 +20,7 @@ import {
 const senderItem = () => ({
   itemId: null,
   media: {
-    contentId: 'https://aurora.onecloud.dk/api/stream/abc/playlist.m3u8?quality=256k&token=TKN&codec=aac',
+    contentId: 'https://music.example.test/api/stream/abc/playlist.m3u8?quality=256k&token=TKN&codec=aac',
     contentType: 'application/vnd.apple.mpegurl',
     streamType: 'BUFFERED',
     hlsSegmentFormat: 'ts',
@@ -31,7 +31,7 @@ const senderItem = () => ({
       metadataType: 3,
       title: 'Habits (Stay High)',
       artist: 'Tove Lo',
-      images: [{ url: 'https://aurora.onecloud.dk/art/1.jpg', height: null, width: null }],
+      images: [{ url: 'https://music.example.test/art/1.jpg', height: null, width: null }],
     },
     customData: { queueEntryId: 'queue-abc-123', token: 'TKN', codec: 'aac', diagnosticsVerbose: false },
   },

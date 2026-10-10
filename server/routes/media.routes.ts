@@ -405,12 +405,12 @@ router.all('/stream/:trackId/playlist.m3u8', async (req, res) => {
       const maxBitrateKbps = parseAdaptiveMaxBitrate(req.query.maxBitrate);
       const ladder = buildAdaptiveLadder(bitrate, sourceFormat, sourceLossless, maxBitrateKbps);
       output = buildAdaptiveMasterPlaylist(ladder, targetCodec, token);
-      writeHlsServerLog(`[playlist ${trackId} auto ${targetCodec}] Served adaptive master ladder=${serializeAdaptiveLadder(ladder)}`);
-      writeHlsSessionLog(trackId, `auto-${serializeAdaptiveLadder(ladder)}`, targetCodec, `Served adaptive master playlist: ${output.split(/\r?\n/).join('\\n')}`);
+      writeHlsServerLog(`[playlist ${trackId} auto ${targetCodec}] Served adaptive master ladder=${serializeAdaptiveLadder(ladder)}`, 'detailed');
+      writeHlsSessionLog(trackId, `auto-${serializeAdaptiveLadder(ladder)}`, targetCodec, `Served adaptive master playlist: ${output.split(/\r?\n/).join('\\n')}`, 'detailed');
     } else {
       output = buildMasterPlaylist(trackId, quality, targetCodec, token, bitrate);
-      writeHlsServerLog(`[playlist ${trackId} ${quality} ${targetCodec}] Served master playlist`);
-      writeHlsSessionLog(trackId, quality, targetCodec, `Served master playlist: ${output.split(/\r?\n/).join('\\n')}`);
+      writeHlsServerLog(`[playlist ${trackId} ${quality} ${targetCodec}] Served master playlist`, 'detailed');
+      writeHlsSessionLog(trackId, quality, targetCodec, `Served master playlist: ${output.split(/\r?\n/).join('\\n')}`, 'detailed');
     }
     res.setHeader('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache');
@@ -473,7 +473,7 @@ router.all('/stream/:trackId/media.m3u8', async (req, res) => {
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
       res.setHeader('Cache-Control', ensured.sessionInfo.finished ? 'public, max-age=30' : 'no-cache');
       touchAdaptiveHlsSession(trackId, ensured.ladder, targetCodec);
-      writeHlsServerLog(`[adaptive-media ${trackId} ${ensured.sessionInfo.ladderKey} ${rendition}] Served ${renditionInfo.segmentCount} segments`);
+      writeHlsServerLog(`[adaptive-media ${trackId} ${ensured.sessionInfo.ladderKey} ${rendition}] Served ${renditionInfo.segmentCount} segments`, 'detailed');
       return res.send(output);
     }
 
@@ -496,7 +496,7 @@ router.all('/stream/:trackId/media.m3u8', async (req, res) => {
       ? null
       : completeVodPlaylist(rawPlaylist, ensured.durationSec);
     if (completedPlaylist) {
-      writeHlsSessionLog(trackId, quality, targetCodec, `Completed partial playlist to VOD (duration=${ensured.durationSec}s)`);
+      writeHlsSessionLog(trackId, quality, targetCodec, `Completed partial playlist to VOD (duration=${ensured.durationSec}s)`, 'detailed');
     }
     const output = rewriteMediaPlaylistSegments(completedPlaylist ?? rawPlaylist, sessionInfo.quality, sessionInfo.codec, token);
 
@@ -510,8 +510,8 @@ router.all('/stream/:trackId/media.m3u8', async (req, res) => {
 
     res.setHeader('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
     res.setHeader('Cache-Control', sessionInfo.finished ? 'public, max-age=30' : 'no-cache');
-    writeHlsServerLog(`[media-playlist ${trackId} ${quality} ${targetCodec}] Served media playlist with ${sessionInfo.segmentCount} segments; finished=${sessionInfo.finished}`);
-    writeHlsSessionLog(trackId, quality, targetCodec, `Served media playlist snapshot: ${output.split(/\r?\n/).slice(0, 20).join('\\n')}`);
+    writeHlsServerLog(`[media-playlist ${trackId} ${quality} ${targetCodec}] Served media playlist with ${sessionInfo.segmentCount} segments; finished=${sessionInfo.finished}`, 'detailed');
+    writeHlsSessionLog(trackId, quality, targetCodec, `Served media playlist snapshot: ${output.split(/\r?\n/).slice(0, 20).join('\\n')}`, 'detailed');
     res.send(output);
   } catch (err: any) {
     console.error('[HLS] Media playlist error:', err?.message || err);
@@ -561,7 +561,7 @@ router.all('/stream/:trackId/prewarm', async (req, res) => {
         ? Math.min(...renditions.map((rendition) => rendition.segmentCount))
         : 0;
       touchAdaptiveHlsSession(trackId, ensured.ladder, targetCodec);
-      writeHlsServerLog(`[prewarm ${trackId} auto ${targetCodec}] Adaptive ladder=${ensured.sessionInfo.ladderKey}; renditions=${renditions.length}; minSegments=${segmentCount}`);
+      writeHlsServerLog(`[prewarm ${trackId} auto ${targetCodec}] Adaptive ladder=${ensured.sessionInfo.ladderKey}; renditions=${renditions.length}; minSegments=${segmentCount}`, 'detailed');
 
       if (req.method === 'HEAD') return res.sendStatus(204);
       return res.json({
@@ -585,8 +585,8 @@ router.all('/stream/:trackId/prewarm', async (req, res) => {
     }
 
     touchSession(trackId, quality, targetCodec);
-    writeHlsServerLog(`[prewarm ${trackId} ${quality} ${targetCodec}] Ready with ${sessionInfo.segmentCount} segments; finished=${sessionInfo.finished}`);
-    writeHlsSessionLog(trackId, quality, targetCodec, `Prewarm ready: segments=${sessionInfo.segmentCount}; finished=${sessionInfo.finished}`);
+    writeHlsServerLog(`[prewarm ${trackId} ${quality} ${targetCodec}] Ready with ${sessionInfo.segmentCount} segments; finished=${sessionInfo.finished}`, 'detailed');
+    writeHlsSessionLog(trackId, quality, targetCodec, `Prewarm ready: segments=${sessionInfo.segmentCount}; finished=${sessionInfo.finished}`, 'detailed');
 
     if (req.method === 'HEAD') {
       return res.sendStatus(204);
@@ -653,14 +653,14 @@ router.all('/stream/:trackId/:segment', async (req, res) => {
     }
     const stat = fs.statSync(segmentPath);
     touchAdaptiveHlsSession(trackId, ladder, codec);
-    writeHlsSessionLog(trackId, `auto-${serializeAdaptiveLadder(ladder)}`, codec, `Serving ${rendition}/${segment} (${stat.size} bytes)`);
+    writeHlsSessionLog(trackId, `auto-${serializeAdaptiveLadder(ladder)}`, codec, `Serving ${rendition}/${segment} (${stat.size} bytes)`, 'detailed');
     res.setHeader('Content-Type', 'video/mp2t');
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     return fs.createReadStream(segmentPath).pipe(res);
   }
 
   logHls(`[HLS DEBUG] Segment request: trackId=${trackId} segment=${segment} quality=${quality} codec=${codec}`);
-  writeHlsSessionLog(trackId, quality, codec, `Segment request for ${segment}`);
+  writeHlsSessionLog(trackId, quality, codec, `Segment request for ${segment}`, 'detailed');
 
   const outputDir = getSessionOutputDir(trackId, quality, codec);
 
@@ -684,7 +684,7 @@ router.all('/stream/:trackId/:segment', async (req, res) => {
 
   logHls(`[HLS DEBUG] Serving segment: ${segmentPath}`);
   const stat = fs.statSync(segmentPath);
-  writeHlsSessionLog(trackId, quality, codec, `Serving ${segment} (${stat.size} bytes) from ${segmentPath}`);
+  writeHlsSessionLog(trackId, quality, codec, `Serving ${segment} (${stat.size} bytes) from ${segmentPath}`, 'detailed');
 
   // Touch the session to keep it alive
   touchSession(trackId, quality, codec);
