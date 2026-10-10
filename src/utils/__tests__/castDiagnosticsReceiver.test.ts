@@ -5,8 +5,13 @@ import { AURORA_STATUS_NAMESPACE } from '../castNamespace';
 
 test('the actual receiver applies and acknowledges diagnostics without changing playback, including auto-advance', () => {
   const html = fs.readFileSync(path.join(process.cwd(), 'public/receiver.html'), 'utf8');
-  document.body.innerHTML = html.match(/<body>([\s\S]*?)<script>/)![1];
-  const script = html.match(/<script>([\s\S]*?)<\/script>/)![1];
+  // Parse rather than regex-match the markup: the inline receiver script is
+  // the body's last child, so the body without it is the receiver's DOM.
+  const receiverDoc = new DOMParser().parseFromString(html, 'text/html');
+  const inlineScript = receiverDoc.body.querySelector('script:not([src])')!;
+  const script = inlineScript.textContent ?? '';
+  inlineScript.remove();
+  document.body.innerHTML = receiverDoc.body.innerHTML;
   const queue = { getItems: () => [], getCurrentItemIndex: () => -1, getCurrentItem: () => null };
   const player = {
     getQueueManager: () => queue, getMediaInformation: () => null,

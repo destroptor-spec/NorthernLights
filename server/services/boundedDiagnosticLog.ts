@@ -15,7 +15,12 @@ export class BoundedDiagnosticLog {
 
   append(name: string, message: string, now = Date.now()) {
     try {
-      const file = path.join(this.root, name);
+      // Callers pass a fixed name or one built from sanitizeSegment(), but the
+      // class accepts any string: refuse anything that would land outside the
+      // log root.
+      const root = path.resolve(this.root);
+      const file = path.resolve(root, name);
+      if (!file.startsWith(root + path.sep)) return;
       fs.mkdirSync(path.dirname(file), { recursive: true });
       // Redact before truncating so a cut-off token cannot evade redaction.
       const clean = redactLogSecrets(message).replace(/[\r\n]+/g, ' ');

@@ -35,6 +35,18 @@ test('prunes old session history and keeps recent logs within the directory budg
   expect(fs.readdirSync(directory).sort()).toEqual(['current.log', 'keep.txt']);
 });
 
+test('never writes outside the log root', () => {
+  const inner = path.join(root, 'logs');
+  const log = new BoundedDiagnosticLog(inner);
+  for (const name of ['../escape.log', 'hls-sessions/../../escape.log', path.join(root, 'absolute.log'), '', '.']) {
+    log.append(name, 'nope');
+  }
+  expect(fs.readdirSync(root)).toEqual([]);
+
+  log.append('hls-sessions/ok--128k--aac.log', 'fine');
+  expect(fs.readdirSync(path.join(inner, 'hls-sessions'))).toEqual(['ok--128k--aac.log']);
+});
+
 test('filesystem failures never propagate into playback', () => {
   const log = new BoundedDiagnosticLog(root);
   jest.spyOn(fs, 'appendFileSync').mockImplementation(() => { throw new Error('ENOSPC'); });
