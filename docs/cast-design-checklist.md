@@ -305,7 +305,7 @@ Run these against at least one Chromecast and one Google TV target when availabl
 | 8 | Pause for 20 minutes | Receiver stops itself after paused timeout | `receiver-paused-timeout` |
 | 9 | Idle for 5 minutes | Idle receiver stops itself for burn-in/session hygiene | `receiver-idle-timeout` |
 | 10 | Disconnect from sender | Sender disconnects cleanly, receiver stops or detaches according to SDK behavior, and local UI leaves Cast mode | session end/disconnect log lines |
-| 11 | Receiver interruption and sender rejoin | Stale `PresentationConnection` recovery or retry path restores sender control when possible | `stale-transport-recovered` |
+| 11 | Receiver interruption and sender rejoin | Stale `PresentationConnection` recovery or retry path restores sender control when possible. When the transport cannot be brought back, the sender says so once (`stale-transport-dead`, one error toast with Retry) instead of reporting a recovery; lifecycle reconcile bursts stand down while recovery is in flight (#39) | `stale-transport-recovered` (or `stale-transport-dead` when unrecoverable) |
 
 ### Automated Log Verification
 

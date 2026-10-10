@@ -17,6 +17,7 @@ import {
     toReceiverQueueItem,
     transportStateFromPlayerState,
 } from './castWatchdogPolicy';
+import { ReconcileBurst, probeCastTransport } from './castTransportRecovery';
 import { applyCastStreamingQualityToHlsUrl, applyStreamingQualityToHlsUrl } from './streaming';
 import { createQueueEntryId, ensureQueueEntryIds } from './queue';
 import type { TrackInfo } from './fileSystem';
@@ -197,7 +198,15 @@ export class CastManager {
     private staleTransportRecoveryPromise: Promise<boolean> | null = null;
     private mediaStatusRefreshPromise: Promise<any | null> | null = null;
     private preserveSessionOnNextEnd = false;
-    private lifecycleReconcileBurstActive = false;
+    private readonly lifecycleReconcileBurst = new ReconcileBurst({
+        set: (callback, delayMs) => window.setTimeout(callback, delayMs),
+        clear: (id) => window.clearTimeout(id),
+    });
+    // The session object a stale-transport recovery could not bring back.
+    // Automatic recovery and lifecycle reconciles leave it alone until the SDK
+    // replaces it, a send gets through, or the user presses Retry (#39).
+    private deadTransportSession: unknown = null;
+    private deadTransportSkipLogged = false;
     private diagnosticsVerbose = false;
     private suppressRemoteEndedDuringDisconnect = false;
     private lastCastButtonStateKey = '';
@@ -765,16 +774,56 @@ export class CastManager {
     }
 
     private scheduleSessionReconcile(reason: string) {
-        if (this.lifecycleReconcileBurstActive) return;
-        this.lifecycleReconcileBurstActive = true;
-        [0, 750, 2500].forEach((delay) => {
-            window.setTimeout(() => {
+        this.lifecycleReconcileBurst.start({
+            attempt: (delay) => {
                 void this.reconcileActiveSession(`${reason}+${delay}ms`);
-                if (delay === 2500) {
-                    this.lifecycleReconcileBurstActive = false;
-                }
-            }, delay);
+            },
+            // Once recovery owns the session, or it has been proven dead, more
+            // attempts can only send into the same dead transport (#39).
+            shouldStandDown: () => this.staleTransportRecoveryPromise !== null || this.isKnownDeadTransport(),
+            onStandDown: (delay) => {
+                this.logCast(
+                    'ok',
+                    `Cast reconcile burst stood down: ${reason}+${delay}ms`,
+                    this.staleTransportRecoveryPromise ? 'recovery=in-flight' : 'transport=dead',
+                );
+            },
         });
+    }
+
+    private nextMediaRequestId(): number {
+        this.watchdogMediaRequestId = (this.watchdogMediaRequestId % 100000) + 1;
+        return this.watchdogMediaRequestId;
+    }
+
+    /** True while the current session is the one recovery already failed to bring back. */
+    private isKnownDeadTransport(): boolean {
+        if (!this.deadTransportSession) return false;
+        const current = this.castContext?.getCurrentSession?.() || null;
+        if (current && current === this.deadTransportSession) return true;
+        this.clearDeadTransport();
+        return false;
+    }
+
+    private clearDeadTransport() {
+        this.deadTransportSession = null;
+        this.deadTransportSkipLogged = false;
+    }
+
+    /**
+     * Recovery triggered by background status traffic (watchdog, reconcile).
+     * After a failed recovery the watchdog would otherwise restart it every 5s
+     * against the same dead session, flashing an error toast each round.
+     */
+    private recoverStaleTransportAutomatically(reason: string, error: unknown) {
+        if (this.isKnownDeadTransport()) {
+            if (!this.deadTransportSkipLogged) {
+                this.deadTransportSkipLogged = true;
+                this.logCast('warn', `Skipped automatic Cast transport recovery: ${reason}`, 'transport=dead');
+            }
+            return;
+        }
+        void this.recoverStaleTransport(reason, error);
     }
 
     private async recoverStaleTransport(reason: string, error?: unknown): Promise<boolean> {
@@ -798,6 +847,12 @@ export class CastManager {
                 this.preserveSessionOnNextEnd = true;
                 this.castContext?.endCurrentSession?.(false);
             } catch (endError) {
+                // endCurrentSession() sends on the same dead transport and can
+                // throw before ending anything. No SESSION_ENDED is coming from
+                // this detach, so don't let the flag claim an unrelated later
+                // end (prod 2026-10-10: it relabelled a different device's end
+                // 40s later as a preserved detach).
+                this.preserveSessionOnNextEnd = false;
                 this.logCast('warn', `Failed to detach stale Cast session: ${reason}`, this.describeError(endError));
             } finally {
                 localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
@@ -815,10 +870,29 @@ export class CastManager {
                 return false;
             }
 
+            let transportStillDead = false;
             for (let attempt = 0; attempt < 16; attempt += 1) {
                 await this.delay(250);
                 const session = this.castContext?.getCurrentSession?.() || null;
-                if (!session) continue;
+                if (!session) {
+                    transportStillDead = false;
+                    continue;
+                }
+
+                // A session being present is not proof of recovery: when the
+                // detach above throws, it is still the old one, and its sends
+                // still fail. Only the disconnected-transport signature counts
+                // as dead; any other probe outcome keeps the previous behaviour.
+                const probe = await probeCastTransport(session, {
+                    requestId: this.nextMediaRequestId(),
+                    isDisconnected: (probeError) => this.isDisconnectedPresentationError(probeError),
+                });
+                if (probe === 'dead') {
+                    transportStillDead = true;
+                    continue;
+                }
+                transportStillDead = false;
+                this.clearDeadTransport();
 
                 this.rejoinSessionPending = false;
                 this.state = 'CONNECTED';
@@ -835,6 +909,18 @@ export class CastManager {
                 this.logCast('ok', 'stale-transport-recovered', `reason=${reason}`);
                 this.setHealthStatus('recovered', 'Cast control reconnected.', this.getCastDeviceName());
                 return true;
+            }
+
+            if (transportStillDead) {
+                // rejoinSessionPending stays set, as on the timeout path below:
+                // if requestSessionById() does deliver later, it must hydrate
+                // as a rejoin rather than auto-cast the local queue over it.
+                this.deadTransportSession = this.castContext?.getCurrentSession?.() || null;
+                this.deadTransportSkipLogged = false;
+                this.logCast('error', `Stale Cast transport still dead after rejoin: ${reason}`);
+                this.logCast('error', 'stale-transport-dead', `reason=${reason}`);
+                this.setHealthStatus('error', 'Lost connection to the Cast device.', reason);
+                return false;
             }
 
             this.logCast('error', `Timed out recovering stale Cast transport: ${reason}`);
@@ -1373,12 +1459,14 @@ export class CastManager {
                     request,
                     () => {
                         this.logCast('ok', `Refreshed Cast media status: ${reason}`);
+                        // A round trip got through, so the transport is not dead.
+                        this.clearDeadTransport();
                         finish(session?.getMediaSession?.() || mediaSession);
                     },
                     (error: unknown) => {
                         this.logCast('warn', `Failed to refresh Cast media status: ${reason}`, this.describeError(error));
                         if (this.isDisconnectedPresentationError(error)) {
-                            void this.recoverStaleTransport(`media-status:${reason}`, error);
+                            this.recoverStaleTransportAutomatically(`media-status:${reason}`, error);
                         }
                         finish(session?.getMediaSession?.() || mediaSession);
                     }
@@ -1386,7 +1474,7 @@ export class CastManager {
             } catch (error) {
                 this.logCast('warn', `Cast media status refresh threw: ${reason}`, this.describeError(error));
                 if (this.isDisconnectedPresentationError(error)) {
-                    void this.recoverStaleTransport(`media-status:${reason}`, error);
+                    this.recoverStaleTransportAutomatically(`media-status:${reason}`, error);
                 }
                 finish(session?.getMediaSession?.() || mediaSession);
             }
@@ -1472,6 +1560,20 @@ export class CastManager {
                 ? await this.refreshMediaSessionStatus(`reconcile:${reason}`)
                 : null;
             const session = startingSession ? this.castContext.getCurrentSession?.() || null : null;
+
+            // The refresh found the transport dead and handed the session to
+            // recovery. Carrying on would hydrate from the cached media object
+            // and report "Reconciled active Cast session" over a dead
+            // transport (prod 2026-10-10 16:16Z), so the answer is whatever
+            // recovery concludes.
+            if (startingSession && this.staleTransportRecoveryPromise) {
+                this.logCast('warn', `Cast reconcile deferred to stale transport recovery: ${reason}`);
+                return await this.staleTransportRecoveryPromise;
+            }
+            if (startingSession && this.isKnownDeadTransport()) {
+                this.logCast('warn', `Skipped Cast reconcile on dead transport: ${reason}`);
+                return false;
+            }
 
             if (startingSession && !session) {
                 this.logCast('warn', `Skipped stale Cast reconcile after session ended: ${reason}`);
@@ -1626,6 +1728,15 @@ export class CastManager {
                 cast.framework.CastContextEventType.SESSION_STATE_CHANGED,
                 (event: any) => {
                     this.logCast('ok', 'SESSION_STATE_CHANGED', `sessionState=${event.sessionState || 'unknown'} errorCode=${event.errorCode || 'none'} reason=${event.reason || 'none'}`);
+                    // Any new session or end supersedes a dead-transport verdict,
+                    // even if the SDK were to hand back the same object.
+                    if (
+                        event.sessionState === cast.framework.SessionState.SESSION_STARTED
+                        || event.sessionState === cast.framework.SessionState.SESSION_RESUMED
+                        || event.sessionState === cast.framework.SessionState.SESSION_ENDED
+                    ) {
+                        this.clearDeadTransport();
+                    }
                     switch (event.sessionState) {
                         case cast.framework.SessionState.SESSION_STARTING:
                             if (!this.rejoinSessionPending) {
@@ -3135,12 +3246,19 @@ export class CastManager {
     public async retryConnectionFromUi(): Promise<boolean> {
         this.setHealthStatus('rejoining', 'Retrying Cast connection...', 'user-action');
         this.logCast('ok', 'User requested Cast recovery retry');
+        // The user gets a fresh recovery attempt even on a session we had
+        // given up on automatically.
+        this.clearDeadTransport();
 
         const reconciled = await this.reconcileActiveSession('user-retry');
         if (reconciled) {
             this.setHealthStatus('recovered', 'Cast control reconnected.', this.getCastDeviceName());
             return true;
         }
+
+        // Recovery already reported the dead transport; "no active media"
+        // would be the wrong explanation.
+        if (this.isKnownDeadTransport()) return false;
 
         if (this.state === 'CONNECTED' && this.castContext?.getCurrentSession?.()) {
             this.setHealthStatus('warning', 'Connected, but no active Cast media was found.');
