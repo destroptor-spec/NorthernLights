@@ -1,3 +1,5 @@
+import { getAuroraStatusNamespace } from './castNamespace';
+import { CastDiagnosticsSync } from './castDiagnostics';
 import { playbackManager } from './PlaybackManager';
 import { usePlayerStore } from '../store';
 import {
@@ -32,13 +34,14 @@ const toast = {
 
 export type CastState = 'NO_DEVICES_AVAILABLE' | 'NOT_CONNECTED' | 'CONNECTING' | 'CONNECTED';
 /**
- * Status the receiver pushes on `urn:x-cast:dk.onecloud.aurora.status`.
+ * Status the receiver pushes on `urn:x-cast:aurora.status`.
  *
  * The SDK's MEDIA_STATUS relay drops queue-item `customData`, so the sender
  * cannot see the `queueEntryId` it assigned and has to infer identity from a
  * URL. This channel carries it verbatim.
  */
 export interface AuroraReceiverStatus {
+  diagnosticsVerbose?: boolean;
   type?: string;
   reason?: string;
   queueEntryId?: string | null;
@@ -63,7 +66,6 @@ export interface CastHealthStatus {
     updatedAt: number;
 }
 
-const AURORA_STATUS_NAMESPACE = 'urn:x-cast:dk.onecloud.aurora.status';
 const SESSION_STORAGE_KEY = 'cast_session_id';
 // Receiver volume applied once when a FRESH session hands playback over (some
 // receivers power on reporting 100% and would blast the first track). Never
@@ -208,6 +210,8 @@ export class CastManager {
     private deadTransportSession: unknown = null;
     private deadTransportSkipLogged = false;
     private diagnosticsVerbose = false;
+    private readonly diagnosticsSync = new CastDiagnosticsSync();
+    private diagnosticsStatusSession: unknown = null;
     private suppressRemoteEndedDuringDisconnect = false;
     private lastCastButtonStateKey = '';
     private lastRemotePlayerStateKey = '';
@@ -647,6 +651,17 @@ export class CastManager {
         if (this.diagnosticsVerbose === enabled) return;
         this.diagnosticsVerbose = enabled;
         this.logCast('ok', 'cast-diagnostics-verbosity', `enabled=${enabled}`);
+        this.diagnosticsSync.reset();
+        this.syncReceiverDiagnostics(true);
+    }
+
+    private syncReceiverDiagnostics(force = false) {
+        const session = this.castContext?.getCurrentSession?.();
+        if (!session || session !== this.diagnosticsStatusSession || !this.lastAuroraStatus
+            || Date.now() - this.lastAuroraStatusAt >= this.auroraStatusFreshMs) return;
+        this.diagnosticsSync.sync(session, this.diagnosticsVerbose,
+            force ? { ...this.lastAuroraStatus, diagnosticsVerbose: undefined } : this.lastAuroraStatus,
+            (level, message) => this.logCast(level, message));
     }
 
     public isDiagnosticsVerbose(): boolean {
@@ -1025,7 +1040,7 @@ export class CastManager {
         if (!session || typeof session.addMessageListener !== 'function') return;
         try {
             // The sender receives a raw string on custom namespaces, not an object.
-            session.addMessageListener(AURORA_STATUS_NAMESPACE, (_ns: string, message: string) => {
+            session.addMessageListener(getAuroraStatusNamespace(session), (_ns: string, message: string) => {
                 let status: AuroraReceiverStatus | null = null;
                 try {
                     status = typeof message === 'string' ? JSON.parse(message) : message;
@@ -1033,11 +1048,18 @@ export class CastManager {
                     return; // malformed payload — ignore rather than throw in a listener
                 }
                 if (status && status.type === 'aurora.status') {
+                    if (session !== this.castContext?.getCurrentSession?.()) return;
+                    this.diagnosticsStatusSession = session;
                     if (status.caps?.includes('control') && this.auroraControlCapLoggedSid !== sessionId) {
                         this.auroraControlCapLoggedSid = sessionId;
                         this.logCast('ok', 'Receiver accepts aurora-control', `sid=${sessionId || 'unknown'} caps=${status.caps.join(',')}`);
                     }
                     this.applyAuroraStatus(status);
+                    this.syncReceiverDiagnostics();
+                } else if (status && status.type === 'aurora.diagnostics.ack') {
+                    const ack = status as unknown as { requestId?: unknown; enabled?: unknown };
+                    this.diagnosticsSync.acknowledge(session, ack.requestId, ack.enabled,
+                        (level, message) => this.logCast(level, message));
                 } else if (status && (status as { type?: string }).type === 'aurora.queue.insert.ack') {
                     const ack = status as unknown as { ok?: boolean; inserted?: number; detail?: string; requestId?: number };
                     this.logCast(
@@ -1294,7 +1316,7 @@ export class CastManager {
         const requestId = ++this.auroraControlRequestId;
         const detail = `action=${action} requestId=${requestId}${typeof extra.time === 'number' ? ` time=${extra.time.toFixed(1)}` : ''}`;
         try {
-            session.sendMessage(AURORA_STATUS_NAMESPACE, { type: 'aurora.control', action, requestId, ...extra })
+            session.sendMessage(getAuroraStatusNamespace(session), { type: 'aurora.control', action, requestId, ...extra })
                 .then(() => this.logCast('ok', `Cast ${action} via receiver channel`, detail))
                 .catch((error: unknown) => this.handleControlError(`${action} via receiver channel`, error));
             return true;
@@ -1340,7 +1362,7 @@ export class CastManager {
         // The contentId carries the media token, so it is never logged.
         const detail = `position=${position} requestId=${requestId} ${label}`;
         try {
-            session.sendMessage(AURORA_STATUS_NAMESPACE, message)
+            session.sendMessage(getAuroraStatusNamespace(session), message)
                 .then(() => this.logCast('ok', 'Cast queue insert via receiver channel', detail))
                 .catch((error: unknown) => this.logCast('error', 'Cast queue insert via receiver channel failed', `${detail} ${this.describeError(error)}`));
             return true;

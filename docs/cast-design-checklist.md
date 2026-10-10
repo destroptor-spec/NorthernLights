@@ -281,7 +281,7 @@ Keep JWT redaction in logs. Add debug toggle in Settings > System or Playback fo
 
 - [x] `logs/cast-receiver.log` can reconstruct sender, receiver, queue, and lifecycle state
 
-Implementation note: sender components emit checklist markers for Cast button state and stale transport recovery. The receiver emits `receiver-state`, `receiver-idle-timeout`, and `receiver-paused-timeout` markers independent of verbose network logging. Playback settings now expose a combined Playback & Cast debug toggle; when enabled, the sender passes receiver diagnostics verbosity through Cast `customData`. `/api/cast/log` also performs server-side JWT/token/Bearer redaction and newline cleanup before writing to `logs/cast-receiver.log`.
+Implementation note: sender components emit checklist markers for Cast button state and stale transport recovery. The receiver emits `receiver-state`, `receiver-idle-timeout`, and `receiver-paused-timeout` markers independent of verbose network logging. Playback settings now expose separate Browser playback diagnostics and Cast diagnostics switches; Cast diagnostics updates capable active receivers over the Aurora namespace and retains Cast `customData` for initial loads and older receivers. `/api/cast/log` also performs server-side JWT/token/Bearer redaction and newline cleanup before writing to `logs/cast-receiver.log`.
 
 ---
 
@@ -291,7 +291,7 @@ Current status: Completed — manual checklist plus repeatable log verifier.
 
 ### Manual Test Cases
 
-Run these against at least one Chromecast and one Google TV target when available. Keep Playback > Playback & Cast Debug Logging enabled for the full pass.
+Run these against at least one Chromecast and one Google TV target when available. Keep Playback > Cast diagnostics enabled for the full pass.
 
 | # | Case | Expected result | Key log evidence |
 |---|------|-----------------|------------------|
@@ -346,3 +346,5 @@ The verifier checks that every Phase 8 marker appears in `logs/cast-receiver.log
 4. Idle/Paused Timeout Behavior — Burn-in protection
 5. Queue UX Polish — Feature completion
 6. Checklist Doc & Final Verification Pass — Compliance sign-off
+
+Logging scope, persistence, receiver compatibility, and HLS retention are documented in [logging.md](./logging.md).

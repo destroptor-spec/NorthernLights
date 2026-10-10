@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { writeHlsServerLog, writeHlsSessionLog } from './debugLogger.service';
+import { writeHlsServerLog, writeHlsSessionLog, type HlsLogDetail } from './debugLogger.service';
 import { logFfmpeg, logHls } from './loggingConfig';
 
 export const ADAPTIVE_RENDITION_KBPS = [64, 128, 160, 320] as const;
@@ -224,9 +224,9 @@ function countPlaylistSegments(content: string): number {
   return (content.match(/^segment\d+\.ts$/gm) || []).length;
 }
 
-function logAdaptiveSession(session: Pick<AdaptiveHlsSession, 'trackId' | 'ladderKey' | 'codec'>, line: string): void {
-  writeHlsServerLog(`[adaptive-session ${session.trackId} ${session.ladderKey} ${session.codec}] ${line}`);
-  writeHlsSessionLog(session.trackId, `auto-${session.ladderKey}`, session.codec, line);
+function logAdaptiveSession(session: Pick<AdaptiveHlsSession, 'trackId' | 'ladderKey' | 'codec'>, line: string, detail: HlsLogDetail = 'normal'): void {
+  writeHlsServerLog(`[adaptive-session ${session.trackId} ${session.ladderKey} ${session.codec}] ${line}`, detail);
+  writeHlsSessionLog(session.trackId, `auto-${session.ladderKey}`, session.codec, line, detail);
 }
 
 function readRenditionState(session: AdaptiveHlsSession): { ready: boolean; totalSegments: number } {
@@ -318,7 +318,7 @@ export async function getOrCreateAdaptiveHlsSession(
   const inputPath = trackPath.toString('utf8');
   const ffmpegArgs = buildAdaptiveFfmpegArgs(inputPath, ladder, codec);
   logAdaptiveSession(session, `Creating one-process adaptive package in ${outputDir}`);
-  logAdaptiveSession(session, `FFmpeg args: ${ffmpegArgs.join(' ')}`);
+  logAdaptiveSession(session, `FFmpeg args: ${ffmpegArgs.join(' ')}`, 'detailed');
   logHls(`[HLS] Spawning adaptive FFmpeg for ${trackId}: ${ladderKey}`);
 
   const ffmpeg = spawn('ffmpeg', ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'], cwd: outputDir });
@@ -338,7 +338,7 @@ export async function getOrCreateAdaptiveHlsSession(
   ffmpeg.stderr?.on('data', (data: Buffer) => {
     const message = data.toString();
     logFfmpeg(`[HLS] Adaptive FFmpeg stderr: ${message.substring(0, 200)}`);
-    logAdaptiveSession(session, `FFmpeg stderr: ${message.trim()}`);
+    logAdaptiveSession(session, `FFmpeg stderr: ${message.trim()}`, /error|invalid|failed|warning|corrupt|cannot|could not|no such file|non.monoton/i.test(message) ? 'normal' : 'ffmpeg');
   });
 
   ffmpeg.on('error', (error) => {

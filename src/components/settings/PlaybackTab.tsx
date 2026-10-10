@@ -1,3 +1,4 @@
+import { PlaybackLoggingSettings } from './PlaybackLoggingSettings';
 import React, { useEffect, useState, useMemo } from 'react';
 import { usePlayerStore, type PrebufferPolicy } from '../../store/index';
 import { useNetworkInfo } from '../../hooks/useNetworkInfo';
@@ -343,22 +344,7 @@ export const PlaybackTab: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="mb-6 flex items-center justify-between p-4 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)]">
-                        <div>
-                            <p className="text-sm font-medium text-[var(--color-text-primary)]">Playback & Cast Debug Logging</p>
-                            <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                                Show HLS prewarm telemetry in the browser console and enable verbose Cast receiver diagnostics in the Cast log.
-                            </p>
-                        </div>
-                        <button
-                            onClick={() => setSettings({ playbackDebugLogging: !playbackDebugLogging })}
-                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ml-4 ${playbackDebugLogging ? 'bg-[var(--color-primary)]' : 'bg-gray-200 dark:bg-[var(--color-bg-tertiary)]'}`}
-                            aria-pressed={playbackDebugLogging}
-                            aria-label="Toggle playback and Cast debug logging"
-                        >
-                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${playbackDebugLogging ? 'translate-x-6' : 'translate-x-1'}`} />
-                        </button>
-                    </div>
+                    <PlaybackLoggingSettings />
 
                     {playbackDebugLogging && (
                         <div className="mb-6 p-3 rounded-lg bg-[var(--color-surface)] border border-[var(--glass-border)]">
@@ -440,9 +426,6 @@ export const PlaybackTab: React.FC = () => {
                                     Prepare warning: <span className="font-mono">{playbackTelemetry.prepareError}</span>
                                 </p>
                             )}
-                            <p className="text-xs text-[var(--color-text-muted)] mt-2">
-                                Cast diagnostics: <span className="font-mono text-[var(--color-text-primary)]">logs/cast-receiver.log</span>
-                            </p>
                         </div>
                     )}
 

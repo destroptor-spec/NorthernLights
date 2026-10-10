@@ -1,4 +1,5 @@
 import { SERVER_LOGGING_SETTINGS, type ProcessingLogChannel, type ServerLoggingSetting } from '../../shared/logging';
+import { redactLogSecrets } from '../../shared/logRedaction';
 
 // Persisted admin settings override environment defaults at runtime.
 
@@ -53,12 +54,12 @@ export function isFfmpegLoggingEnabled(): boolean {
   return loggingFlags.ffmpeg;
 }
 
-export function logHls(...args: any[]) {
-  if (loggingFlags.hls) console.log(...args);
+export function logHls(...args: unknown[]) {
+  if (loggingFlags.hls) console.log(...args.map(value => typeof value === 'string' ? redactLogSecrets(value) : value));
 }
 
-export function logFfmpeg(...args: any[]) {
-  if (loggingFlags.ffmpeg) console.error(...args);
+export function logFfmpeg(...args: unknown[]) {
+  if (loggingFlags.ffmpeg) console.error(...args.map(value => typeof value === 'string' ? redactLogSecrets(value) : value));
 }
 
 // Load persisted overrides from the DB. Call after the DB is connected.

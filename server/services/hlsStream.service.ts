@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { writeHlsServerLog, writeHlsSessionLog } from './debugLogger.service';
+import { writeHlsServerLog, writeHlsSessionLog, type HlsLogDetail } from './debugLogger.service';
 import { logHls, logFfmpeg } from './loggingConfig';
 
 // ─── Types ──────────────────────────────────────────────────────────────
@@ -45,9 +45,9 @@ function getSessionKeyParts(key: string): { trackId: string; quality: string; co
   return { trackId: parts[0], quality: parts[1], codec: parts[2] };
 }
 
-function logHlsSession(trackId: string, quality: string, codec: string, line: string) {
-  writeHlsServerLog(`[session ${trackId} ${quality} ${codec}] ${line}`);
-  writeHlsSessionLog(trackId, quality, codec, line);
+function logHlsSession(trackId: string, quality: string, codec: string, line: string, detail: HlsLogDetail = 'normal') {
+  writeHlsServerLog(`[session ${trackId} ${quality} ${codec}] ${line}`, detail);
+  writeHlsSessionLog(trackId, quality, codec, line, detail);
 }
 
 function summarizePlaylist(content: string): string {
@@ -238,12 +238,12 @@ export async function getOrCreateHlsSession(
   const inputPath = trackPath.toString('utf8');
   const shouldRemux = getRemuxDecision(quality, sourceBitrate, sourceFormat, targetCodec, inputPath);
   logHlsSession(trackId, quality, targetCodec, `Creating session in ${outputDir}`);
-  logHlsSession(trackId, quality, targetCodec, `Input path: ${inputPath}`);
+  logHlsSession(trackId, quality, targetCodec, `Input path: ${inputPath}`, 'detailed');
   logHlsSession(trackId, quality, targetCodec, `Remux decision: ${shouldRemux ? 'copy' : 'transcode'}`);
 
   // Build FFmpeg args
   const ffmpegArgs = buildFfmpegArgs(inputPath, playlistFilename, segmentFilename, quality, shouldRemux, targetCodec, sourceBitrate);
-  logHlsSession(trackId, quality, targetCodec, `FFmpeg args: ${ffmpegArgs.join(' ')}`);
+  logHlsSession(trackId, quality, targetCodec, `FFmpeg args: ${ffmpegArgs.join(' ')}`, 'detailed');
 
   // Create the readiness promise — resolves when segment000.ts appears
   let resolveReady: () => void;
@@ -280,7 +280,7 @@ export async function getOrCreateHlsSession(
     // Only log lines that look like actual errors, not config/progress noise.
     const msg = data.toString();
     logFfmpeg(`[HLS DEBUG] FFmpeg stderr: ${msg.substring(0, 200)}`);
-    logHlsSession(trackId, quality, targetCodec, `FFmpeg stderr: ${msg.trim()}`);
+    logHlsSession(trackId, quality, targetCodec, `FFmpeg stderr: ${msg.trim()}`, /error|invalid|failed|warning|corrupt|cannot|could not|no such file|non.monoton/i.test(msg) ? 'normal' : 'ffmpeg');
     if (/^\[?error|Error while|Invalid|No such file|could not|Cannot/mi.test(msg)) {
       console.error(`[HLS] FFmpeg error for ${trackId}:`, msg.trim());
     }
@@ -320,7 +320,7 @@ export async function getOrCreateHlsSession(
         const segmentCount = countPlaylistSegments(content);
         session.segmentCount = segmentCount;
         logHls(`[HLS DEBUG] Poll: playlist exists, content: ${JSON.stringify(content.substring(0, 200))}`);
-        logHlsSession(trackId, quality, targetCodec, `Playlist poll snapshot (${segmentCount} segments): ${summarizePlaylist(content)}`);
+        logHlsSession(trackId, quality, targetCodec, `Playlist poll snapshot (${segmentCount} segments): ${summarizePlaylist(content)}`, 'detailed');
         if (segmentCount >= 2 || (segmentCount >= 1 && content.includes('#EXT-X-ENDLIST'))) {
           clearInterval(pollInterval);
           session.ready = true;
