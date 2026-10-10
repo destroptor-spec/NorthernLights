@@ -99,13 +99,22 @@ export const CastButton: React.FC<CastButtonProps> = ({
     }
   };
 
-  if (!isVisible) return null;
+  if (!castApiAvailable) return null;
 
+  // Hide, never unmount, when discovery momentarily reports no devices (#40).
+  // The SDK flickers NOT_CONNECTED -> NO_DEVICES_AVAILABLE -> NOT_CONNECTED
+  // while the picker opens; returning null here tore <google-cast-launcher>
+  // out mid-request, the tap never resolved ("press Cast, nothing happens"),
+  // and every later tap on that page failed with invalid_parameter until a
+  // reload. Prod Sep 1 - Oct 10: 6/6 taps hidden while pending never resolved,
+  // 0 of 67 resolved taps were hidden.
   return (
     <div
       className={`aurora-cast-control aurora-cast-control-${size} ${className}`}
       data-cast-state={castState}
       data-cast-health={castHealth.phase}
+      style={isVisible ? undefined : { display: 'none' }}
+      aria-hidden={isVisible ? undefined : true}
     >
       <span
         className="aurora-cast-button-shell"
