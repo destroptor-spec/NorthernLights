@@ -263,7 +263,10 @@ export class CastManager {
     private queueWindowEditHandled = 0;
     private queueWindowAdoptionChecked: unknown = null;
     private mediaChannelJumpFailedFor: unknown = null;
-    private queueJumpGeneration = 0;
+    private pendingSkip: { tracks: CastQueueTrack[]; startIndex: number; repeat: CastRepeat } | null = null;
+    private skipRunner: Promise<void> | null = null;
+    private skipRequestSeq = 0;
+    private staleSdkMedia: unknown = null;
     private queueLoadRetry: { session: unknown; index: number; time: number } | null = null;
     private queueLoadGeneration = 0;
     private readonly queueInsertAcks = new CastQueueInsertAcks();
@@ -1069,6 +1072,7 @@ export class CastManager {
                 this.mediaSessionProbeStartedAt = 0;
                 this.remoteMediaConcludedGone = false;
                 this.logCast('ok', 'MEDIA_SESSION: rebinding to new remote media', this.describeMediaSession(mediaSession));
+                this.noteSdkMedia(this.queueWindow, mediaSession);
                 void this.hydrateSenderFromRemoteSession(mediaSession, 'media-session-event');
             });
             this.logCast('ok', 'Attached MEDIA_SESSION listener', `sid=${sessionId || 'unknown'}`);
@@ -2651,7 +2655,30 @@ export class CastManager {
         return typeof itemId === 'number' ? itemId : null;
     }
 
-    public async ensureQueuePlayback(tracks: CastQueueTrack[], startIndex = 0, repeat: CastRepeat = 'none') {
+    /**
+     * Play the given queue entry on the receiver. Fast presses coalesce: one
+     * skip runs at a time and only the newest requested target follows it, so
+     * a burst becomes a few jumps rather than a LOAD per press.
+     */
+    public ensureQueuePlayback(tracks: CastQueueTrack[], startIndex = 0, repeat: CastRepeat = 'none'): Promise<void> {
+        this.pendingSkip = { tracks, startIndex, repeat };
+        this.skipRequestSeq++;
+        if (this.skipRunner) return this.skipRunner;
+        this.skipRunner = (async () => {
+            try {
+                while (this.pendingSkip) {
+                    const next = this.pendingSkip;
+                    this.pendingSkip = null;
+                    await this.runQueueSkip(next.tracks, next.startIndex, next.repeat, this.skipRequestSeq);
+                }
+            } finally {
+                this.skipRunner = null;
+            }
+        })();
+        return this.skipRunner;
+    }
+
+    private async runQueueSkip(tracks: CastQueueTrack[], startIndex: number, repeat: CastRepeat, requestSeq: number) {
         if (!this.isConnected()) return;
         const session = this.castContext.getCurrentSession();
         const window = this.queueWindow;
@@ -2677,16 +2704,21 @@ export class CastManager {
         const item = listed ?? (media && typeof usableId === 'number' ? { itemId: usableId } : null);
         if (media && window && window.session === session && typeof media.mediaSessionId === 'number') window.mediaSessionId = media.mediaSessionId;
         const inWindow = !!window && window.session === session && !window.blocked && window.repeat === repeat && !!entryId && window.ids.includes(entryId);
-        // Every skip supersedes the previous one; only the latest may reload.
-        const jumpGeneration = ++this.queueJumpGeneration;
-        const stillLatest = () => jumpGeneration === this.queueJumpGeneration;
+        // A newer press supersedes this one; only the latest may reload.
+        const stillLatest = () => requestSeq === this.skipRequestSeq;
         const jumpId: number | undefined = typeof usableId === 'number' ? usableId : item?.itemId;
         if (inWindow && window && entryId && typeof jumpId === 'number') {
             const status = this.lastAuroraStatus && Date.now() - this.lastAuroraStatusAt <= this.auroraStatusFreshMs ? this.lastAuroraStatus : null;
             // The receiver's own report decides "already there"; a stale SDK
             // Media object's currentItemId can be wrong.
             if (status ? status.queueEntryId === entryId : media?.currentItemId === jumpId) return;
-            if (media && item) {
+            // The media channel first: it worked on the NAD within 100-800 ms
+            // (2026-10-12), while the SDK's Media object goes stale or missing
+            // once the receiver advances by itself.
+            const viaChannel = await this.jumpViaMediaChannel(session, window, jumpId, entryId, stillLatest);
+            if (viaChannel === 'ok' || viaChannel === 'superseded') return;
+            const sdkMedia = this.castContext.getCurrentSession()?.getMediaSession();
+            if (sdkMedia && sdkMedia !== this.staleSdkMedia) {
                 try {
                     // Recovery keeps the receiver's queue, so its item IDs stay valid.
                     await this.runCastCommand('queue-jump', () => castQueueCallback((ok, fail) => {
@@ -2698,14 +2730,11 @@ export class CastManager {
                 } catch (error) {
                     // A stale SDK Media object accepts the call and never answers
                     // (NAD 2026-10-12 21:26: seven presses, no track change).
+                    // Do not wait on the same object again.
+                    this.staleSdkMedia = sdkMedia;
                     this.logCast('warn', 'Cast queue jump via SDK unconfirmed', `${this.describeError(error)} itemId=${jumpId}`);
-                    if (!stillLatest()) return;
                 }
             }
-            // The SDK drops or freezes its Media object once the receiver moves
-            // on by itself. The jump can still go out on the media channel; it
-            // proves itself through aurora.status.
-            if (await this.jumpViaMediaChannel(session, window, jumpId, entryId)) return;
             if (!stillLatest()) return;
         }
         if (window && window.session === session) {
@@ -3049,7 +3078,7 @@ export class CastManager {
                         complete: bounded.entries.length === ordered.length, cafRepeat: cafRepeatFor(bounded.entries),
                         inferred: new Set(), nextItemId: null, seedable: true, inferenceOff: false,
                     };
-                    this.queueWindow.mediaSessionId = session.getMediaSession?.()?.mediaSessionId ?? null;
+                    this.noteSdkMedia(this.queueWindow, session.getMediaSession?.());
                     this.persistQueueWindow();
                     this.lastAuroraStatus = null; // status from the previous LOAD cannot refill this window
                     this.lastAuroraStatusAt = 0;
@@ -3306,8 +3335,10 @@ export class CastManager {
      * advanced is exactly what the outcome log answers. Success is only the
      * receiver reporting the entry; one miss disables it for the Cast session.
      */
-    private async jumpViaMediaChannel(session: any, window: CastQueueWindow, itemId: number, entryId: string): Promise<boolean> {
-        if (this.mediaChannelJumpFailedFor === session || typeof window.mediaSessionId !== 'number' || typeof session?.sendMessage !== 'function') return false;
+    private async jumpViaMediaChannel(
+        session: any, window: CastQueueWindow, itemId: number, entryId: string, isLatest: () => boolean,
+    ): Promise<'ok' | 'superseded' | 'failed'> {
+        if (this.mediaChannelJumpFailedFor === session || typeof window.mediaSessionId !== 'number' || typeof session?.sendMessage !== 'function') return 'failed';
         const requestId = ++this.auroraControlRequestId;
         try {
             await Promise.resolve(session.sendMessage(CAST_MEDIA_NAMESPACE, {
@@ -3316,22 +3347,58 @@ export class CastManager {
         } catch (error) {
             this.mediaChannelJumpFailedFor = session;
             this.logCast('warn', 'Cast queue jump via media channel failed', `${this.describeError(error)} itemId=${itemId}`);
-            return false;
+            return 'failed';
         }
         const startedAt = Date.now();
         while (Date.now() - startedAt < CAST_MEDIA_CHANNEL_JUMP_TIMEOUT_MS) {
             if (this.lastAuroraStatus?.queueEntryId === entryId && this.lastAuroraStatusAt >= startedAt) {
                 this.logCast('ok', 'Cast queue jump via media channel', `itemId=${itemId} mediaSessionId=${window.mediaSessionId} ms=${Date.now() - startedAt}`);
-                return true;
+                return 'ok';
             }
-            if (this.queueWindow !== window || session !== this.castContext?.getCurrentSession?.()) return false;
+            // A newer skip overtook this one (fast presses, NAD 2026-10-12
+            // 21:39:50): the receiver may pass this entry without reporting it.
+            // That is not evidence against the channel.
+            if (!isLatest()) return 'superseded';
+            if (this.queueWindow !== window || session !== this.castContext?.getCurrentSession?.()) return 'superseded';
             await new Promise(resolve => setTimeout(resolve, 100));
         }
-        // One miss means this receiver does not accept it; never pay the wait
-        // again in this Cast session.
+        // The latest skip went unanswered: this receiver does not accept it.
+        // Never pay the wait again in this Cast session.
         this.mediaChannelJumpFailedFor = session;
         this.logCast('warn', 'Cast queue jump via media channel unconfirmed', `itemId=${itemId} mediaSessionId=${window.mediaSessionId} timeoutMs=${CAST_MEDIA_CHANNEL_JUMP_TIMEOUT_MS}`);
-        return false;
+        return 'failed';
+    }
+
+    /**
+     * Learn what a fresh SDK Media object can tell us about the window: its
+     * media session ID, and (cross-checked by stream URL) the item ID of the
+     * entry it plays, which seeds the rest at once instead of after the first
+     * aurora.status. A skip inside that gap otherwise reloaded again (NAD
+     * 2026-10-12 21:40:04: twelve loads in two seconds). Seeds stay inferred
+     * and are verified by every receiver report.
+     */
+    private noteSdkMedia(window: CastQueueWindow | null, media: any): void {
+        if (!window || !media || window.session !== this.castContext?.getCurrentSession?.()) return;
+        if (typeof media.mediaSessionId === 'number') window.mediaSessionId = media.mediaSessionId;
+        if (window.nextItemId !== null || !window.seedable || window.inferenceOff || typeof media.currentItemId !== 'number') return;
+        const key = streamKey(media.media?.contentId);
+        if (!key) return;
+        const playlist = usePlayerStore.getState().playlist;
+        const matches = window.ids.filter(id => {
+            const track = playlist.find(candidate => candidate.queueEntryId === id);
+            return streamKey(track?.url || track?.rawUrl) === key;
+        });
+        if (matches.length !== 1) return; // the same track twice is ambiguous
+        const seed = seedItemIds(window.ids, matches[0], media.currentItemId);
+        if (!seed) return;
+        for (const [id, inferred] of seed.ids) {
+            if (this.queueItemIdByEntryId.has(id)) continue;
+            this.queueItemIdByEntryId.set(id, inferred);
+            window.inferred.add(id);
+        }
+        window.nextItemId = seed.next;
+        this.logCast('ok', 'queue-item-ids-inferred', `items=${window.ids.length} base=${seed.next - window.ids.length} source=sdk-media`);
+        this.persistQueueWindow();
     }
 
     /** Remember the window under its Cast session ID, for adoption after a reload or recovery. */
