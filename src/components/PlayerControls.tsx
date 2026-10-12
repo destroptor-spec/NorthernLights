@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { usePlayerStore } from '../store/index';
+import { hasNextTrack } from '../utils/queue';
 import { usePlaybackTimeStore } from '../store/playbackTime';
 import { useVolumeSync } from '../hooks/useVolumeSync';
 import { Infinity, FileText, Waypoints } from 'lucide-react';
@@ -39,7 +40,8 @@ const transportBtnClass =
   'flex items-center justify-center w-9 h-9 rounded-full border border-black/10 bg-black/5 ' +
   'text-black/65 hover:text-black/95 hover:border-black/20 hover:bg-black/10 ' +
   'dark:border-white/10 dark:bg-white/5 dark:text-white/75 dark:hover:text-white ' +
-  'dark:hover:border-white/20 dark:hover:bg-white/10 active:scale-95 transition-ui duration-150';
+  'dark:hover:border-white/20 dark:hover:bg-white/10 active:scale-95 transition-ui duration-150 ' +
+  'disabled:opacity-40 disabled:cursor-default disabled:pointer-events-none';
 
 const playBtnClass =
   'flex items-center justify-center w-11 h-11 rounded-full border border-emerald-500/40 ' +
@@ -325,6 +327,7 @@ export const PlayerControls: React.FC = () => {
 
   const setVolume = usePlayerStore((state) => state.setVolume);
   const nextTrackAction = usePlayerStore((state) => state.nextTrack);
+  const canSkipNext = usePlayerStore(hasNextTrack);
   const prevTrackAction = usePlayerStore((state) => state.prevTrack);
   const toggleShuffle = usePlayerStore((state) => state.toggleShuffle);
   const cycleRepeatAction = usePlayerStore((state) => state.cycleRepeat);
@@ -545,6 +548,7 @@ export const PlayerControls: React.FC = () => {
 
         <button
           onClick={() => void nextTrackAction()}
+          disabled={!canSkipNext}
           aria-label="Next track"
           className={transportBtnClass}
         >

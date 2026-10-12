@@ -1,5 +1,6 @@
 import { usePlayerStore } from '../index';
 import { TrackInfo } from '../../utils/fileSystem';
+import { hasNextTrack } from '../../utils/queue';
 
 describe('Music Store Logic', () => {
   beforeEach(() => {
@@ -58,12 +59,24 @@ describe('Music Store Logic', () => {
       expect(playAtIndex).not.toHaveBeenCalled();
     });
 
-    it('ends the queue without Infinity, as the last track ending by itself does', async () => {
-      const { playAtIndex, stop } = stubs();
+    it('does nothing without Infinity: Next is disabled there, and stopping closed the mobile player', async () => {
+      const { playAtIndex, stop, fetchNextInfinityTrack } = stubs();
       usePlayerStore.setState({ playlist: queue(), currentIndex: 1, repeat: 'none', isInfinityMode: false });
+      expect(hasNextTrack(usePlayerStore.getState())).toBe(false);
       await usePlayerStore.getState().nextTrack();
-      expect(stop).toHaveBeenCalled();
+      expect(stop).not.toHaveBeenCalled();
       expect(playAtIndex).not.toHaveBeenCalled();
+      expect(fetchNextInfinityTrack).not.toHaveBeenCalled();
+    });
+
+    it('hasNextTrack: repeat-all, shuffle or Infinity keep Next enabled on the last track', () => {
+      const base = { playlist: queue(), currentIndex: 1, repeat: 'none' as const, shuffle: false, isInfinityMode: false };
+      expect(hasNextTrack(base)).toBe(false);
+      expect(hasNextTrack({ ...base, repeat: 'all' })).toBe(true);
+      expect(hasNextTrack({ ...base, shuffle: true })).toBe(true);
+      expect(hasNextTrack({ ...base, isInfinityMode: true })).toBe(true);
+      expect(hasNextTrack({ ...base, currentIndex: 0 })).toBe(true);
+      expect(hasNextTrack({ ...base, playlist: [] })).toBe(false);
     });
 
     it('still advances normally before the end', async () => {

@@ -8,7 +8,7 @@ import { EMPTY_FILTER_STATE } from '../utils/filterState';
 import { extractMetadata } from '../utils/fileSystem';
 import { playbackManager, PlaybackState } from '../utils/PlaybackManager';
 import { castManager } from '../utils/CastManager';
-import { cloneTrackForQueue, ensureQueueEntryIds } from '../utils/queue';
+import { cloneTrackForQueue, ensureQueueEntryIds, hasNextTrack } from '../utils/queue';
 import { preloadManager } from '../utils/PreloadManager';
 import { setPlaybackDebugLogging } from '../utils/playbackDebug';
 import { savePlaybackContinuitySnapshot } from '../utils/playbackContinuity';
@@ -2803,6 +2803,14 @@ export const usePlayerStore = create<PlayerState>()(
         nextTrack: async (options?: NextTrackOptions) => {
           const { playlist, currentIndex, shuffle } = get();
           if (playlist.length === 0) return;
+          // Next on the last track: Infinity continues; without it (and without
+          // repeat-all or shuffle) there is nothing next, and the UI disables
+          // Next rather than ending playback. It used to wrap to track 1.
+          if (!hasNextTrack(get())) return;
+          if (!shuffle && currentIndex !== null && currentIndex >= playlist.length - 1 && get().repeat !== 'all') {
+            await get().fetchNextInfinityTrack(false);
+            return;
+          }
 
           // Telemetry: record a skip for the track we are leaving — but only if
           // we left before it crossed the "played" threshold. Past that point
@@ -2815,15 +2823,6 @@ export const usePlayerStore = create<PlayerState>()(
           if (shuffle) {
             nextIndex = Math.floor(Math.random() * playlist.length);
           } else if (currentIndex !== null) {
-            // Only repeat-all wraps around. Next on the last track used to jump
-            // back to the first one whatever the repeat mode (reported on the
-            // Cast channel, 2026-10-12). Now it does what the last track ending
-            // by itself does: Infinity continues, otherwise the queue ends.
-            if (currentIndex >= playlist.length - 1 && get().repeat !== 'all') {
-              if (get().isInfinityMode) await get().fetchNextInfinityTrack(false);
-              else get().stop();
-              return;
-            }
             nextIndex = (currentIndex + 1) % playlist.length;
           }
 
