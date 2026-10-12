@@ -48,7 +48,7 @@ function harness() {
         state: 'CONNECTED', castContext: { getCurrentSession: () => active }, currentLoadPromise: Promise.resolve(),
         playbackConfirmation: new CastPlaybackConfirmation(), confirmationLoadAccepted: false, getCastDeviceName: () => 'Test device',
         healthStatus: { phase: 'connected', message: '' },
-        queueLoadGeneration: 0, queueWindowBusy: false, queueWindowEditSeq: 0, queueWindowEditHandled: 0, queueWindow: null,
+        queueLoadGeneration: 0, queueWindowBusy: false, queueWindowEditSeq: 0, queueWindowEditHandled: 0, queueJumpGeneration: 0, queueWindow: null,
         queueItemIdByEntryId: new Map(), queueInsertAcks: new CastQueueInsertAcks(), auroraControlRequestId: 0,
         auroraStatusFreshMs: 20000, lastAuroraStatus: null, lastAuroraStatusAt: 0, queueWindowAdoptionChecked: null,
         recoverStaleTransport: jest.fn().mockResolvedValue(false),
@@ -575,4 +575,39 @@ test('a media-channel jump during an unconfirmed start confirms the jumped-to en
     expect(manager.playbackConfirmation.entryId).toBe('entry-12');
     manager.applyAuroraStatus({ queueEntryId: 'entry-12', itemId: 35, playerState: 'PLAYING', currentTime: 1.3 });
     expect(manager.playbackConfirmation.unconfirmed).toBe(false);
+});
+
+describe('a jump that is never acknowledged (NAD 2026-10-12 21:26: stale SDK Media object)', () => {
+    afterEach(() => jest.useRealTimers());
+    const stale = async () => {
+        const h = harness();
+        await h.manager.castQueue(mockState.playlist, 10);
+        for (let i = 0; i < 30; i++) h.manager.queueItemIdByEntryId.set(`entry-${i}`, 100 + i);
+        h.media.queueJumpToItem.mockImplementation(() => {}); // accepts the call, never answers
+        jest.useFakeTimers();
+        return h;
+    };
+
+    it('reloads at the requested track by itself, with no error and no blocked window', async () => {
+        const { manager, session } = await stale();
+        const pending = manager.ensureQueuePlayback(mockState.playlist, 12);
+        await jest.advanceTimersByTimeAsync(3100);
+        await pending;
+        expect(manager.logCast).toHaveBeenCalledWith('warn', 'Cast queue jump via SDK unconfirmed', expect.stringContaining('itemId=112'));
+        expect(session.loadMedia).toHaveBeenCalledTimes(2);
+        expect(session.loadMedia.mock.calls[1][0].media.customData.queueEntryId).toBe('entry-12');
+        expect((manager as unknown as { setHealthStatus: jest.Mock }).setHealthStatus).not.toHaveBeenCalledWith('error', expect.anything());
+        expect(manager.queueWindow?.blocked).toBe(false);
+    });
+
+    it('only the latest of several quick presses falls back to a reload', async () => {
+        const { manager, session } = await stale();
+        const first = manager.ensureQueuePlayback(mockState.playlist, 12);
+        await jest.advanceTimersByTimeAsync(500);
+        const second = manager.ensureQueuePlayback(mockState.playlist, 13);
+        await jest.advanceTimersByTimeAsync(3100);
+        await Promise.all([first, second]);
+        expect(session.loadMedia).toHaveBeenCalledTimes(2);
+        expect(session.loadMedia.mock.calls[1][0].media.customData.queueEntryId).toBe('entry-13');
+    });
 });
