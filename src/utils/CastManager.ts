@@ -76,6 +76,8 @@ const SESSION_STORAGE_KEY = 'cast_session_id';
 const QUEUE_WINDOW_STORAGE_KEY = 'aurora-cast-queue-window-v1';
 // How long a media-channel jump may take to show up in aurora.status.
 const CAST_MEDIA_CHANNEL_JUMP_TIMEOUT_MS = 3000;
+// A live SDK answers a queue jump in well under a second.
+const CAST_QUEUE_JUMP_ACK_TIMEOUT_MS = 3000;
 // Receiver volume applied once when a FRESH session hands playback over (some
 // receivers power on reporting 100% and would blast the first track). Never
 // applied when joining or rejoining an ongoing session.
@@ -259,6 +261,7 @@ export class CastManager {
     private queueWindowEditHandled = 0;
     private queueWindowAdoptionChecked: unknown = null;
     private mediaChannelJumpFailedFor: unknown = null;
+    private queueJumpGeneration = 0;
     private queueLoadRetry: { session: unknown; index: number; time: number } | null = null;
     private queueLoadGeneration = 0;
     private readonly queueInsertAcks = new CastQueueInsertAcks();
@@ -2637,34 +2640,46 @@ export class CastManager {
         const item = listed ?? (media && typeof usableId === 'number' ? { itemId: usableId } : null);
         if (media && window && window.session === session && typeof media.mediaSessionId === 'number') window.mediaSessionId = media.mediaSessionId;
         const inWindow = !!window && window.session === session && !window.blocked && window.repeat === repeat && !!entryId && window.ids.includes(entryId);
-        // The SDK drops its Media object once the receiver moves on by itself
-        // (NAD 2026-10-12: every second Next reloaded). The jump can still go
-        // out on the media channel; it proves itself through aurora.status.
-        if (inWindow && !media && typeof usableId === 'number' && window && entryId &&
-            await this.jumpViaMediaChannel(session, window, usableId, entryId)) return;
-        if (!inWindow || !item) {
-            if (window && window.session === session) {
-                const reason = window.blocked ? 'blocked' : window.repeat !== repeat ? 'repeat-changed'
-                    : !entryId || !window.ids.includes(entryId) ? 'outside-window'
-                    : !media ? 'no-media-session' : 'unknown-item-id';
-                this.logCast('ok', 'Cast queue jump fell back to LOAD', `reason=${reason} knownItemId=${typeof usableId === 'number'}`);
+        // Every skip supersedes the previous one; only the latest may reload.
+        const jumpGeneration = ++this.queueJumpGeneration;
+        const stillLatest = () => jumpGeneration === this.queueJumpGeneration;
+        const jumpId: number | undefined = typeof usableId === 'number' ? usableId : item?.itemId;
+        if (inWindow && window && entryId && typeof jumpId === 'number') {
+            const status = this.lastAuroraStatus && Date.now() - this.lastAuroraStatusAt <= this.auroraStatusFreshMs ? this.lastAuroraStatus : null;
+            // The receiver's own report decides "already there"; a stale SDK
+            // Media object's currentItemId can be wrong.
+            if (status ? status.queueEntryId === entryId : media?.currentItemId === jumpId) return;
+            if (media && item) {
+                try {
+                    // Recovery keeps the receiver's queue, so its item IDs stay valid.
+                    await this.runCastCommand('queue-jump', () => castQueueCallback((ok, fail) => {
+                        const active = this.castContext.getCurrentSession()?.getMediaSession();
+                        if (!active) throw new Error('No active Cast media session');
+                        active.queueJumpToItem(jumpId, ok, fail);
+                    }, CAST_QUEUE_JUMP_ACK_TIMEOUT_MS));
+                    return;
+                } catch (error) {
+                    // A stale SDK Media object accepts the call and never answers
+                    // (NAD 2026-10-12 21:26: seven presses, no track change).
+                    this.logCast('warn', 'Cast queue jump via SDK unconfirmed', `${this.describeError(error)} itemId=${jumpId}`);
+                    if (!stillLatest()) return;
+                }
             }
-            await this.castQueue(tracks, startIndex, repeat);
-            return;
+            // The SDK drops or freezes its Media object once the receiver moves
+            // on by itself. The jump can still go out on the media channel; it
+            // proves itself through aurora.status.
+            if (await this.jumpViaMediaChannel(session, window, jumpId, entryId)) return;
+            if (!stillLatest()) return;
         }
-        if (item.itemId === media.currentItemId) return;
-        try {
-            // Recovery keeps the receiver's queue, so its item IDs stay valid.
-            await this.runCastCommand('queue-jump', () => castQueueCallback((ok, fail) => {
-                const active = this.castContext.getCurrentSession()?.getMediaSession();
-                if (!active) throw new Error('No active Cast media session');
-                active.queueJumpToItem(item.itemId, ok, fail);
-            }));
-        } catch (error) {
-            window.blocked = true;
-            this.setHealthStatus('error', 'Could not skip on the Cast device. Retry to reload the queue.');
-            this.logCast('error', 'Cast queue jump unconfirmed', this.describeError(error));
+        if (window && window.session === session) {
+            const reason = window.blocked ? 'blocked' : window.repeat !== repeat ? 'repeat-changed'
+                : !entryId || !window.ids.includes(entryId) ? 'outside-window'
+                : typeof jumpId !== 'number' ? 'unknown-item-id' : 'jump-unconfirmed';
+            this.logCast('ok', 'Cast queue jump fell back to LOAD', `reason=${reason}`);
         }
+        // Reloading at the requested entry is what the old "Retry" did by hand:
+        // do it directly, without an error, when a jump could not be confirmed.
+        await this.castQueue(tracks, startIndex, repeat);
     }
 
     /**

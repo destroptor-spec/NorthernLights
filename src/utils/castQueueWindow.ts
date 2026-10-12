@@ -28,9 +28,9 @@ export function boundedQueueRequest<T, R>(
 }
 
 /** SDK queue methods return void: only the callback acknowledges a command. */
-export function castQueueCallback(send: (ok: () => void, fail: (error: unknown) => void) => void): Promise<void> {
+export function castQueueCallback(send: (ok: () => void, fail: (error: unknown) => void) => void, timeoutMs = 10000): Promise<void> {
     return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('Cast queue acknowledgement timed out')), 10000);
+        const timer = setTimeout(() => reject(new Error('Cast queue acknowledgement timed out')), timeoutMs);
         const finish = (error?: unknown) => {
             clearTimeout(timer);
             if (error !== undefined) reject(error); else resolve();
