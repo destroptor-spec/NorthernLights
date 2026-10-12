@@ -1,4 +1,5 @@
 import { usePlayerStore } from '../store/index';
+import { hasNextTrack } from '../utils/queue';
 import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { X, Infinity as InfinityIcon, ListMusic, ListX, ChevronUp, FileText, Speaker } from 'lucide-react';
 import ProgressBar from './ProgressBar';
@@ -111,6 +112,7 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
   const pause = usePlayerStore((s) => s.pause);
   const resume = usePlayerStore((s) => s.resume);
   const nextTrack = usePlayerStore((s) => s.nextTrack);
+  const canSkipNext = usePlayerStore(hasNextTrack);
   const prevTrack = usePlayerStore((s) => s.prevTrack);
   const shuffle = usePlayerStore((s) => s.shuffle);
   const toggleShuffle = usePlayerStore((s) => s.toggleShuffle);
@@ -433,6 +435,7 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
           <button
             type="button"
             onClick={() => void nextTrack()}
+            disabled={!canSkipNext}
             aria-label="Next track"
             className="mobile-player-control-btn mobile-player-control-btn-lg"
           >

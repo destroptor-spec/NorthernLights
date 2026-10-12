@@ -1,5 +1,6 @@
 import { memo, useEffect, useState } from 'react';
 import { usePlayerStore } from '../store/index';
+import { hasNextTrack } from '../utils/queue';
 import { Play, Speaker } from 'lucide-react';
 import { useSwipe } from '../hooks/useSwipe';
 import MobileNowPlaying from './MobileNowPlaying';
@@ -16,6 +17,7 @@ const MobileMiniPlayer = () => {
   const pause = usePlayerStore((s) => s.pause);
   const resume = usePlayerStore((s) => s.resume);
   const nextTrack = usePlayerStore((s) => s.nextTrack);
+  const canSkipNext = usePlayerStore(hasNextTrack);
   const prevTrack = usePlayerStore((s) => s.prevTrack);
   const castConnected = usePlayerStore((s) => s.castConnected);
   const audioOutputSupported = usePlayerStore((s) => s.audioOutputSupported);
@@ -93,6 +95,7 @@ const MobileMiniPlayer = () => {
 
   const swipeRef = useSwipe<HTMLDivElement>({
     onSwipeLeft: () => {
+      if (!canSkipNext) return;
       flashSwipe('left');
       nextTrack();
     },
@@ -199,6 +202,7 @@ const MobileMiniPlayer = () => {
             <button
               type="button"
               onClick={handleNext}
+              disabled={!canSkipNext}
               aria-label="Next track"
               className="mobile-player-control-btn mobile-player-control-btn-sm"
             >

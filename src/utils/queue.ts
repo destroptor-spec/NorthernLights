@@ -23,3 +23,17 @@ export function ensureQueueEntryIds(tracks: TrackInfo[]): { tracks: TrackInfo[];
   });
   return { tracks: normalized, changed };
 }
+
+/**
+ * Whether Next leads anywhere. On the last track only repeat-all, shuffle or
+ * Infinity continue; otherwise Next is disabled rather than ending playback
+ * (which closed the mobile player and popped it up again).
+ */
+export function hasNextTrack(state: {
+  playlist: readonly unknown[]; currentIndex: number | null; shuffle: boolean;
+  repeat: 'none' | 'one' | 'all'; isInfinityMode: boolean;
+}): boolean {
+  if (state.playlist.length === 0) return false;
+  if (state.shuffle || state.repeat === 'all' || state.isInfinityMode) return true;
+  return state.currentIndex === null || state.currentIndex < state.playlist.length - 1;
+}
