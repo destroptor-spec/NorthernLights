@@ -577,14 +577,16 @@ everything it needs (`aurora.queue.insert`, CAF queue).
   `resolveTrackIndexFromSession`) must map through `queueEntryId` or a
   window-relative index.
 - **Item IDs and jumps.** The SDK lists only ~3 receiver items, so the sender
-  infers the window's item IDs from one reported ID (CAF numbers items
-  consecutively in queue order) and checks every later report against them.
-  Once the receiver has advanced by itself the SDK often has no Media object
-  to jump with; the sender then sends `QUEUE_UPDATE` on the media channel with
-  the window's media session ID and accepts it only when `aurora.status`
-  reports the requested entry within 3 s. One miss turns that off for the Cast
-  session and skips fall back to a LOAD (`Cast queue jump fell back to LOAD`
-  logs why).
+  infers the window's item IDs from one known ID (CAF numbers items
+  consecutively in queue order): from the fresh SDK Media right after a LOAD,
+  cross-checked by stream URL, or from the first `aurora.status`. Every later
+  report is checked against them. Jumps go first as `QUEUE_UPDATE` on the media
+  channel with the LOAD's media session ID (confirmed on the NAD within
+  100–800 ms; the SDK's Media object goes stale or missing once the receiver
+  advances by itself), then through the SDK, then as a LOAD at the target, with
+  no error shown. A jump counts as failed only if it is still the latest skip
+  when its 3 s run out; fast presses coalesce, so only the newest target is
+  played after the one in flight.
 - **Previous entries.** A LOAD also carries up to **10 entries before** the
   current one, with `startIndex` pointing at the current entry. They count
   toward the 30-item cap (so a fresh load holds 10 behind and up to 20 ahead)
