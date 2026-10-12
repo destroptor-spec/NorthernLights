@@ -24,7 +24,7 @@ import {
     toReceiverQueueItem,
     transportStateFromPlayerState,
 } from './castWatchdogPolicy';
-import { ReconcileBurst, probeCastTransport } from './castTransportRecovery';
+import { CAST_MEDIA_NAMESPACE, ReconcileBurst, probeCastTransport } from './castTransportRecovery';
 import { applyCastStreamingQualityToHlsUrl, applyStreamingQualityToHlsUrl } from './streaming';
 import { createQueueEntryId, ensureQueueEntryIds } from './queue';
 import type { TrackInfo } from './fileSystem';
@@ -74,6 +74,8 @@ export interface CastHealthStatus {
 const SESSION_STORAGE_KEY = 'cast_session_id';
 // The window's entry IDs, so a reloaded or recovered sender can adopt it.
 const QUEUE_WINDOW_STORAGE_KEY = 'aurora-cast-queue-window-v1';
+// How long a media-channel jump may take to show up in aurora.status.
+const CAST_MEDIA_CHANNEL_JUMP_TIMEOUT_MS = 3000;
 // Receiver volume applied once when a FRESH session hands playback over (some
 // receivers power on reporting 100% and would blast the first track). Never
 // applied when joining or rejoining an ongoing session.
@@ -97,6 +99,8 @@ type CastQueueWindow = {
     seedable: boolean;
     /** Set after one contradiction; this window then uses observed IDs only. */
     inferenceOff: boolean;
+    /** The media session ID of this window's LOAD, for QUEUE_UPDATE without an SDK Media object. */
+    mediaSessionId?: number | null;
 };
 
 type CastLogLevel = 'ok' | 'warn' | 'error';
@@ -256,6 +260,7 @@ export class CastManager {
     private queueWindowEditSeq = 0;
     private queueWindowEditHandled = 0;
     private queueWindowAdoptionChecked: unknown = null;
+    private mediaChannelJumpFailedFor: unknown = null;
     private queueLoadRetry: { session: unknown; index: number; time: number } | null = null;
     private queueLoadGeneration = 0;
     private readonly queueInsertAcks = new CastQueueInsertAcks();
@@ -2667,8 +2672,20 @@ export class CastManager {
             item.media?.customData?.queueEntryId === entryId ||
             (entryId && this.queueItemIdByEntryId.get(entryId) === item.itemId));
         const item = listed ?? (media && typeof usableId === 'number' ? { itemId: usableId } : null);
-        if (!window || window.session !== session || window.blocked || window.repeat !== repeat ||
-            !entryId || !window.ids.includes(entryId) || !item) {
+        if (media && window && window.session === session && typeof media.mediaSessionId === 'number') window.mediaSessionId = media.mediaSessionId;
+        const inWindow = !!window && window.session === session && !window.blocked && window.repeat === repeat && !!entryId && window.ids.includes(entryId);
+        // The SDK drops its Media object once the receiver moves on by itself
+        // (NAD 2026-10-12: every second Next reloaded). The jump can still go
+        // out on the media channel; it proves itself through aurora.status.
+        if (inWindow && !media && typeof usableId === 'number' && window && entryId &&
+            await this.jumpViaMediaChannel(session, window, usableId, entryId)) return;
+        if (!inWindow || !item) {
+            if (window && window.session === session) {
+                const reason = window.blocked ? 'blocked' : window.repeat !== repeat ? 'repeat-changed'
+                    : !entryId || !window.ids.includes(entryId) ? 'outside-window'
+                    : !media ? 'no-media-session' : 'unknown-item-id';
+                this.logCast('ok', 'Cast queue jump fell back to LOAD', `reason=${reason} knownItemId=${typeof usableId === 'number'}`);
+            }
             await this.castQueue(tracks, startIndex, repeat);
             return;
         }
@@ -3017,6 +3034,7 @@ export class CastManager {
                         complete: bounded.entries.length === ordered.length, cafRepeat: cafRepeatFor(bounded.entries),
                         inferred: new Set(), nextItemId: null, seedable: true, inferenceOff: false,
                     };
+                    this.queueWindow.mediaSessionId = session.getMediaSession?.()?.mediaSessionId ?? null;
                     this.persistQueueWindow();
                     this.lastAuroraStatus = null; // status from the previous LOAD cannot refill this window
                     this.lastAuroraStatusAt = 0;
@@ -3264,6 +3282,41 @@ export class CastManager {
         this.persistQueueWindow();
         this.logCast('ok', 'Cast queue window edit mirrored', detail);
         return true;
+    }
+
+    /**
+     * Jump with a QUEUE_UPDATE on the media namespace when the SDK has no Media
+     * object to call queueJumpToItem on. It reuses the media session ID from
+     * this window's LOAD; whether CAF still accepts it after the receiver has
+     * advanced is exactly what the outcome log answers. Success is only the
+     * receiver reporting the entry; one miss disables it for the Cast session.
+     */
+    private async jumpViaMediaChannel(session: any, window: CastQueueWindow, itemId: number, entryId: string): Promise<boolean> {
+        if (this.mediaChannelJumpFailedFor === session || typeof window.mediaSessionId !== 'number' || typeof session?.sendMessage !== 'function') return false;
+        const requestId = ++this.auroraControlRequestId;
+        try {
+            await Promise.resolve(session.sendMessage(CAST_MEDIA_NAMESPACE, {
+                type: 'QUEUE_UPDATE', requestId, mediaSessionId: window.mediaSessionId, currentItemId: itemId,
+            }));
+        } catch (error) {
+            this.mediaChannelJumpFailedFor = session;
+            this.logCast('warn', 'Cast queue jump via media channel failed', `${this.describeError(error)} itemId=${itemId}`);
+            return false;
+        }
+        const startedAt = Date.now();
+        while (Date.now() - startedAt < CAST_MEDIA_CHANNEL_JUMP_TIMEOUT_MS) {
+            if (this.lastAuroraStatus?.queueEntryId === entryId && this.lastAuroraStatusAt >= startedAt) {
+                this.logCast('ok', 'Cast queue jump via media channel', `itemId=${itemId} mediaSessionId=${window.mediaSessionId} ms=${Date.now() - startedAt}`);
+                return true;
+            }
+            if (this.queueWindow !== window || session !== this.castContext?.getCurrentSession?.()) return false;
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        // One miss means this receiver does not accept it; never pay the wait
+        // again in this Cast session.
+        this.mediaChannelJumpFailedFor = session;
+        this.logCast('warn', 'Cast queue jump via media channel unconfirmed', `itemId=${itemId} mediaSessionId=${window.mediaSessionId} timeoutMs=${CAST_MEDIA_CHANNEL_JUMP_TIMEOUT_MS}`);
+        return false;
     }
 
     /** Remember the window under its Cast session ID, for adoption after a reload or recovery. */
