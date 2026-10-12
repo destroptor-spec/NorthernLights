@@ -362,3 +362,47 @@ describe('receiver item IDs inferred from position (prod 2026-10-12: CAF numbers
         expect(session.loadMedia).toHaveBeenCalledTimes(1);
     });
 });
+
+describe('jumping without an SDK Media object (NAD 2026-10-12: every second Next reloaded)', () => {
+    const setup = async () => {
+        const h = harness();
+        Object.assign(h.media, { mediaSessionId: 7 });
+        await h.manager.castQueue(mockState.playlist, 10);
+        h.manager.queueItemIdByEntryId.set('entry-12', 35);
+        (h.session as { getMediaSession: () => unknown }).getMediaSession = () => null; // the receiver moved on
+        return h;
+    };
+    afterEach(() => jest.useRealTimers());
+
+    it('sends QUEUE_UPDATE on the media channel and accepts it once the receiver reports the entry', async () => {
+        const { manager, session } = await setup();
+        jest.useFakeTimers();
+        const pending = manager.ensureQueuePlayback(mockState.playlist, 12);
+        await Promise.resolve(); await Promise.resolve();
+        expect(session.sendMessage).toHaveBeenCalledWith('urn:x-cast:com.google.cast.media',
+            expect.objectContaining({ type: 'QUEUE_UPDATE', mediaSessionId: 7, currentItemId: 35 }));
+        manager.lastAuroraStatus = { queueEntryId: 'entry-12', itemId: 35 };
+        manager.lastAuroraStatusAt = Date.now() + 1;
+        await jest.advanceTimersByTimeAsync(200);
+        await pending;
+        expect(session.loadMedia).toHaveBeenCalledTimes(1);
+        expect(manager.logCast).toHaveBeenCalledWith('ok', 'Cast queue jump via media channel', expect.stringContaining('itemId=35'));
+    });
+
+    it('falls back to a LOAD after 3 s without evidence, and stops trying for the Cast session', async () => {
+        const { manager, session } = await setup();
+        jest.useFakeTimers();
+        const pending = manager.ensureQueuePlayback(mockState.playlist, 12);
+        await jest.advanceTimersByTimeAsync(3100);
+        await pending;
+        expect(session.loadMedia).toHaveBeenCalledTimes(2);
+        expect(manager.logCast).toHaveBeenCalledWith('warn', 'Cast queue jump via media channel unconfirmed', expect.any(String));
+        // The next window in this Cast session does not pay the wait again.
+        manager.queueItemIdByEntryId.set('entry-13', 36);
+        (manager.queueWindow as unknown as { mediaSessionId: number }).mediaSessionId = 7;
+        session.sendMessage.mockClear();
+        await manager.ensureQueuePlayback(mockState.playlist, 13);
+        expect(session.sendMessage).not.toHaveBeenCalled();
+        expect(session.loadMedia).toHaveBeenCalledTimes(3);
+    });
+});
