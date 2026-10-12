@@ -2,6 +2,7 @@ import { resolveLoggingPreferences } from '../utils/loggingPreferences';
 import type { ServerLoggingSetting } from '../../shared/logging';
 import { create, StateCreator } from 'zustand';
 import { persist, PersistOptions } from 'zustand/middleware';
+import { buildTrackUrls } from '../utils/trackUrls';
 import type { TrackInfo } from '../utils/fileSystem';
 import { EMPTY_FILTER_STATE } from '../utils/filterState';
 import { extractMetadata } from '../utils/fileSystem';
@@ -173,37 +174,9 @@ async function getResponseError(response: Response, fallback: string): Promise<s
   return fallback;
 }
 
-const buildTrackUrls = (trackId: string, path: string, token: string, quality: string = '128k', artHash?: string) => {
-  const base = `${window.location.protocol}//${window.location.host}`;
-  const tokenParam = token ? `&token=${token}` : '';
-  if (path.startsWith('api-v1:')) {
-    const encodedToken = encodeURIComponent(token);
-    return {
-      url: `${base}/api/stream/${encodeURIComponent(trackId)}/playlist.m3u8?quality=${quality}${tokenParam}`,
-      rawUrl: `${base}/api/v1/media/tracks/${encodeURIComponent(trackId)}${encodedToken ? `?token=${encodedToken}` : ''}`,
-      artUrl: artHash ? `${base}/api/art?hash=${encodeURIComponent(artHash)}${tokenParam}` : undefined,
-    };
-  }
-  // path is already base64 from the DB — just URL-encode for safe transport
-  const pathB64 = encodeURIComponent(path);
-  // Prefer a content-hash art URL when the cover has been pre-encoded: it's
-  // identical across every track of an album, so the service worker caches and
-  // the browser decodes it ONCE per album instead of once per track. Tracks not
-  // yet processed (no artHash) fall back to the path-addressed URL, which the
-  // server resolves and serves (or live-extracts) transparently.
-  const artUrl = artHash
-    ? `${base}/api/art?hash=${artHash}${tokenParam}`
-    : `${base}/api/art?pathB64=${pathB64}${tokenParam}`;
-  return {
-    url: `${base}/api/stream/${encodeURIComponent(trackId)}/playlist.m3u8?quality=${quality}${tokenParam}`,
-    rawUrl: `${base}/api/stream?pathB64=${pathB64}${tokenParam}`,
-    artUrl,
-  };
-};
-
 const hydrateServerTrack = (track: TrackInfo, token: string, quality: string): TrackInfo => ({
   ...track,
-  ...buildTrackUrls(track.id, track.path, token, quality, (track as any).artHash),
+  ...buildTrackUrls(track.id, track.path, token, quality, (track as any).artHash, track.artUrl),
 });
 
 const dedupeTrackIds = (trackIds: string[]): string[] => {
@@ -298,7 +271,7 @@ const hydratePlaylistTracks = (
     .filter((track): track is TrackInfo => Boolean(track?.id && track?.path))
     .map((track) => ({
       ...track,
-      ...buildTrackUrls(track.id, track.path, authToken, quality, (track as any).artHash),
+      ...buildTrackUrls(track.id, track.path, authToken, quality, (track as any).artHash, track.artUrl),
     }));
 };
 
@@ -2032,7 +2005,7 @@ export const usePlayerStore = create<PlayerState>()(
                 const currentTrack = state.currentIndex !== null ? state.playlist[state.currentIndex] : null;
                 const nextQueue = state.playlist
                   .filter((t) => existing.has(t.id))
-                  .map((t) => (t.path ? { ...t, ...buildTrackUrls(t.id, t.path, token, quality, (t as any).artHash) } : t));
+                  .map((t) => (t.path ? { ...t, ...buildTrackUrls(t.id, t.path, token, quality, (t as any).artHash, t.artUrl) } : t));
                 let nextIndex = state.currentIndex;
                 if (currentTrack) {
                   if (!existing.has(currentTrack.id)) {
@@ -2707,7 +2680,7 @@ export const usePlayerStore = create<PlayerState>()(
           const freshToken = mediaAccessToken || authToken || '';
           const freshQuality = streamingQuality;
           const playable: TrackInfo = track.path && freshToken
-            ? { ...track, ...buildTrackUrls(track.id, track.path, freshToken, freshQuality, (track as any).artHash) }
+            ? { ...track, ...buildTrackUrls(track.id, track.path, freshToken, freshQuality, (track as any).artHash, track.artUrl) }
             : track;
 
           const generation = ++playGeneration;
@@ -2732,7 +2705,7 @@ export const usePlayerStore = create<PlayerState>()(
                   // couldn't load the new queue and kept playing the old one,
                   // while local playback self-healed. Keep them symmetric.
                   const rebuilt = item.path && freshToken
-                    ? { ...item, ...buildTrackUrls(item.id, item.path, freshToken, freshQuality, (item as any).artHash) }
+                    ? { ...item, ...buildTrackUrls(item.id, item.path, freshToken, freshQuality, (item as any).artHash, item.artUrl) }
                     : item;
                   return {
                     queueEntryId: item.queueEntryId,
