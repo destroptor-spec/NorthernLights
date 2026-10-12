@@ -1,7 +1,7 @@
 import {
     boundedQueueRequest, queueWindowEntries, castQueueCallback, CastQueueInsertAcks, planWindowEdit, applyWindowEdit, adoptableWindow,
     CAST_QUEUE_MAX_ITEMS, CAST_QUEUE_INSERT_MAX_ITEMS, CAST_QUEUE_LOW_WATER, CAST_QUEUE_KEEP_PREVIOUS,
-    type CastWindowEdit, type StoredCastWindow,
+    seedItemIds, streamKey, type CastWindowEdit, type StoredCastWindow,
 } from './castQueueWindow';
 import { getAuroraStatusNamespace } from './castNamespace';
 import { CastDiagnosticsSync } from './castDiagnostics';
@@ -87,7 +87,17 @@ type CastRepeat = 'none' | 'one' | 'all';
  * `complete` means it reaches the end of the local queue, so appends are
  * delivered at once; `cafRepeat` is the repeat mode the receiver was given.
  */
-type CastQueueWindow = { session: unknown; ids: string[]; repeat: CastRepeat; blocked: boolean; complete: boolean; cafRepeat: CastRepeat };
+type CastQueueWindow = {
+    session: unknown; ids: string[]; repeat: CastRepeat; blocked: boolean; complete: boolean; cafRepeat: CastRepeat;
+    /** Item IDs inferred from position (seedItemIds) and not yet confirmed by the receiver. */
+    inferred: Set<string>;
+    /** The ID CAF will give the next inserted item, once seeded; null until then. */
+    nextItemId: number | null;
+    /** Positional seeding is only valid until the window's order first changes. */
+    seedable: boolean;
+    /** Set after one contradiction; this window then uses observed IDs only. */
+    inferenceOff: boolean;
+};
 
 type CastLogLevel = 'ok' | 'warn' | 'error';
 
@@ -1126,8 +1136,9 @@ export class CastManager {
     private applyAuroraStatus(status: AuroraReceiverStatus) {
         const now = Date.now();
         this.lastAuroraStatus = status;
-        if (status.queueEntryId && typeof status.itemId === 'number' && this.queueWindow?.session === this.castContext?.getCurrentSession?.()) {
-            this.queueItemIdByEntryId.set(status.queueEntryId, status.itemId);
+        const statusWindow = this.queueWindow;
+        if (statusWindow && status.queueEntryId && typeof status.itemId === 'number' && statusWindow.session === this.castContext?.getCurrentSession?.()) {
+            this.observeItemId(statusWindow, status.queueEntryId, status.itemId);
         }
         this.lastAuroraStatusAt = now;
         this.maybeAdoptQueueWindow(status);
@@ -2640,13 +2651,22 @@ export class CastManager {
         const media = session?.getMediaSession();
         // The SDK may expose only current + next, and may strip customData.
         // Never interpret a local playlist index as a receiver array index.
-        const listed = media?.items?.find((item: { itemId: number; media?: { customData?: { queueEntryId?: string } } }) =>
-            item.media?.customData?.queueEntryId === entryId ||
-            (entryId && this.queueItemIdByEntryId.get(entryId) === item.itemId));
         // A played entry kept for Previous is usually no longer listed by the
         // SDK, but the receiver reported its item ID while it played.
         const knownId = entryId ? this.queueItemIdByEntryId.get(entryId) : undefined;
-        const item = listed ?? (media && typeof knownId === 'number' ? { itemId: knownId } : null);
+        // An inferred ID the SDK happens to list must name the same track.
+        const listedById = typeof knownId === 'number'
+            ? media?.items?.find((candidate: { itemId: number }) => candidate.itemId === knownId) : undefined;
+        const listedKey = streamKey(listedById?.media?.contentId);
+        const wantedKey = streamKey(tracks[startIndex]?.url || tracks[startIndex]?.rawUrl);
+        if (window && entryId && window.inferred.has(entryId) && listedKey && wantedKey && listedKey !== wantedKey) {
+            this.dropInferredItemIds(window, `entryId=${entryId} itemId=${knownId} listed=${listedKey} wanted=${wantedKey}`);
+        }
+        const usableId = entryId ? this.queueItemIdByEntryId.get(entryId) : undefined;
+        const listed = media?.items?.find((item: { itemId: number; media?: { customData?: { queueEntryId?: string } } }) =>
+            item.media?.customData?.queueEntryId === entryId ||
+            (entryId && this.queueItemIdByEntryId.get(entryId) === item.itemId));
+        const item = listed ?? (media && typeof usableId === 'number' ? { itemId: usableId } : null);
         if (!window || window.session !== session || window.blocked || window.repeat !== repeat ||
             !entryId || !window.ids.includes(entryId) || !item) {
             await this.castQueue(tracks, startIndex, repeat);
@@ -2994,6 +3014,7 @@ export class CastManager {
                     this.queueWindow = {
                         session, ids: [...before, ...bounded.entries].map(entry => entry.queueEntryId!), repeat, blocked: false,
                         complete: bounded.entries.length === ordered.length, cafRepeat: cafRepeatFor(bounded.entries),
+                        inferred: new Set(), nextItemId: null, seedable: true, inferenceOff: false,
                     };
                     this.persistQueueWindow();
                     this.lastAuroraStatus = null; // status from the previous LOAD cannot refill this window
@@ -3088,6 +3109,8 @@ export class CastManager {
                         if (!current()) return;
                         window.ids = window.ids.filter(id => id !== remaining[0]);
                         this.queueItemIdByEntryId.delete(remaining[0]);
+                        window.inferred.delete(remaining[0]);
+                        window.seedable = false;
                         this.persistQueueWindow();
                         again = true;
                     } else {
@@ -3138,8 +3161,9 @@ export class CastManager {
                 const ids = prunable.map(id => this.queueItemIdByEntryId.get(id));
                 await castQueueCallback((ok, fail) => media.queueRemoveItems(new chrome.cast.media.QueueRemoveItemsRequest(ids), ok, fail));
                 if (!current()) return;
-                prunable.forEach(id => this.queueItemIdByEntryId.delete(id));
+                prunable.forEach(id => { this.queueItemIdByEntryId.delete(id); window.inferred.delete(id); });
                 window.ids = window.ids.filter(id => !prunable.includes(id));
+                window.seedable = false;
                 this.persistQueueWindow();
             }
             const available = Math.min(CAST_QUEUE_INSERT_MAX_ITEMS, CAST_QUEUE_MAX_ITEMS - remaining.length);
@@ -3163,6 +3187,7 @@ export class CastManager {
             }
             if (!current()) return;
             window.ids.push(...bounded.entries.map(entry => entry.queueEntryId!));
+            this.assignInsertedItemIds(window, bounded.entries.map(entry => entry.queueEntryId!));
             window.complete = bounded.entries.length === candidates.length && candidates.length === ordered.length - remaining.length;
             this.persistQueueWindow();
             again = true;
@@ -3233,6 +3258,8 @@ export class CastManager {
         }
         if (!current()) return false;
         window.ids = applyWindowEdit(window.ids, edit);
+        if (edit.kind === 'insert') this.assignInsertedItemIds(window, edit.ids);
+        else window.seedable = false; // positions moved: an unseeded window can no longer seed
         this.persistQueueWindow();
         this.logCast('ok', 'Cast queue window edit mirrored', detail);
         return true;
@@ -3244,7 +3271,12 @@ export class CastManager {
         const sessionId = (window?.session as { getSessionId?: () => string } | undefined)?.getSessionId?.();
         if (!window || !sessionId) return;
         try {
-            const stored: StoredCastWindow = { sessionId, ids: window.ids };
+            const itemIds: Record<string, number> = {};
+            for (const id of window.ids) {
+                const itemId = this.queueItemIdByEntryId.get(id);
+                if (typeof itemId === 'number') itemIds[id] = itemId;
+            }
+            const stored: StoredCastWindow = { sessionId, ids: window.ids, itemIds, nextItemId: window.inferenceOff ? null : window.nextItemId };
             localStorage.setItem(QUEUE_WINDOW_STORAGE_KEY, JSON.stringify(stored));
         } catch { /* adoption simply will not happen */ }
     }
@@ -3279,9 +3311,65 @@ export class CastManager {
             complete: verdict.ids.length - offset >= local.length,
             cafRepeat: this.cafRepeatOf(session.getMediaSession?.()?.repeatMode)
                 ?? (state.repeat === 'one' ? 'one' : state.repeat === 'all' && covers ? 'all' : 'none'),
+            // Stored IDs are treated as inferred: the receiver confirms or refutes them.
+            inferred: new Set(), nextItemId: typeof stored?.nextItemId === 'number' ? stored.nextItemId : null,
+            seedable: false, inferenceOff: false,
         };
-        if (typeof status.itemId === 'number') this.queueItemIdByEntryId.set(status.queueEntryId, status.itemId);
-        this.logCast('ok', 'queue-window-adopted', `items=${verdict.ids.length} offset=${offset}`);
+        const window = this.queueWindow;
+        for (const [entryId, itemId] of Object.entries(stored?.itemIds ?? {})) {
+            if (!verdict.ids.includes(entryId) || typeof itemId !== 'number') continue;
+            this.queueItemIdByEntryId.set(entryId, itemId);
+            window.inferred.add(entryId);
+        }
+        if (typeof status.itemId === 'number') this.observeItemId(window, status.queueEntryId, status.itemId);
+        this.logCast('ok', 'queue-window-adopted', `items=${verdict.ids.length} offset=${offset} itemIds=${Object.keys(stored?.itemIds ?? {}).length}`);
+    }
+
+    /**
+     * Record an item ID the receiver reported, check it against any inferred
+     * one, and seed the rest of a freshly loaded window from it.
+     */
+    private observeItemId(window: CastQueueWindow, entryId: string, itemId: number): void {
+        const prior = this.queueItemIdByEntryId.get(entryId);
+        if (window.inferred.delete(entryId) && prior !== itemId) {
+            this.dropInferredItemIds(window, `entryId=${entryId} inferred=${prior} observed=${itemId}`);
+        }
+        this.queueItemIdByEntryId.set(entryId, itemId);
+        if (window.nextItemId === null && window.seedable && !window.inferenceOff) {
+            const seed = seedItemIds(window.ids, entryId, itemId);
+            if (seed) {
+                for (const [id, inferred] of seed.ids) {
+                    if (this.queueItemIdByEntryId.has(id)) continue;
+                    this.queueItemIdByEntryId.set(id, inferred);
+                    window.inferred.add(id);
+                }
+                window.nextItemId = seed.next;
+                this.logCast('ok', 'queue-item-ids-inferred', `items=${window.ids.length} base=${seed.next - window.ids.length}`);
+            }
+        }
+        if (prior !== itemId) this.persistQueueWindow();
+    }
+
+    /** Inserted items continue CAF's numbering, once a window has been seeded. */
+    private assignInsertedItemIds(window: CastQueueWindow, entryIds: string[]): void {
+        if (window.nextItemId === null || window.inferenceOff) {
+            window.seedable = false;
+            return;
+        }
+        for (const id of entryIds) {
+            this.queueItemIdByEntryId.set(id, window.nextItemId++);
+            window.inferred.add(id);
+        }
+    }
+
+    /** One contradiction is enough: fall back to observed IDs for this window. */
+    private dropInferredItemIds(window: CastQueueWindow, detail: string): void {
+        for (const id of window.inferred) this.queueItemIdByEntryId.delete(id);
+        window.inferred.clear();
+        window.inferenceOff = true;
+        window.nextItemId = null;
+        this.logCast('warn', 'queue-item-id-inference-mismatch', detail);
+        this.persistQueueWindow();
     }
 
     /** The receiver's repeat mode as reported in its media status, if any. */
