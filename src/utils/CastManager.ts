@@ -2960,7 +2960,7 @@ export class CastManager {
             const time = Number.isFinite(startTime) && startTime > 0 ? startTime : 0;
             if (!(tracks[index]?.url || tracks[index]?.rawUrl)) throw new Error('Cast track has no content URL');
             if (tracks.some(track => !track.queueEntryId)) throw new Error('Cast queue entries require stable identities');
-            // Up to two played entries ride along so Previous, and the device's
+            // Up to CAST_QUEUE_KEEP_PREVIOUS played entries ride along so Previous, and the device's
             // own controls, jump instead of reloading. With repeat-all the
             // wrapped tail stops before them, so no entry is queued twice and
             // the receiver's items stay in cyclic order.
@@ -2992,7 +2992,8 @@ export class CastManager {
                 }
                 return request;
             };
-            let cap = CAST_QUEUE_MAX_ITEMS;
+            // Previous entries count toward the item cap; the byte budget covers all of them.
+            let cap = Math.max(1, CAST_QUEUE_MAX_ITEMS - before.length);
             for (let attempt = 0; attempt < 3; attempt++) {
                 const bounded = boundedQueueRequest(ordered, build, cap);
                 this.logCast('ok', 'Queue load requested', `items=${before.length + bounded.entries.length} previous=${before.length} startIndex=${index} startTime=${time} bytes=${bounded.bytes} attempt=${attempt + 1}`);

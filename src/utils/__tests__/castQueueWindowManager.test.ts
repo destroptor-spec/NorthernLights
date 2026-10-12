@@ -73,9 +73,10 @@ test('68 entries load a zero-relative window; a skip outside it loads a new wind
     expect(serializedBytes(request)).toBeLessThanOrEqual(24576);
     await manager.ensureQueuePlayback(mockState.playlist, 66);
     request = session.loadMedia.mock.calls[1][0];
-    // Two played entries ride along so Previous jumps instead of reloading.
-    expect(request.queueData.items.map(item => item.media.customData.queueEntryId)).toEqual(['entry-64', 'entry-65', 'entry-66', 'entry-67']);
-    expect(request.queueData.startIndex).toBe(2);
+    // Ten played entries ride along so Previous, and Google Home's Previous, jump back.
+    expect(request.queueData.items.map(item => item.media.customData.queueEntryId))
+        .toEqual(Array.from({ length: 12 }, (_, i) => `entry-${56 + i}`));
+    expect(request.queueData.startIndex).toBe(10);
     expect(request.media.customData.queueEntryId).toBe('entry-66');
 });
 
@@ -97,13 +98,13 @@ test('refill waits for an ack and concurrent ticks never duplicate the insert', 
     await manager.reconcileQueueWindow();
     expect(media.queueRemoveItems).toHaveBeenCalledTimes(1);
     expect(session.sendMessage).toHaveBeenCalledTimes(1);
-    // Played entries are pruned, keeping the last two.
-    expect(manager.queueWindow?.ids).toHaveLength(6);
+    // Played entries are pruned, keeping the last ten.
+    expect(manager.queueWindow?.ids).toHaveLength(14);
     const request = session.sendMessage.mock.calls[0][1];
     expect(request.items).toHaveLength(20);
     manager.queueInsertAcks.acknowledge(session, { requestId: request.requestId, ok: true, inserted: 20 });
     await pending;
-    expect(manager.queueWindow?.ids).toEqual(mockState.playlist.slice(24, 50).map(track => track.queueEntryId));
+    expect(manager.queueWindow?.ids).toEqual(mockState.playlist.slice(16, 50).map(track => track.queueEntryId));
 });
 
 test('SDK fallback refills, and repeat-all wraps the local queue without looping a partial window', async () => {
@@ -112,10 +113,11 @@ test('SDK fallback refills, and repeat-all wraps the local queue without looping
     await manager.castQueue(mockState.playlist, 60, 'all');
     const request = session.loadMedia.mock.calls[0][0];
     expect(request.queueData.repeatMode).toBe('OFF');
-    expect(request.queueData.items[0].media.customData.queueEntryId).toBe('entry-58');
-    expect(request.queueData.items[10].media.customData.queueEntryId).toBe('entry-0');
-    for (const [i, item] of request.queueData.items.slice(0, 26).entries()) manager.queueItemIdByEntryId.set(item.media.customData.queueEntryId, i + 1);
-    report(18, []);
+    expect(request.queueData.items).toHaveLength(30); // 10 previous count toward the cap
+    expect(request.queueData.items[0].media.customData.queueEntryId).toBe('entry-50');
+    expect(request.queueData.items[18].media.customData.queueEntryId).toBe('entry-0');
+    for (const [i, item] of request.queueData.items.slice(0, 28).entries()) manager.queueItemIdByEntryId.set(item.media.customData.queueEntryId, i + 1);
+    report(9, []);
     await manager.reconcileQueueWindow();
     expect(media.queueInsertItems).toHaveBeenCalledTimes(1);
     expect(session.sendMessage).not.toHaveBeenCalled();
@@ -345,7 +347,7 @@ describe('receiver item IDs inferred from position (prod 2026-10-12: CAF numbers
     const seeded = async () => {
         const h = harness();
         Object.assign(h.manager, { onTrackChange: jest.fn(), onPlayStateChange: jest.fn() });
-        await h.manager.castQueue(mockState.playlist, 10); // entries 8..39, start at position 2
+        await h.manager.castQueue(mockState.playlist, 10); // entries 0..29, start at position 10
         mockState.currentIndex = 10;
         apply(h.manager, { queueEntryId: 'entry-10', itemId: 33, playerState: 'PLAYING', currentTime: 1 });
         return h;
@@ -353,8 +355,8 @@ describe('receiver item IDs inferred from position (prod 2026-10-12: CAF numbers
 
     it('one observed ID gives the whole window, so a skip deep into it jumps instead of reloading', async () => {
         const { manager, session, media } = await seeded();
-        expect(manager.queueItemIdByEntryId.get('entry-8')).toBe(31);
-        expect(manager.queueItemIdByEntryId.get('entry-39')).toBe(62);
+        expect(manager.queueItemIdByEntryId.get('entry-0')).toBe(23);
+        expect(manager.queueItemIdByEntryId.get('entry-29')).toBe(52);
         await manager.ensureQueuePlayback(mockState.playlist, 25);
         expect(media.queueJumpToItem.mock.calls[0][0]).toBe(48);
         expect(session.loadMedia).toHaveBeenCalledTimes(1);
@@ -386,17 +388,17 @@ describe('receiver item IDs inferred from position (prod 2026-10-12: CAF numbers
         await settle();
         ack();
         await pending;
-        expect(manager.queueItemIdByEntryId.get('next')).toBe(63);
+        expect(manager.queueItemIdByEntryId.get('next')).toBe(53);
     });
 
     it('a reloaded sender adopts the stored IDs and keeps jumping', async () => {
         const { manager, session, media, replaceSession } = await seeded();
         manager.queueItemIdByEntryId.clear(); // the reload lost memory
         replaceSession({ ...session, getSessionId: () => 'session' });
-        manager.maybeAdoptQueueWindow({ queueEntryId: 'entry-10', itemId: 33, currentItemIndex: 2, queueLength: 32 });
-        expect(manager.queueItemIdByEntryId.get('entry-30')).toBe(53);
-        await manager.ensureQueuePlayback(mockState.playlist, 30);
-        expect(media.queueJumpToItem.mock.calls[0][0]).toBe(53);
+        manager.maybeAdoptQueueWindow({ queueEntryId: 'entry-10', itemId: 33, currentItemIndex: 10, queueLength: 30 });
+        expect(manager.queueItemIdByEntryId.get('entry-28')).toBe(51);
+        await manager.ensureQueuePlayback(mockState.playlist, 28);
+        expect(media.queueJumpToItem.mock.calls[0][0]).toBe(51);
         expect(session.loadMedia).toHaveBeenCalledTimes(1);
     });
 });
