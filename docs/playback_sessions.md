@@ -655,3 +655,39 @@ everything it needs (`aurora.queue.insert`, CAF queue).
 - `shared/api/v1.ts`: session, patch and report schemas
 - `src/store/index.ts`, `src/utils/queue.ts`, `src/utils/playbackContinuity.ts`: client queue today
 - `src/utils/CastManager.ts`, `public/receiver.html`: Cast sender and receiver
+
+
+## Implementation status — 2026-10-12
+
+Phase 0 is implemented as four stacked draft PRs, in the order listed in the
+roadmap. It is not yet validated on physical Cast devices:
+
+- **0(a), #89:** complete-request UTF-8/count budgets, decreasing LOAD retries,
+  identity-based navigation, acknowledged refill, bounded receiver queues and
+  sender repeat-all wrapping. Until live remove/reorder mirroring is verified,
+  edits inside the window use a reload at the receiver-reported position.
+  Pruning also reloads if the sender missed the item IDs while suspended.
+- **0(b), #90:** entry-bound position/duration selection, position-event freshness,
+  duplicate-URL ambiguity rejection, and entry-bound interpolation/handback.
+- **0(c), #91:** one bounded Infinity worker maintains three upcoming entries;
+  exhaustion, duplicate results and queue changes stop the top-up safely.
+- **0(d):** matching identity plus advancing PLAYING evidence confirms starts.
+  One retry follows the 15-second deadline; another 15 seconds ends in an
+  actionable error. A substantially delayed timer after phone suspension does
+  not automatically reload the receiver. Late valid evidence can still confirm
+  playback. Existing progress surfaces show startup/uncertainty, and existing
+  Cast health toasts provide Retry. Session changes, stop, pause and seek cancel
+  pending confirmation. LOAD acknowledgement itself has a 12-second timeout so
+  a hung command cannot block the retry indefinitely.
+
+Automated validation: typecheck; Vite production build; full Jest run (95 suites,
+793 tests passed, 26 tests skipped); final targeted confirmation/manager/UI run
+(22 tests passed) after the last race-condition adjustments. The skipped suites
+and physical devices are not covered by this result.
+
+Before promoting the drafts: verify the NAD checklist above, a 68+ entry queue
+playing beyond its first window, repeat wrap and current-entry removal, edits
+inside/outside the window, successful and deliberately failed starts, another
+sender taking over, and the installed phone PWA backgrounded for three tracks.
+The Phase 1–5 server/session/receiver work remains unimplemented by these PRs.
+Issue #72 remains deferred; these changes do not establish the cause of error 310.

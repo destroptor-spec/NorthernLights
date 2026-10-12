@@ -1,3 +1,4 @@
+import { castManager } from '../utils/CastManager';
 import { usePlayerStore } from '../store/index';
 import { usePlaybackTimeStore } from '../store/playbackTime';
 import { playbackManager } from '../utils/PlaybackManager';
@@ -6,6 +7,7 @@ import { formatTime } from '../utils/formatTime';
 import React from 'react';
 
 const ProgressBarImpl = () => {
+  const castPlaybackStatus = usePlayerStore((state) => state.castPlaybackStatus);
   const currentTime = usePlaybackTimeStore((state) => state.currentTime);
   const duration = usePlaybackTimeStore((state) => state.duration);
   const playlist = usePlayerStore((state) => state.playlist);
@@ -28,6 +30,14 @@ const ProgressBarImpl = () => {
   const handleSeek = React.useCallback((time: number) => {
     playbackManager.seek(time);
   }, []);
+
+  if (castPlaybackStatus) {
+    return <div className="progress-bar-container" role="status" aria-live="polite">
+      {castPlaybackStatus === 'starting'
+        ? `Starting on ${castManager.getCastDeviceName() || 'Cast device'}…`
+        : 'Playback not confirmed'}
+    </div>;
+  }
 
   return (
     <div className="progress-bar-container">

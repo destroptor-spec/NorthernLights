@@ -1,3 +1,4 @@
+import { CastPlaybackConfirmation } from './castPlaybackConfirmation';
 import { boundedQueueRequest, queueWindowEntries, castQueueCallback, CastQueueInsertAcks, CAST_QUEUE_MAX_ITEMS, CAST_QUEUE_INSERT_MAX_ITEMS, CAST_QUEUE_LOW_WATER } from './castQueueWindow';
 import { getAuroraStatusNamespace } from './castNamespace';
 import { CastDiagnosticsSync } from './castDiagnostics';
@@ -229,8 +230,13 @@ export class CastManager {
 
     private queueWindow: CastQueueWindow | null = null;
     private queueWindowBusy = false;
+    private queueLoadingSession: unknown = null;
     private queueWindowEdited = false;
-    private queueLoadRetry: { session: unknown; index: number; time: number } | null = null;
+    private readonly playbackConfirmation = new CastPlaybackConfirmation();
+    private playbackRetry: { session: unknown; entryId: string; time: number } | null = null;
+    private confirmationLoadAccepted = false;
+    private previousPlaybackEntryId: string | null = null;
+    private queueLoadRetry: { session: unknown; entryId: string; time: number } | null = null;
     private queueLoadGeneration = 0;
     private readonly queueInsertAcks = new CastQueueInsertAcks();
 
@@ -310,6 +316,10 @@ export class CastManager {
     private _onStateChangeCallback?: (state: CastState) => void;
 
     private notifyStateChange() {
+        if (!this.isConnected()) {
+            this.playbackConfirmation.cancel();
+            this.playbackRetry = null;
+        }
         if (this.state === 'CONNECTED') {
             this.startStatusWatchdog();
         } else {
@@ -344,6 +354,7 @@ export class CastManager {
      * re-anchoring on our own extrapolation would compound its error.
      */
     private publishPosition(position: number, atMs: number = Date.now()) {
+        if (this.playbackConfirmation.unconfirmed) return;
         const entryId = this.currentEntryId();
         if (!entryId || !Number.isFinite(position) || position < 0) return;
         this.positionAnchor = { position, atMs, entryId };
@@ -413,7 +424,7 @@ export class CastManager {
      * of its way entirely and the two never fight.
      */
     private runPositionTick() {
-        if (!this.isConnected()) return;
+        if (!this.isConnected() || this.playbackConfirmation.unconfirmed) return;
         const anchor = this.positionAnchor;
         if (!anchor || anchor.entryId !== this.currentEntryId()) return;
         if (this.remotePositionMatchesTrack() && !isRemotePlayerStreamStale(Date.now() - this.lastRemotePositionAt)) return;
@@ -552,7 +563,7 @@ export class CastManager {
         this.mediaSessionProbeStartedAt = 0;
         this.logCast('warn', 'Cast remote media gone; releasing local playing state', `eventSilenceMs=${eventSilenceMs} probedMs=${probedMs} msSinceEvidence=${Date.now() - this.lastRemoteEvidenceAt}`);
         try {
-            this.onPlayStateChange?.(false);
+            this.publishPlayState(false);
         } catch { /* ignore */ }
     }
 
@@ -778,6 +789,8 @@ export class CastManager {
     }
 
     private resetSessionAttemptState(reason: string, options: { clearStoredSession?: boolean; healthPhase?: CastHealthPhase; healthMessage?: string } = {}) {
+        this.playbackConfirmation.cancel();
+        this.playbackRetry = null;
         this.mediaSessionListenerSessionId = '';
         this.userSessionRequestPending = false;
         this.rejoinSessionPending = false;
@@ -1108,6 +1121,15 @@ export class CastManager {
      * snapshot, which is local state.
      */
     private applyAuroraStatus(status: AuroraReceiverStatus) {
+        if (this.playbackConfirmation.unconfirmed && !this.confirmationLoadAccepted && status.queueEntryId !== this.playbackConfirmation.entryId) return;
+        if (this.playbackConfirmation.unconfirmed && status.queueEntryId && status.queueEntryId !== this.playbackConfirmation.entryId) {
+            // Ignore the preceding item's late status; a different selection is
+            // evidence of takeover/advance, which cancels our pending retry.
+            if (status.queueEntryId === this.previousPlaybackEntryId) return;
+            this.playbackConfirmation.cancel();
+            this.playbackRetry = null;
+        }
+        if (this.confirmationLoadAccepted) this.playbackConfirmation.observe({ entryId: status.queueEntryId, playerState: status.playerState, currentTime: status.currentTime });
         const now = Date.now();
         this.lastAuroraStatus = status;
         if (status.queueEntryId && typeof status.itemId === 'number' && this.queueWindow?.session === this.castContext?.getCurrentSession?.()) {
@@ -1165,9 +1187,9 @@ export class CastManager {
             if (resolved !== null && resolved !== this.lastKnownDuration) this.publishDuration(resolved);
         }
         if (status.playerState === 'PLAYING') {
-            this.onPlayStateChange?.(true);
+            this.publishPlayState(true);
         } else if (status.playerState === 'PAUSED') {
-            this.onPlayStateChange?.(false);
+            this.publishPlayState(false);
         }
     }
 
@@ -1972,7 +1994,7 @@ export class CastManager {
             this.playerController.addEventListener(
                 cast.framework.RemotePlayerEventType.IS_PAUSED_CHANGED,
                 () => {
-                    this.onPlayStateChange?.(!this.player.isPaused);
+                    this.publishPlayState(!this.player.isPaused);
                 }
             );
 
@@ -1984,6 +2006,7 @@ export class CastManager {
                     if (!this.mediaMatchesCurrentTrack(this.player?.mediaInfo)) return;
                     this.lastRemotePositionAt = Date.now();
                     this.lastRemotePositionEntryId = this.currentEntryId();
+                    if (this.confirmationLoadAccepted) this.playbackConfirmation.observe({ entryId: this.currentEntryId(), playerState: this.player.playerState, currentTime: this.player.currentTime });
                     this.publishPosition(this.player.currentTime);
                 }
             );
@@ -2013,7 +2036,7 @@ export class CastManager {
                         // idleReason is only available on the media session, not RemotePlayer
                         try {
                             if (mediaSession?.idleReason === chrome.cast.media.IdleReason.FINISHED) {
-                                if (this.suppressRemoteEndedDuringDisconnect) return;
+                                if (this.suppressRemoteEndedDuringDisconnect || this.playbackConfirmation.unconfirmed) return;
                                 this.onEnded?.();
                             }
                         } catch { /* ignore */ }
@@ -2269,6 +2292,43 @@ export class CastManager {
         return mediaSession.media?.customData?.queueEntryId || null;
     }
 
+    private beginPlaybackConfirmation(session: unknown, entryId: string, time: number): void {
+        this.confirmationLoadAccepted = false;
+        this.positionAnchor = { position: time, atMs: Date.now(), entryId };
+        this.previousPlaybackEntryId = this.lastAuroraStatus?.queueEntryId || this.getCurrentQueueEntryId();
+        this.playbackRetry = null;
+        this.playbackConfirmation.start({
+            entryId,
+            isCurrent: () => this.isConnected() && session === this.castContext?.getCurrentSession?.() && this.currentEntryId() === entryId,
+            retry: async () => {
+                const state = usePlayerStore.getState();
+                const index = state.playlist.findIndex(track => track.queueEntryId === entryId);
+                if (index >= 0) await this.castQueue(state.playlist, index, state.repeat, time, true);
+            },
+            confirmed: (attempt, elapsedMs) => {
+                usePlayerStore.setState({ castPlaybackStatus: null, isBuffering: false });
+                this.queueLoadRetry = null;
+                this.playbackRetry = null;
+                this.logCast('ok', 'playback-confirmed', `entryId=${entryId} elapsedMs=${elapsedMs} attempt=${attempt}`);
+                this.setHealthStatus('connected', `Casting to ${this.getCastDeviceName() || 'device'}.`);
+                this.publishPlayState(true);
+            },
+            failed: (attempt, elapsedMs) => {
+                this.playbackRetry = { session, entryId, time };
+                usePlayerStore.setState({ castPlaybackStatus: 'unconfirmed', isBuffering: false, playbackState: 'paused' });
+                this.logCast('error', 'playback-unconfirmed', `entryId=${entryId} elapsedMs=${elapsedMs} attempt=${attempt}`);
+                this.setHealthStatus('error', 'Playback did not start on the Cast device. Retry to try again.');
+            },
+            cancelled: () => usePlayerStore.setState({ castPlaybackStatus: null, isBuffering: false }),
+        });
+        usePlayerStore.setState({ castPlaybackStatus: 'starting', isBuffering: true });
+        this.setHealthStatus('rejoining', `Starting on ${this.getCastDeviceName() || 'Cast device'}…`);
+    }
+
+    private publishPlayState(playing: boolean): void {
+        if (!this.playbackConfirmation.unconfirmed) this.onPlayStateChange?.(playing);
+    }
+
     private currentEntryId(): string | null {
         const state = usePlayerStore.getState();
         return state.currentIndex === null ? null : state.playlist[state.currentIndex]?.queueEntryId || null;
@@ -2440,7 +2500,7 @@ export class CastManager {
         const media = mediaSession.media || {};
         const metadata = media.metadata || {};
         const storeTrack = sessionIndex !== null ? playlist[sessionIndex] : null;
-        const choice = sessionIndex === usePlayerStore.getState().currentIndex
+        const choice = !this.playbackConfirmation.unconfirmed && sessionIndex === usePlayerStore.getState().currentIndex
             ? this.chooseCurrentPosition(mediaSession)
             : { currentTime: null, duration: storeTrack?.duration ?? null, source: 'none' as const };
         const playerState = mediaSession.playerState || this.player?.playerState;
@@ -2456,7 +2516,7 @@ export class CastManager {
             },
             position: choice.currentTime,
             duration: choice.duration,
-            playbackState: this.mapCastPlayerState(playerState),
+            playbackState: this.playbackConfirmation.unconfirmed ? 'paused' : this.mapCastPlayerState(playerState),
         };
     }
 
@@ -2492,6 +2552,10 @@ export class CastManager {
             playbackManager.getLocalAudioElement().pause();
         } catch { /* ignore */ }
 
+        if (this.playbackConfirmation.unconfirmed && !this.mediaMatchesCurrentTrack(mediaSession.media)) return false;
+        if (this.confirmationLoadAccepted && mediaSession.__source !== 'remote-player' && this.mediaMatchesCurrentTrack(mediaSession.media)) {
+            this.playbackConfirmation.observe({ entryId: this.currentEntryId(), playerState: mediaSession.playerState, currentTime: mediaSession.currentTime });
+        }
         const trackSynced = this.syncCurrentTrackFromSession(mediaSession);
         const choice = this.chooseCurrentPosition(mediaSession);
 
@@ -2509,9 +2573,9 @@ export class CastManager {
 
         const playerState = mediaSession.playerState || this.player?.playerState;
         if (playerState === chrome.cast.media.PlayerState.PLAYING) {
-            this.onPlayStateChange?.(true);
+            this.publishPlayState(true);
         } else if (playerState === chrome.cast.media.PlayerState.PAUSED) {
-            this.onPlayStateChange?.(false);
+            this.publishPlayState(false);
         }
 
         this.syncBrowserMediaSessionFromCast(mediaSession);
@@ -2582,6 +2646,7 @@ export class CastManager {
     }
 
     private syncCurrentTrackFromSession(mediaSession: any | null = this.getMediaSession()): boolean {
+        if (this.playbackConfirmation.unconfirmed && !this.mediaMatchesCurrentTrack(mediaSession?.media)) return false;
         if (!mediaSession) return false;
 
         this.syncQueueItemMapFromSession(mediaSession);
@@ -2629,8 +2694,10 @@ export class CastManager {
             return;
         }
         if (item.itemId === media.currentItemId) return;
+        this.beginPlaybackConfirmation(session, entryId, 0);
         try {
             await castQueueCallback((ok, fail) => media.queueJumpToItem(item.itemId, ok, fail));
+            if (session === this.castContext.getCurrentSession() && this.playbackConfirmation.entryId === entryId) this.confirmationLoadAccepted = true;
         } catch (error) {
             window.blocked = true;
             this.setHealthStatus('error', 'Could not skip on the Cast device. Retry to reload the queue.');
@@ -2891,11 +2958,15 @@ export class CastManager {
      * @param startIndex Which track to start playing (0-based)
      * @param repeat 'none' | 'one' | 'all' — repeat mode
      */
-    public async castQueue(tracks: CastQueueTrack[], startIndex = 0, repeat: CastRepeat = 'none', startTime = 0) {
+    public async castQueue(tracks: CastQueueTrack[], startIndex = 0, repeat: CastRepeat = 'none', startTime = 0, confirmationRetry = false) {
         if (!this.isConnected() || tracks.length === 0) return;
         const session = this.castContext.getCurrentSession();
         if (!session) return;
         const generation = ++this.queueLoadGeneration;
+        this.queueLoadingSession = session;
+        const requestedEntryId = tracks[startIndex]?.queueEntryId;
+        this.confirmationLoadAccepted = false;
+        if (!confirmationRetry && requestedEntryId) this.beginPlaybackConfirmation(session, requestedEntryId, startTime);
         const previous = this.currentLoadPromise;
         let release!: () => void;
         this.currentLoadPromise = new Promise<void>(resolve => { release = resolve; });
@@ -2937,8 +3008,14 @@ export class CastManager {
                 const bounded = boundedQueueRequest(ordered, build, cap);
                 this.logCast('ok', 'Queue load requested', `items=${bounded.entries.length} startIndex=${index} startTime=${time} bytes=${bounded.bytes} attempt=${attempt + 1}`);
                 try {
-                    await session.loadMedia(bounded.request);
+                    let timer: ReturnType<typeof setTimeout> | undefined;
+                    try {
+                        await Promise.race([session.loadMedia(bounded.request), new Promise<never>((_, reject) => {
+                            timer = setTimeout(() => reject(new Error('Cast LOAD acknowledgement timed out')), 12000);
+                        })]);
+                    } finally { if (timer !== undefined) clearTimeout(timer); }
                     if (!stillCurrent()) return;
+                    this.confirmationLoadAccepted = true;
                     this.queueWindow = { session, ids: bounded.entries.map(entry => entry.queueEntryId!), repeat, blocked: false };
                     this.lastAuroraStatus = null; // status from the previous LOAD cannot refill this window
                     this.lastAuroraStatusAt = 0;
@@ -2957,11 +3034,14 @@ export class CastManager {
             }
         } catch (error) {
             if (stillCurrent()) {
-                this.queueLoadRetry = { session, index: startIndex, time: startTime };
+                this.queueLoadRetry = requestedEntryId ? { session, entryId: requestedEntryId, time: startTime } : null;
                 this.logCast('error', 'Failed to load queue', this.describeError(error));
-                this.setHealthStatus('error', 'Failed to load the Cast queue. Retry to try again.');
+                if (!this.playbackConfirmation.unconfirmed) this.setHealthStatus('error', 'Failed to load the Cast queue. Retry to try again.');
             }
-        } finally { release(); }
+        } finally {
+            if (generation === this.queueLoadGeneration) this.queueLoadingSession = null;
+            release();
+        }
     }
 
     /** Refill only a window this sender loaded, using acknowledged mutations. */
@@ -2971,7 +3051,7 @@ export class CastManager {
         await Promise.resolve();
         const window = this.queueWindow;
         const session = this.castContext?.getCurrentSession?.();
-        if (!this.isConnected() || !window || window.session !== session || window.blocked || this.queueWindowBusy) return;
+        if (!this.isConnected() || !window || window.session !== session || window.blocked || this.queueWindowBusy || this.playbackConfirmation.unconfirmed) return;
         const mediaSnapshot = session.getMediaSession();
         const status: AuroraReceiverStatus | null = this.lastAuroraStatus && Date.now() - this.lastAuroraStatusAt <= this.auroraStatusFreshMs
             ? this.lastAuroraStatus : mediaSnapshot ? {
@@ -3021,7 +3101,7 @@ export class CastManager {
                     window.ids = window.ids.filter(id => id !== remaining[0]);
                     this.queueItemIdByEntryId.delete(remaining[0]);
                 } else {
-                    reload = { index: index < 0 ? Math.min(state.currentIndex ?? 0, state.playlist.length - 1) : index,
+                    reload = { index: index < 0 ? ((state.currentIndex ?? 0) >= state.playlist.length ? 0 : (state.currentIndex ?? 0)) : index,
                         time: index < 0 ? 0 : status.currentTime || 0 };
                 }
                 return;
@@ -3087,6 +3167,10 @@ export class CastManager {
      * Appends a new track to the end of the active Cast queue without interrupting playback.
      */
     public async appendToQueue(track: { queueEntryId?: string; url?: string; rawUrl?: string; title?: string; artist?: string; artUrl?: string; album?: string; format?: string; duration?: number }) {
+        if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
+            this.queueWindowEdited = true;
+            return;
+        }
         if (this.queueWindow?.session === this.castContext?.getCurrentSession?.()) {
             await this.reconcileQueueWindow(true);
             return;
@@ -3135,6 +3219,10 @@ export class CastManager {
     }
 
     public async insertNextInQueue(track: { queueEntryId?: string; url?: string; rawUrl?: string; title?: string; artist?: string; artUrl?: string; album?: string; format?: string; duration?: number }) {
+        if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
+            this.queueWindowEdited = true;
+            return;
+        }
         if (this.queueWindow?.session === this.castContext?.getCurrentSession?.()) {
             await this.reconcileQueueWindow(true);
             return;
@@ -3180,6 +3268,10 @@ export class CastManager {
     }
 
     public async removeFromQueue(queueEntryId: string) {
+        if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
+            this.queueWindowEdited = true;
+            return;
+        }
         if (this.queueWindow?.session === this.castContext?.getCurrentSession?.()) {
             await this.reconcileQueueWindow(true);
             return;
@@ -3204,6 +3296,10 @@ export class CastManager {
     }
 
     public async moveQueueItem(queueEntryId: string, newIndex: number) {
+        if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
+            this.queueWindowEdited = true;
+            return;
+        }
         if (this.queueWindow?.session === this.castContext?.getCurrentSession?.()) {
             await this.reconcileQueueWindow(true);
             return;
@@ -3228,6 +3324,10 @@ export class CastManager {
     }
 
     public async setRepeatMode(repeat: 'none' | 'one' | 'all') {
+        if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
+            this.queueWindowEdited = true;
+            return;
+        }
         if (this.queueWindow?.session === this.castContext?.getCurrentSession?.()) {
             await this.reconcileQueueWindow(true);
             return;
@@ -3248,6 +3348,8 @@ export class CastManager {
     }
 
     public playOrPause() {
+        if (this.playbackRetry) { void this.retryConnectionFromUi(); return; }
+        if (this.playbackConfirmation.pending) { this.pause(); return; }
         if (this.tryTransportViaMediaSession('play-or-pause', 'toggle')) return;
         try {
             if (!this.playerController) {
@@ -3261,6 +3363,10 @@ export class CastManager {
     }
 
     public pause() {
+        this.queueLoadingSession = null;
+        this.queueLoadGeneration++;
+        this.playbackConfirmation.cancel();
+        this.playbackRetry = null;
         if (this.tryTransportViaMediaSession('pause', 'pause')) return;
         try {
             if (!this.playerController) {
@@ -3275,6 +3381,7 @@ export class CastManager {
     }
 
     public resume() {
+        if (this.playbackRetry) { void this.retryConnectionFromUi(); return; }
         if (this.tryTransportViaMediaSession('resume', 'play')) return;
         try {
             if (!this.playerController) {
@@ -3289,6 +3396,12 @@ export class CastManager {
     }
 
     public stop() {
+        this.queueLoadingSession = null;
+        this.queueWindow = null;
+        this.queueLoadRetry = null;
+        this.playbackConfirmation.cancel();
+        this.playbackRetry = null;
+        this.queueLoadGeneration++;
         try {
             if (this.playerController) {
                 this.playerController.stop();
@@ -3299,6 +3412,10 @@ export class CastManager {
     }
 
     public seek(time: number) {
+        if (this.playbackConfirmation.unconfirmed) {
+            this.playbackConfirmation.cancel();
+            this.playbackRetry = null;
+        }
         const view = this.getReceiverTrackView();
         const state = usePlayerStore.getState();
         const decision = decideSeek({
@@ -3340,15 +3457,22 @@ export class CastManager {
     public getCurrentCastTime(): number {
         const anchor = this.positionAnchor;
         if (!anchor || anchor.entryId !== this.currentEntryId()) return 0;
+        if (this.playbackConfirmation.unconfirmed) return anchor.position;
         return interpolatePosition({ anchorPosition: anchor.position, anchorAtMs: anchor.atMs,
             nowMs: Date.now(), playing: usePlayerStore.getState().playbackState === 'playing', duration: this.lastKnownDuration || null });
     }
 
     public async retryConnectionFromUi(): Promise<boolean> {
-        if (this.queueLoadRetry && this.queueLoadRetry.session === this.castContext?.getCurrentSession?.()) {
+        const playbackRetry = this.playbackRetry;
+        if (playbackRetry && playbackRetry.session === this.castContext?.getCurrentSession?.() && playbackRetry.entryId === this.currentEntryId()) {
+            const state = usePlayerStore.getState();
+            await this.castQueue(state.playlist, state.currentIndex ?? 0, state.repeat, playbackRetry.time);
+            return this.playbackConfirmation.pending;
+        }
+        if (this.queueLoadRetry && this.queueLoadRetry.entryId === this.currentEntryId() && this.queueLoadRetry.session === this.castContext?.getCurrentSession?.()) {
             const retry = this.queueLoadRetry;
             const state = usePlayerStore.getState();
-            await this.castQueue(state.playlist, retry.index, state.repeat, retry.time);
+            await this.castQueue(state.playlist, state.playlist.findIndex(track => track.queueEntryId === retry.entryId), state.repeat, retry.time);
             return this.queueLoadRetry === null;
         }
         if (this.queueWindow?.blocked && this.queueWindow.session === this.castContext?.getCurrentSession?.()) {
