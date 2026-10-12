@@ -739,9 +739,11 @@ roadmap. It is not yet validated on physical Cast devices:
   sender repeat-all wrapping. After review: inside edits are mirrored by item
   ID (Play Next via `aurora.queue.insert`, remove, reorder, repeat), with a
   reload only when an ID is unknown; complete windows deliver appends at once;
-  LOADs carry two previous entries; pruning never reloads; windows are adopted
+  LOADs carry ten previous entries; pruning never reloads; windows are adopted
   after a reload, rejoin or recovery only on proof; loads and jumps recover a
-  dead transport through `runCastCommand`.
+  dead transport through `runCastCommand`. Receiver item IDs are inferred
+  from position (CAF numbers items consecutively) and verified against every
+  report, so skips and edits deep in the window no longer reload.
 - **0(b), #90:** entry-bound position/duration selection, position-event freshness,
   duplicate-URL ambiguity rejection, and entry-bound interpolation/handback.
   Receiver play state still applies when its entry does not match.
