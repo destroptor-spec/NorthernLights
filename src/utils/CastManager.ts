@@ -3034,8 +3034,12 @@ export class CastManager {
             const build = (selected: CastQueueTrack[]) => {
                 const all = [...before, ...selected];
                 const start = before.length;
+                // Every item carries its cover: the receiver shows art only from
+                // the item it plays (Google TV, 2026-10-13: most covers missing
+                // when only the start item had one). The byte budget pays for it
+                // with fewer items per load, and refill tops up the rest.
                 const items = all.map((track, i) => this.buildQueueItem(track, {
-                    includeAuthTokenInCustomData: false, includeArtwork: i === start,
+                    includeAuthTokenInCustomData: false, includeArtwork: true,
                     includeDuration: i === start, compactHlsUrl: true,
                 }));
                 const token = this.extractTokenFromUrl(tracks[index].url || tracks[index].rawUrl || '');
@@ -3237,7 +3241,7 @@ export class CastManager {
             const requestId = ++this.auroraControlRequestId;
             const capable = status.caps?.includes(RECEIVER_QUEUE_INSERT_CAP);
             const bounded = boundedQueueRequest(candidates, selected => {
-                const items = selected.map(track => this.buildQueueItem(track, { includeAuthTokenInCustomData: false, includeArtwork: false, compactHlsUrl: true }));
+                const items = selected.map(track => this.buildQueueItem(track, { includeAuthTokenInCustomData: false, includeArtwork: true, compactHlsUrl: true }));
                 return capable ? { type: 'aurora.queue.insert', requestId, position: 'end', items: items.map(toReceiverQueueItem) }
                     : new chrome.cast.media.QueueInsertItemsRequest(items);
             }, available);
@@ -3288,7 +3292,7 @@ export class CastManager {
             const playlist = usePlayerStore.getState().playlist;
             const tracks = edit.ids.map(id => playlist.find(track => track.queueEntryId === id));
             if (tracks.length > CAST_QUEUE_INSERT_MAX_ITEMS || tracks.some(track => !track)) return 'reload';
-            const items = (tracks as CastQueueTrack[]).map(track => this.buildQueueItem(track, { includeAuthTokenInCustomData: false, includeArtwork: false, compactHlsUrl: true }));
+            const items = (tracks as CastQueueTrack[]).map(track => this.buildQueueItem(track, { includeAuthTokenInCustomData: false, includeArtwork: true, compactHlsUrl: true }));
             const next = edit.before === remaining[1];
             if (next && status.caps?.includes(RECEIVER_QUEUE_INSERT_CAP)) {
                 // The receiver channel inserts after its current item (#56 Stage 0).
