@@ -32,4 +32,45 @@ describe('Music Store Logic', () => {
     expect(url.searchParams.get('quality')).toBe('auto');
     expect(url.searchParams.get('token')).toBe('media-token');
   });
+
+  describe('Next on the last track', () => {
+    const queue = () => [{ id: 'a', path: '/a.mp3', title: 'a' }, { id: 'b', path: '/b.mp3', title: 'b' }];
+    const stubs = () => {
+      const playAtIndex = jest.fn().mockResolvedValue(undefined);
+      const stop = jest.fn();
+      const fetchNextInfinityTrack = jest.fn().mockResolvedValue(undefined);
+      usePlayerStore.setState({ playAtIndex, stop, fetchNextInfinityTrack, recordSkip: jest.fn(), _scrobbleEligible: true, shuffle: false } as never);
+      return { playAtIndex, stop, fetchNextInfinityTrack };
+    };
+
+    it('wraps to the first track only with repeat-all', async () => {
+      const { playAtIndex } = stubs();
+      usePlayerStore.setState({ playlist: queue(), currentIndex: 1, repeat: 'all' });
+      await usePlayerStore.getState().nextTrack();
+      expect(playAtIndex).toHaveBeenCalledWith(0);
+    });
+
+    it('continues with Infinity instead of jumping back to the first track', async () => {
+      const { playAtIndex, fetchNextInfinityTrack } = stubs();
+      usePlayerStore.setState({ playlist: queue(), currentIndex: 1, repeat: 'none', isInfinityMode: true });
+      await usePlayerStore.getState().nextTrack();
+      expect(fetchNextInfinityTrack).toHaveBeenCalledWith(false);
+      expect(playAtIndex).not.toHaveBeenCalled();
+    });
+
+    it('ends the queue without Infinity, as the last track ending by itself does', async () => {
+      const { playAtIndex, stop } = stubs();
+      usePlayerStore.setState({ playlist: queue(), currentIndex: 1, repeat: 'none', isInfinityMode: false });
+      await usePlayerStore.getState().nextTrack();
+      expect(stop).toHaveBeenCalled();
+      expect(playAtIndex).not.toHaveBeenCalled();
+    });
+
+    it('still advances normally before the end', async () => {
+      const { playAtIndex } = stubs();
+      usePlayerStore.setState({ playlist: queue(), currentIndex: 0, repeat: 'none', isInfinityMode: false });
+      await usePlayerStore.getState().nextTrack();
+      expect(playAtIndex).toHaveBeenCalledWith(1);
+    });
+  });
 });
