@@ -19,12 +19,14 @@ type Internals = {
     lastAuroraStatus: AuroraReceiverStatus | null; lastAuroraStatusAt: number;
     queueItemIdByEntryId: Map<string, number>; queueWindow: { ids: string[]; blocked: boolean } | null;
     queueInsertAcks: CastQueueInsertAcks; reconcileQueueWindow(edited?: boolean): Promise<void>;
+    maybeAdoptQueueWindow(status: AuroraReceiverStatus): void; recoverStaleTransport: jest.Mock; logCast: jest.Mock;
 };
 beforeEach(() => jest.useFakeTimers());
 afterEach(() => { jest.clearAllTimers(); jest.useRealTimers(); });
 function harness() {
     Object.assign(globalThis, { chrome: { cast: { media: {
         LoadRequest, QueueData: class {}, QueueInsertItemsRequest: ItemsRequest, QueueRemoveItemsRequest: ItemsRequest,
+        QueueReorderItemsRequest: ItemsRequest,
         RepeatMode: { ALL: 'ALL', OFF: 'OFF', SINGLE: 'SINGLE' },
     } } } });
     const media = {
@@ -32,6 +34,8 @@ function harness() {
         queueRemoveItems: jest.fn((_request, ok) => ok()),
         queueInsertItems: jest.fn((_request, ok) => ok()),
         queueJumpToItem: jest.fn((_id, ok) => ok()), queueRemoveItem: jest.fn((_id, ok) => ok()), stop: jest.fn((_request, ok) => ok()),
+        queueReorderItems: jest.fn((_request, ok) => ok()), queueSetRepeatMode: jest.fn((_mode, ok) => ok()),
+        repeatMode: undefined as string | undefined,
     };
     const session = {
         getMediaSession: () => media, getSessionId: () => 'session',
@@ -43,9 +47,10 @@ function harness() {
     Object.assign(manager, {
         state: 'CONNECTED', castContext: { getCurrentSession: () => active }, currentLoadPromise: Promise.resolve(),
         playbackConfirmation: new CastPlaybackConfirmation(), confirmationLoadAccepted: false, getCastDeviceName: () => 'Test device',
-        queueLoadGeneration: 0, queueWindowBusy: false, queueWindowEdited: false, queueWindow: null,
+        queueLoadGeneration: 0, queueWindowBusy: false, queueWindowEditSeq: 0, queueWindowEditHandled: 0, queueWindow: null,
         queueItemIdByEntryId: new Map(), queueInsertAcks: new CastQueueInsertAcks(), auroraControlRequestId: 0,
-        auroraStatusFreshMs: 20000, lastAuroraStatus: null, lastAuroraStatusAt: 0,
+        auroraStatusFreshMs: 20000, lastAuroraStatus: null, lastAuroraStatusAt: 0, queueWindowAdoptionChecked: null,
+        recoverStaleTransport: jest.fn().mockResolvedValue(false),
         logCast: jest.fn(), setHealthStatus: jest.fn(),
         buildQueueItem: (track: TrackInfo) => ({ media: { contentId: track.url, customData: { queueEntryId: track.queueEntryId }, metadata: { title: track.title } } }),
     });
@@ -57,7 +62,13 @@ function harness() {
         manager.lastAuroraStatusAt = Date.now();
         mockState.currentIndex = index;
     };
-    return { manager, session, media, report, replaceSession: () => { active = {}; } };
+    localStorage.clear();
+    const ack = () => {
+        const [, message] = session.sendMessage.mock.calls[session.sendMessage.mock.calls.length - 1];
+        manager.queueInsertAcks.acknowledge(active, { requestId: message.requestId, ok: true, inserted: message.items.length });
+    };
+    const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+    return { manager, session, media, report, ack, settle, replaceSession: (next: unknown = {}) => { active = next; } };
 }
 
 test('68 entries load a zero-relative window; a skip outside it loads a new window', async () => {
@@ -69,8 +80,10 @@ test('68 entries load a zero-relative window; a skip outside it loads a new wind
     expect(serializedBytes(request)).toBeLessThanOrEqual(24576);
     await manager.ensureQueuePlayback(mockState.playlist, 66);
     request = session.loadMedia.mock.calls[1][0];
-    expect(request.queueData.items.map(item => item.media.customData.queueEntryId)).toEqual(['entry-66', 'entry-67']);
-    expect(request.queueData.startIndex).toBe(0);
+    // Two played entries ride along so Previous jumps instead of reloading.
+    expect(request.queueData.items.map(item => item.media.customData.queueEntryId)).toEqual(['entry-64', 'entry-65', 'entry-66', 'entry-67']);
+    expect(request.queueData.startIndex).toBe(2);
+    expect(request.media.customData.queueEntryId).toBe('entry-66');
 });
 
 test('invalid_parameter retries smaller queues and retains the local remainder', async () => {
@@ -91,12 +104,13 @@ test('refill waits for an ack and concurrent ticks never duplicate the insert', 
     await manager.reconcileQueueWindow();
     expect(media.queueRemoveItems).toHaveBeenCalledTimes(1);
     expect(session.sendMessage).toHaveBeenCalledTimes(1);
-    expect(manager.queueWindow?.ids).toHaveLength(4);
+    // Played entries are pruned, keeping the last two.
+    expect(manager.queueWindow?.ids).toHaveLength(6);
     const request = session.sendMessage.mock.calls[0][1];
     expect(request.items).toHaveLength(20);
     manager.queueInsertAcks.acknowledge(session, { requestId: request.requestId, ok: true, inserted: 20 });
     await pending;
-    expect(manager.queueWindow?.ids).toEqual(mockState.playlist.slice(26, 50).map(track => track.queueEntryId));
+    expect(manager.queueWindow?.ids).toEqual(mockState.playlist.slice(24, 50).map(track => track.queueEntryId));
 });
 
 test('SDK fallback refills, and repeat-all wraps the local queue without looping a partial window', async () => {
@@ -105,7 +119,8 @@ test('SDK fallback refills, and repeat-all wraps the local queue without looping
     await manager.castQueue(mockState.playlist, 60, 'all');
     const request = session.loadMedia.mock.calls[0][0];
     expect(request.queueData.repeatMode).toBe('OFF');
-    expect(request.queueData.items[8].media.customData.queueEntryId).toBe('entry-0');
+    expect(request.queueData.items[0].media.customData.queueEntryId).toBe('entry-58');
+    expect(request.queueData.items[10].media.customData.queueEntryId).toBe('entry-0');
     for (const [i, item] of request.queueData.items.slice(0, 26).entries()) manager.queueItemIdByEntryId.set(item.media.customData.queueEntryId, i + 1);
     report(18, []);
     await manager.reconcileQueueWindow();
@@ -113,7 +128,7 @@ test('SDK fallback refills, and repeat-all wraps the local queue without looping
     expect(session.sendMessage).not.toHaveBeenCalled();
 });
 
-test('outside edits stay local; inside edits reload at receiver position', async () => {
+test('outside edits stay local; an inside edit without a known item ID reloads at receiver position', async () => {
     const { manager, session, report } = harness();
     await manager.castQueue(mockState.playlist);
     report(0);
@@ -204,6 +219,132 @@ test('duplicate URLs without entry identity are rejected and old anchors do not 
     expect(manager.getCurrentCastTime()).toBe(0);
 });
 
+test('Play Next inside the window is mirrored through the receiver channel, without a reload', async () => {
+    const { manager, session, report, ack, settle } = harness();
+    await manager.castQueue(mockState.playlist);
+    report(0);
+    mockState.playlist.splice(1, 0, { ...mockState.playlist[40], queueEntryId: 'next' });
+    const pending = manager.reconcileQueueWindow(true);
+    await settle();
+    const message = session.sendMessage.mock.calls[0][1];
+    expect(message).toMatchObject({ type: 'aurora.queue.insert', position: 'next' });
+    ack();
+    await pending;
+    expect(session.loadMedia).toHaveBeenCalledTimes(1);
+    expect(manager.queueWindow?.ids.slice(0, 3)).toEqual(['entry-0', 'next', 'entry-1']);
+});
+
+test('remove and move inside the window use item-ID commands when the IDs are known', async () => {
+    const { manager, session, report, media, settle } = harness();
+    await manager.castQueue(mockState.playlist);
+    report(0);
+    for (let i = 0; i < 30; i++) manager.queueItemIdByEntryId.set(`entry-${i}`, i + 1);
+    mockState.playlist.splice(3, 1);
+    await manager.reconcileQueueWindow(true);
+    expect(media.queueRemoveItems.mock.calls[0][0].items).toEqual([4]);
+    const [moved] = mockState.playlist.splice(1, 1);
+    mockState.playlist.splice(4, 0, moved);
+    await manager.reconcileQueueWindow(true);
+    await settle();
+    const reorder = media.queueReorderItems.mock.calls[0][0];
+    expect(reorder.items).toEqual([2]);
+    expect(reorder.insertBefore).toBe(7);
+    expect(session.loadMedia).toHaveBeenCalledTimes(1);
+});
+
+test('toggling repeat sets the receiver mode instead of reloading', async () => {
+    const { manager, session, report, media } = harness();
+    mockState.playlist = mockState.playlist.slice(0, 10);
+    await manager.castQueue(mockState.playlist);
+    report(0);
+    mockState.repeat = 'one';
+    await manager.reconcileQueueWindow(true);
+    expect(media.queueSetRepeatMode.mock.calls[0][0]).toBe('SINGLE');
+    mockState.repeat = 'all';
+    await manager.reconcileQueueWindow(true);
+    expect(media.queueSetRepeatMode.mock.calls[1][0]).toBe('ALL'); // the whole queue is on the receiver
+    expect(session.loadMedia).toHaveBeenCalledTimes(1);
+});
+
+test('a complete window delivers an append at once, as before windowing', async () => {
+    const { manager, session, report, ack, settle } = harness();
+    mockState.playlist = mockState.playlist.slice(0, 20);
+    await manager.castQueue(mockState.playlist);
+    report(0); // 19 upcoming, far above the low-water mark
+    mockState.playlist.push({ ...mockState.playlist[0], queueEntryId: 'added' });
+    const pending = manager.reconcileQueueWindow(true);
+    await settle();
+    expect(session.sendMessage.mock.calls[0][1]).toMatchObject({ position: 'end', items: [expect.anything()] });
+    ack();
+    await pending;
+    expect(manager.queueWindow?.ids).toContain('added');
+});
+
+test('pruning skips unknown item IDs and never reloads', async () => {
+    const { manager, session, report, media, ack, settle } = harness();
+    await manager.castQueue(mockState.playlist);
+    manager.queueItemIdByEntryId.set('entry-3', 4); // the phone slept through the rest
+    report(26);
+    const pending = manager.reconcileQueueWindow();
+    await settle();
+    expect(media.queueRemoveItems.mock.calls[0][0].items).toEqual([4]);
+    ack();
+    await pending;
+    expect(session.loadMedia).toHaveBeenCalledTimes(1);
+    expect(manager.queueWindow?.ids).not.toContain('entry-3');
+    expect(manager.queueWindow?.ids).toContain('entry-2');
+});
+
+test('a resumed sender adopts its stored window only on proof, and never reloads', async () => {
+    const { manager, session, replaceSession } = harness();
+    await manager.castQueue(mockState.playlist);
+    const resumed = { ...session, getSessionId: () => 'session' };
+    replaceSession(resumed);
+    manager.maybeAdoptQueueWindow({ queueEntryId: 'entry-4', itemId: 5, currentItemIndex: 4, queueLength: 30 });
+    expect(manager.queueWindow?.ids).toHaveLength(30);
+    expect((manager.queueWindow as unknown as { session: unknown }).session).toBe(resumed);
+
+    const other = { ...session, getSessionId: () => 'session' };
+    replaceSession(other);
+    manager.maybeAdoptQueueWindow({ queueEntryId: 'entry-4', itemId: 5, currentItemIndex: 4, queueLength: 31 });
+    expect(manager.queueWindow).toBeNull();
+    expect(manager.logCast).toHaveBeenCalledWith('warn', 'queue-window-not-adopted', 'reason=receiver-count-mismatch');
+    expect(session.loadMedia).toHaveBeenCalledTimes(1);
+});
+
+test('a LOAD into a dead transport recovers and retries on the recovered session', async () => {
+    const { manager, session, replaceSession } = harness();
+    const dead = Object.assign(new Error('Presentation connection is disconnected.'), { name: 'InvalidStateError' });
+    session.loadMedia.mockRejectedValueOnce(dead);
+    const recovered = { ...session, getSessionId: () => 'session', loadMedia: jest.fn().mockResolvedValue(undefined) };
+    manager.recoverStaleTransport.mockImplementation(async () => { replaceSession(recovered); return true; });
+    await manager.castQueue(mockState.playlist);
+    expect(manager.recoverStaleTransport).toHaveBeenCalledWith('load-queue', dead);
+    expect(recovered.loadMedia).toHaveBeenCalledTimes(1);
+    expect((manager.queueWindow as unknown as { session: unknown }).session).toBe(recovered);
+});
+
+test('Previous jumps to a kept played entry by its reported item ID', async () => {
+    const { manager, session, report, media } = harness();
+    await manager.castQueue(mockState.playlist, 10);
+    report(10);
+    manager.queueItemIdByEntryId.set('entry-9', 2); // reported while it played
+    await manager.ensureQueuePlayback(mockState.playlist, 9);
+    expect(media.queueJumpToItem.mock.calls[0][0]).toBe(2);
+    expect(session.loadMedia).toHaveBeenCalledTimes(1);
+});
+
+test('play state from the receiver applies even when its entry is unknown; position does not', () => {
+    const { manager } = harness();
+    const onPlayStateChange = jest.fn();
+    const onTime = jest.fn();
+    Object.assign(manager, { onPlayStateChange, onTimeUpdate: onTime, publishPosition: onTime, publishDuration: onTime });
+    const apply = (status: AuroraReceiverStatus) => (manager as unknown as { applyAuroraStatus(s: AuroraReceiverStatus): void }).applyAuroraStatus(status);
+    apply({ queueEntryId: null, playerState: 'PAUSED', currentTime: 248.4, duration: 248.4 });
+    apply({ queueEntryId: 'not-in-the-local-queue', playerState: 'PLAYING', currentTime: 248.4, duration: 248.4 });
+    expect(onPlayStateChange.mock.calls).toEqual([[false], [true]]);
+    expect(onTime).not.toHaveBeenCalled();
+});
 
 test('LOAD acceptance does not publish progress until receiver evidence advances', async () => {
     const { manager } = harness();

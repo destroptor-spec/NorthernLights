@@ -559,6 +559,11 @@ everything it needs (`aurora.queue.insert`, CAF queue).
   in `ensureQueuePlayback`, the `metadata.index` fallback in
   `resolveTrackIndexFromSession`) must map through `queueEntryId` or a
   window-relative index.
+- **Previous entries.** A LOAD also carries up to **2 entries before** the
+  current one (inside the same budget), with `startIndex` pointing at the
+  current entry. Previous on the phone, and the device's own controls (Google
+  Home, a TV remote), then jump instead of reloading. Going further back than
+  that is a LOAD at the chosen entry, which is a user-initiated skip.
 - **Replenishment.** When the receiver's current item has fewer than 5 items
   after it, the sender appends the next local entries, up to the cap, with
   `aurora.queue.insert` (`end`, ≤ 20 per message, acked), falling back to the
@@ -566,13 +571,58 @@ everything it needs (`aurora.queue.insert`, CAF queue).
   sender being awake, exactly as today's Infinity top-up does. A 30-item window
   is about two hours of music, far longer than the phone-asleep gaps in the
   Oct 11 log. Removing that dependency is Phase 5.
+- **A complete window delivers at once.** When the window already reaches the
+  end of the local queue, an append or Play Next is sent to the receiver
+  immediately (acked), exactly as before windowing. The low-water wait applies
+  only to a *truncated* window, whose next entries are still on the phone. This
+  keeps small queues behaving as they did: a track added just before locking
+  the phone is already on the device.
 - **Edits outside the window** change only the local queue. Replenishment picks
   them up when the window reaches them.
-- **Edits inside the window** are mirrored as today. Because the remove/move
-  mirroring path is suspected dead (the SDK relay strips `customData`), the
-  Phase 0 PR first verifies it on the NAD. If it is dead, an edit inside the
-  window reloads the window at the current item and position: one short gap,
-  instead of a receiver queue that disagrees with the phone.
+- **Edits inside the window** are mirrored, never reloaded, whenever the
+  receiver item IDs involved are known:
+  - Play Next: `aurora.queue.insert` with `next` (acked; proven on the NAD in
+    #56), falling back to the SDK insert with `insertBefore` on older receivers;
+  - remove: SDK `queueRemoveItem` by item ID;
+  - move: SDK `queueReorderItems` before the item ID of the entry's new
+    successor;
+  - repeat change: SDK `queueSetRepeatMode`, using the repeat-all rule below.
+
+  These are item-ID commands, which do not depend on `customData` surviving the
+  relay. Only inserts do, which is why inserts prefer `aurora.queue.insert`.
+  When an item ID is unknown (the phone slept through the status that carried
+  it), or the edit cannot be expressed as one of these commands, the window is
+  reloaded at the receiver's entry and position: one short gap, instead of a
+  receiver queue that disagrees with the phone. Undo of a queue edit is an edit
+  too, and goes through the same path.
+- **Played entries** are pruned from the receiver only by item IDs the sender
+  actually observed, keeping the last 2 (see *Previous entries*). An entry
+  whose ID is unknown stays on the receiver. Pruning never reloads; a few
+  extra played entries on the receiver are harmless.
+- **Infinity and the low-water mark.** Infinity keeps 3 entries ahead (0(c)),
+  below the low-water mark of 5. That is consistent rather than conflicting:
+  in Infinity mode the window always holds the whole local tail, so it is
+  complete, and each Infinity append is delivered at once as one acked insert.
+  The low-water refill matters only for long, finite queues.
+- **Rejoin, reload and recovery.** The window survives the sender losing its
+  memory or its session object:
+  - after every window change, the sender stores the window's entry IDs with
+    the Cast session ID (≤ 32 IDs in `localStorage`);
+  - when a session is resumed (a PWA reload, a stored-session rejoin, or a
+    #86 stale-transport recovery, which creates a new session object), the
+    sender **adopts** the stored window only if all of these hold: the session
+    ID matches; the receiver's current entry (`aurora.status`) is in the stored
+    IDs; the receiver's item count from the current item
+    (`queueLength - currentItemIndex`) equals the stored count from that entry;
+    and the stored IDs from that entry match the local queue's order from the
+    current entry;
+  - otherwise it does **not** adopt. It leaves the receiver's queue playing
+    untouched (never an automatic reload), logs `queue-window-not-adopted`
+    with the failed condition, and falls back to the pre-window per-edit
+    mirroring. The next user-initiated load creates a fresh window.
+- **Loads and jumps recover a dead transport** through the same
+  stale-transport wrapper (`runCastCommand`) as every other Cast command, so a
+  tap after the phone wakes recovers and retries instead of failing (#39/#86).
 - **Removing the playing entry** jumps the receiver to the next window entry
   (`queueJumpToItem`), then removes the old one.
 - **Repeat-all:** when the whole queue fits in the window, CAF `REPEAT_ALL` as

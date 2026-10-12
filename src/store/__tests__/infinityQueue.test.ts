@@ -232,3 +232,48 @@ describe('Infinity Mode through API v1', () => {
   });
 
 });
+
+describe('Infinity at the end of the queue', () => {
+  const fetchMock = jest.fn();
+  beforeEach(() => {
+    jest.clearAllMocks();
+    isConnected.mockReturnValue(false);
+    global.fetch = fetchMock as unknown as typeof fetch;
+    usePlayerStore.setState({
+      isInfinityMode: true, isFetchingInfinity: false, playlist: [track('a'), track('b')], currentIndex: 1,
+      sessionHistoryTrackIds: [], mediaAccessToken: 'media-token', streamingQuality: 'auto',
+    });
+  });
+
+  const pendingRecommendation = () => {
+    let resolve!: (response: unknown) => void;
+    fetchMock.mockReturnValue(new Promise(done => { resolve = done; }));
+    return (id: string) => resolve({ ok: true, json: async () => ({ data: apiTrack(id) }) });
+  };
+
+  it('plays a track the listener queued during the request instead of stopping', async () => {
+    const respond = pendingRecommendation();
+    const playAtIndex = jest.fn();
+    const stop = jest.fn();
+    usePlayerStore.setState({ playAtIndex, stop } as never);
+    const pending = usePlayerStore.getState().fetchNextInfinityTrack(false);
+    usePlayerStore.setState({ playlist: [track('a'), track('b'), track('queued')] });
+    respond('next');
+    await pending;
+    expect(playAtIndex).toHaveBeenCalledWith(2);
+    expect(stop).not.toHaveBeenCalled();
+    expect(usePlayerStore.getState().playlist.map(t => t.id)).toEqual(['a', 'b', 'queued']);
+  });
+
+  it('appends and plays the recommendation after an edit that left nothing to play', async () => {
+    const respond = pendingRecommendation();
+    const playAtIndex = jest.fn();
+    usePlayerStore.setState({ playAtIndex } as never);
+    const pending = usePlayerStore.getState().fetchNextInfinityTrack(false);
+    usePlayerStore.setState({ playlist: [{ ...track('b') }], currentIndex: 0 }); // 'a' removed
+    respond('next');
+    await pending;
+    expect(usePlayerStore.getState().playlist.map(t => t.id)).toEqual(['b', 'next']);
+    expect(playAtIndex).toHaveBeenCalledWith(1);
+  });
+});
