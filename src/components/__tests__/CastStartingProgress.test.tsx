@@ -11,10 +11,9 @@ jest.mock('../../utils/PlaybackManager', () => ({ playbackManager: { seek: jest.
 jest.mock('../../utils/CastManager', () => ({ castManager: { getCastDeviceName: () => 'NAD' } }));
 jest.mock('../WaveformProgressBar', () => ({ WaveformProgressBar: () => <div data-testid="waveform" /> }));
 
-test('existing progress surface announces startup and uncertainty without an active seek bar', () => {
+test('a start in progress keeps the normal bar; only an unconfirmed start replaces it', () => {
     const { rerender } = render(<ProgressBar />);
-    expect(screen.getByRole('status').textContent).toBe('Starting on NAD…');
-    expect(screen.queryByTestId('waveform')).toBeNull();
+    expect(screen.queryByRole('status')).toBeNull(); // no "Starting on…": the play button spins
     mockStatus = 'unconfirmed';
     // ProgressBar is memoized; unmount to simulate the store subscription update.
     rerender(<ProgressBar key="failed" />);

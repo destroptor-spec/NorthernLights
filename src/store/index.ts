@@ -593,6 +593,7 @@ export interface PlayerState {
   playbackState: PlaybackState;
   isBuffering: boolean;
   castConnected: boolean;
+  /** 'starting' only holds the play button's spinner; 'unconfirmed' is shown. */
   castPlaybackStatus: 'starting' | 'unconfirmed' | null;
   audioOutputSupported: boolean;
   audioOutputPickerSupported: boolean;
