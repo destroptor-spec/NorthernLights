@@ -662,3 +662,32 @@ test('every queue item carries its cover art: loads, refills and Play Next (Goog
     expect(built.length).toBeGreaterThan(10);
     expect(built.every(options => options.includeArtwork === true)).toBe(true);
 });
+
+test('during an unconfirmed jump, refill at the end goes ahead and edits wait without spinning (Google TV 22:14:46)', async () => {
+    const { manager, session, report, ack, settle } = harness();
+    mockState.playlist = mockState.playlist.slice(0, 12);
+    await manager.castQueue(mockState.playlist);
+    report(0); // also cancels the load's own confirmation
+    manager.playbackConfirmation.start({
+        entryId: 'entry-1', isCurrent: () => true, retry: async () => undefined,
+        confirmed: jest.fn(), failed: jest.fn(), cancelled: jest.fn(),
+    });
+    // Infinity appends at the end: delivered at once despite the pending jump.
+    mockState.playlist.push({ ...mockState.playlist[0], queueEntryId: 'infinity-1' });
+    const refill = manager.reconcileQueueWindow(true);
+    await settle();
+    ack();
+    await refill;
+    expect(manager.queueWindow?.ids).toContain('infinity-1');
+    // A move waits for confirmation, and does not re-run itself meanwhile.
+    const runs = jest.spyOn(manager, 'reconcileQueueWindow');
+    const [moved] = mockState.playlist.splice(3, 1);
+    mockState.playlist.splice(6, 0, moved);
+    await manager.reconcileQueueWindow(true);
+    await settle();
+    const settled = runs.mock.calls.length;
+    await settle(); await settle();
+    expect(runs.mock.calls.length).toBe(settled); // no re-run loop while deferred
+    expect(settled).toBeLessThanOrEqual(2); // ours, plus at most the refill's one follow-up
+    expect(session.loadMedia).toHaveBeenCalledTimes(1);
+});

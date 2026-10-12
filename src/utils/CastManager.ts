@@ -3242,7 +3242,9 @@ export class CastManager {
         const editSeq = this.queueWindowEditSeq;
         const window = this.queueWindow;
         const session = this.castContext?.getCurrentSession?.();
-        if (!this.isConnected() || !window || window.session !== session || window.blocked || this.queueWindowBusy || this.playbackConfirmation.unconfirmed) return;
+        if (!this.isConnected() || !window || window.session !== session || window.blocked || this.queueWindowBusy) return;
+        // Nothing touches a queue whose LOAD is still in flight.
+        if (this.playbackConfirmation.unconfirmed && this.queueLoadingSession === session) return;
         const mediaSnapshot = session.getMediaSession();
         const status: AuroraReceiverStatus | null = this.lastAuroraStatus && Date.now() - this.lastAuroraStatusAt <= this.auroraStatusFreshMs
             ? this.lastAuroraStatus : mediaSnapshot ? {
@@ -3271,9 +3273,19 @@ export class CastManager {
         this.currentLoadPromise = new Promise<void>(resolve => { release = resolve; });
         let reload: { index: number; time: number } | null = null;
         let again = false;
+        let deferred = false; // edits held for playback confirmation; it re-runs this
         try {
             await previous;
             if (!current()) return;
+            // While a jump is unconfirmed the receiver's status may still name
+            // the previous entry, so edits wait for confirmation (which runs
+            // this again). Refill at the end does not depend on it and goes
+            // ahead: holding it back made fast skips outrun Infinity's appends
+            // and reload (Google TV, 2026-10-13 22:14:46).
+            if ((index < 0 || edit.kind !== 'none') && this.playbackConfirmation.unconfirmed) {
+                deferred = true;
+                return;
+            }
             if (index < 0 || edit.kind !== 'none') {
                 // Only our own edits change the receiver; a transient mismatch does not.
                 if (this.queueWindowEditHandled >= editSeq) return;
@@ -3392,7 +3404,7 @@ export class CastManager {
             if (reload && current()) await this.castQueue(state.playlist, reload.index, state.repeat, reload.time);
             // An edit that arrived while we were busy, or a refill/repeat step
             // that follows a mirrored edit, runs now rather than on the next tick.
-            else if ((again || this.queueWindowEditHandled < this.queueWindowEditSeq) && current()) void this.reconcileQueueWindow();
+            else if (!deferred && (again || this.queueWindowEditHandled < this.queueWindowEditSeq) && current()) void this.reconcileQueueWindow();
         }
     }
 
