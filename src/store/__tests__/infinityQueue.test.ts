@@ -96,8 +96,8 @@ describe('Infinity Mode through API v1', () => {
     expect(appendToQueue.mock.calls[0][0]).toMatchObject({ id: 'next' });
   });
 
-  it('does not fetch while tracks remain ahead in the queue', async () => {
-    usePlayerStore.setState({ playlist: [track('a'), track('b'), track('c')], currentIndex: 0 });
+  it('does not fetch while three tracks remain ahead in the queue', async () => {
+    usePlayerStore.setState({ playlist: [track('a'), track('b'), track('c'), track('d'), track('e')], currentIndex: 0 });
     callbacks().onTrackChange(1);
     await new Promise((r) => setTimeout(r, 0));
 
@@ -199,4 +199,36 @@ describe('Infinity Mode through API v1', () => {
       expect(error).toHaveBeenCalledWith('Failed to fetch infinity track', expect.objectContaining({ code: 'INTERNAL_ERROR' }));
     } finally { error.mockRestore(); }
   });
+
+  it('serially fills three upcoming slots and shares concurrent top-up requests', async () => {
+    usePlayerStore.setState({ currentIndex: 1 });
+    const ids = ['next-1', 'next-2', 'next-3'];
+    fetchMock.mockImplementation(async (url: string) => ({ ok: true, json: async () => ({ data: url === '/api/v1/recommendations/next' ? apiTrack(ids.shift()!) : null }) }));
+    await Promise.all([usePlayerStore.getState().ensureInfinityQueue(), usePlayerStore.getState().ensureInfinityQueue()]);
+    const requests = fetchMock.mock.calls.filter(([url]) => url === '/api/v1/recommendations/next');
+    expect(requests).toHaveLength(3);
+    expect(usePlayerStore.getState().playlist.map(track => track.id)).toEqual(['a', 'b', 'next-1', 'next-2', 'next-3']);
+    expect(appendToQueue).toHaveBeenCalledTimes(3);
+    expect(JSON.parse(requests[2][1].body).exclude).toContain('next-2');
+  });
+
+  it('does not append stale recommendations after queue replacement', async () => {
+    let resolve!: (response: unknown) => void;
+    fetchMock.mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    const pending = usePlayerStore.getState().ensureInfinityQueue();
+    await Promise.resolve();
+    usePlayerStore.setState({ playlist: [track('new-queue')], currentIndex: 0 });
+    resolve({ ok: true, json: async () => ({ data: apiTrack('stale') }) });
+    await pending;
+    expect(usePlayerStore.getState().playlist.map(track => track.id)).toEqual(['new-queue']);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('exhaustion stops a top-up after one request', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: null }) });
+    await usePlayerStore.getState().ensureInfinityQueue();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(usePlayerStore.getState().isFetchingInfinity).toBe(false);
+  });
+
 });
