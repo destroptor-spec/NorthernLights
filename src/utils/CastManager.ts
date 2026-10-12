@@ -1,3 +1,4 @@
+import { boundedQueueRequest, queueWindowEntries, castQueueCallback, CastQueueInsertAcks, CAST_QUEUE_MAX_ITEMS, CAST_QUEUE_INSERT_MAX_ITEMS, CAST_QUEUE_LOW_WATER } from './castQueueWindow';
 import { getAuroraStatusNamespace } from './castNamespace';
 import { CastDiagnosticsSync } from './castDiagnostics';
 import { playbackManager } from './PlaybackManager';
@@ -72,6 +73,10 @@ const SESSION_STORAGE_KEY = 'cast_session_id';
 // applied when joining or rejoining an ongoing session.
 const FRESH_SESSION_STARTUP_VOLUME = 0.3;
 const CUSTOM_RECEIVER_HLS_CODEC = 'aac';
+type CastQueueTrack = Pick<TrackInfo, 'queueEntryId' | 'url' | 'rawUrl' | 'title' | 'artist' | 'artUrl' | 'album' | 'format' | 'duration'>;
+type CastRepeat = 'none' | 'one' | 'all';
+type CastQueueWindow = { session: unknown; ids: string[]; repeat: CastRepeat; blocked: boolean };
+
 type CastLogLevel = 'ok' | 'warn' | 'error';
 
 // Maps audio format strings (from music-metadata and file extensions) to MIME types.
@@ -219,6 +224,13 @@ export class CastManager {
 
     // Serializes concurrent loadMedia calls to prevent session_error on rapid clicks
     private currentLoadPromise: Promise<void> = Promise.resolve();
+
+    private queueWindow: CastQueueWindow | null = null;
+    private queueWindowBusy = false;
+    private queueWindowEdited = false;
+    private queueLoadRetry: { session: unknown; index: number; time: number } | null = null;
+    private queueLoadGeneration = 0;
+    private readonly queueInsertAcks = new CastQueueInsertAcks();
 
     // Listener pattern for state changes (multiple subscribers)
     private stateChangeListeners: Set<(state: CastState) => void> = new Set();
@@ -434,6 +446,7 @@ export class CastManager {
      */
     private async runStatusWatchdogTick() {
         if (!this.isConnected()) return;
+        void this.reconcileQueueWindow();
         try {
             // A live media session means any earlier "remote media gone"
             // verdict is stale — allow probing again on the next loss.
@@ -1062,6 +1075,7 @@ export class CastManager {
                         (level, message) => this.logCast(level, message));
                 } else if (status && (status as { type?: string }).type === 'aurora.queue.insert.ack') {
                     const ack = status as unknown as { ok?: boolean; inserted?: number; detail?: string; requestId?: number };
+                    this.queueInsertAcks.acknowledge(session, ack);
                     this.logCast(
                         ack.ok ? 'ok' : 'error',
                         'Cast queue insert acknowledged by receiver',
@@ -1092,6 +1106,9 @@ export class CastManager {
     private applyAuroraStatus(status: AuroraReceiverStatus) {
         const now = Date.now();
         this.lastAuroraStatus = status;
+        if (status.queueEntryId && typeof status.itemId === 'number' && this.queueWindow?.session === this.castContext?.getCurrentSession?.()) {
+            this.queueItemIdByEntryId.set(status.queueEntryId, status.itemId);
+        }
         this.lastAuroraStatusAt = now;
         this.lastRemoteEvidenceAt = now;
         this.mediaSessionProbeStartedAt = 0;
@@ -2208,7 +2225,7 @@ export class CastManager {
     }
 
     private syncQueueItemMapFromSession(mediaSession: any | null = this.getMediaSession()) {
-        this.queueItemIdByEntryId.clear();
+        if (!this.queueWindow) this.queueItemIdByEntryId.clear();
         const items = mediaSession?.items;
         if (!Array.isArray(items)) return;
         for (const item of items) {
@@ -2285,7 +2302,7 @@ export class CastManager {
         }
 
         const fallbackIndex = mediaSession.media?.metadata?.index;
-        if (typeof fallbackIndex === 'number' && fallbackIndex >= 0 && fallbackIndex < playlist.length) {
+        if (!this.queueWindow && typeof fallbackIndex === 'number' && fallbackIndex >= 0 && fallbackIndex < playlist.length) {
             return fallbackIndex;
         }
 
@@ -2561,42 +2578,29 @@ export class CastManager {
         return typeof itemId === 'number' ? itemId : null;
     }
 
-    private isSessionQueueMatchingTracks(tracks: { queueEntryId?: string }[], mediaSession: any | null = this.getMediaSession()): boolean {
-        if (!mediaSession) return false;
-        const sessionEntryIds = this.getSessionQueueEntryIds(mediaSession);
-        if (sessionEntryIds.length !== tracks.length) return false;
-        return tracks.every((track, index) => track.queueEntryId && track.queueEntryId === sessionEntryIds[index]);
-    }
-
-    public async ensureQueuePlayback(
-        tracks: { queueEntryId?: string; url?: string; rawUrl?: string; title?: string; artist?: string; artUrl?: string; album?: string; format?: string; duration?: number }[],
-        startIndex: number = 0,
-        repeat: 'none' | 'one' | 'all' = 'none'
-    ) {
+    public async ensureQueuePlayback(tracks: CastQueueTrack[], startIndex = 0, repeat: CastRepeat = 'none') {
         if (!this.isConnected()) return;
-        const mediaSession = this.getMediaSession();
-        if (!mediaSession || !this.isSessionQueueMatchingTracks(tracks, mediaSession)) {
+        const session = this.castContext.getCurrentSession();
+        const window = this.queueWindow;
+        const entryId = tracks[startIndex]?.queueEntryId;
+        const media = session?.getMediaSession();
+        // The SDK may expose only current + next, and may strip customData.
+        // Never interpret a local playlist index as a receiver array index.
+        const item = media?.items?.find((item: { itemId: number; media?: { customData?: { queueEntryId?: string } } }) =>
+            item.media?.customData?.queueEntryId === entryId ||
+            (entryId && this.queueItemIdByEntryId.get(entryId) === item.itemId));
+        if (!window || window.session !== session || window.blocked || window.repeat !== repeat ||
+            !entryId || !window.ids.includes(entryId) || !item) {
             await this.castQueue(tracks, startIndex, repeat);
             return;
         }
-
-        const desiredRepeatMode = this.getRepeatMode(repeat);
-        if (mediaSession.repeatMode !== desiredRepeatMode) {
-            try {
-                await mediaSession.queueSetRepeatMode(desiredRepeatMode);
-            } catch (e) {
-                console.warn('[Cast] Failed to sync repeat mode:', e);
-            }
-        }
-
-        const items = mediaSession.items;
-        if (!items || !items[startIndex]) return;
-        const targetItemId = items[startIndex].itemId;
-        if (targetItemId === mediaSession.currentItemId) return;
+        if (item.itemId === media.currentItemId) return;
         try {
-            await mediaSession.queueJumpToItem(targetItemId);
-        } catch (e) {
-            console.error('[Cast] Failed to jump to queue item:', e);
+            await castQueueCallback((ok, fail) => media.queueJumpToItem(item.itemId, ok, fail));
+        } catch (error) {
+            window.blocked = true;
+            this.setHealthStatus('error', 'Could not skip on the Cast device. Retry to reload the queue.');
+            this.logCast('error', 'Cast queue jump unconfirmed', this.describeError(error));
         }
     }
 
@@ -2853,152 +2857,187 @@ export class CastManager {
      * @param startIndex Which track to start playing (0-based)
      * @param repeat 'none' | 'one' | 'all' — repeat mode
      */
-    public async castQueue(
-        tracks: { queueEntryId?: string; url?: string; rawUrl?: string; title?: string; artist?: string; artUrl?: string; album?: string; format?: string; duration?: number }[],
-        startIndex: number = 0,
-        repeat: 'none' | 'one' | 'all' = 'none',
-        startTime: number = 0
-    ) {
-        if (!this.isConnected()) return;
-
-        const castSession = this.castContext.getCurrentSession();
-        if (!castSession) return;
-        const normalizedStartIndex = Math.max(0, Math.min(startIndex, tracks.length - 1));
-        const normalizedStartTime = Number.isFinite(startTime) && startTime > 0 ? startTime : 0;
-        const queueItems: any[] = tracks.map((track, index) => this.buildQueueItem(
-            track,
-            {
-                includeAuthTokenInCustomData: false,
-                includeArtwork: index === normalizedStartIndex,
-                includeDuration: index === normalizedStartIndex,
-                compactHlsUrl: true,
-            }
-        ));
-
-        const startItem = queueItems[normalizedStartIndex] || queueItems[0];
-        if (!startItem?.media) {
-            console.error('[Cast] Cannot load queue: missing start item media');
-            return;
-        }
-        // A queue built without playable URLs (empty contentId) would otherwise
-        // be sent to the device, silently fail to load, and leave the previous
-        // queue playing. Surface it instead of casting nothing.
-        if (!startItem.media.contentId) {
-            console.error('[Cast] Cannot load queue: start item has no content URL (unhydrated track?)');
-            this.logCast('error', 'Queue load aborted: empty content URL', `startIndex=${normalizedStartIndex} title=${tracks[normalizedStartIndex]?.title || 'unknown'}`);
-            toast.error('Cannot cast this queue — track URLs are missing. Try reloading.');
-            return;
-        }
-
-        const startTrack = tracks[normalizedStartIndex] || tracks[0];
-        const startTrackUrl = applyCastStreamingQualityToHlsUrl(
-            startTrack?.url || '',
-            usePlayerStore.getState().streamingQuality
-        );
-        const sharedAuthToken = this.extractTokenFromUrl(startTrackUrl || startTrack?.rawUrl || '');
-        startItem.media.customData = {
-            ...(startItem.media.customData || {}),
-            ...(sharedAuthToken ? { token: sharedAuthToken } : {}),
-            diagnosticsVerbose: this.diagnosticsVerbose,
-        };
-
-        const request = new chrome.cast.media.LoadRequest(startItem.media);
-        request.autoplay = true;
-        request.queueData = new chrome.cast.media.QueueData();
-        request.queueData.items = queueItems;
-        request.queueData.startIndex = normalizedStartIndex;
-        if (normalizedStartTime > 0) {
-            // Handing over from local playback has to resume where the listener
-            // was, not restart the track. `QueueData.startTime` alone does not
-            // do it — the documented places are the start item's own
-            // `startTime` and the LoadRequest's `currentTime`, so set those and
-            // keep queueData.startTime for good measure. All three carry the
-            // same absolute position, so there is nothing to disagree about.
-            startItem.startTime = normalizedStartTime;
-            request.currentTime = normalizedStartTime;
-            request.queueData.startTime = normalizedStartTime;
-        }
-        request.queueData.repeatMode = this.getRepeatMode(repeat);
-
-        try {
-            const approxPayloadChars = JSON.stringify({
-                media: request.media,
-                queueData: {
-                    startIndex: request.queueData.startIndex,
-                    startTime: request.queueData.startTime,
-                    repeatMode: request.queueData.repeatMode,
-                    items: request.queueData.items,
-                }
-            }).length;
-            console.log(`[Cast] Queue load summary: items=${queueItems.length} startIndex=${normalizedStartIndex} startTime=${normalizedStartTime.toFixed(1)} approxPayloadChars=${approxPayloadChars}`);
-            this.logCast('ok', 'Queue load requested', `items=${queueItems.length} startIndex=${normalizedStartIndex} startTime=${normalizedStartTime.toFixed(1)} bytesApprox=${approxPayloadChars}`);
-        } catch { /* ignore */ }
-
-        // Serialize loadMedia calls to prevent concurrent loads from clashing
+    public async castQueue(tracks: CastQueueTrack[], startIndex = 0, repeat: CastRepeat = 'none', startTime = 0) {
+        if (!this.isConnected() || tracks.length === 0) return;
+        const session = this.castContext.getCurrentSession();
+        if (!session) return;
+        const generation = ++this.queueLoadGeneration;
         const previous = this.currentLoadPromise;
-        let resolveLoad: () => void;
-        this.currentLoadPromise = new Promise<void>((resolve) => { resolveLoad = resolve; });
+        let release!: () => void;
+        this.currentLoadPromise = new Promise<void>(resolve => { release = resolve; });
         await previous;
-
+        const stillCurrent = () => generation === this.queueLoadGeneration && session === this.castContext.getCurrentSession();
         try {
-            await this.runCastCommand('load-queue', async () => {
-                const activeSession = this.castContext.getCurrentSession();
-                if (!activeSession) throw new Error('No active Cast session');
-                return activeSession.loadMedia(request);
-            });
-            this.logCast('ok', 'Queue load succeeded', `items=${queueItems.length} startIndex=${normalizedStartIndex}`);
-        } catch (e: any) {
-            const errorDetail = e?.code || e?.message || String(e);
-            const errorDesc = e?.description || '';
-            const describedError = this.describeError(e);
-            console.error(`[Cast] Failed to load queue: ${errorDetail}${errorDesc ? ' — ' + errorDesc : ''}`, e);
-            this.logCast('error', 'Failed to load queue', `${errorDetail}${errorDesc ? ' - ' + errorDesc : ''} ${describedError}`);
-            const isInvalidParameter = /invalid_parameter|INVALID_PARAMETER/.test(`${errorDetail} ${errorDesc} ${describedError}`);
-            if (isInvalidParameter && startTrack) {
+            if (!stillCurrent()) return;
+            this.queueLoadRetry = null;
+            this.queueWindow = null;
+            this.queueWindowEdited = false;
+            this.queueItemIdByEntryId.clear();
+            const index = Number.isInteger(startIndex) ? Math.max(0, Math.min(startIndex, tracks.length - 1)) : 0;
+            const time = Number.isFinite(startTime) && startTime > 0 ? startTime : 0;
+            if (!(tracks[index]?.url || tracks[index]?.rawUrl)) throw new Error('Cast track has no content URL');
+            if (tracks.some(track => !track.queueEntryId)) throw new Error('Cast queue entries require stable identities');
+            const ordered = queueWindowEntries(tracks, index, repeat === 'all');
+            const build = (selected: CastQueueTrack[]) => {
+                const items = selected.map((track, i) => this.buildQueueItem(track, {
+                    includeAuthTokenInCustomData: false, includeArtwork: i === 0,
+                    includeDuration: i === 0, compactHlsUrl: true,
+                }));
+                const token = this.extractTokenFromUrl(tracks[index].url || tracks[index].rawUrl || '');
+                items[0].media.customData = { ...items[0].media.customData, ...(token ? { token } : {}), diagnosticsVerbose: this.diagnosticsVerbose };
+                const request = new chrome.cast.media.LoadRequest(items[0].media);
+                request.autoplay = true;
+                request.queueData = new chrome.cast.media.QueueData();
+                request.queueData.items = items;
+                request.queueData.startIndex = 0;
+                request.queueData.repeatMode = this.getRepeatMode(repeat === 'all' && selected.length < tracks.length ? 'none' : repeat);
+                if (time > 0) {
+                    items[0].startTime = time;
+                    request.currentTime = time;
+                    request.queueData.startTime = time;
+                }
+                return request;
+            };
+            let cap = CAST_QUEUE_MAX_ITEMS;
+            for (let attempt = 0; attempt < 3; attempt++) {
+                const bounded = boundedQueueRequest(ordered, build, cap);
+                this.logCast('ok', 'Queue load requested', `items=${bounded.entries.length} startIndex=${index} startTime=${time} bytes=${bounded.bytes} attempt=${attempt + 1}`);
                 try {
-                    const fallbackMediaInfo = this.buildMediaInfo(startTrack, {
-                        includeAuthTokenInCustomData: true,
-                        includeArtwork: true,
-                        includeDuration: true,
-                        compactHlsUrl: false,
-                    });
-                    const fallbackRequest = new chrome.cast.media.LoadRequest(fallbackMediaInfo);
-                    fallbackRequest.autoplay = true;
-                    if (normalizedStartTime > 0) {
-                        fallbackRequest.currentTime = normalizedStartTime;
-                    }
-                    this.logCast('warn', 'Retrying Cast queue failure as current media load', `index=${normalizedStartIndex} startTime=${normalizedStartTime.toFixed(1)}`);
-                    await this.runCastCommand('load-current-media-after-queue-invalid', async () => {
-                        const activeSession = this.castContext.getCurrentSession();
-                        if (!activeSession) throw new Error('No active Cast session');
-                        return activeSession.loadMedia(fallbackRequest);
-                    });
-                    this.queueItemIdByEntryId.clear();
-                    const sessionId = castSession.getSessionId();
-                    if (sessionId) {
-                        localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
-                    }
-                    this.logCast('warn', 'Cast queue load fell back to current track', `index=${normalizedStartIndex} title=${startTrack.title || 'Unknown Title'}`);
+                    await session.loadMedia(bounded.request);
+                    if (!stillCurrent()) return;
+                    this.queueWindow = { session, ids: bounded.entries.map(entry => entry.queueEntryId!), repeat, blocked: false };
+                    this.lastAuroraStatus = null; // status from the previous LOAD cannot refill this window
+                    this.lastAuroraStatusAt = 0;
+                    this.syncQueueItemMapFromSession(session.getMediaSession());
+                    const id = session.getSessionId();
+                    if (id) localStorage.setItem(SESSION_STORAGE_KEY, id);
+                    this.logCast('ok', 'Queue load succeeded', `items=${bounded.entries.length} startIndex=${index} bytes=${bounded.bytes}`);
                     return;
-                } catch (fallbackError) {
-                    console.error('[Cast] Current media fallback after queue failure also failed:', fallbackError);
-                    this.logCast('error', 'Cast queue fallback failed', this.describeError(fallbackError));
+                } catch (error) {
+                    if (!stillCurrent()) return;
+                    const nextCap = attempt === 0 ? Math.max(1, Math.floor(bounded.entries.length / 2)) : 6;
+                    if (!/invalid_parameter/i.test(this.describeError(error)) || attempt === 2 || nextCap >= bounded.entries.length) throw error;
+                    cap = nextCap;
+                    this.logCast('warn', 'Retrying Cast load with smaller window', `items=${cap}`);
                 }
             }
-            if (!String(errorDetail).includes('cancel') && !String(errorDetail).includes('abort')) {
-                toast.error('Failed to load queue on Cast device.');
+        } catch (error) {
+            if (stillCurrent()) {
+                this.queueLoadRetry = { session, index: startIndex, time: startTime };
+                this.logCast('error', 'Failed to load queue', this.describeError(error));
+                this.setHealthStatus('error', 'Failed to load the Cast queue. Retry to try again.');
             }
-            return;
-        } finally {
-            resolveLoad!();
-        }
+        } finally { release(); }
+    }
 
-        // Store session ID for rejoin
-        const sessionId = castSession.getSessionId();
-        if (sessionId) {
-            localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+    /** Refill only a window this sender loaded, using acknowledged mutations. */
+    private async reconcileQueueWindow(edited = false): Promise<void> {
+        if (edited) this.queueWindowEdited = true;
+        // Store queue actions call us inside their updater; read after it commits.
+        await Promise.resolve();
+        const window = this.queueWindow;
+        const session = this.castContext?.getCurrentSession?.();
+        if (!this.isConnected() || !window || window.session !== session || window.blocked || this.queueWindowBusy) return;
+        const mediaSnapshot = session.getMediaSession();
+        const status: AuroraReceiverStatus | null = this.lastAuroraStatus && Date.now() - this.lastAuroraStatusAt <= this.auroraStatusFreshMs
+            ? this.lastAuroraStatus : mediaSnapshot ? {
+                queueEntryId: mediaSnapshot.items?.find((item: { itemId: number }) => item.itemId === mediaSnapshot.currentItemId)?.media?.customData?.queueEntryId
+                    || mediaSnapshot.media?.customData?.queueEntryId,
+                currentTime: mediaSnapshot.getEstimatedTime?.() ?? mediaSnapshot.currentTime,
+            } : null;
+        if (!status?.queueEntryId) return;
+        this.syncQueueItemMapFromSession(mediaSnapshot);
+        const offset = window.ids.indexOf(status.queueEntryId);
+        if (offset < 0) return; // another sender replaced the media; never seize it back
+        const state = usePlayerStore.getState();
+        const index = state.playlist.findIndex(track => track.queueEntryId === status.queueEntryId);
+        const remaining = window.ids.slice(offset);
+        const ordered = queueWindowEntries(state.playlist, index, state.repeat === 'all');
+        const changed = index < 0 || window.repeat !== state.repeat || remaining.some((id, i) => ordered[i]?.queueEntryId !== id);
+        const generation = this.queueLoadGeneration;
+        const current = () => generation === this.queueLoadGeneration && this.queueWindow === window && session === this.castContext.getCurrentSession();
+        this.queueWindowBusy = true;
+        // Serialize with LOAD too; a late insert must not contaminate its replacement.
+        const previous = this.currentLoadPromise;
+        let release!: () => void;
+        this.currentLoadPromise = new Promise<void>(resolve => { release = resolve; });
+        let reload: { index: number; time: number } | null = null;
+        try {
+            await previous;
+            if (!current()) return;
+            if (changed) {
+                // Conservative edit fallback until live SDK remove/reorder is verified.
+                if (!this.queueWindowEdited) return;
+                this.queueWindowEdited = false;
+                if (state.playlist.length === 0 || (index < 0 && (state.currentIndex ?? 0) >= state.playlist.length && state.repeat !== 'all')) {
+                    await castQueueCallback((ok, fail) => session.getMediaSession()?.stop(null, ok, fail));
+                    if (current()) {
+                        this.queueWindow = null;
+                        usePlayerStore.setState({ currentIndex: null, playbackState: 'stopped' });
+                    }
+                } else if (index < 0 && mediaSnapshot && remaining[1] && state.playlist.some(track => track.queueEntryId === remaining[1]) &&
+                    typeof this.queueItemIdByEntryId.get(remaining[0]) === 'number' &&
+                    mediaSnapshot.items?.some((item: { itemId: number }) => item.itemId === this.queueItemIdByEntryId.get(remaining[1]))) {
+                    const oldId = this.queueItemIdByEntryId.get(remaining[0]);
+                    const nextId = this.queueItemIdByEntryId.get(remaining[1]);
+                    await castQueueCallback((ok, fail) => mediaSnapshot.queueJumpToItem(nextId, ok, fail));
+                    if (!current()) return;
+                    await castQueueCallback((ok, fail) => mediaSnapshot.queueRemoveItem(oldId, ok, fail));
+                    if (!current()) return;
+                    window.ids = window.ids.filter(id => id !== remaining[0]);
+                    this.queueItemIdByEntryId.delete(remaining[0]);
+                } else {
+                    reload = { index: index < 0 ? Math.min(state.currentIndex ?? 0, state.playlist.length - 1) : index,
+                        time: index < 0 ? 0 : status.currentTime || 0 };
+                }
+                return;
+            }
+            this.queueWindowEdited = false;
+            if (remaining.length - 1 >= CAST_QUEUE_LOW_WATER || ordered.length <= remaining.length || state.repeat === 'one') return;
+            // CAF retains played entries. Remove only IDs actually observed from
+            // this LOAD; if the phone slept through them, reload without guessing.
+            const consumed = window.ids.slice(0, offset);
+            const media = session.getMediaSession();
+            if (consumed.length) {
+                const ids = consumed.map(id => this.queueItemIdByEntryId.get(id));
+                if (!media || ids.some(id => id === undefined)) {
+                    reload = { index, time: status.currentTime || 0 };
+                    return;
+                }
+                await castQueueCallback((ok, fail) => media.queueRemoveItems(new chrome.cast.media.QueueRemoveItemsRequest(ids), ok, fail));
+                if (!current()) return;
+                consumed.forEach(id => this.queueItemIdByEntryId.delete(id));
+                window.ids = remaining;
+            }
+            const requestId = ++this.auroraControlRequestId;
+            const available = Math.min(CAST_QUEUE_INSERT_MAX_ITEMS, CAST_QUEUE_MAX_ITEMS - remaining.length);
+            const capable = status.caps?.includes(RECEIVER_QUEUE_INSERT_CAP);
+            const bounded = boundedQueueRequest(ordered.slice(remaining.length), selected => {
+                const items = selected.map(track => this.buildQueueItem(track, { includeAuthTokenInCustomData: false, includeArtwork: false, compactHlsUrl: true }));
+                return capable ? { type: 'aurora.queue.insert', requestId, position: 'end', items: items.map(toReceiverQueueItem) }
+                    : new chrome.cast.media.QueueInsertItemsRequest(items);
+            }, available);
+            if (capable) {
+                await this.queueInsertAcks.wait(session, requestId, bounded.entries.length,
+                    () => session.sendMessage(getAuroraStatusNamespace(session), bounded.request));
+            } else {
+                if (!media) throw new Error('Cast queue refill requires a media session');
+                await castQueueCallback((ok, fail) => media.queueInsertItems(bounded.request, ok, fail));
+            }
+            if (!current()) return;
+            window.ids.push(...bounded.entries.map(entry => entry.queueEntryId!));
+            this.logCast('ok', 'Cast queue window replenished', `inserted=${bounded.entries.length} items=${window.ids.length} bytes=${bounded.bytes}`);
+        } catch (error) {
+            if (current()) {
+                window.blocked = true;
+                this.logCast('error', 'Cast queue window acknowledgement failed', this.describeError(error));
+                this.setHealthStatus('error', 'Cast queue update unconfirmed. Retry to reload the queue.');
+            }
+        } finally {
+            release();
+            this.queueWindowBusy = false;
+            if (reload && current()) await this.castQueue(state.playlist, reload.index, state.repeat, reload.time);
         }
-        this.syncQueueItemMapFromSession(castSession.getMediaSession());
     }
 
     /**
@@ -3006,31 +3045,18 @@ export class CastManager {
      * Much faster than reloading the entire queue for next/prev navigation.
      */
     public async jumpToQueueIndex(index: number) {
-        if (!this.isConnected()) return;
-        const mediaSession = this.getMediaSession();
-        if (!mediaSession) return;
-
-        const items = mediaSession.items;
-        if (!items || !items[index]) return;
-        const itemId = items[index].itemId;
-
-        // Jump to the specified item in the cast queue
-        try {
-            await this.runCastCommand('queue-jump', async () => {
-                const activeMediaSession = this.getMediaSession();
-                if (!activeMediaSession) throw new Error('No active Cast media session');
-                return activeMediaSession.queueJumpToItem(itemId);
-            });
-        } catch (e) {
-            console.error('[Cast] Failed to jump to queue index:', e);
-            this.logCast('error', 'Failed to jump to Cast queue item', this.describeError(e));
-        }
+        const state = usePlayerStore.getState();
+        await this.ensureQueuePlayback(state.playlist, index, state.repeat);
     }
 
     /**
      * Appends a new track to the end of the active Cast queue without interrupting playback.
      */
     public async appendToQueue(track: { queueEntryId?: string; url?: string; rawUrl?: string; title?: string; artist?: string; artUrl?: string; album?: string; format?: string; duration?: number }) {
+        if (this.queueWindow?.session === this.castContext?.getCurrentSession?.()) {
+            await this.reconcileQueueWindow(true);
+            return;
+        }
         if (!this.isConnected()) return;
         const session = this.castContext.getCurrentSession();
         if (!session) {
@@ -3075,6 +3101,10 @@ export class CastManager {
     }
 
     public async insertNextInQueue(track: { queueEntryId?: string; url?: string; rawUrl?: string; title?: string; artist?: string; artUrl?: string; album?: string; format?: string; duration?: number }) {
+        if (this.queueWindow?.session === this.castContext?.getCurrentSession?.()) {
+            await this.reconcileQueueWindow(true);
+            return;
+        }
         if (!this.isConnected()) return;
         const mediaSession = this.getMediaSession();
         const item = this.buildQueueItem({
@@ -3116,6 +3146,10 @@ export class CastManager {
     }
 
     public async removeFromQueue(queueEntryId: string) {
+        if (this.queueWindow?.session === this.castContext?.getCurrentSession?.()) {
+            await this.reconcileQueueWindow(true);
+            return;
+        }
         if (!this.isConnected()) return;
         const mediaSession = this.getMediaSession();
         if (!mediaSession) return;
@@ -3136,6 +3170,10 @@ export class CastManager {
     }
 
     public async moveQueueItem(queueEntryId: string, newIndex: number) {
+        if (this.queueWindow?.session === this.castContext?.getCurrentSession?.()) {
+            await this.reconcileQueueWindow(true);
+            return;
+        }
         if (!this.isConnected()) return;
         const mediaSession = this.getMediaSession();
         if (!mediaSession) return;
@@ -3156,6 +3194,10 @@ export class CastManager {
     }
 
     public async setRepeatMode(repeat: 'none' | 'one' | 'all') {
+        if (this.queueWindow?.session === this.castContext?.getCurrentSession?.()) {
+            await this.reconcileQueueWindow(true);
+            return;
+        }
         if (!this.isConnected()) return;
         const mediaSession = this.getMediaSession();
         if (!mediaSession) return;
@@ -3266,6 +3308,17 @@ export class CastManager {
     }
 
     public async retryConnectionFromUi(): Promise<boolean> {
+        if (this.queueLoadRetry && this.queueLoadRetry.session === this.castContext?.getCurrentSession?.()) {
+            const retry = this.queueLoadRetry;
+            const state = usePlayerStore.getState();
+            await this.castQueue(state.playlist, retry.index, state.repeat, retry.time);
+            return this.queueLoadRetry === null;
+        }
+        if (this.queueWindow?.blocked && this.queueWindow.session === this.castContext?.getCurrentSession?.()) {
+            const state = usePlayerStore.getState();
+            await this.castQueue(state.playlist, state.currentIndex ?? 0, state.repeat, this.lastAuroraStatus?.currentTime || 0);
+            return Boolean(this.queueWindow && !this.queueWindow.blocked);
+        }
         this.setHealthStatus('rejoining', 'Retrying Cast connection...', 'user-action');
         this.logCast('ok', 'User requested Cast recovery retry');
         // The user gets a fresh recovery attempt even on a session we had
