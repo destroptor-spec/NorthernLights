@@ -326,3 +326,15 @@ test('Previous jumps to a kept played entry by its reported item ID', async () =
     expect(media.queueJumpToItem.mock.calls[0][0]).toBe(2);
     expect(session.loadMedia).toHaveBeenCalledTimes(1);
 });
+
+test('play state from the receiver applies even when its entry is unknown; position does not', () => {
+    const { manager } = harness();
+    const onPlayStateChange = jest.fn();
+    const onTime = jest.fn();
+    Object.assign(manager, { onPlayStateChange, onTimeUpdate: onTime, publishPosition: onTime, publishDuration: onTime });
+    const apply = (status: AuroraReceiverStatus) => (manager as unknown as { applyAuroraStatus(s: AuroraReceiverStatus): void }).applyAuroraStatus(status);
+    apply({ queueEntryId: null, playerState: 'PAUSED', currentTime: 248.4, duration: 248.4 });
+    apply({ queueEntryId: 'not-in-the-local-queue', playerState: 'PLAYING', currentTime: 248.4, duration: 248.4 });
+    expect(onPlayStateChange.mock.calls).toEqual([[false], [true]]);
+    expect(onTime).not.toHaveBeenCalled();
+});

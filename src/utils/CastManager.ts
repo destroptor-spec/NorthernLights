@@ -1157,9 +1157,12 @@ export class CastManager {
         // is the case this channel exists to cover.
         //
         // Track identity and play state are discrete and authoritative, so they
-        // still apply unconditionally below.
-        if (status.queueEntryId !== this.currentEntryId()) return;
-        if (!this.remotePositionMatchesTrack() || isRemotePlayerStreamStale(now - this.lastRemotePositionAt)) {
+        // still apply unconditionally below. Position and duration apply only
+        // to the entry the sender shows as current.
+        const forCurrentEntry = status.queueEntryId === this.currentEntryId();
+        if (!forCurrentEntry) {
+            // Neither value belongs to the track on screen.
+        } else if (!this.remotePositionMatchesTrack() || isRemotePlayerStreamStale(now - this.lastRemotePositionAt)) {
             if (typeof status.duration === 'number' && isFinite(status.duration) && status.duration > 0) {
                 this.publishDuration(status.duration);
             }
