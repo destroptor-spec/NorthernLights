@@ -2814,6 +2814,15 @@ export const usePlayerStore = create<PlayerState>()(
           if (shuffle) {
             nextIndex = Math.floor(Math.random() * playlist.length);
           } else if (currentIndex !== null) {
+            // Only repeat-all wraps around. Next on the last track used to jump
+            // back to the first one whatever the repeat mode (reported on the
+            // Cast channel, 2026-10-12). Now it does what the last track ending
+            // by itself does: Infinity continues, otherwise the queue ends.
+            if (currentIndex >= playlist.length - 1 && get().repeat !== 'all') {
+              if (get().isInfinityMode) await get().fetchNextInfinityTrack(false);
+              else get().stop();
+              return;
+            }
             nextIndex = (currentIndex + 1) % playlist.length;
           }
 
