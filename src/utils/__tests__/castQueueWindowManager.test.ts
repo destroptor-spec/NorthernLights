@@ -47,6 +47,7 @@ function harness() {
     Object.assign(manager, {
         state: 'CONNECTED', castContext: { getCurrentSession: () => active }, currentLoadPromise: Promise.resolve(),
         playbackConfirmation: new CastPlaybackConfirmation(), confirmationLoadAccepted: false, getCastDeviceName: () => 'Test device',
+        healthStatus: { phase: 'connected', message: '' },
         queueLoadGeneration: 0, queueWindowBusy: false, queueWindowEditSeq: 0, queueWindowEditHandled: 0, queueWindow: null,
         queueItemIdByEntryId: new Map(), queueInsertAcks: new CastQueueInsertAcks(), auroraControlRequestId: 0,
         auroraStatusFreshMs: 20000, lastAuroraStatus: null, lastAuroraStatusAt: 0, queueWindowAdoptionChecked: null,
@@ -397,4 +398,35 @@ test('edits during LOAD wait for the new window rather than mutating the old que
     expect(session.sendMessage).not.toHaveBeenCalled();
     finish();
     await pending;
+});
+
+test('a LOAD acknowledged late is not loaded twice: receiver evidence confirms it', async () => {
+    const { manager, session } = harness();
+    session.loadMedia.mockImplementationOnce(() => new Promise(() => {})); // ack never arrives
+    const pending = manager.castQueue(mockState.playlist);
+    await Promise.resolve();
+    jest.advanceTimersByTime(12000);
+    await pending;
+    expect(manager.queueWindow?.ids).toHaveLength(30);
+    manager.applyAuroraStatus({ queueEntryId: 'entry-0', currentTime: 1, duration: 154, playerState: 'PLAYING' });
+    manager.applyAuroraStatus({ queueEntryId: 'entry-0', currentTime: 2.2, duration: 154, playerState: 'PLAYING' });
+    expect(manager.playbackConfirmation.unconfirmed).toBe(false);
+    jest.advanceTimersByTime(30000);
+    expect(session.loadMedia).toHaveBeenCalledTimes(1);
+});
+
+test('pausing while the LOAD is in flight keeps its window and pauses the new media', async () => {
+    const { manager, session } = harness();
+    const pauseVia = jest.fn(() => true);
+    Object.assign(manager, { tryTransportViaMediaSession: pauseVia });
+    let finish!: () => void;
+    session.loadMedia.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const pending = manager.castQueue(mockState.playlist);
+    await Promise.resolve();
+    manager.pause();
+    expect(pauseVia).toHaveBeenCalledTimes(1);
+    finish();
+    await pending;
+    expect(manager.queueWindow?.ids).toHaveLength(30);
+    expect(pauseVia).toHaveBeenCalledTimes(2); // once more, on the media the LOAD created
 });

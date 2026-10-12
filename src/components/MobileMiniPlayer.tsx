@@ -18,6 +18,7 @@ const MobileMiniPlayer = () => {
   const nextTrack = usePlayerStore((s) => s.nextTrack);
   const prevTrack = usePlayerStore((s) => s.prevTrack);
   const castConnected = usePlayerStore((s) => s.castConnected);
+  const castPlaybackStatus = usePlayerStore((s) => s.castPlaybackStatus);
   const audioOutputSupported = usePlayerStore((s) => s.audioOutputSupported);
   const audioOutputActive = usePlayerStore((s) => s.audioOutputActive);
   const audioOutputDeviceLabel = usePlayerStore((s) => s.audioOutputDeviceLabel);
@@ -106,7 +107,13 @@ const MobileMiniPlayer = () => {
 
   if (!currentTrack) return null;
 
-  const secondaryLabel = castConnected ? (castDeviceName || 'Cast device') : (currentTrack.artist || 'Unknown Artist');
+  // While a Cast start is unconfirmed, the device line says so: this is the
+  // phone's always-visible playback surface, and its progress is hidden.
+  const castDeviceLabel = castDeviceName || 'Cast device';
+  const secondaryLabel = !castConnected ? (currentTrack.artist || 'Unknown Artist')
+    : castPlaybackStatus === 'starting' ? `Starting on ${castDeviceLabel}…`
+    : castPlaybackStatus === 'unconfirmed' ? `Playback not confirmed on ${castDeviceLabel}`
+    : castDeviceLabel;
 
   return (
     <>
@@ -172,6 +179,7 @@ const MobileMiniPlayer = () => {
               className={`text-xs truncate leading-tight mt-0.5 ${
                 castConnected ? 'text-[var(--color-primary)]' : 'text-[var(--color-text-muted)]'
               }`}
+              {...(castConnected ? { role: 'status', 'aria-live': 'polite' as const } : {})}
             >
               {secondaryLabel}
             </div>

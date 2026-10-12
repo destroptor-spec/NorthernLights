@@ -75,6 +75,8 @@ export interface CastHealthStatus {
 const SESSION_STORAGE_KEY = 'cast_session_id';
 // The window's entry IDs, so a reloaded or recovered sender can adopt it.
 const QUEUE_WINDOW_STORAGE_KEY = 'aurora-cast-queue-window-v1';
+// A LOAD not acknowledged by then is treated as sent, never resent blindly.
+const CAST_LOAD_ACK_TIMEOUT_MS = 12000;
 // Receiver volume applied once when a FRESH session hands playback over (some
 // receivers power on reporting 100% and would blast the first track). Never
 // applied when joining or rejoining an ongoing session.
@@ -243,6 +245,7 @@ export class CastManager {
     private queueWindow: CastQueueWindow | null = null;
     private queueWindowBusy = false;
     private queueLoadingSession: unknown = null;
+    private pauseAfterLoadGeneration: number | null = null;
     // Edits are counted, not flagged: a reconcile handles exactly the edits
     // that committed before it read the queue, and leaves later ones pending.
     private queueWindowEditSeq = 0;
@@ -2332,6 +2335,20 @@ export class CastManager {
                 this.logCast('ok', 'playback-confirmed', `entryId=${entryId} elapsedMs=${elapsedMs} attempt=${attempt}`);
                 this.setHealthStatus('connected', `Casting to ${this.getCastDeviceName() || 'device'}.`);
                 this.publishPlayState(true);
+                // Edits made while starting were held back; apply them now.
+                void this.reconcileQueueWindow();
+            },
+            pausedElsewhere: (attempt, elapsedMs) => {
+                usePlayerStore.setState({ castPlaybackStatus: null, isBuffering: false });
+                this.queueLoadRetry = null;
+                this.playbackRetry = null;
+                this.logCast('ok', 'playback-paused-before-confirmation', `entryId=${entryId} elapsedMs=${elapsedMs} attempt=${attempt}`);
+                this.setHealthStatus('connected', `Casting to ${this.getCastDeviceName() || 'device'}.`);
+                this.publishPlayState(false);
+                void this.reconcileQueueWindow();
+            },
+            extended: (elapsedMs) => {
+                this.logCast('warn', 'playback-confirmation-extended', `entryId=${entryId} elapsedMs=${elapsedMs} reason=entry-already-starting`);
             },
             failed: (attempt, elapsedMs) => {
                 this.playbackRetry = { session, entryId, time };
@@ -2339,7 +2356,13 @@ export class CastManager {
                 this.logCast('error', 'playback-unconfirmed', `entryId=${entryId} elapsedMs=${elapsedMs} attempt=${attempt}`);
                 this.setHealthStatus('error', 'Playback did not start on the Cast device. Retry to try again.');
             },
-            cancelled: () => usePlayerStore.setState({ castPlaybackStatus: null, isBuffering: false }),
+            cancelled: () => {
+                usePlayerStore.setState({ castPlaybackStatus: null, isBuffering: false });
+                // Don't leave the Cast icon spinning on "Starting…".
+                if (this.isConnected() && this.healthStatus.phase === 'rejoining' && this.healthStatus.message?.startsWith('Starting on ')) {
+                    this.setHealthStatus('connected', `Casting to ${this.getCastDeviceName() || 'device'}.`);
+                }
+            },
         });
         usePlayerStore.setState({ castPlaybackStatus: 'starting', isBuffering: true });
         this.setHealthStatus('rejoining', `Starting on ${this.getCastDeviceName() || 'Cast device'}…`);
@@ -2992,6 +3015,9 @@ export class CastManager {
         let session = this.castContext.getCurrentSession();
         if (!session) return;
         const generation = ++this.queueLoadGeneration;
+        // `tracks` is the queue as of this call; edits after it stay pending
+        // and are reconciled against the new window once it has landed.
+        const editSeqAtCall = this.queueWindowEditSeq;
         this.queueLoadingSession = session;
         const requestedEntryId = tracks[startIndex]?.queueEntryId;
         this.confirmationLoadAccepted = false;
@@ -3005,7 +3031,7 @@ export class CastManager {
             if (!stillCurrent()) return;
             this.queueLoadRetry = null;
             this.queueWindow = null;
-            this.queueWindowEditHandled = this.queueWindowEditSeq; // a fresh LOAD covers every edit so far
+            this.queueWindowEditHandled = Math.max(this.queueWindowEditHandled, editSeqAtCall);
             this.queueItemIdByEntryId.clear();
             const index = Number.isInteger(startIndex) ? Math.max(0, Math.min(startIndex, tracks.length - 1)) : 0;
             const time = Number.isFinite(startTime) && startTime > 0 ? startTime : 0;
@@ -3052,16 +3078,26 @@ export class CastManager {
                     // command: a tap after waking into a dead transport
                     // recovers and retries (#39/#86). Recovery can replace the
                     // session object, so the retry re-reads it.
-                    await this.runCastCommand('load-queue', async () => {
+                    const acknowledged = await this.runCastCommand('load-queue', async () => {
                         const active = this.castContext.getCurrentSession();
                         if (!active) throw new Error('No active Cast session');
                         // A newer load (for example one started by recovery's own
                         // hydration) owns the device now; never send a second LOAD.
                         if (generation !== this.queueLoadGeneration) throw new Error('Cast queue load superseded');
                         session = active;
-                        return active.loadMedia(bounded.request);
+                        // A hung acknowledgement must not hold the load lock, but
+                        // it is not a failure either: the LOAD may be playing.
+                        // Treat it as sent and let receiver evidence decide.
+                        let timer: ReturnType<typeof setTimeout> | undefined;
+                        try {
+                            return await Promise.race([
+                                Promise.resolve(active.loadMedia(bounded.request)).then(() => true),
+                                new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), CAST_LOAD_ACK_TIMEOUT_MS); }),
+                            ]);
+                        } finally { if (timer !== undefined) clearTimeout(timer); }
                     });
                     if (!stillCurrent()) return;
+                    if (!acknowledged) this.logCast('warn', 'Queue load acknowledgement timed out; awaiting receiver evidence', `items=${before.length + bounded.entries.length} timeoutMs=${CAST_LOAD_ACK_TIMEOUT_MS}`);
                     this.confirmationLoadAccepted = true;
                     this.queueWindow = {
                         session, ids: [...before, ...bounded.entries].map(entry => entry.queueEntryId!), repeat, blocked: false,
@@ -3074,6 +3110,12 @@ export class CastManager {
                     const id = session.getSessionId();
                     if (id) localStorage.setItem(SESSION_STORAGE_KEY, id);
                     this.logCast('ok', 'Queue load succeeded', `items=${before.length + bounded.entries.length} previous=${before.length} startIndex=${index} bytes=${bounded.bytes}`);
+                    if (this.pauseAfterLoadGeneration === generation) {
+                        // The listener paused while this LOAD was in flight.
+                        this.pauseAfterLoadGeneration = null;
+                        this.queueLoadingSession = null;
+                        this.pause();
+                    }
                     return;
                 } catch (error) {
                     if (!stillCurrent()) return;
@@ -3581,8 +3623,12 @@ export class CastManager {
     }
 
     public pause() {
-        this.queueLoadingSession = null;
-        this.queueLoadGeneration++;
+        // A LOAD in flight was sent with autoplay. Abandoning it (as bumping
+        // the load generation did) left the receiver playing with no window
+        // and no refill; let it land, then pause the media it created.
+        if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
+            this.pauseAfterLoadGeneration = this.queueLoadGeneration;
+        }
         this.playbackConfirmation.cancel();
         this.playbackRetry = null;
         if (this.tryTransportViaMediaSession('pause', 'pause')) return;

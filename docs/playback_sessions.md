@@ -287,8 +287,15 @@ of evidence*, so none of them, alone or combined, ends the output.
 - **Confirmed** when the output reports `PLAYING` for the *requested*
   `queueEntryId`, and its position has advanced past where it started (two
   reports with increasing `positionMs`, or one ≥ 1 s past the start position).
-  For Cast that is the receiver's `aurora.status`. The SDK's media status is
-  not enough on its own: it carried the previous track's state at 15:55.
+  For Cast that is the receiver's `aurora.status`. The SDK's media status
+  (RemotePlayer or media session) counts only when it carries the requested
+  entry's identity: without that it carried the previous track's state at
+  15:55. With it, receivers that predate `aurora.status` still confirm instead
+  of hanging on *Starting…*.
+- **Paused on the device** (Google Home, a TV remote, another sender) for the
+  requested entry ends confirmation without a retry: the start happened and
+  someone paused it. A pause on the phone while the LOAD is in flight lets the
+  LOAD land, then pauses the media it created.
 - **Until then** the UI shows *Starting on NAD Forstærker…* in the place it
   shows Cast progress today, not a running progress bar.
 - **Bounded failure path:** if no confirmation arrives within a deadline (15 s,
@@ -296,7 +303,14 @@ of evidence*, so none of them, alone or combined, ends the output.
   logs), retry once by re-requesting the same entry at the same position. If the
   retry does not confirm either, show an error toast with Retry
   (`CastHealthToasts`) and keep the queue and position untouched. Never silently
-  advance to another track.
+  advance to another track. If the requested entry is already visibly starting
+  at the first deadline (`PLAYING` or `BUFFERING` for it, a slow LOAD ack or a
+  cold transcode), the retry is skipped and only the second deadline remains: a
+  reload would restart it.
+- **A LOAD acknowledgement timeout is not a failure.** The ack can arrive after
+  the receiver has started. After 12 s the sender stops waiting for it,
+  records the window as sent, and lets receiver evidence decide. It never sends
+  the same LOAD again on a timeout alone.
 - Log markers `playback-confirmed` and `playback-unconfirmed` (with the entry,
   the elapsed time and the attempt) make this verifiable from
   `cast-receiver.log`.
@@ -714,26 +728,32 @@ roadmap. It is not yet validated on physical Cast devices:
 
 - **0(a), #89:** complete-request UTF-8/count budgets, decreasing LOAD retries,
   identity-based navigation, acknowledged refill, bounded receiver queues and
-  sender repeat-all wrapping. Until live remove/reorder mirroring is verified,
-  edits inside the window use a reload at the receiver-reported position.
-  Pruning also reloads if the sender missed the item IDs while suspended.
+  sender repeat-all wrapping. After review: inside edits are mirrored by item
+  ID (Play Next via `aurora.queue.insert`, remove, reorder, repeat), with a
+  reload only when an ID is unknown; complete windows deliver appends at once;
+  LOADs carry two previous entries; pruning never reloads; windows are adopted
+  after a reload, rejoin or recovery only on proof; loads and jumps recover a
+  dead transport through `runCastCommand`.
 - **0(b), #90:** entry-bound position/duration selection, position-event freshness,
   duplicate-URL ambiguity rejection, and entry-bound interpolation/handback.
+  Receiver play state still applies when its entry does not match.
 - **0(c), #91:** one bounded Infinity worker maintains three upcoming entries;
-  exhaustion, duplicate results and queue changes stop the top-up safely.
+  exhaustion, duplicate results and queue changes stop the top-up safely. At
+  the very end of the queue, a track queued during the fetch plays first.
 - **0(d):** matching identity plus advancing PLAYING evidence confirms starts.
   One retry follows the 15-second deadline; another 15 seconds ends in an
   actionable error. A substantially delayed timer after phone suspension does
   not automatically reload the receiver. Late valid evidence can still confirm
-  playback. Existing progress surfaces show startup/uncertainty, and existing
-  Cast health toasts provide Retry. Session changes, stop, pause and seek cancel
-  pending confirmation. LOAD acknowledgement itself has a 12-second timeout so
-  a hung command cannot block the retry indefinitely.
+  playback. Existing progress surfaces (desktop progress bar and waveform, the
+  mobile now-playing sheet, and the mobile mini player's device line) show
+  startup/uncertainty, and existing Cast health toasts provide Retry. Session
+  changes, stop and seek cancel pending confirmation; a pause defers to the
+  in-flight LOAD; a device-side pause settles it. A LOAD ack timeout (12 s) is
+  treated as sent, never resent on its own.
 
-Automated validation: typecheck; Vite production build; full Jest run (95 suites,
-793 tests passed, 26 tests skipped); final targeted confirmation/manager/UI run
-(22 tests passed) after the last race-condition adjustments. The skipped suites
-and physical devices are not covered by this result.
+Automated validation after the review fixes: typecheck, Vite production build
+and the full Jest run on each branch of the stack. Physical devices are not
+covered by this result.
 
 Before promoting the drafts: verify the NAD checklist above, a 68+ entry queue
 playing beyond its first window, repeat wrap and current-entry removal, edits

@@ -87,3 +87,38 @@ test('a timer delayed by phone suspension reports uncertainty without restarting
     confirmation.observe(playing(121));
     expect(callbacks.confirmed).toHaveBeenCalledTimes(1);
 });
+
+test('a pause on the device for the requested entry ends confirmation without a retry', () => {
+    const { confirmation, callbacks } = setup();
+    const pausedElsewhere = jest.fn();
+    confirmation.start({ ...callbacks, pausedElsewhere });
+    confirmation.observe({ entryId: 'previous', playerState: 'PAUSED', currentTime: 3 });
+    expect(confirmation.unconfirmed).toBe(true);
+    confirmation.observe({ entryId: 'selected', playerState: 'PAUSED', currentTime: 3 });
+    expect(pausedElsewhere).toHaveBeenCalledTimes(1);
+    expect(confirmation.unconfirmed).toBe(false);
+    jest.advanceTimersByTime(60000);
+    expect(callbacks.retry).not.toHaveBeenCalled();
+    expect(callbacks.failed).not.toHaveBeenCalled();
+});
+
+test('a start already visible at the deadline is given more time instead of a reload', () => {
+    const { confirmation, callbacks } = setup();
+    const extended = jest.fn();
+    confirmation.start({ ...callbacks, extended });
+    confirmation.observe({ entryId: 'selected', playerState: 'BUFFERING', currentTime: 0 });
+    jest.advanceTimersByTime(15000);
+    expect(extended).toHaveBeenCalledTimes(1);
+    expect(callbacks.retry).not.toHaveBeenCalled();
+    confirmation.observe(playing(0));
+    confirmation.observe(playing(1.2));
+    expect(callbacks.confirmed).toHaveBeenCalledWith(2, 15000);
+});
+
+test('a visible start that never progresses still fails at the second deadline', () => {
+    const { confirmation, callbacks } = setup();
+    confirmation.observe({ entryId: 'selected', playerState: 'BUFFERING', currentTime: 0 });
+    jest.advanceTimersByTime(30000);
+    expect(callbacks.retry).not.toHaveBeenCalled();
+    expect(callbacks.failed).toHaveBeenCalledWith(2, 30000);
+});
