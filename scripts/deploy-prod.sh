@@ -17,6 +17,13 @@
 #   a build that empties dist/ under it breaks the page);
 # - keeps the previous build in dist-prev for an instant rollback;
 # - health-checks /api/health after the restart and rolls back on failure.
+# `ssh host 'cmd'` runs a non-interactive shell that skips ~/.bashrc, where nvm
+# and npm-global PATH entries usually live. Load them before strict mode, since
+# these files are not written for `set -u`.
+[ -s "$HOME/.nvm/nvm.sh" ] && . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1 || true
+[ -f "$HOME/.profile" ] && . "$HOME/.profile" >/dev/null 2>&1 || true
+export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
+
 set -euo pipefail
 
 APP_DIR="${AURORA_DIR:-$HOME/NorthernLights}"
@@ -29,10 +36,13 @@ say() { printf '\n==> %s\n' "$*"; }
 die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 
 pm2_name() {
+  command -v pm2 >/dev/null 2>&1 || die "pm2 is not on PATH for this ssh session (node: $(command -v node || echo none); PATH=$PATH)"
+  if [ -n "${AURORA_PM2_NAME:-}" ]; then echo "$AURORA_PM2_NAME"; return; fi
   for name in aurora northernlights; do
     if pm2 describe "$name" >/dev/null 2>&1; then echo "$name"; return; fi
   done
-  die "no pm2 process named aurora or northernlights"
+  pm2 ls >&2 || true
+  die "no pm2 process named aurora or northernlights (listed above); rerun with AURORA_PM2_NAME=<name> before bash -s"
 }
 NAME="$(pm2_name)"
 PORT="$( (grep -E '^PORT=' .env 2>/dev/null || true) | tail -n 1 | cut -d= -f2 | tr -d '"'"'"' ')"
