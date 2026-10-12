@@ -50,6 +50,9 @@ function durationValue(value: unknown): number | null {
 }
 
 export interface RemotePositionSources {
+  /** Explicit false excludes a source whose track identity is stale or unknown. */
+  playerMatchesTrack?: boolean;
+  sessionMatchesTrack?: boolean;
   playerTime?: unknown;
   playerDuration?: unknown;
   sessionTime?: unknown;
@@ -96,7 +99,7 @@ export interface RemotePositionChoice {
  * so neither is consulted once it goes quiet.
  */
 export function pickRemotePosition(input: RemotePositionSources): RemotePositionChoice {
-  const stale = isRemotePlayerStreamStale(input.msSinceRemotePlayerEvent, input.staleAfterMs);
+  const stale = input.playerMatchesTrack === false || isRemotePlayerStreamStale(input.msSinceRemotePlayerEvent, input.staleAfterMs);
 
   const playerTime = positionValue(input.playerTime);
   const playerDuration = durationValue(input.playerDuration);
@@ -106,8 +109,8 @@ export function pickRemotePosition(input: RemotePositionSources): RemotePosition
   // original bug, labelled source=media-session. A synthetic session is the
   // RemotePlayer, so it is ignored exactly when the RemotePlayer is.
   const syntheticAndStale = input.sessionIsSynthetic === true && stale;
-  const sessionTime = syntheticAndStale ? null : positionValue(input.sessionTime);
-  const sessionDuration = syntheticAndStale ? null : durationValue(input.sessionDuration);
+  const sessionTime = syntheticAndStale || input.sessionMatchesTrack === false ? null : positionValue(input.sessionTime);
+  const sessionDuration = syntheticAndStale || input.sessionMatchesTrack === false ? null : durationValue(input.sessionDuration);
   const fallbackDuration = syntheticAndStale ? null : durationValue(input.fallbackDuration);
 
   const duration = stale

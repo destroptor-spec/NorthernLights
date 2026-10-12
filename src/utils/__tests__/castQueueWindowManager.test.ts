@@ -11,6 +11,8 @@ type Request = { media: Item['media']; queueData: { items: Item[]; startIndex: n
 class LoadRequest { constructor(public media: Item['media']) {} }
 class ItemsRequest { constructor(public items: unknown[]) {} }
 type Internals = {
+    chooseCurrentPosition(media: unknown): { currentTime: number | null; duration: number | null; source: string };
+    publishPosition(position: number): void;
     lastAuroraStatus: AuroraReceiverStatus | null; lastAuroraStatusAt: number;
     queueItemIdByEntryId: Map<string, number>; queueWindow: { ids: string[]; blocked: boolean } | null;
     queueInsertAcks: CastQueueInsertAcks; reconcileQueueWindow(edited?: boolean): Promise<void>;
@@ -167,4 +169,30 @@ test('uncertain insert blocks retries until an explicit reload', async () => {
     await manager.reconcileQueueWindow();
     expect(manager.queueWindow?.blocked).toBe(true);
     expect(session.sendMessage).toHaveBeenCalledTimes(1);
+});
+
+
+test('receiver track 8/154 wins over a live but different RemotePlayer at 248/248', () => {
+    const { manager, report } = harness();
+    report(1);
+    Object.assign(manager, {
+        player: { currentTime: 248.4, duration: 248.4, mediaInfo: { customData: { queueEntryId: 'entry-0' } } },
+        lastRemotePositionEntryId: 'entry-0', lastRemotePositionAt: Date.now(),
+    });
+    manager.lastAuroraStatus = { queueEntryId: 'entry-1', currentTime: 8, duration: 154 };
+    expect(manager.chooseCurrentPosition({ media: { customData: { queueEntryId: 'entry-0' }, duration: 248.4 }, currentTime: 248.4 }))
+        .toEqual({ currentTime: 8, duration: 154, source: 'media-session' });
+});
+
+test('duplicate URLs without entry identity are rejected and old anchors do not cross tracks', () => {
+    const { manager } = harness();
+    mockState.playlist[1].url = mockState.playlist[0].url;
+    Object.assign(manager, {
+        player: { currentTime: 220, duration: 230, mediaInfo: { contentId: mockState.playlist[0].url } },
+        lastRemotePositionEntryId: 'entry-0', lastRemotePositionAt: Date.now(),
+    });
+    expect(manager.chooseCurrentPosition({ media: { contentId: mockState.playlist[0].url }, currentTime: 220 }).source).toBe('none');
+    manager.publishPosition(200);
+    mockState.currentIndex = 1;
+    expect(manager.getCurrentCastTime()).toBe(0);
 });

@@ -166,3 +166,20 @@ describe('chooseTransportAction', () => {
     expect(chooseTransportAction('pause', 'stopped')).toBe('satisfied');
   });
 });
+
+
+test('a fresh PLAYING event cannot legitimize the previous track position', () => {
+  expect(pickRemotePosition({
+    playerTime: 248.4, playerDuration: 248.4, playerMatchesTrack: false,
+    sessionTime: 8, sessionDuration: 154, sessionMatchesTrack: true,
+    msSinceRemotePlayerEvent: 0,
+  })).toEqual({ currentTime: 8, duration: 154, source: 'media-session' });
+});
+
+test('neither stale identity nor a synthetic copy can supply position or duration', () => {
+  expect(pickRemotePosition({
+    playerTime: 248.4, playerDuration: 248.4, playerMatchesTrack: false,
+    sessionTime: 248.4, sessionDuration: 248.4, sessionMatchesTrack: false,
+    sessionIsSynthetic: true, msSinceRemotePlayerEvent: 0,
+  })).toEqual({ currentTime: null, duration: null, source: 'none' });
+});
