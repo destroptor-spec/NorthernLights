@@ -19,9 +19,9 @@ jest.mock('../../hooks/useDominantColor', () => ({ prefetchPalette: jest.fn(), N
 jest.mock('../../utils/CastManager', () => ({ castManager: { getCastDeviceName: () => 'NAD Forstærker', addStateChangeListener: () => () => {} } }));
 
 // The phone PWA is the prod case: its always-visible surface must say a start is pending.
-test('the mobile mini player shows startup and uncertainty in its Cast device line', () => {
+test('the mobile mini player keeps its device line while starting and flags only a failed start', () => {
     const { rerender } = render(<MobileMiniPlayer />);
-    expect(screen.getByRole('status').textContent).toBe('Starting on NAD Forstærker…');
+    expect(screen.getByRole('status').textContent).toBe('NAD Forstærker');
     mockStatus = 'unconfirmed';
     rerender(<MobileMiniPlayer key="failed" />);
     expect(screen.getByRole('status').textContent).toBe('Playback not confirmed on NAD Forstærker');

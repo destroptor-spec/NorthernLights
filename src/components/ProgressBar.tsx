@@ -1,4 +1,3 @@
-import { castManager } from '../utils/CastManager';
 import { usePlayerStore } from '../store/index';
 import { usePlaybackTimeStore } from '../store/playbackTime';
 import { playbackManager } from '../utils/PlaybackManager';
@@ -31,11 +30,11 @@ const ProgressBarImpl = () => {
     playbackManager.seek(time);
   }, []);
 
-  if (castPlaybackStatus) {
+  // A start in progress shows the normal bar (the play button spins); only
+  // a start that failed after its retry replaces it.
+  if (castPlaybackStatus === 'unconfirmed') {
     return <div className="progress-bar-container" role="status" aria-live="polite">
-      {castPlaybackStatus === 'starting'
-        ? `Starting on ${castManager.getCastDeviceName() || 'Cast device'}…`
-        : 'Playback not confirmed'}
+      Playback not confirmed
     </div>;
   }
 

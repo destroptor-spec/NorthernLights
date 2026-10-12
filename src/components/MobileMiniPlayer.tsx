@@ -107,11 +107,10 @@ const MobileMiniPlayer = () => {
 
   if (!currentTrack) return null;
 
-  // While a Cast start is unconfirmed, the device line says so: this is the
-  // phone's always-visible playback surface, and its progress is hidden.
+  // Only a failed Cast start changes the device line; a start in progress
+  // shows the play button's spinner and nothing else.
   const castDeviceLabel = castDeviceName || 'Cast device';
   const secondaryLabel = !castConnected ? (currentTrack.artist || 'Unknown Artist')
-    : castPlaybackStatus === 'starting' ? `Starting on ${castDeviceLabel}…`
     : castPlaybackStatus === 'unconfirmed' ? `Playback not confirmed on ${castDeviceLabel}`
     : castDeviceLabel;
 

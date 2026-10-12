@@ -296,11 +296,9 @@ of evidence*, so none of them, alone or combined, ends the output.
   requested entry ends confirmation without a retry: the start happened and
   someone paused it. A pause on the phone while the LOAD is in flight lets the
   LOAD land, then pauses the media it created.
-- **Until then** the UI shows the requested track at its start position with
-  the usual buffering state, not a running progress bar. A normal start needs
-  no message. Only when a start has not confirmed after 5 s does *Starting on
-  NAD Forstærker…* replace the progress bar, so a slow start is explained
-  rather than silent.
+- **Until then** the UI shows the requested track at its start position and
+  the play button's spinner. No surface shows text for a start in progress and
+  the Cast icon is left alone; only a start that fails says anything.
 - **Bounded failure path:** if no confirmation arrives within a deadline (15 s,
   above the slowest successful start in the prod logs; tune it from those
   logs), retry once by re-requesting the same entry at the same position. If the
@@ -766,8 +764,8 @@ roadmap. It is not yet validated on physical Cast devices:
   actionable error. A substantially delayed timer after phone suspension does
   not automatically reload the receiver. Late valid evidence can still confirm
   playback. Existing progress surfaces (desktop progress bar and waveform, the
-  mobile now-playing sheet, and the mobile mini player's device line) show a
-  start only when it is slow (over 5 s) and show uncertainty, and existing Cast health toasts provide Retry. Session
+  mobile now-playing sheet, and the mobile mini player's device line) show
+  nothing for a start in progress (the play button spins) and show uncertainty, and existing Cast health toasts provide Retry. Session
   changes, stop and seek cancel pending confirmation; a pause defers to the
   in-flight LOAD; a device-side pause settles it. A LOAD ack timeout (12 s) is
   treated as sent, never resent on its own.
