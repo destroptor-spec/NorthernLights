@@ -39,7 +39,7 @@ function harness() {
     const manager = Object.create(CastManager.prototype) as Pick<CastManager, keyof CastManager> & Internals;
     Object.assign(manager, {
         state: 'CONNECTED', castContext: { getCurrentSession: () => active }, currentLoadPromise: Promise.resolve(),
-        queueLoadGeneration: 0, queueWindowBusy: false, queueWindowEditSeq: 0, queueWindowEditHandled: 0, queueJumpGeneration: 0, queueWindow: null,
+        queueLoadGeneration: 0, queueWindowBusy: false, queueWindowEditSeq: 0, queueWindowEditHandled: 0, skipRequestSeq: 0, pendingSkip: null, skipRunner: null, staleSdkMedia: null, queueWindow: null,
         queueItemIdByEntryId: new Map(), queueInsertAcks: new CastQueueInsertAcks(), auroraControlRequestId: 0,
         auroraStatusFreshMs: 20000, lastAuroraStatus: null, lastAuroraStatusAt: 0, queueWindowAdoptionChecked: null,
         recoverStaleTransport: jest.fn().mockResolvedValue(false),
@@ -439,5 +439,40 @@ describe('a jump that is never acknowledged (NAD 2026-10-12 21:26: stale SDK Med
         await Promise.all([first, second]);
         expect(session.loadMedia).toHaveBeenCalledTimes(2);
         expect(session.loadMedia.mock.calls[1][0].media.customData.queueEntryId).toBe('entry-13');
+    });
+});
+
+describe('fast presses (NAD 2026-10-12 21:39:50 and 21:40:04)', () => {
+    afterEach(() => jest.useRealTimers());
+
+    it('seeds item IDs from the fresh SDK Media at load time, before any receiver status', async () => {
+        const { manager, media } = harness();
+        Object.assign(media, {
+            mediaSessionId: 3, currentItemId: 51,
+            media: { contentId: 'https://music.example/api/stream/10/playlist.m3u8?codec=mp4a.40.2', customData: {}, metadata: { title: 'x' } },
+        });
+        await manager.castQueue(mockState.playlist, 10); // window entries 0..29, start at position 10
+        expect(manager.queueItemIdByEntryId.get('entry-11')).toBe(52);
+        expect(manager.logCast).toHaveBeenCalledWith('ok', 'queue-item-ids-inferred', expect.stringContaining('source=sdk-media'));
+    });
+
+    it('an overtaken media-channel jump is not a failure, and a burst ends in one jump per target reached', async () => {
+        const { manager, session, media } = harness();
+        Object.assign(media, { mediaSessionId: 3 });
+        await manager.castQueue(mockState.playlist, 10);
+        for (let i = 0; i < 30; i++) manager.queueItemIdByEntryId.set(`entry-${i}`, 100 + i);
+        (session as { getMediaSession: () => unknown }).getMediaSession = () => null;
+        jest.useFakeTimers();
+        const presses = [11, 12, 13, 14].map(index => manager.ensureQueuePlayback(mockState.playlist, index));
+        await jest.advanceTimersByTimeAsync(150);
+        // The receiver lands on the newest target only.
+        manager.lastAuroraStatus = { queueEntryId: 'entry-14', itemId: 114 };
+        manager.lastAuroraStatusAt = Date.now() + 1;
+        await jest.advanceTimersByTimeAsync(300);
+        await Promise.all(presses);
+        const jumps = session.sendMessage.mock.calls.filter(([namespace]) => namespace === 'urn:x-cast:com.google.cast.media');
+        expect(jumps.map(([, message]) => message.currentItemId)).toEqual([111, 114]); // 12 and 13 coalesced away
+        expect(manager.logCast).not.toHaveBeenCalledWith('warn', 'Cast queue jump via media channel unconfirmed', expect.anything());
+        expect(session.loadMedia).toHaveBeenCalledTimes(1);
     });
 });
