@@ -65,8 +65,13 @@ export class CastQueueInsertAcks {
     }
 }
 
-/** Played entries kept on the receiver so Previous and device remotes can jump back. */
-export const CAST_QUEUE_KEEP_PREVIOUS = 2;
+/**
+ * Played entries kept on the receiver so Previous, and the device's own
+ * controls (Google Home, a TV remote), can step back. Those controls only see
+ * the receiver's queue; with 2, Google Home stopped two tracks before the last
+ * track started from the phone (NAD, 2026-10-12).
+ */
+export const CAST_QUEUE_KEEP_PREVIOUS = 10;
 
 /**
  * How a sender-side edit maps onto the receiver's window, by entry identity.
