@@ -901,6 +901,7 @@ export interface PlayerState {
 export const usePlayerStore = create<PlayerState>()(
   persist(
     (set, get) => {
+      let infinityTopUp: Promise<void> | null = null;
       // Setup PlaybackManager callbacks to update store state
       playbackManager.setCallbacks({
         onTimeUpdate: (time) => {
@@ -1888,16 +1889,24 @@ export const usePlayerStore = create<PlayerState>()(
         },
 
         ensureInfinityQueue: async () => {
-          const state = get();
-          if (!state.isInfinityMode || state.isFetchingInfinity) return;
-
-          const currentIndex = state.currentIndex !== null ? state.currentIndex : 0;
-          const remaining = Math.max(0, state.playlist.length - 1 - currentIndex);
-          
-          // Prefetch if there are no upcoming tracks in the queue
-          if (remaining < 1 && state.playlist.length > 0) {
-            await get().fetchNextInfinityTrack(true);
-          }
+          if (infinityTopUp) return infinityTopUp;
+          if (!get().isInfinityMode || get().isFetchingInfinity) return;
+          // One bounded worker fills three upcoming slots. Yield first so its
+          // promise exists before any store subscriber can ask for another top-up.
+          infinityTopUp = Promise.resolve().then(async () => {
+            for (let attempt = 0; attempt < 3; attempt++) {
+              const before = get();
+              const remaining = Math.max(0, before.playlist.length - 1 - (before.currentIndex ?? 0));
+              if (!before.isInfinityMode || before.isFetchingInfinity || before.playlist.length === 0 || remaining >= 3) break;
+              const length = before.playlist.length;
+              await get().fetchNextInfinityTrack(true);
+              // Exhaustion, duplicate, error or a replaced queue must not spin.
+              const after = get();
+              if (after.playlist.length !== length + 1 ||
+                  before.playlist.some((entry, index) => entry.id !== after.playlist[index]?.id)) break;
+            }
+          }).finally(() => { infinityTopUp = null; });
+          return infinityTopUp;
         },
 
         fetchNextInfinityTrack: async (isPrefetch = false) => {
@@ -1928,13 +1937,30 @@ export const usePlayerStore = create<PlayerState>()(
               }
             };
             const recommended = await fetchNextRecommendation(authHeaders, payload);
+            if (!isPrefetch) {
+              // The queue ran out while we were asking. If the listener queued
+              // something meanwhile, play that rather than skipping past it;
+              // the next top-up still follows its usual path.
+              const now = get();
+              if (now.currentIndex !== null && now.currentIndex + 1 < now.playlist.length) {
+                void now.playAtIndex(now.currentIndex + 1);
+                return;
+              }
+            }
             if (recommended) {
               const latest = get();
+              // A prefetch never delivers into a different or edited queue. At
+              // the end of the queue there is nothing else to play, so append.
+              if (isPrefetch && (latest.playlist.length !== state.playlist.length || state.playlist.some((entry, index) =>
+                  entry.id !== latest.playlist[index]?.id || entry.queueEntryId !== latest.playlist[index]?.queueEntryId))) return;
               // An older server or a queue edit during the request must not
               // append a track we already hold. Do not undo Infinity-off.
               if (isPrefetch && !latest.isInfinityMode) return;
               if (latest.playlist.slice(Math.max(0, (latest.currentIndex ?? 0) - 50))
-                .some(track => track.id === recommended.id)) return;
+                .some(track => track.id === recommended.id)) {
+                if (!isPrefetch) get().stop();
+                return;
+              }
               const { mediaAccessToken, authToken, streamingQuality } = latest;
               const token = mediaAccessToken || authToken || '';
 
