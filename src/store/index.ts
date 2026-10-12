@@ -2650,6 +2650,8 @@ export const usePlayerStore = create<PlayerState>()(
               boundedIndex,
               repeat
             );
+            // A restored queue is an edit to the receiver window, not a skip.
+            castManager.reconcileQueueEdits();
           }
         },
 
