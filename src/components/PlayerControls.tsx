@@ -223,6 +223,7 @@ const SignalChain: React.FC<SignalChainProps> = ({
 // ──────────────────────────────────────────────────────────────────────────
 
 const InlineWaveformImpl: React.FC = () => {
+  const castPlaybackStatus = usePlayerStore((state) => state.castPlaybackStatus);
   const currentTime = usePlaybackTimeStore((s) => s.currentTime);
   const duration = usePlaybackTimeStore((s) => s.duration);
   const playlist = usePlayerStore((s) => s.playlist);
@@ -247,6 +248,14 @@ const InlineWaveformImpl: React.FC = () => {
   // new width without a full remount + re-decode (which previously broke
   // rendering when combined with strict-mode double-mount).
   const audioUrl = currentTrack?.rawUrl || currentTrack?.url || '';
+
+  // A start in progress shows the normal bar (the play button spins); only
+  // a start that failed after its retry replaces it.
+  if (castPlaybackStatus === 'unconfirmed') {
+    return <div className="player-waveform" role="status" aria-live="polite">
+      Playback not confirmed
+    </div>;
+  }
 
   return (
     <div className="player-waveform" data-placement={placement}>

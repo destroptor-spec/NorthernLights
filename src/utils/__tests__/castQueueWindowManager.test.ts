@@ -1,3 +1,4 @@
+import { CastPlaybackConfirmation } from '../castPlaybackConfirmation';
 import { CastManager, AuroraReceiverStatus } from '../CastManager';
 import { CastQueueInsertAcks, serializedBytes } from '../castQueueWindow';
 import type { TrackInfo } from '../fileSystem';
@@ -11,6 +12,8 @@ type Request = { media: Item['media']; queueData: { items: Item[]; startIndex: n
 class LoadRequest { constructor(public media: Item['media']) {} }
 class ItemsRequest { constructor(public items: unknown[]) {} }
 type Internals = {
+    playbackConfirmation: CastPlaybackConfirmation;
+    applyAuroraStatus(status: AuroraReceiverStatus): void;
     chooseCurrentPosition(media: unknown): { currentTime: number | null; duration: number | null; source: string };
     publishPosition(position: number): void;
     lastAuroraStatus: AuroraReceiverStatus | null; lastAuroraStatusAt: number;
@@ -18,6 +21,8 @@ type Internals = {
     queueInsertAcks: CastQueueInsertAcks; reconcileQueueWindow(edited?: boolean): Promise<void>;
     maybeAdoptQueueWindow(status: AuroraReceiverStatus): void; recoverStaleTransport: jest.Mock; logCast: jest.Mock;
 };
+beforeEach(() => jest.useFakeTimers());
+afterEach(() => { jest.clearAllTimers(); jest.useRealTimers(); });
 function harness() {
     Object.assign(globalThis, { chrome: { cast: { media: {
         LoadRequest, QueueData: class {}, QueueInsertItemsRequest: ItemsRequest, QueueRemoveItemsRequest: ItemsRequest,
@@ -41,6 +46,8 @@ function harness() {
     const manager = Object.create(CastManager.prototype) as Pick<CastManager, keyof CastManager> & Internals;
     Object.assign(manager, {
         state: 'CONNECTED', castContext: { getCurrentSession: () => active }, currentLoadPromise: Promise.resolve(),
+        playbackConfirmation: new CastPlaybackConfirmation(), confirmationLoadAccepted: false, getCastDeviceName: () => 'Test device',
+        healthStatus: { phase: 'connected', message: '' },
         queueLoadGeneration: 0, queueWindowBusy: false, queueWindowEditSeq: 0, queueWindowEditHandled: 0, skipRequestSeq: 0, pendingSkip: null, skipRunner: null, staleSdkMedia: null, queueWindow: null,
         queueItemIdByEntryId: new Map(), queueInsertAcks: new CastQueueInsertAcks(), auroraControlRequestId: 0,
         auroraStatusFreshMs: 20000, lastAuroraStatus: null, lastAuroraStatusAt: 0, queueWindowAdoptionChecked: null,
@@ -51,6 +58,7 @@ function harness() {
     mockState.playlist = Array.from({ length: 68 }, (_, i) => ({ id: `${i}`, queueEntryId: `entry-${i}`, title: `Track ${i}`, url: `https://music.example/api/stream/${i}/playlist.m3u8?token=test` } as TrackInfo));
     mockState.currentIndex = 0; mockState.repeat = 'none';
     const report = (index: number, caps = ['queue-insert']) => {
+        manager.playbackConfirmation.cancel();
         manager.lastAuroraStatus = { queueEntryId: `entry-${index}`, currentTime: 12, itemId: index + 1, caps };
         manager.lastAuroraStatusAt = Date.now();
         mockState.currentIndex = index;
@@ -341,6 +349,105 @@ test('play state from the receiver applies even when its entry is unknown; posit
     expect(onTime).not.toHaveBeenCalled();
 });
 
+test('LOAD acceptance does not publish progress until receiver evidence advances', async () => {
+    const { manager } = harness();
+    const onTimeUpdate = jest.fn();
+    const onPlayStateChange = jest.fn();
+    Object.assign(manager, { onTimeUpdate, onPlayStateChange });
+    await manager.castQueue(mockState.playlist);
+    expect(manager.playbackConfirmation.pending).toBe(true);
+    manager.applyAuroraStatus({ queueEntryId: 'entry-0', currentTime: 8, duration: 154, playerState: 'PLAYING' });
+    expect(onTimeUpdate).not.toHaveBeenCalled();
+    expect(onPlayStateChange).not.toHaveBeenCalled();
+    manager.applyAuroraStatus({ queueEntryId: 'entry-0', currentTime: 9, duration: 154, playerState: 'PLAYING' });
+    expect(manager.playbackConfirmation.pending).toBe(false);
+    expect(onTimeUpdate).toHaveBeenLastCalledWith(9);
+    expect(onPlayStateChange).toHaveBeenCalledWith(true);
+});
+
+test('an unconfirmed start retries the same entry and position exactly once', async () => {
+    const { manager, session } = harness();
+    await manager.castQueue(mockState.playlist, 0, 'none', 42);
+    expect(manager.getCurrentCastTime()).toBe(42);
+    jest.advanceTimersByTime(15000);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(session.loadMedia).toHaveBeenCalledTimes(2);
+    expect(session.loadMedia.mock.calls.map(([request]) => request.currentTime)).toEqual([42, 42]);
+    expect(session.loadMedia.mock.calls.map(([request]) => request.media.customData.queueEntryId)).toEqual(['entry-0', 'entry-0']);
+    jest.advanceTimersByTime(15000);
+    expect(manager.playbackConfirmation.pending).toBe(false);
+    expect(manager.playbackConfirmation.unconfirmed).toBe(true);
+    expect(session.loadMedia).toHaveBeenCalledTimes(2);
+});
+
+test('takeover cancels an unconfirmed start instead of reclaiming the receiver', async () => {
+    const { manager, session } = harness();
+    await manager.castQueue(mockState.playlist);
+    manager.applyAuroraStatus({ queueEntryId: 'other-sender', currentTime: 1, playerState: 'PLAYING' });
+    jest.advanceTimersByTime(30000);
+    expect(session.loadMedia).toHaveBeenCalledTimes(1);
+    expect(manager.playbackConfirmation.unconfirmed).toBe(false);
+});
+
+
+test('edits during LOAD wait for the new window rather than mutating the old queue', async () => {
+    const { manager, session } = harness();
+    let finish!: () => void;
+    session.loadMedia.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const pending = manager.castQueue(mockState.playlist);
+    await Promise.resolve();
+    await manager.appendToQueue({ ...mockState.playlist[0], queueEntryId: 'new-entry' });
+    expect(session.sendMessage).not.toHaveBeenCalled();
+    finish();
+    await pending;
+});
+
+test('a LOAD acknowledged late is not loaded twice: receiver evidence confirms it', async () => {
+    const { manager, session } = harness();
+    session.loadMedia.mockImplementationOnce(() => new Promise(() => {})); // ack never arrives
+    const pending = manager.castQueue(mockState.playlist);
+    await Promise.resolve();
+    jest.advanceTimersByTime(12000);
+    await pending;
+    expect(manager.queueWindow?.ids).toHaveLength(30);
+    manager.applyAuroraStatus({ queueEntryId: 'entry-0', currentTime: 1, duration: 154, playerState: 'PLAYING' });
+    manager.applyAuroraStatus({ queueEntryId: 'entry-0', currentTime: 2.2, duration: 154, playerState: 'PLAYING' });
+    expect(manager.playbackConfirmation.unconfirmed).toBe(false);
+    jest.advanceTimersByTime(30000);
+    expect(session.loadMedia).toHaveBeenCalledTimes(1);
+});
+
+test('pausing while the LOAD is in flight keeps its window and pauses the new media', async () => {
+    const { manager, session } = harness();
+    const pauseVia = jest.fn(() => true);
+    Object.assign(manager, { tryTransportViaMediaSession: pauseVia });
+    let finish!: () => void;
+    session.loadMedia.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const pending = manager.castQueue(mockState.playlist);
+    await Promise.resolve();
+    manager.pause();
+    expect(pauseVia).toHaveBeenCalledTimes(1);
+    finish();
+    await pending;
+    expect(manager.queueWindow?.ids).toHaveLength(30);
+    expect(pauseVia).toHaveBeenCalledTimes(2); // once more, on the media the LOAD created
+});
+
+test('a start never shows "Starting on"; it only holds the play button spinner until confirmed', async () => {
+    const { manager } = harness();
+    const { usePlayerStore } = jest.requireMock('../../store') as { usePlayerStore: { setState: jest.Mock } };
+    const health = (manager as unknown as { setHealthStatus: jest.Mock }).setHealthStatus;
+    usePlayerStore.setState.mockClear();
+    health.mockClear();
+    await manager.castQueue(mockState.playlist);
+    expect(usePlayerStore.setState).toHaveBeenCalledWith({ castPlaybackStatus: 'starting', isBuffering: true });
+    jest.advanceTimersByTime(10000);
+    expect(health).not.toHaveBeenCalledWith('rejoining', expect.anything());
+    manager.applyAuroraStatus({ queueEntryId: 'entry-0', currentTime: 0.2, duration: 154, playerState: 'PLAYING' });
+    manager.applyAuroraStatus({ queueEntryId: 'entry-0', currentTime: 1.4, duration: 154, playerState: 'PLAYING' });
+    expect(usePlayerStore.setState).toHaveBeenCalledWith({ castPlaybackStatus: null, isBuffering: false });
+});
+
 describe('receiver item IDs inferred from position (prod 2026-10-12: CAF numbers items consecutively)', () => {
     const apply = (manager: unknown, status: AuroraReceiverStatus) =>
         (manager as { applyAuroraStatus(s: AuroraReceiverStatus): void }).applyAuroraStatus(status);
@@ -447,6 +554,25 @@ describe('jumping without an SDK Media object (NAD 2026-10-12: every second Next
     });
 });
 
+test('a media-channel jump during an unconfirmed start confirms the jumped-to entry', async () => {
+    const { manager, session, media } = harness();
+    Object.assign(manager, { onTrackChange: jest.fn(), onPlayStateChange: jest.fn(), onTimeUpdate: jest.fn() });
+    Object.assign(media, { mediaSessionId: 7 });
+    await manager.castQueue(mockState.playlist, 10); // start of entry-10 still unconfirmed
+    manager.queueItemIdByEntryId.set('entry-12', 35);
+    (session as { getMediaSession: () => unknown }).getMediaSession = () => null;
+    mockState.currentIndex = 12;
+    const pending = manager.ensureQueuePlayback(mockState.playlist, 12);
+    await jest.advanceTimersByTimeAsync(0);
+    manager.applyAuroraStatus({ queueEntryId: 'entry-12', itemId: 35, playerState: 'PLAYING', currentTime: 0.1 });
+    await jest.advanceTimersByTimeAsync(200);
+    await pending;
+    expect(session.loadMedia).toHaveBeenCalledTimes(1);
+    expect(manager.playbackConfirmation.entryId).toBe('entry-12');
+    manager.applyAuroraStatus({ queueEntryId: 'entry-12', itemId: 35, playerState: 'PLAYING', currentTime: 1.3 });
+    expect(manager.playbackConfirmation.unconfirmed).toBe(false);
+});
+
 describe('a jump that is never acknowledged (NAD 2026-10-12 21:26: stale SDK Media object)', () => {
     afterEach(() => jest.useRealTimers());
     const stale = async () => {
@@ -535,4 +661,33 @@ test('every queue item carries its cover art: loads, refills and Play Next (Goog
     await pending;
     expect(built.length).toBeGreaterThan(10);
     expect(built.every(options => options.includeArtwork === true)).toBe(true);
+});
+
+test('during an unconfirmed jump, refill at the end goes ahead and edits wait without spinning (Google TV 22:14:46)', async () => {
+    const { manager, session, report, ack, settle } = harness();
+    mockState.playlist = mockState.playlist.slice(0, 12);
+    await manager.castQueue(mockState.playlist);
+    report(0); // also cancels the load's own confirmation
+    manager.playbackConfirmation.start({
+        entryId: 'entry-1', isCurrent: () => true, retry: async () => undefined,
+        confirmed: jest.fn(), failed: jest.fn(), cancelled: jest.fn(),
+    });
+    // Infinity appends at the end: delivered at once despite the pending jump.
+    mockState.playlist.push({ ...mockState.playlist[0], queueEntryId: 'infinity-1' });
+    const refill = manager.reconcileQueueWindow(true);
+    await settle();
+    ack();
+    await refill;
+    expect(manager.queueWindow?.ids).toContain('infinity-1');
+    // A move waits for confirmation, and does not re-run itself meanwhile.
+    const runs = jest.spyOn(manager, 'reconcileQueueWindow');
+    const [moved] = mockState.playlist.splice(3, 1);
+    mockState.playlist.splice(6, 0, moved);
+    await manager.reconcileQueueWindow(true);
+    await settle();
+    const settled = runs.mock.calls.length;
+    await settle(); await settle();
+    expect(runs.mock.calls.length).toBe(settled); // no re-run loop while deferred
+    expect(settled).toBeLessThanOrEqual(2); // ours, plus at most the refill's one follow-up
+    expect(session.loadMedia).toHaveBeenCalledTimes(1);
 });

@@ -1,3 +1,4 @@
+import { CastPlaybackConfirmation } from './castPlaybackConfirmation';
 import {
     boundedQueueRequest, queueWindowEntries, castQueueCallback, CastQueueInsertAcks, planWindowEdit, applyWindowEdit, adoptableWindow,
     CAST_QUEUE_MAX_ITEMS, CAST_QUEUE_INSERT_MAX_ITEMS, CAST_QUEUE_LOW_WATER, CAST_QUEUE_KEEP_PREVIOUS,
@@ -74,6 +75,8 @@ export interface CastHealthStatus {
 const SESSION_STORAGE_KEY = 'cast_session_id';
 // The window's entry IDs, so a reloaded or recovered sender can adopt it.
 const QUEUE_WINDOW_STORAGE_KEY = 'aurora-cast-queue-window-v1';
+// A LOAD not acknowledged by then is treated as sent, never resent blindly.
+const CAST_LOAD_ACK_TIMEOUT_MS = 12000;
 // How long a media-channel jump may take to show up in aurora.status.
 const CAST_MEDIA_CHANNEL_JUMP_TIMEOUT_MS = 3000;
 // A live SDK answers a queue jump in well under a second.
@@ -257,17 +260,23 @@ export class CastManager {
 
     private queueWindow: CastQueueWindow | null = null;
     private queueWindowBusy = false;
+    private queueLoadingSession: unknown = null;
+    private pauseAfterLoadGeneration: number | null = null;
     // Edits are counted, not flagged: a reconcile handles exactly the edits
     // that committed before it read the queue, and leaves later ones pending.
     private queueWindowEditSeq = 0;
     private queueWindowEditHandled = 0;
     private queueWindowAdoptionChecked: unknown = null;
+    private readonly playbackConfirmation = new CastPlaybackConfirmation();
+    private playbackRetry: { session: unknown; entryId: string; time: number } | null = null;
+    private confirmationLoadAccepted = false;
+    private previousPlaybackEntryId: string | null = null;
     private mediaChannelJumpFailedFor: unknown = null;
     private pendingSkip: { tracks: CastQueueTrack[]; startIndex: number; repeat: CastRepeat } | null = null;
     private skipRunner: Promise<void> | null = null;
     private skipRequestSeq = 0;
     private staleSdkMedia: unknown = null;
-    private queueLoadRetry: { session: unknown; index: number; time: number } | null = null;
+    private queueLoadRetry: { session: unknown; entryId: string; time: number } | null = null;
     private queueLoadGeneration = 0;
     private readonly queueInsertAcks = new CastQueueInsertAcks();
 
@@ -347,6 +356,10 @@ export class CastManager {
     private _onStateChangeCallback?: (state: CastState) => void;
 
     private notifyStateChange() {
+        if (!this.isConnected()) {
+            this.playbackConfirmation.cancel();
+            this.playbackRetry = null;
+        }
         if (this.state === 'CONNECTED') {
             this.startStatusWatchdog();
         } else {
@@ -381,6 +394,7 @@ export class CastManager {
      * re-anchoring on our own extrapolation would compound its error.
      */
     private publishPosition(position: number, atMs: number = Date.now()) {
+        if (this.playbackConfirmation.unconfirmed) return;
         const entryId = this.currentEntryId();
         if (!entryId || !Number.isFinite(position) || position < 0) return;
         this.positionAnchor = { position, atMs, entryId };
@@ -450,7 +464,7 @@ export class CastManager {
      * of its way entirely and the two never fight.
      */
     private runPositionTick() {
-        if (!this.isConnected()) return;
+        if (!this.isConnected() || this.playbackConfirmation.unconfirmed) return;
         const anchor = this.positionAnchor;
         if (!anchor || anchor.entryId !== this.currentEntryId()) return;
         if (this.remotePositionMatchesTrack() && !isRemotePlayerStreamStale(Date.now() - this.lastRemotePositionAt)) return;
@@ -589,7 +603,7 @@ export class CastManager {
         this.mediaSessionProbeStartedAt = 0;
         this.logCast('warn', 'Cast remote media gone; releasing local playing state', `eventSilenceMs=${eventSilenceMs} probedMs=${probedMs} msSinceEvidence=${Date.now() - this.lastRemoteEvidenceAt}`);
         try {
-            this.onPlayStateChange?.(false);
+            this.publishPlayState(false);
         } catch { /* ignore */ }
     }
 
@@ -815,6 +829,8 @@ export class CastManager {
     }
 
     private resetSessionAttemptState(reason: string, options: { clearStoredSession?: boolean; healthPhase?: CastHealthPhase; healthMessage?: string } = {}) {
+        this.playbackConfirmation.cancel();
+        this.playbackRetry = null;
         this.mediaSessionListenerSessionId = '';
         this.userSessionRequestPending = false;
         this.rejoinSessionPending = false;
@@ -1146,6 +1162,15 @@ export class CastManager {
      * snapshot, which is local state.
      */
     private applyAuroraStatus(status: AuroraReceiverStatus) {
+        if (this.playbackConfirmation.unconfirmed && !this.confirmationLoadAccepted && status.queueEntryId !== this.playbackConfirmation.entryId) return;
+        if (this.playbackConfirmation.unconfirmed && status.queueEntryId && status.queueEntryId !== this.playbackConfirmation.entryId) {
+            // Ignore the preceding item's late status; a different selection is
+            // evidence of takeover/advance, which cancels our pending retry.
+            if (status.queueEntryId === this.previousPlaybackEntryId) return;
+            this.playbackConfirmation.cancel();
+            this.playbackRetry = null;
+        }
+        if (this.confirmationLoadAccepted) this.playbackConfirmation.observe({ entryId: status.queueEntryId, playerState: status.playerState, currentTime: status.currentTime });
         const now = Date.now();
         this.lastAuroraStatus = status;
         const statusWindow = this.queueWindow;
@@ -1208,9 +1233,9 @@ export class CastManager {
             if (resolved !== null && resolved !== this.lastKnownDuration) this.publishDuration(resolved);
         }
         if (status.playerState === 'PLAYING') {
-            this.onPlayStateChange?.(true);
+            this.publishPlayState(true);
         } else if (status.playerState === 'PAUSED') {
-            this.onPlayStateChange?.(false);
+            this.publishPlayState(false);
         }
     }
 
@@ -2015,7 +2040,7 @@ export class CastManager {
             this.playerController.addEventListener(
                 cast.framework.RemotePlayerEventType.IS_PAUSED_CHANGED,
                 () => {
-                    this.onPlayStateChange?.(!this.player.isPaused);
+                    this.publishPlayState(!this.player.isPaused);
                 }
             );
 
@@ -2027,6 +2052,7 @@ export class CastManager {
                     if (!this.mediaMatchesCurrentTrack(this.player?.mediaInfo)) return;
                     this.lastRemotePositionAt = Date.now();
                     this.lastRemotePositionEntryId = this.currentEntryId();
+                    if (this.confirmationLoadAccepted) this.playbackConfirmation.observe({ entryId: this.currentEntryId(), playerState: this.player.playerState, currentTime: this.player.currentTime });
                     this.publishPosition(this.player.currentTime);
                 }
             );
@@ -2056,7 +2082,7 @@ export class CastManager {
                         // idleReason is only available on the media session, not RemotePlayer
                         try {
                             if (mediaSession?.idleReason === chrome.cast.media.IdleReason.FINISHED) {
-                                if (this.suppressRemoteEndedDuringDisconnect) return;
+                                if (this.suppressRemoteEndedDuringDisconnect || this.playbackConfirmation.unconfirmed) return;
                                 this.onEnded?.();
                             }
                         } catch { /* ignore */ }
@@ -2312,6 +2338,62 @@ export class CastManager {
         return mediaSession.media?.customData?.queueEntryId || null;
     }
 
+    private beginPlaybackConfirmation(session: unknown, entryId: string, time: number): void {
+        this.confirmationLoadAccepted = false;
+        this.positionAnchor = { position: time, atMs: Date.now(), entryId };
+        this.previousPlaybackEntryId = this.lastAuroraStatus?.queueEntryId || this.getCurrentQueueEntryId();
+        this.playbackRetry = null;
+        this.playbackConfirmation.start({
+            entryId,
+            isCurrent: () => this.isConnected() && session === this.castContext?.getCurrentSession?.() && this.currentEntryId() === entryId,
+            retry: async () => {
+                const state = usePlayerStore.getState();
+                const index = state.playlist.findIndex(track => track.queueEntryId === entryId);
+                if (index >= 0) await this.castQueue(state.playlist, index, state.repeat, time, true);
+            },
+            confirmed: (attempt, elapsedMs) => {
+                usePlayerStore.setState({ castPlaybackStatus: null, isBuffering: false });
+                this.queueLoadRetry = null;
+                this.playbackRetry = null;
+                this.logCast('ok', 'playback-confirmed', `entryId=${entryId} elapsedMs=${elapsedMs} attempt=${attempt}`);
+                this.setHealthStatus('connected', `Casting to ${this.getCastDeviceName() || 'device'}.`);
+                this.publishPlayState(true);
+                // Edits made while starting were held back; apply them now.
+                void this.reconcileQueueWindow();
+            },
+            pausedElsewhere: (attempt, elapsedMs) => {
+                usePlayerStore.setState({ castPlaybackStatus: null, isBuffering: false });
+                this.queueLoadRetry = null;
+                this.playbackRetry = null;
+                this.logCast('ok', 'playback-paused-before-confirmation', `entryId=${entryId} elapsedMs=${elapsedMs} attempt=${attempt}`);
+                this.setHealthStatus('connected', `Casting to ${this.getCastDeviceName() || 'device'}.`);
+                this.publishPlayState(false);
+                void this.reconcileQueueWindow();
+            },
+            extended: (elapsedMs) => {
+                this.logCast('warn', 'playback-confirmation-extended', `entryId=${entryId} elapsedMs=${elapsedMs} reason=entry-already-starting`);
+            },
+            failed: (attempt, elapsedMs) => {
+                this.playbackRetry = { session, entryId, time };
+                usePlayerStore.setState({ castPlaybackStatus: 'unconfirmed', isBuffering: false, playbackState: 'paused' });
+                this.logCast('error', 'playback-unconfirmed', `entryId=${entryId} elapsedMs=${elapsedMs} attempt=${attempt}`);
+                this.setHealthStatus('error', 'Playback did not start on the Cast device. Retry to try again.');
+            },
+            cancelled: () => {
+                usePlayerStore.setState({ castPlaybackStatus: null, isBuffering: false });
+            },
+        });
+        // No words while starting: the play button's spinner is the feedback
+        // (Andreas, 2026-10-13). 'starting' keeps that spinner on until the
+        // receiver confirms; no surface renders text for it, and the Cast icon
+        // is left alone. Only a failed start says anything.
+        usePlayerStore.setState({ castPlaybackStatus: 'starting', isBuffering: true });
+    }
+
+    private publishPlayState(playing: boolean): void {
+        if (!this.playbackConfirmation.unconfirmed) this.onPlayStateChange?.(playing);
+    }
+
     private currentEntryId(): string | null {
         const state = usePlayerStore.getState();
         return state.currentIndex === null ? null : state.playlist[state.currentIndex]?.queueEntryId || null;
@@ -2483,7 +2565,7 @@ export class CastManager {
         const media = mediaSession.media || {};
         const metadata = media.metadata || {};
         const storeTrack = sessionIndex !== null ? playlist[sessionIndex] : null;
-        const choice = sessionIndex === usePlayerStore.getState().currentIndex
+        const choice = !this.playbackConfirmation.unconfirmed && sessionIndex === usePlayerStore.getState().currentIndex
             ? this.chooseCurrentPosition(mediaSession)
             : { currentTime: null, duration: storeTrack?.duration ?? null, source: 'none' as const };
         const playerState = mediaSession.playerState || this.player?.playerState;
@@ -2499,7 +2581,7 @@ export class CastManager {
             },
             position: choice.currentTime,
             duration: choice.duration,
-            playbackState: this.mapCastPlayerState(playerState),
+            playbackState: this.playbackConfirmation.unconfirmed ? 'paused' : this.mapCastPlayerState(playerState),
         };
     }
 
@@ -2535,6 +2617,10 @@ export class CastManager {
             playbackManager.getLocalAudioElement().pause();
         } catch { /* ignore */ }
 
+        if (this.playbackConfirmation.unconfirmed && !this.mediaMatchesCurrentTrack(mediaSession.media)) return false;
+        if (this.confirmationLoadAccepted && mediaSession.__source !== 'remote-player' && this.mediaMatchesCurrentTrack(mediaSession.media)) {
+            this.playbackConfirmation.observe({ entryId: this.currentEntryId(), playerState: mediaSession.playerState, currentTime: mediaSession.currentTime });
+        }
         const trackSynced = this.syncCurrentTrackFromSession(mediaSession);
         const choice = this.chooseCurrentPosition(mediaSession);
 
@@ -2552,9 +2638,9 @@ export class CastManager {
 
         const playerState = mediaSession.playerState || this.player?.playerState;
         if (playerState === chrome.cast.media.PlayerState.PLAYING) {
-            this.onPlayStateChange?.(true);
+            this.publishPlayState(true);
         } else if (playerState === chrome.cast.media.PlayerState.PAUSED) {
-            this.onPlayStateChange?.(false);
+            this.publishPlayState(false);
         }
 
         this.syncBrowserMediaSessionFromCast(mediaSession);
@@ -2625,6 +2711,7 @@ export class CastManager {
     }
 
     private syncCurrentTrackFromSession(mediaSession: any | null = this.getMediaSession()): boolean {
+        if (this.playbackConfirmation.unconfirmed && !this.mediaMatchesCurrentTrack(mediaSession?.media)) return false;
         if (!mediaSession) return false;
 
         this.syncQueueItemMapFromSession(mediaSession);
@@ -2712,6 +2799,12 @@ export class CastManager {
             // The receiver's own report decides "already there"; a stale SDK
             // Media object's currentItemId can be wrong.
             if (status ? status.queueEntryId === entryId : media?.currentItemId === jumpId) return;
+            // Start confirming the target before any jump is sent: while a
+            // start is unconfirmed, statuses for other entries are dropped, and
+            // the jump's own evidence must get through. A fallback LOAD below
+            // restarts confirmation for itself.
+            this.beginPlaybackConfirmation(session, entryId, 0);
+            this.confirmationLoadAccepted = true;
             // The media channel first: it worked on the NAD within 100-800 ms
             // (2026-10-12), while the SDK's Media object goes stale or missing
             // once the receiver advances by itself.
@@ -3001,11 +3094,18 @@ export class CastManager {
      * @param startIndex Which track to start playing (0-based)
      * @param repeat 'none' | 'one' | 'all' — repeat mode
      */
-    public async castQueue(tracks: CastQueueTrack[], startIndex = 0, repeat: CastRepeat = 'none', startTime = 0) {
+    public async castQueue(tracks: CastQueueTrack[], startIndex = 0, repeat: CastRepeat = 'none', startTime = 0, confirmationRetry = false) {
         if (!this.isConnected() || tracks.length === 0) return;
         let session = this.castContext.getCurrentSession();
         if (!session) return;
         const generation = ++this.queueLoadGeneration;
+        // `tracks` is the queue as of this call; edits after it stay pending
+        // and are reconciled against the new window once it has landed.
+        const editSeqAtCall = this.queueWindowEditSeq;
+        this.queueLoadingSession = session;
+        const requestedEntryId = tracks[startIndex]?.queueEntryId;
+        this.confirmationLoadAccepted = false;
+        if (!confirmationRetry && requestedEntryId) this.beginPlaybackConfirmation(session, requestedEntryId, startTime);
         const previous = this.currentLoadPromise;
         let release!: () => void;
         this.currentLoadPromise = new Promise<void>(resolve => { release = resolve; });
@@ -3015,7 +3115,7 @@ export class CastManager {
             if (!stillCurrent()) return;
             this.queueLoadRetry = null;
             this.queueWindow = null;
-            this.queueWindowEditHandled = this.queueWindowEditSeq; // a fresh LOAD covers every edit so far
+            this.queueWindowEditHandled = Math.max(this.queueWindowEditHandled, editSeqAtCall);
             this.queueItemIdByEntryId.clear();
             const index = Number.isInteger(startIndex) ? Math.max(0, Math.min(startIndex, tracks.length - 1)) : 0;
             const time = Number.isFinite(startTime) && startTime > 0 ? startTime : 0;
@@ -3067,16 +3167,27 @@ export class CastManager {
                     // command: a tap after waking into a dead transport
                     // recovers and retries (#39/#86). Recovery can replace the
                     // session object, so the retry re-reads it.
-                    await this.runCastCommand('load-queue', async () => {
+                    const acknowledged = await this.runCastCommand('load-queue', async () => {
                         const active = this.castContext.getCurrentSession();
                         if (!active) throw new Error('No active Cast session');
                         // A newer load (for example one started by recovery's own
                         // hydration) owns the device now; never send a second LOAD.
                         if (generation !== this.queueLoadGeneration) throw new Error('Cast queue load superseded');
                         session = active;
-                        return active.loadMedia(bounded.request);
+                        // A hung acknowledgement must not hold the load lock, but
+                        // it is not a failure either: the LOAD may be playing.
+                        // Treat it as sent and let receiver evidence decide.
+                        let timer: ReturnType<typeof setTimeout> | undefined;
+                        try {
+                            return await Promise.race([
+                                Promise.resolve(active.loadMedia(bounded.request)).then(() => true),
+                                new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), CAST_LOAD_ACK_TIMEOUT_MS); }),
+                            ]);
+                        } finally { if (timer !== undefined) clearTimeout(timer); }
                     });
                     if (!stillCurrent()) return;
+                    if (!acknowledged) this.logCast('warn', 'Queue load acknowledgement timed out; awaiting receiver evidence', `items=${before.length + bounded.entries.length} timeoutMs=${CAST_LOAD_ACK_TIMEOUT_MS}`);
+                    this.confirmationLoadAccepted = true;
                     this.queueWindow = {
                         session, ids: [...before, ...bounded.entries].map(entry => entry.queueEntryId!), repeat, blocked: false,
                         complete: bounded.entries.length === ordered.length, cafRepeat: cafRepeatFor(bounded.entries),
@@ -3090,6 +3201,12 @@ export class CastManager {
                     const id = session.getSessionId();
                     if (id) localStorage.setItem(SESSION_STORAGE_KEY, id);
                     this.logCast('ok', 'Queue load succeeded', `items=${before.length + bounded.entries.length} previous=${before.length} startIndex=${index} bytes=${bounded.bytes}`);
+                    if (this.pauseAfterLoadGeneration === generation) {
+                        // The listener paused while this LOAD was in flight.
+                        this.pauseAfterLoadGeneration = null;
+                        this.queueLoadingSession = null;
+                        this.pause();
+                    }
                     return;
                 } catch (error) {
                     if (!stillCurrent()) return;
@@ -3101,11 +3218,14 @@ export class CastManager {
             }
         } catch (error) {
             if (stillCurrent()) {
-                this.queueLoadRetry = { session, index: startIndex, time: startTime };
+                this.queueLoadRetry = requestedEntryId ? { session, entryId: requestedEntryId, time: startTime } : null;
                 this.logCast('error', 'Failed to load queue', this.describeError(error));
-                this.setHealthStatus('error', 'Failed to load the Cast queue. Retry to try again.');
+                if (!this.playbackConfirmation.unconfirmed) this.setHealthStatus('error', 'Failed to load the Cast queue. Retry to try again.');
             }
-        } finally { release(); }
+        } finally {
+            if (generation === this.queueLoadGeneration) this.queueLoadingSession = null;
+            release();
+        }
     }
 
     /**
@@ -3123,6 +3243,8 @@ export class CastManager {
         const window = this.queueWindow;
         const session = this.castContext?.getCurrentSession?.();
         if (!this.isConnected() || !window || window.session !== session || window.blocked || this.queueWindowBusy) return;
+        // Nothing touches a queue whose LOAD is still in flight.
+        if (this.playbackConfirmation.unconfirmed && this.queueLoadingSession === session) return;
         const mediaSnapshot = session.getMediaSession();
         const status: AuroraReceiverStatus | null = this.lastAuroraStatus && Date.now() - this.lastAuroraStatusAt <= this.auroraStatusFreshMs
             ? this.lastAuroraStatus : mediaSnapshot ? {
@@ -3151,9 +3273,19 @@ export class CastManager {
         this.currentLoadPromise = new Promise<void>(resolve => { release = resolve; });
         let reload: { index: number; time: number } | null = null;
         let again = false;
+        let deferred = false; // edits held for playback confirmation; it re-runs this
         try {
             await previous;
             if (!current()) return;
+            // While a jump is unconfirmed the receiver's status may still name
+            // the previous entry, so edits wait for confirmation (which runs
+            // this again). Refill at the end does not depend on it and goes
+            // ahead: holding it back made fast skips outrun Infinity's appends
+            // and reload (Google TV, 2026-10-13 22:14:46).
+            if ((index < 0 || edit.kind !== 'none') && this.playbackConfirmation.unconfirmed) {
+                deferred = true;
+                return;
+            }
             if (index < 0 || edit.kind !== 'none') {
                 // Only our own edits change the receiver; a transient mismatch does not.
                 if (this.queueWindowEditHandled >= editSeq) return;
@@ -3181,7 +3313,7 @@ export class CastManager {
                         this.persistQueueWindow();
                         again = true;
                     } else {
-                        reload = { index: Math.min(state.currentIndex ?? 0, state.playlist.length - 1), time: 0 };
+                        reload = { index: (state.currentIndex ?? 0) >= state.playlist.length ? 0 : (state.currentIndex ?? 0), time: 0 };
                     }
                     return;
                 }
@@ -3272,7 +3404,7 @@ export class CastManager {
             if (reload && current()) await this.castQueue(state.playlist, reload.index, state.repeat, reload.time);
             // An edit that arrived while we were busy, or a refill/repeat step
             // that follows a mirrored edit, runs now rather than on the next tick.
-            else if ((again || this.queueWindowEditHandled < this.queueWindowEditSeq) && current()) void this.reconcileQueueWindow();
+            else if (!deferred && (again || this.queueWindowEditHandled < this.queueWindowEditSeq) && current()) void this.reconcileQueueWindow();
         }
     }
 
@@ -3538,6 +3670,10 @@ export class CastManager {
      * Appends a new track to the end of the active Cast queue without interrupting playback.
      */
     public async appendToQueue(track: { queueEntryId?: string; url?: string; rawUrl?: string; title?: string; artist?: string; artUrl?: string; album?: string; format?: string; duration?: number }) {
+        if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
+            this.queueWindowEditSeq++; // reconciled once the load has landed
+            return;
+        }
         if (this.queueWindow?.session === this.castContext?.getCurrentSession?.()) {
             await this.reconcileQueueWindow(true);
             return;
@@ -3586,6 +3722,10 @@ export class CastManager {
     }
 
     public async insertNextInQueue(track: { queueEntryId?: string; url?: string; rawUrl?: string; title?: string; artist?: string; artUrl?: string; album?: string; format?: string; duration?: number }) {
+        if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
+            this.queueWindowEditSeq++; // reconciled once the load has landed
+            return;
+        }
         if (this.queueWindow?.session === this.castContext?.getCurrentSession?.()) {
             await this.reconcileQueueWindow(true);
             return;
@@ -3631,6 +3771,10 @@ export class CastManager {
     }
 
     public async removeFromQueue(queueEntryId: string) {
+        if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
+            this.queueWindowEditSeq++; // reconciled once the load has landed
+            return;
+        }
         if (this.queueWindow?.session === this.castContext?.getCurrentSession?.()) {
             await this.reconcileQueueWindow(true);
             return;
@@ -3655,6 +3799,10 @@ export class CastManager {
     }
 
     public async moveQueueItem(queueEntryId: string, newIndex: number) {
+        if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
+            this.queueWindowEditSeq++; // reconciled once the load has landed
+            return;
+        }
         if (this.queueWindow?.session === this.castContext?.getCurrentSession?.()) {
             await this.reconcileQueueWindow(true);
             return;
@@ -3679,6 +3827,10 @@ export class CastManager {
     }
 
     public async setRepeatMode(repeat: 'none' | 'one' | 'all') {
+        if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
+            this.queueWindowEditSeq++; // reconciled once the load has landed
+            return;
+        }
         if (this.queueWindow?.session === this.castContext?.getCurrentSession?.()) {
             await this.reconcileQueueWindow(true);
             return;
@@ -3699,6 +3851,8 @@ export class CastManager {
     }
 
     public playOrPause() {
+        if (this.playbackRetry) { void this.retryConnectionFromUi(); return; }
+        if (this.playbackConfirmation.pending) { this.pause(); return; }
         if (this.tryTransportViaMediaSession('play-or-pause', 'toggle')) return;
         try {
             if (!this.playerController) {
@@ -3712,6 +3866,14 @@ export class CastManager {
     }
 
     public pause() {
+        // A LOAD in flight was sent with autoplay. Abandoning it (as bumping
+        // the load generation did) left the receiver playing with no window
+        // and no refill; let it land, then pause the media it created.
+        if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
+            this.pauseAfterLoadGeneration = this.queueLoadGeneration;
+        }
+        this.playbackConfirmation.cancel();
+        this.playbackRetry = null;
         if (this.tryTransportViaMediaSession('pause', 'pause')) return;
         try {
             if (!this.playerController) {
@@ -3726,6 +3888,7 @@ export class CastManager {
     }
 
     public resume() {
+        if (this.playbackRetry) { void this.retryConnectionFromUi(); return; }
         if (this.tryTransportViaMediaSession('resume', 'play')) return;
         try {
             if (!this.playerController) {
@@ -3740,6 +3903,12 @@ export class CastManager {
     }
 
     public stop() {
+        this.queueLoadingSession = null;
+        this.queueWindow = null;
+        this.queueLoadRetry = null;
+        this.playbackConfirmation.cancel();
+        this.playbackRetry = null;
+        this.queueLoadGeneration++;
         try {
             if (this.playerController) {
                 this.playerController.stop();
@@ -3750,6 +3919,10 @@ export class CastManager {
     }
 
     public seek(time: number) {
+        if (this.playbackConfirmation.unconfirmed) {
+            this.playbackConfirmation.cancel();
+            this.playbackRetry = null;
+        }
         const view = this.getReceiverTrackView();
         const state = usePlayerStore.getState();
         const decision = decideSeek({
@@ -3791,15 +3964,22 @@ export class CastManager {
     public getCurrentCastTime(): number {
         const anchor = this.positionAnchor;
         if (!anchor || anchor.entryId !== this.currentEntryId()) return 0;
+        if (this.playbackConfirmation.unconfirmed) return anchor.position;
         return interpolatePosition({ anchorPosition: anchor.position, anchorAtMs: anchor.atMs,
             nowMs: Date.now(), playing: usePlayerStore.getState().playbackState === 'playing', duration: this.lastKnownDuration || null });
     }
 
     public async retryConnectionFromUi(): Promise<boolean> {
-        if (this.queueLoadRetry && this.queueLoadRetry.session === this.castContext?.getCurrentSession?.()) {
+        const playbackRetry = this.playbackRetry;
+        if (playbackRetry && playbackRetry.session === this.castContext?.getCurrentSession?.() && playbackRetry.entryId === this.currentEntryId()) {
+            const state = usePlayerStore.getState();
+            await this.castQueue(state.playlist, state.currentIndex ?? 0, state.repeat, playbackRetry.time);
+            return this.playbackConfirmation.pending;
+        }
+        if (this.queueLoadRetry && this.queueLoadRetry.entryId === this.currentEntryId() && this.queueLoadRetry.session === this.castContext?.getCurrentSession?.()) {
             const retry = this.queueLoadRetry;
             const state = usePlayerStore.getState();
-            await this.castQueue(state.playlist, retry.index, state.repeat, retry.time);
+            await this.castQueue(state.playlist, state.playlist.findIndex(track => track.queueEntryId === retry.entryId), state.repeat, retry.time);
             return this.queueLoadRetry === null;
         }
         if (this.queueWindow?.blocked && this.queueWindow.session === this.castContext?.getCurrentSession?.()) {

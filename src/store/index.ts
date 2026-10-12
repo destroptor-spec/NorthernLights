@@ -620,6 +620,8 @@ export interface PlayerState {
   playbackState: PlaybackState;
   isBuffering: boolean;
   castConnected: boolean;
+  /** 'starting' only holds the play button's spinner; 'unconfirmed' is shown. */
+  castPlaybackStatus: 'starting' | 'unconfirmed' | null;
   audioOutputSupported: boolean;
   audioOutputPickerSupported: boolean;
   audioOutputDevices: AudioOutputDevice[];
@@ -1193,6 +1195,7 @@ export const usePlayerStore = create<PlayerState>()(
         playbackState: 'stopped' as PlaybackState,
         isBuffering: false as boolean,
         castConnected: false as boolean,
+        castPlaybackStatus: null,
         audioOutputSupported: false,
         audioOutputPickerSupported: false,
         audioOutputDevices: [{ deviceId: '', label: 'System default', isDefault: true }],
@@ -2712,7 +2715,7 @@ export const usePlayerStore = create<PlayerState>()(
           // Immediately set the DB-known duration so the UI doesn't flash "0:10"
           // while waiting for hls.js to parse the full manifest.
           setPlaybackTimeState({ currentTime: 0, duration: track.duration || 0 });
-          set({ isBuffering: true });
+          set({ isBuffering: true, ...(castManager.isConnected() ? { currentIndex: index } : {}) });
 
           try {
             // Set volume before playing
@@ -2758,7 +2761,7 @@ export const usePlayerStore = create<PlayerState>()(
             }
             // A newer playAtIndex call has taken over — discard this result
             if (generation !== playGeneration) return;
-            set({ currentIndex: index, isBuffering: false, lastPlaybackActivityAt: Date.now(), _scrobbleStartAt: Date.now(), _scrobbleEligible: false });
+            set({ currentIndex: index, isBuffering: get().castPlaybackStatus === 'starting', lastPlaybackActivityAt: Date.now(), _scrobbleStartAt: Date.now(), _scrobbleEligible: false });
             persistContinuitySnapshot(true);
 
             // Push to the rolling session history immediately so Infinity-mode
@@ -2803,7 +2806,7 @@ export const usePlayerStore = create<PlayerState>()(
             if (generation !== playGeneration) return;
             set({ isBuffering: false });
             console.error("Error playing track", e);
-            get().nextTrack();
+            if (!castManager.isConnected()) get().nextTrack();
           }
         },
 

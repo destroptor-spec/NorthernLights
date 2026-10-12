@@ -6,6 +6,7 @@ import { formatTime } from '../utils/formatTime';
 import React from 'react';
 
 const ProgressBarImpl = () => {
+  const castPlaybackStatus = usePlayerStore((state) => state.castPlaybackStatus);
   const currentTime = usePlaybackTimeStore((state) => state.currentTime);
   const duration = usePlaybackTimeStore((state) => state.duration);
   const playlist = usePlayerStore((state) => state.playlist);
@@ -28,6 +29,14 @@ const ProgressBarImpl = () => {
   const handleSeek = React.useCallback((time: number) => {
     playbackManager.seek(time);
   }, []);
+
+  // A start in progress shows the normal bar (the play button spins); only
+  // a start that failed after its retry replaces it.
+  if (castPlaybackStatus === 'unconfirmed') {
+    return <div className="progress-bar-container" role="status" aria-live="polite">
+      Playback not confirmed
+    </div>;
+  }
 
   return (
     <div className="progress-bar-container">
