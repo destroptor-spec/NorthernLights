@@ -1937,16 +1937,30 @@ export const usePlayerStore = create<PlayerState>()(
               }
             };
             const recommended = await fetchNextRecommendation(authHeaders, payload);
+            if (!isPrefetch) {
+              // The queue ran out while we were asking. If the listener queued
+              // something meanwhile, play that rather than skipping past it;
+              // the next top-up still follows its usual path.
+              const now = get();
+              if (now.currentIndex !== null && now.currentIndex + 1 < now.playlist.length) {
+                void now.playAtIndex(now.currentIndex + 1);
+                return;
+              }
+            }
             if (recommended) {
               const latest = get();
-              // Never deliver a recommendation into a different or edited queue.
-              if (latest.playlist.length !== state.playlist.length || state.playlist.some((entry, index) =>
-                  entry.id !== latest.playlist[index]?.id || entry.queueEntryId !== latest.playlist[index]?.queueEntryId)) return;
+              // A prefetch never delivers into a different or edited queue. At
+              // the end of the queue there is nothing else to play, so append.
+              if (isPrefetch && (latest.playlist.length !== state.playlist.length || state.playlist.some((entry, index) =>
+                  entry.id !== latest.playlist[index]?.id || entry.queueEntryId !== latest.playlist[index]?.queueEntryId))) return;
               // An older server or a queue edit during the request must not
               // append a track we already hold. Do not undo Infinity-off.
               if (isPrefetch && !latest.isInfinityMode) return;
               if (latest.playlist.slice(Math.max(0, (latest.currentIndex ?? 0) - 50))
-                .some(track => track.id === recommended.id)) return;
+                .some(track => track.id === recommended.id)) {
+                if (!isPrefetch) get().stop();
+                return;
+              }
               const { mediaAccessToken, authToken, streamingQuality } = latest;
               const token = mediaAccessToken || authToken || '';
 
