@@ -59,6 +59,14 @@ describe('Music Store Logic', () => {
       expect(playAtIndex).not.toHaveBeenCalled();
     });
 
+    it('records the skip of the last track before Infinity continues', async () => {
+      stubs();
+      const recordSkip = jest.fn();
+      usePlayerStore.setState({ recordSkip, _scrobbleEligible: false, playlist: queue(), currentIndex: 1, repeat: 'none', isInfinityMode: true } as never);
+      await usePlayerStore.getState().nextTrack();
+      expect(recordSkip).toHaveBeenCalledWith('b');
+    });
+
     it('does nothing without Infinity: Next is disabled there, and stopping closed the mobile player', async () => {
       const { playAtIndex, stop, fetchNextInfinityTrack } = stubs();
       usePlayerStore.setState({ playlist: queue(), currentIndex: 1, repeat: 'none', isInfinityMode: false });

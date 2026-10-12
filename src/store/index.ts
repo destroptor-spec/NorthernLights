@@ -2807,16 +2807,17 @@ export const usePlayerStore = create<PlayerState>()(
           // repeat-all or shuffle) there is nothing next, and the UI disables
           // Next rather than ending playback. It used to wrap to track 1.
           if (!hasNextTrack(get())) return;
-          if (!shuffle && currentIndex !== null && currentIndex >= playlist.length - 1 && get().repeat !== 'all') {
-            await get().fetchNextInfinityTrack(false);
-            return;
-          }
 
           // Telemetry: record a skip for the track we are leaving — but only if
           // we left before it crossed the "played" threshold. Past that point
           // the track is already counted as a play, so a skip would contradict it.
           if (currentIndex !== null && playlist[currentIndex] && !get()._scrobbleEligible) {
             get().recordSkip(playlist[currentIndex].id);
+          }
+
+          if (!shuffle && currentIndex !== null && currentIndex >= playlist.length - 1 && get().repeat !== 'all') {
+            await get().fetchNextInfinityTrack(false); // only Infinity gets here
+            return;
           }
 
           let nextIndex = 0;
