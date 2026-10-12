@@ -11,6 +11,8 @@ type Request = { media: Item['media']; queueData: { items: Item[]; startIndex: n
 class LoadRequest { constructor(public media: Item['media']) {} }
 class ItemsRequest { constructor(public items: unknown[]) {} }
 type Internals = {
+    chooseCurrentPosition(media: unknown): { currentTime: number | null; duration: number | null; source: string };
+    publishPosition(position: number): void;
     lastAuroraStatus: AuroraReceiverStatus | null; lastAuroraStatusAt: number;
     queueItemIdByEntryId: Map<string, number>; queueWindow: { ids: string[]; blocked: boolean } | null;
     queueInsertAcks: CastQueueInsertAcks; reconcileQueueWindow(edited?: boolean): Promise<void>;
@@ -186,6 +188,32 @@ test('uncertain insert blocks retries until an explicit reload', async () => {
     expect(session.sendMessage).toHaveBeenCalledTimes(1);
 });
 
+
+test('receiver track 8/154 wins over a live but different RemotePlayer at 248/248', () => {
+    const { manager, report } = harness();
+    report(1);
+    Object.assign(manager, {
+        player: { currentTime: 248.4, duration: 248.4, mediaInfo: { customData: { queueEntryId: 'entry-0' } } },
+        lastRemotePositionEntryId: 'entry-0', lastRemotePositionAt: Date.now(),
+    });
+    manager.lastAuroraStatus = { queueEntryId: 'entry-1', currentTime: 8, duration: 154 };
+    expect(manager.chooseCurrentPosition({ media: { customData: { queueEntryId: 'entry-0' }, duration: 248.4 }, currentTime: 248.4 }))
+        .toEqual({ currentTime: 8, duration: 154, source: 'media-session' });
+});
+
+test('duplicate URLs without entry identity are rejected and old anchors do not cross tracks', () => {
+    const { manager } = harness();
+    mockState.playlist[1].url = mockState.playlist[0].url;
+    Object.assign(manager, {
+        player: { currentTime: 220, duration: 230, mediaInfo: { contentId: mockState.playlist[0].url } },
+        lastRemotePositionEntryId: 'entry-0', lastRemotePositionAt: Date.now(),
+    });
+    expect(manager.chooseCurrentPosition({ media: { contentId: mockState.playlist[0].url }, currentTime: 220 }).source).toBe('none');
+    manager.publishPosition(200);
+    mockState.currentIndex = 1;
+    expect(manager.getCurrentCastTime()).toBe(0);
+});
+
 test('Play Next inside the window is mirrored through the receiver channel, without a reload', async () => {
     const { manager, session, report, ack, settle } = harness();
     await manager.castQueue(mockState.playlist);
@@ -299,6 +327,18 @@ test('Previous jumps to a kept played entry by its reported item ID', async () =
     await manager.ensureQueuePlayback(mockState.playlist, 9);
     expect(media.queueJumpToItem.mock.calls[0][0]).toBe(2);
     expect(session.loadMedia).toHaveBeenCalledTimes(1);
+});
+
+test('play state from the receiver applies even when its entry is unknown; position does not', () => {
+    const { manager } = harness();
+    const onPlayStateChange = jest.fn();
+    const onTime = jest.fn();
+    Object.assign(manager, { onPlayStateChange, onTimeUpdate: onTime, publishPosition: onTime, publishDuration: onTime });
+    const apply = (status: AuroraReceiverStatus) => (manager as unknown as { applyAuroraStatus(s: AuroraReceiverStatus): void }).applyAuroraStatus(status);
+    apply({ queueEntryId: null, playerState: 'PAUSED', currentTime: 248.4, duration: 248.4 });
+    apply({ queueEntryId: 'not-in-the-local-queue', playerState: 'PLAYING', currentTime: 248.4, duration: 248.4 });
+    expect(onPlayStateChange.mock.calls).toEqual([[false], [true]]);
+    expect(onTime).not.toHaveBeenCalled();
 });
 
 describe('receiver item IDs inferred from position (prod 2026-10-12: CAF numbers items consecutively)', () => {

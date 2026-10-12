@@ -188,12 +188,14 @@ export class CastManager {
     // Carries the progress bar between receiver updates once the RemotePlayer
     // event stream dies; see runPositionTick().
     private positionTickTimer: ReturnType<typeof setInterval> | null = null;
-    private positionAnchor: { position: number; atMs: number } | null = null;
+    private positionAnchor: { position: number; atMs: number; entryId: string } | null = null;
     private lastKnownDuration = 0;
     private lastDurationCorrectionLogAt = 0;
     private auroraControlRequestId = 0;
     private auroraControlCapLoggedSid: string | null = null;
     private lastRemotePlayerEventAt = 0;
+    private lastRemotePositionAt = 0;
+    private lastRemotePositionEntryId: string | null = null;
     private lastCastStateChangeAt = 0;
     private lastWatchdogRecoveryLogAt = 0;
     private watchdogMediaRequestId = 0;
@@ -379,7 +381,9 @@ export class CastManager {
      * re-anchoring on our own extrapolation would compound its error.
      */
     private publishPosition(position: number, atMs: number = Date.now()) {
-        this.positionAnchor = { position, atMs };
+        const entryId = this.currentEntryId();
+        if (!entryId || !Number.isFinite(position) || position < 0) return;
+        this.positionAnchor = { position, atMs, entryId };
         this.onTimeUpdate?.(position);
     }
 
@@ -448,8 +452,8 @@ export class CastManager {
     private runPositionTick() {
         if (!this.isConnected()) return;
         const anchor = this.positionAnchor;
-        if (!anchor) return;
-        if (!isRemotePlayerStreamStale(this.msSinceRemotePlayerEvent())) return;
+        if (!anchor || anchor.entryId !== this.currentEntryId()) return;
+        if (this.remotePositionMatchesTrack() && !isRemotePlayerStreamStale(Date.now() - this.lastRemotePositionAt)) return;
         if (usePlayerStore.getState().playbackState !== 'playing') return;
 
         this.onTimeUpdate?.(interpolatePosition({
@@ -1176,8 +1180,12 @@ export class CastManager {
         // is the case this channel exists to cover.
         //
         // Track identity and play state are discrete and authoritative, so they
-        // still apply unconditionally below.
-        if (isRemotePlayerStreamStale(now - this.lastRemotePlayerEventAt)) {
+        // still apply unconditionally below. Position and duration apply only
+        // to the entry the sender shows as current.
+        const forCurrentEntry = status.queueEntryId === this.currentEntryId();
+        if (!forCurrentEntry) {
+            // Neither value belongs to the track on screen.
+        } else if (!this.remotePositionMatchesTrack() || isRemotePlayerStreamStale(now - this.lastRemotePositionAt)) {
             if (typeof status.duration === 'number' && isFinite(status.duration) && status.duration > 0) {
                 this.publishDuration(status.duration);
             }
@@ -2016,6 +2024,9 @@ export class CastManager {
                 () => {
                     this.lastRemotePlayerEventAt = Date.now();
                     this.lastRemoteEvidenceAt = Date.now();
+                    if (!this.mediaMatchesCurrentTrack(this.player?.mediaInfo)) return;
+                    this.lastRemotePositionAt = Date.now();
+                    this.lastRemotePositionEntryId = this.currentEntryId();
                     this.publishPosition(this.player.currentTime);
                 }
             );
@@ -2023,7 +2034,7 @@ export class CastManager {
             this.playerController.addEventListener(
                 cast.framework.RemotePlayerEventType.DURATION_CHANGED,
                 () => {
-                    this.publishDuration(this.player.duration);
+                    if (this.remotePositionMatchesTrack()) this.publishDuration(this.player.duration);
                 }
             );
 
@@ -2301,6 +2312,48 @@ export class CastManager {
         return mediaSession.media?.customData?.queueEntryId || null;
     }
 
+    private currentEntryId(): string | null {
+        const state = usePlayerStore.getState();
+        return state.currentIndex === null ? null : state.playlist[state.currentIndex]?.queueEntryId || null;
+    }
+
+    private mediaMatchesCurrentTrack(media: { customData?: { queueEntryId?: string }; contentId?: string } | null | undefined): boolean {
+        const expected = this.currentEntryId();
+        if (!expected || !media) return false;
+        if (media.customData?.queueEntryId) return media.customData.queueEntryId === expected;
+        const url = this.normalizeCastUrlForMatch(media.contentId);
+        if (!url) return false;
+        const state = usePlayerStore.getState();
+        // Legacy relays strip customData. URL matching is safe only when that
+        // URL identifies exactly one queue occurrence, including duplicates.
+        const matches = state.playlist.filter(track => [track.rawUrl,
+            applyCastStreamingQualityToHlsUrl(track.url || '', state.streamingQuality)]
+            .some(candidate => candidate && this.normalizeCastUrlForMatch(candidate) === url));
+        return matches.length === 1 && matches[0].queueEntryId === expected;
+    }
+
+    private remotePositionMatchesTrack(): boolean {
+        return this.lastRemotePositionEntryId === this.currentEntryId() && this.mediaMatchesCurrentTrack(this.player?.mediaInfo);
+    }
+
+    private chooseCurrentPosition(mediaSession: any) {
+        const state = usePlayerStore.getState();
+        const track = state.currentIndex === null ? null : state.playlist[state.currentIndex];
+        const receiver = this.lastAuroraStatus;
+        const receiverMatches = receiver?.queueEntryId === this.currentEntryId() && Date.now() - this.lastAuroraStatusAt < this.auroraStatusFreshMs;
+        const mediaMatches = this.mediaMatchesCurrentTrack(mediaSession?.media);
+        return pickRemotePosition({
+            playerTime: this.player?.currentTime, playerDuration: this.player?.duration,
+            playerMatchesTrack: this.remotePositionMatchesTrack(),
+            sessionTime: receiverMatches ? receiver?.currentTime : mediaSession?.currentTime,
+            sessionDuration: receiverMatches ? receiver?.duration : mediaSession?.media?.duration,
+            sessionMatchesTrack: receiverMatches || mediaMatches,
+            fallbackDuration: track?.duration,
+            sessionIsSynthetic: !receiverMatches && mediaSession?.__source === 'remote-player',
+            msSinceRemotePlayerEvent: Date.now() - this.lastRemotePositionAt,
+        });
+    }
+
     private normalizeTextForMatch(value: unknown): string {
         return typeof value === 'string' ? value.trim().toLowerCase() : '';
     }
@@ -2430,17 +2483,9 @@ export class CastManager {
         const media = mediaSession.media || {};
         const metadata = media.metadata || {};
         const storeTrack = sessionIndex !== null ? playlist[sessionIndex] : null;
-        const synthetic = mediaSession.__source === 'remote-player';
-        const choice = pickRemotePosition({
-            playerTime: this.player?.currentTime,
-            playerDuration: this.player?.duration,
-            sessionTime: mediaSession.currentTime,
-            sessionDuration: media.duration,
-            // The catalogue length is real even when the session is not.
-            fallbackDuration: synthetic ? storeTrack?.duration : metadata.duration || storeTrack?.duration,
-            sessionIsSynthetic: synthetic,
-            msSinceRemotePlayerEvent: this.msSinceRemotePlayerEvent(),
-        });
+        const choice = sessionIndex === usePlayerStore.getState().currentIndex
+            ? this.chooseCurrentPosition(mediaSession)
+            : { currentTime: null, duration: storeTrack?.duration ?? null, source: 'none' as const };
         const playerState = mediaSession.playerState || this.player?.playerState;
 
         return {
@@ -2491,15 +2536,7 @@ export class CastManager {
         } catch { /* ignore */ }
 
         const trackSynced = this.syncCurrentTrackFromSession(mediaSession);
-        const choice = pickRemotePosition({
-            playerTime: this.player?.currentTime,
-            playerDuration: this.player?.duration,
-            sessionTime: mediaSession.currentTime,
-            sessionDuration: mediaSession.media?.duration,
-            fallbackDuration: mediaSession.media?.metadata?.duration,
-            sessionIsSynthetic: mediaSession.__source === 'remote-player',
-            msSinceRemotePlayerEvent: this.msSinceRemotePlayerEvent(),
-        });
+        const choice = this.chooseCurrentPosition(mediaSession);
 
         // The guard here used to be doesSessionTrackMatchStore(), which cannot
         // fail in this position: syncCurrentTrackFromSession has just written
@@ -3752,7 +3789,10 @@ export class CastManager {
     }
 
     public getCurrentCastTime(): number {
-        return this.player?.currentTime ?? 0;
+        const anchor = this.positionAnchor;
+        if (!anchor || anchor.entryId !== this.currentEntryId()) return 0;
+        return interpolatePosition({ anchorPosition: anchor.position, anchorAtMs: anchor.atMs,
+            nowMs: Date.now(), playing: usePlayerStore.getState().playbackState === 'playing', duration: this.lastKnownDuration || null });
     }
 
     public async retryConnectionFromUi(): Promise<boolean> {
