@@ -77,6 +77,8 @@ const SESSION_STORAGE_KEY = 'cast_session_id';
 const QUEUE_WINDOW_STORAGE_KEY = 'aurora-cast-queue-window-v1';
 // A LOAD not acknowledged by then is treated as sent, never resent blindly.
 const CAST_LOAD_ACK_TIMEOUT_MS = 12000;
+// Only a start slower than this shows "Starting on <device>…"; quicker ones need no message.
+const CAST_STARTING_HINT_DELAY_MS = 5000;
 // Receiver volume applied once when a FRESH session hands playback over (some
 // receivers power on reporting 100% and would blast the first track). Never
 // applied when joining or rejoining an ongoing session.
@@ -246,6 +248,7 @@ export class CastManager {
     private queueWindowBusy = false;
     private queueLoadingSession: unknown = null;
     private pauseAfterLoadGeneration: number | null = null;
+    private startingHintTimer: ReturnType<typeof setTimeout> | null = null;
     // Edits are counted, not flagged: a reconcile handles exactly the edits
     // that committed before it read the queue, and leaves later ones pending.
     private queueWindowEditSeq = 0;
@@ -2329,6 +2332,7 @@ export class CastManager {
                 if (index >= 0) await this.castQueue(state.playlist, index, state.repeat, time, true);
             },
             confirmed: (attempt, elapsedMs) => {
+                this.clearStartingHint();
                 usePlayerStore.setState({ castPlaybackStatus: null, isBuffering: false });
                 this.queueLoadRetry = null;
                 this.playbackRetry = null;
@@ -2339,6 +2343,7 @@ export class CastManager {
                 void this.reconcileQueueWindow();
             },
             pausedElsewhere: (attempt, elapsedMs) => {
+                this.clearStartingHint();
                 usePlayerStore.setState({ castPlaybackStatus: null, isBuffering: false });
                 this.queueLoadRetry = null;
                 this.playbackRetry = null;
@@ -2351,12 +2356,14 @@ export class CastManager {
                 this.logCast('warn', 'playback-confirmation-extended', `entryId=${entryId} elapsedMs=${elapsedMs} reason=entry-already-starting`);
             },
             failed: (attempt, elapsedMs) => {
+                this.clearStartingHint();
                 this.playbackRetry = { session, entryId, time };
                 usePlayerStore.setState({ castPlaybackStatus: 'unconfirmed', isBuffering: false, playbackState: 'paused' });
                 this.logCast('error', 'playback-unconfirmed', `entryId=${entryId} elapsedMs=${elapsedMs} attempt=${attempt}`);
                 this.setHealthStatus('error', 'Playback did not start on the Cast device. Retry to try again.');
             },
             cancelled: () => {
+                this.clearStartingHint();
                 usePlayerStore.setState({ castPlaybackStatus: null, isBuffering: false });
                 // Don't leave the Cast icon spinning on "Starting…".
                 if (this.isConnected() && this.healthStatus.phase === 'rejoining' && this.healthStatus.message?.startsWith('Starting on ')) {
@@ -2364,8 +2371,22 @@ export class CastManager {
                 }
             },
         });
-        usePlayerStore.setState({ castPlaybackStatus: 'starting', isBuffering: true });
-        this.setHealthStatus('rejoining', `Starting on ${this.getCastDeviceName() || 'Cast device'}…`);
+        // A normal start needs no words: the play button's buffering state and
+        // the progress bar moving are the feedback. Only a start that is
+        // visibly slow says so, in place of the progress bar.
+        usePlayerStore.setState({ isBuffering: true });
+        this.clearStartingHint();
+        this.startingHintTimer = setTimeout(() => {
+            this.startingHintTimer = null;
+            if (!this.playbackConfirmation.pending || this.playbackConfirmation.entryId !== entryId) return;
+            usePlayerStore.setState({ castPlaybackStatus: 'starting' });
+            this.setHealthStatus('rejoining', `Starting on ${this.getCastDeviceName() || 'Cast device'}…`);
+        }, CAST_STARTING_HINT_DELAY_MS);
+    }
+
+    private clearStartingHint(): void {
+        if (this.startingHintTimer !== null) clearTimeout(this.startingHintTimer);
+        this.startingHintTimer = null;
     }
 
     private publishPlayState(playing: boolean): void {

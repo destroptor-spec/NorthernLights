@@ -430,3 +430,22 @@ test('pausing while the LOAD is in flight keeps its window and pauses the new me
     expect(manager.queueWindow?.ids).toHaveLength(30);
     expect(pauseVia).toHaveBeenCalledTimes(2); // once more, on the media the LOAD created
 });
+
+test('a normal start shows no "Starting on" message; only a slow one does', async () => {
+    const { manager } = harness();
+    const { usePlayerStore } = jest.requireMock('../../store') as { usePlayerStore: { setState: jest.Mock } };
+    const startingShown = () => usePlayerStore.setState.mock.calls.some(([patch]) => patch?.castPlaybackStatus === 'starting');
+    usePlayerStore.setState.mockClear();
+    await manager.castQueue(mockState.playlist);
+    manager.applyAuroraStatus({ queueEntryId: 'entry-0', currentTime: 0.2, duration: 154, playerState: 'PLAYING' });
+    manager.applyAuroraStatus({ queueEntryId: 'entry-0', currentTime: 1.4, duration: 154, playerState: 'PLAYING' });
+    jest.advanceTimersByTime(10000);
+    expect(startingShown()).toBe(false);
+
+    usePlayerStore.setState.mockClear();
+    await manager.ensureQueuePlayback(mockState.playlist, 40); // outside the window: a new LOAD
+    jest.advanceTimersByTime(4999);
+    expect(startingShown()).toBe(false);
+    jest.advanceTimersByTime(1);
+    expect(startingShown()).toBe(true);
+});
