@@ -642,3 +642,23 @@ describe('fast presses (NAD 2026-10-12 21:39:50 and 21:40:04)', () => {
         expect(session.loadMedia).toHaveBeenCalledTimes(1);
     });
 });
+
+test('every queue item carries its cover art: loads, refills and Play Next (Google TV, 2026-10-13)', async () => {
+    const { manager, report, ack, settle } = harness();
+    const built: Array<{ includeArtwork?: boolean }> = [];
+    const original = (manager as unknown as { buildQueueItem: (t: TrackInfo, o: object) => unknown }).buildQueueItem;
+    (manager as unknown as { buildQueueItem: unknown }).buildQueueItem = (track: TrackInfo, options: { includeArtwork?: boolean }) => {
+        built.push(options);
+        return original(track, options);
+    };
+    mockState.playlist = mockState.playlist.slice(0, 10);
+    await manager.castQueue(mockState.playlist);
+    report(0);
+    mockState.playlist.splice(1, 0, { ...mockState.playlist[5], queueEntryId: 'next' });
+    const pending = manager.reconcileQueueWindow(true);
+    await settle();
+    ack();
+    await pending;
+    expect(built.length).toBeGreaterThan(10);
+    expect(built.every(options => options.includeArtwork === true)).toBe(true);
+});
