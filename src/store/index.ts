@@ -8,7 +8,7 @@ import { EMPTY_FILTER_STATE } from '../utils/filterState';
 import { extractMetadata } from '../utils/fileSystem';
 import { playbackManager, PlaybackState } from '../utils/PlaybackManager';
 import { castManager } from '../utils/CastManager';
-import { cloneTrackForQueue, ensureQueueEntryIds } from '../utils/queue';
+import { cloneTrackForQueue, ensureQueueEntryIds, hasNextTrack } from '../utils/queue';
 import { preloadManager } from '../utils/PreloadManager';
 import { setPlaybackDebugLogging } from '../utils/playbackDebug';
 import { savePlaybackContinuitySnapshot } from '../utils/playbackContinuity';
@@ -2803,12 +2803,21 @@ export const usePlayerStore = create<PlayerState>()(
         nextTrack: async (options?: NextTrackOptions) => {
           const { playlist, currentIndex, shuffle } = get();
           if (playlist.length === 0) return;
+          // Next on the last track: Infinity continues; without it (and without
+          // repeat-all or shuffle) there is nothing next, and the UI disables
+          // Next rather than ending playback. It used to wrap to track 1.
+          if (!hasNextTrack(get())) return;
 
           // Telemetry: record a skip for the track we are leaving — but only if
           // we left before it crossed the "played" threshold. Past that point
           // the track is already counted as a play, so a skip would contradict it.
           if (currentIndex !== null && playlist[currentIndex] && !get()._scrobbleEligible) {
             get().recordSkip(playlist[currentIndex].id);
+          }
+
+          if (!shuffle && currentIndex !== null && currentIndex >= playlist.length - 1 && get().repeat !== 'all') {
+            await get().fetchNextInfinityTrack(false); // only Infinity gets here
+            return;
           }
 
           let nextIndex = 0;

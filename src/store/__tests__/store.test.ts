@@ -1,5 +1,6 @@
 import { usePlayerStore } from '../index';
 import { TrackInfo } from '../../utils/fileSystem';
+import { hasNextTrack } from '../../utils/queue';
 
 describe('Music Store Logic', () => {
   beforeEach(() => {
@@ -31,5 +32,66 @@ describe('Music Store Logic', () => {
     const url = new URL(track.url!);
     expect(url.searchParams.get('quality')).toBe('auto');
     expect(url.searchParams.get('token')).toBe('media-token');
+  });
+
+  describe('Next on the last track', () => {
+    const queue = () => [{ id: 'a', path: '/a.mp3', title: 'a' }, { id: 'b', path: '/b.mp3', title: 'b' }];
+    const stubs = () => {
+      const playAtIndex = jest.fn().mockResolvedValue(undefined);
+      const stop = jest.fn();
+      const fetchNextInfinityTrack = jest.fn().mockResolvedValue(undefined);
+      usePlayerStore.setState({ playAtIndex, stop, fetchNextInfinityTrack, recordSkip: jest.fn(), _scrobbleEligible: true, shuffle: false } as never);
+      return { playAtIndex, stop, fetchNextInfinityTrack };
+    };
+
+    it('wraps to the first track only with repeat-all', async () => {
+      const { playAtIndex } = stubs();
+      usePlayerStore.setState({ playlist: queue(), currentIndex: 1, repeat: 'all' });
+      await usePlayerStore.getState().nextTrack();
+      expect(playAtIndex).toHaveBeenCalledWith(0);
+    });
+
+    it('continues with Infinity instead of jumping back to the first track', async () => {
+      const { playAtIndex, fetchNextInfinityTrack } = stubs();
+      usePlayerStore.setState({ playlist: queue(), currentIndex: 1, repeat: 'none', isInfinityMode: true });
+      await usePlayerStore.getState().nextTrack();
+      expect(fetchNextInfinityTrack).toHaveBeenCalledWith(false);
+      expect(playAtIndex).not.toHaveBeenCalled();
+    });
+
+    it('records the skip of the last track before Infinity continues', async () => {
+      stubs();
+      const recordSkip = jest.fn();
+      usePlayerStore.setState({ recordSkip, _scrobbleEligible: false, playlist: queue(), currentIndex: 1, repeat: 'none', isInfinityMode: true } as never);
+      await usePlayerStore.getState().nextTrack();
+      expect(recordSkip).toHaveBeenCalledWith('b');
+    });
+
+    it('does nothing without Infinity: Next is disabled there, and stopping closed the mobile player', async () => {
+      const { playAtIndex, stop, fetchNextInfinityTrack } = stubs();
+      usePlayerStore.setState({ playlist: queue(), currentIndex: 1, repeat: 'none', isInfinityMode: false });
+      expect(hasNextTrack(usePlayerStore.getState())).toBe(false);
+      await usePlayerStore.getState().nextTrack();
+      expect(stop).not.toHaveBeenCalled();
+      expect(playAtIndex).not.toHaveBeenCalled();
+      expect(fetchNextInfinityTrack).not.toHaveBeenCalled();
+    });
+
+    it('hasNextTrack: repeat-all, shuffle or Infinity keep Next enabled on the last track', () => {
+      const base = { playlist: queue(), currentIndex: 1, repeat: 'none' as const, shuffle: false, isInfinityMode: false };
+      expect(hasNextTrack(base)).toBe(false);
+      expect(hasNextTrack({ ...base, repeat: 'all' })).toBe(true);
+      expect(hasNextTrack({ ...base, shuffle: true })).toBe(true);
+      expect(hasNextTrack({ ...base, isInfinityMode: true })).toBe(true);
+      expect(hasNextTrack({ ...base, currentIndex: 0 })).toBe(true);
+      expect(hasNextTrack({ ...base, playlist: [] })).toBe(false);
+    });
+
+    it('still advances normally before the end', async () => {
+      const { playAtIndex } = stubs();
+      usePlayerStore.setState({ playlist: queue(), currentIndex: 0, repeat: 'none', isInfinityMode: false });
+      await usePlayerStore.getState().nextTrack();
+      expect(playAtIndex).toHaveBeenCalledWith(1);
+    });
   });
 });
