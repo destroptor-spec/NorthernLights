@@ -559,11 +559,16 @@ everything it needs (`aurora.queue.insert`, CAF queue).
   in `ensureQueuePlayback`, the `metadata.index` fallback in
   `resolveTrackIndexFromSession`) must map through `queueEntryId` or a
   window-relative index.
-- **Previous entries.** A LOAD also carries up to **2 entries before** the
-  current one (inside the same budget), with `startIndex` pointing at the
-  current entry. Previous on the phone, and the device's own controls (Google
-  Home, a TV remote), then jump instead of reloading. Going further back than
-  that is a LOAD at the chosen entry, which is a user-initiated skip.
+- **Previous entries.** A LOAD also carries up to **10 entries before** the
+  current one, with `startIndex` pointing at the current entry. They count
+  toward the 30-item cap (so a fresh load holds 10 behind and up to 20 ahead)
+  and the byte budget. Previous on the phone, and the device's own controls
+  (Google Home, a TV remote), then step back instead of reloading. The
+  device's controls only ever see the receiver's queue: with 2 entries, Google
+  Home stopped two tracks before the last track started from the phone (NAD,
+  2026-10-12). Going further back than the receiver holds is a LOAD from the
+  phone; from Google Home it needs the phone to backfill, or the receiver
+  following the session (Phase 5).
 - **Replenishment.** When the receiver's current item has fewer than 5 items
   after it, the sender appends the next local entries, up to the cap, with
   `aurora.queue.insert` (`end`, ≤ 20 per message, acked), falling back to the
@@ -596,7 +601,7 @@ everything it needs (`aurora.queue.insert`, CAF queue).
   receiver queue that disagrees with the phone. Undo of a queue edit is an edit
   too, and goes through the same path.
 - **Played entries** are pruned from the receiver only by item IDs the sender
-  actually observed, keeping the last 2 (see *Previous entries*). An entry
+  actually observed, keeping the last 10 (see *Previous entries*). An entry
   whose ID is unknown stays on the receiver. Pruning never reloads; a few
   extra played entries on the receiver are harmless.
 - **Infinity and the low-water mark.** Infinity keeps 3 entries ahead (0(c)),
