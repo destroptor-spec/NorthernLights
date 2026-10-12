@@ -298,3 +298,65 @@ test('Previous jumps to a kept played entry by its reported item ID', async () =
     expect(media.queueJumpToItem.mock.calls[0][0]).toBe(2);
     expect(session.loadMedia).toHaveBeenCalledTimes(1);
 });
+
+describe('receiver item IDs inferred from position (prod 2026-10-12: CAF numbers items consecutively)', () => {
+    const apply = (manager: unknown, status: AuroraReceiverStatus) =>
+        (manager as { applyAuroraStatus(s: AuroraReceiverStatus): void }).applyAuroraStatus(status);
+    const seeded = async () => {
+        const h = harness();
+        Object.assign(h.manager, { onTrackChange: jest.fn(), onPlayStateChange: jest.fn() });
+        await h.manager.castQueue(mockState.playlist, 10); // entries 8..39, start at position 2
+        mockState.currentIndex = 10;
+        apply(h.manager, { queueEntryId: 'entry-10', itemId: 33, playerState: 'PLAYING', currentTime: 1 });
+        return h;
+    };
+
+    it('one observed ID gives the whole window, so a skip deep into it jumps instead of reloading', async () => {
+        const { manager, session, media } = await seeded();
+        expect(manager.queueItemIdByEntryId.get('entry-8')).toBe(31);
+        expect(manager.queueItemIdByEntryId.get('entry-39')).toBe(62);
+        await manager.ensureQueuePlayback(mockState.playlist, 25);
+        expect(media.queueJumpToItem.mock.calls[0][0]).toBe(48);
+        expect(session.loadMedia).toHaveBeenCalledTimes(1);
+    });
+
+    it('one contradiction turns inference off and falls back to a reload', async () => {
+        const { manager, session, media } = await seeded();
+        apply(manager, { queueEntryId: 'entry-11', itemId: 99, playerState: 'PLAYING', currentTime: 1 });
+        expect(manager.logCast).toHaveBeenCalledWith('warn', 'queue-item-id-inference-mismatch', expect.stringContaining('inferred=34 observed=99'));
+        expect(manager.queueItemIdByEntryId.get('entry-25')).toBeUndefined();
+        await manager.ensureQueuePlayback(mockState.playlist, 25);
+        expect(media.queueJumpToItem).not.toHaveBeenCalled();
+        expect(session.loadMedia).toHaveBeenCalledTimes(2);
+    });
+
+    it('an SDK-listed item that names another track refutes the inferred ID before jumping', async () => {
+        const { manager, session, media } = await seeded();
+        media.items = [{ itemId: 48, media: { contentId: 'https://music.example/api/stream/50/playlist.m3u8', customData: {} as never, metadata: { title: 'x' } } }];
+        await manager.ensureQueuePlayback(mockState.playlist, 25);
+        expect(media.queueJumpToItem).not.toHaveBeenCalled();
+        expect(session.loadMedia).toHaveBeenCalledTimes(2);
+    });
+
+    it('inserted items continue the numbering', async () => {
+        const { manager, report, ack, settle } = await seeded();
+        report(10);
+        mockState.playlist.splice(11, 0, { ...mockState.playlist[50], queueEntryId: 'next' });
+        const pending = manager.reconcileQueueWindow(true);
+        await settle();
+        ack();
+        await pending;
+        expect(manager.queueItemIdByEntryId.get('next')).toBe(63);
+    });
+
+    it('a reloaded sender adopts the stored IDs and keeps jumping', async () => {
+        const { manager, session, media, replaceSession } = await seeded();
+        manager.queueItemIdByEntryId.clear(); // the reload lost memory
+        replaceSession({ ...session, getSessionId: () => 'session' });
+        manager.maybeAdoptQueueWindow({ queueEntryId: 'entry-10', itemId: 33, currentItemIndex: 2, queueLength: 32 });
+        expect(manager.queueItemIdByEntryId.get('entry-30')).toBe(53);
+        await manager.ensureQueuePlayback(mockState.playlist, 30);
+        expect(media.queueJumpToItem.mock.calls[0][0]).toBe(53);
+        expect(session.loadMedia).toHaveBeenCalledTimes(1);
+    });
+});

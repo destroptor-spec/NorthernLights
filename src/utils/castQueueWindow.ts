@@ -143,7 +143,7 @@ export function applyWindowEdit(ids: readonly string[], edit: CastWindowEdit): s
 }
 
 /** What a sender remembers about its window, keyed by Cast session ID. */
-export type StoredCastWindow = { sessionId: string; ids: string[] };
+export type StoredCastWindow = { sessionId: string; ids: string[]; itemIds?: Record<string, number>; nextItemId?: number | null };
 
 /**
  * Decide whether a resumed sender may adopt a stored window. Every condition
@@ -165,4 +165,24 @@ export function adoptableWindow(
         queueLength - currentItemIndex !== stored.ids.length - offset) return { ok: false, reason: 'receiver-count-mismatch' };
     if (!isPrefix(stored.ids.slice(offset), localFromCurrent)) return { ok: false, reason: 'local-queue-diverged' };
     return { ok: true, ids: [...stored.ids] };
+}
+
+/**
+ * Receiver item IDs for a freshly loaded window, from one observed ID. CAF
+ * numbers queue items consecutively in queue order on LOAD and continues the
+ * sequence for inserts (prod 2026-10-12: every load and insert of the session).
+ * The SDK lists only ~3 items and no usable customData, so without this the
+ * sender knows the ID of the next track only, and every further skip or edit
+ * reloads. Callers must verify inferred IDs against every observed one.
+ */
+export function seedItemIds(order: readonly string[], entryId: string, itemId: number): { ids: Map<string, number>; next: number } | null {
+    const position = order.indexOf(entryId);
+    if (position < 0 || !Number.isInteger(itemId) || itemId - position < 0) return null;
+    const base = itemId - position;
+    return { ids: new Map(order.map((id, i) => [id, base + i] as const)), next: base + order.length };
+}
+
+/** The `/api/stream/<id>/` key of a media URL, to cross-check an item against an entry. */
+export function streamKey(url: string | undefined | null): string | null {
+    return url?.match(/\/api\/stream\/([^/?#]+)/)?.[1] ?? null;
 }
