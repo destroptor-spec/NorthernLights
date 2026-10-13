@@ -39,15 +39,11 @@ const RouteFallback: React.FC = () => (
 // App means navigation re-renders only this subtree, not the whole app shell.
 export const MainContent: React.FC = () => {
   const location = useLocation();
-  const library = usePlayerStore(state => state.library);
-  const albums = usePlayerStore(state => state.albums);
-  const artists = usePlayerStore(state => state.artists);
+  const libraryError = usePlayerStore(state => state.libraryError);
   const isLibraryLoading = usePlayerStore(state => state.isLibraryLoading);
-  // The library is "present" as soon as the lightweight entity lists load
-  // (entity-first), not only once the full track array arrives in the
-  // background. Gating on `library` (tracks) alone showed the empty "add a
-  // folder" prompt during the background-load window even when a library exists.
-  const hasLibrary = library.length > 0 || albums.length > 0 || artists.length > 0;
+  // Only show folder setup after a successful empty load on the home route.
+  // Other routes fetch their own data and must mount while entities load.
+  const hasLibrary = usePlayerStore(state => state.library.length > 0 || state.albums.length > 0 || state.artists.length > 0);
   const isScanningGlobal = usePlayerStore(state => state.isScanning);
   const playlist = usePlayerStore(state => state.playlist);
   const [playerPlacement] = usePlayerPlacement();
@@ -66,30 +62,8 @@ export const MainContent: React.FC = () => {
             : 'pb-32 md:pb-44'
           : 'pb-16 md:pb-4'
       }`}>
-        {!hasLibrary ? (
-          isLibraryLoading && location.pathname !== '/library' ? (
-            <div className="page-container">
-              {/* Same filter-toolbar-shaped placeholder as RouteFallback so the
-                  whole loading chain (this → route fallback → real view) keeps the
-                  grid at one Y and doesn't shift. */}
-              <div className="flex gap-2 py-2.5 mb-6">
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} className="h-9 w-10 rounded-xl bg-[var(--color-surface-variant)] animate-pulse" />
-                ))}
-              </div>
-              <div className="album-grid">
-                {Array.from({ length: 12 }).map((_, i) => (
-                  <div key={i} className="flex flex-col animate-pulse">
-                    <div className="aspect-square w-full mb-3 rounded-2xl bg-[var(--color-surface-variant)]" />
-                    <div className="px-1 space-y-1.5">
-                      <div className="h-4 w-3/4 rounded bg-[var(--color-surface-variant)]" />
-                      <div className="h-3 w-1/2 rounded bg-[var(--color-surface-variant)]" />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
+        {!hasLibrary && !isLibraryLoading && !libraryError
+          && (location.pathname === '/' || location.pathname === '/library') ? (
           <React.Suspense fallback={<RouteFallback />}>
             <Routes>
               <Route path="/invite/:token" element={<InviteRegister />} />
@@ -126,7 +100,6 @@ export const MainContent: React.FC = () => {
               } />
             </Routes>
           </React.Suspense>
-          )
         ) : (
           <React.Suspense fallback={<RouteFallback />}>
             <Routes>

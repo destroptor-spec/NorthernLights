@@ -984,6 +984,7 @@ export const Hub: React.FC = () => {
   const albums = usePlayerStore((s) => s.albums);
   const albumCount = usePlayerStore((s) => s.albums.length);
   const authToken = usePlayerStore((s) => s.authToken);
+  const isLibraryLoading = usePlayerStore((s) => s.isLibraryLoading);
   const mediaAccessToken = usePlayerStore((s) => s.mediaAccessToken);
   // The library is "present" once the entity lists load (entity-first); Hub's
   // own data is server-side, so it shouldn't wait for the full track array.
@@ -1238,17 +1239,18 @@ export const Hub: React.FC = () => {
   const isInitialLoading = (isLoading || isSmartLoading) && collections.length === 0 && !smartBundle;
 
   useEffect(() => {
-    if (hasLibrary) {
+    // Hub feeds come from the server; entity pagination is not a prerequisite.
+    if (authToken) {
       fetchHubData();
       void fetchSmartBundle();
     } else {
       setIsLoading(false);
       setIsSmartLoading(false);
     }
-  }, [fetchHubData, fetchSmartBundle, hasLibrary]);
+  }, [fetchHubData, fetchSmartBundle, authToken]);
 
   useEffect(() => {
-    if (!hasLibrary || isInitialLoading) return;
+    if (!authToken || isInitialLoading) return;
 
     const startedAt = Date.now();
     const interval = window.setInterval(() => {
@@ -1261,7 +1263,7 @@ export const Hub: React.FC = () => {
     }, HUB_REFRESH_POLL_MS);
 
     return () => window.clearInterval(interval);
-  }, [fetchHubData, fetchSmartBundle, hasLibrary, isInitialLoading]);
+  }, [fetchHubData, fetchSmartBundle, authToken, isInitialLoading]);
 
   useEffect(() => {
     if (shouldAnimateCards && !isLoading) hasPlayedHubCardIntro = true;
@@ -1465,7 +1467,7 @@ export const Hub: React.FC = () => {
               {generationError}
             </p>
           )}
-          {!hasLibrary && (
+          {!hasLibrary && !isLibraryLoading && (
             <p className="text-xs text-[var(--color-error)] mt-4 font-medium">
               scan music into your library first
             </p>
