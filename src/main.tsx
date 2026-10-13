@@ -9,8 +9,11 @@ import { usePlayerStore } from './store';
 import { createPwaUpdateHandler, reloadAppOnce, setPwaUpdateHandler, startPwaUpdateChecks, watchPwaUpdates } from './utils/pwaUpdate';
 import { OriginAccessGate } from './components/OriginAccessGate';
 import { sessionMirror } from './utils/SessionMirror';
+import { sessionFollower } from './utils/SessionFollower';
+import { getAuroraClientId } from './api/auroraApi';
+import { toPlayableTracks } from './utils/playableTracks';
 import { castManager } from './utils/CastManager';
-import { getPlaybackTimeSnapshot } from './store/playbackTime';
+import { getPlaybackTimeSnapshot, setPlaybackTimeState } from './store/playbackTime';
 import { describeThisDevice } from './utils/deviceName';
 import { logPlaybackInfo } from './utils/playbackDebug';
 
@@ -18,6 +21,19 @@ import { logPlaybackInfo } from './utils/playbackDebug';
 sessionMirror.start(usePlayerStore, {
   getPositionSeconds: () => getPlaybackTimeSnapshot().currentTime,
   getOutputName: () => (usePlayerStore.getState().castConnected && castManager.getCastDeviceName()) || describeThisDevice(),
+  log: logPlaybackInfo,
+  // One device plays at a time: another device took over, so stop here.
+  onDisplaced: () => {
+    const state = usePlayerStore.getState();
+    if (state.playbackState === 'playing') state.pause();
+  },
+});
+sessionFollower.start(usePlayerStore, {
+  clientId: getAuroraClientId,
+  mirror: sessionMirror,
+  toTracks: (session) => toPlayableTracks(session.queue.map((entry) => entry.track))
+    .map((track, index) => ({ ...track, queueEntryId: session.queue[index].queueEntryId })),
+  setPlaybackTime: (currentTime, duration) => setPlaybackTimeState({ currentTime, duration }),
   log: logPlaybackInfo,
 });
 

@@ -58,12 +58,14 @@ function setup(initial: Partial<MirroredPlayerState> = {}, existing: PlaybackSes
   }));
   const mirror = new SessionMirror();
   let position = 41;
+  const onDisplaced = jest.fn();
   mirror.start(store, {
     api: api as unknown as typeof sessionApi,
     getPositionSeconds: () => position,
     getOutputName: () => 'Chrome on Android',
+    onDisplaced,
   });
-  return { api, store, mirror, setPosition: (seconds: number) => { position = seconds; } };
+  return { api, store, mirror, onDisplaced, setPosition: (seconds: number) => { position = seconds; } };
 }
 
 const play = async (store: ReturnType<typeof setup>['store']) => {
@@ -253,4 +255,52 @@ it('tries the claim again while still playing after it failed', async () => {
   expect(api.claimPlaybackOutput).not.toHaveBeenCalled();
   await jest.advanceTimersByTimeAsync(30_000);
   expect(api.claimPlaybackOutput).toHaveBeenCalledTimes(1);
+});
+
+describe('another device claiming the output', () => {
+  it('stops this device when the claim is newer than its own', async () => {
+    const { api, store, mirror, onDisplaced } = setup();
+    await play(store);
+    expect(mirror.holdsOutput()).toBe(true);
+
+    await mirror.noteReplaced('session-1', credential.generation);
+    expect(onDisplaced).not.toHaveBeenCalled();
+
+    await mirror.noteReplaced('session-1', credential.generation + 1);
+    expect(onDisplaced).toHaveBeenCalledTimes(1);
+    expect(mirror.holdsOutput()).toBe(false);
+    api.reportPlaybackOutput.mockClear();
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(api.reportPlaybackOutput).not.toHaveBeenCalled();
+  });
+
+  it('waits for its own claim in flight before deciding', async () => {
+    const { api, store, mirror, onDisplaced } = setup();
+    let finishClaim: () => void = () => undefined;
+    api.claimPlaybackOutput.mockImplementationOnce(() => new Promise((resolve) => {
+      finishClaim = () => resolve({ session: sessionOf([], 5), credential: { ...credential, generation: 4 } });
+    }));
+    await play(store);
+    const decided = mirror.noteReplaced('session-1', 3);
+    finishClaim();
+    await decided;
+    expect(onDisplaced).not.toHaveBeenCalled();
+    expect(mirror.holdsOutput()).toBe(true);
+  });
+
+  it('stops a device that plays without a grant (its claim failed) and does not claim again by itself', async () => {
+    const { api, store, mirror, onDisplaced } = setup();
+    api.claimPlaybackOutput.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    await play(store);
+    await mirror.noteReplaced('session-1', 9);
+    expect(onDisplaced).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(api.claimPlaybackOutput).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves an idle device alone', async () => {
+    const { mirror, onDisplaced } = setup();
+    await mirror.noteReplaced('session-1', 9);
+    expect(onDisplaced).not.toHaveBeenCalled();
+  });
 });

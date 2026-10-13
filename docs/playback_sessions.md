@@ -965,5 +965,47 @@ columns):
 - **Replaced output:** a report or refresh answered with
   `OUTPUT_GRANT_REPLACED` means another device plays now. This device stops
   writing and reporting, and does not claim again until an explicit Play here
-  (`resume`, `setPlaylist` → `notePlayIntent`). Pausing it, and the prompt
-  for Next/Previous, come in PR 3.
+  (`resume`, `setPlaylist`, `playAtIndex` → `notePlayIntent`).
+
+**PR 3 (the following side):**
+- Server: every accepted report is also published as
+  `playbackSession.progress` (`{sessionId, revision, outputId, generation,
+  report}`). These events are transient: delivered live, never kept for replay,
+  so ten-second heartbeats cannot push the events a reconnecting client needs
+  out of the replay window.
+- `src/utils/SessionFollower.ts`, started in `main.tsx`, with pure helpers in
+  `src/utils/sessionFollow.ts`.
+  - It connects to `/api/v1/events` only with the scoped `sse` token. When the
+    store has none (it falls back to the session JWT for older streams), it
+    does not connect at all, so the event stream never sees a full session
+    token (Security). The server already refuses one there.
+  - On connect, and on `resync.required`, it reads the user's latest session;
+    `created`/`updated`/`handedOff` events fetch it when it is news, and
+    `progress` events update the followed device in place.
+  - **Idle device** (not playing, not casting, not holding the output): the
+    session's queue replaces the local one silently (entry IDs kept), the
+    current track is the one the other device plays, and progress is carried
+    forward every second between heartbeats. `sessionFollow` in the store
+    drives "Playing on <device>" in the desktop player (in place of the
+    signal chain), the mobile mini player and the Now Playing heading, shown
+    only while that device plays. An output that is `unreachable` or `ended` is
+    not followed; after 65 s without a heartbeat the session is read again.
+  - **Play** on an idle device continues from where the other device is now
+    (`resume` updates the pending start from `sessionFollow`). Playing any
+    track here (`playAtIndex`) claims the output again, which also closes the
+    queue-row gap from PR 2.
+  - **Next / Previous** on an idle device while the other device plays open
+    "Play here instead?" (`takeOverPrompt`, `SessionTakeOverPrompt`). Taking
+    over plays the next track here, or for Previous restarts the current one
+    when the other device was past 3 s. Pause is not offered there: an idle
+    device shows Play, and Play never asks.
+  - **One device at a time:** a `handedOff` event, or a fetched session, with a
+    newer generation from another device goes to `sessionMirror.noteReplaced`.
+    It waits for this device's own claim in flight, ignores a claim older than
+    its own grant, and otherwise stops this device (`onDisplaced` → `pause`,
+    which pauses the Cast device while casting). A device that plays without a
+    grant (its claim failed) is stopped too. What was already true when the
+    stream connected never counts as a claim. Without the event stream, the
+    next report's `OUTPUT_GRANT_REPLACED` does the same within 10 s.
+  - A casting device never adopts a queue: a Cast receiver's queue is never
+    replaced from here.

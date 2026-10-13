@@ -1,4 +1,5 @@
 import { usePlayerStore } from '../store/index';
+import { useFollowedDeviceName } from '../hooks/useFollowedDeviceName';
 import { hasNextTrack } from '../utils/queue';
 import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { X, Infinity as InfinityIcon, ListMusic, ListX, ChevronUp, FileText, Speaker } from 'lucide-react';
@@ -126,6 +127,7 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
   const audioOutputSelecting = usePlayerStore((s) => s.audioOutputSelecting);
   const selectAudioOutput = usePlayerStore((s) => s.selectAudioOutput);
   const volume = usePlayerStore((s) => s.volume);
+  const followedDeviceName = useFollowedDeviceName();
   const setVolume = usePlayerStore((s) => s.setVolume);
 
   const [castConnected, setCastConnected] = useState(castManager.isConnected());
@@ -308,12 +310,15 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
             locally, "on {device}" when casting or on a selected output. */}
         <div className="mobile-now-playing-heading">
           <span className="mobile-now-heading-line">
-            {castConnected && <span className="mobile-now-heading-dot" aria-hidden="true" />}
+            {(castConnected || followedDeviceName) && <span className="mobile-now-heading-dot" aria-hidden="true" />}
             Now Playing
             {castConnected && castDeviceName && (
               <span className="mobile-now-heading-device"> on {castDeviceName}</span>
             )}
-            {!castConnected && audioOutputActive && (
+            {!castConnected && followedDeviceName && (
+              <span className="mobile-now-heading-device"> on {followedDeviceName}</span>
+            )}
+            {!castConnected && !followedDeviceName && audioOutputActive && (
               <span className="mobile-now-heading-device"> on {audioOutputDeviceLabel || 'selected output'}</span>
             )}
           </span>

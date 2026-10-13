@@ -9015,7 +9015,7 @@
         "tags": [
           "Events"
         ],
-        "description": "Use a short-lived sse token in the query string because EventSource cannot set Authorization headers.",
+        "description": "Use a short-lived sse token in the query string because EventSource cannot set Authorization headers; a full session token is refused. Each event's data is JSON `{id, type, occurredAt, data}`. Types: playbackSession.created / updated / handedOff / deleted (fetch the session when its revision is newer), playbackSession.progress (every accepted output report: `{sessionId, revision, outputId, generation, report}`; live only, never replayed), playlist.changed, annotation.changed, library.revision, and resync.required (the replay window was lost: re-fetch everything).",
         "security": [
           {
             "listenerAuth": []

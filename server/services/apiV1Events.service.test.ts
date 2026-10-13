@@ -13,4 +13,18 @@ describe('Aurora API v1 event stream', () => {
     expect(replayApiV1Events('user-a', first.id)).toEqual([second]);
     expect(replayApiV1Events('user-b', first.id)).toBeNull();
   });
+
+  it('delivers a transient event live but never replays it', () => {
+    const listener = jest.fn();
+    const unsubscribe = subscribeApiV1Events('user-t', listener);
+    const before = publishApiV1Event('user-t', 'playlist.changed', { playlistId: 'p1' });
+    const progress = publishApiV1Event('user-t', 'playbackSession.progress', { sessionId: 's1' }, { transient: true });
+    const after = publishApiV1Event('user-t', 'playlist.changed', { playlistId: 'p2' });
+    unsubscribe();
+
+    expect(listener).toHaveBeenCalledWith(progress);
+    expect(replayApiV1Events('user-t', before.id)).toEqual([after]);
+    // A client whose last seen event was a transient one has lost its place.
+    expect(replayApiV1Events('user-t', progress.id)).toBeNull();
+  });
 });
