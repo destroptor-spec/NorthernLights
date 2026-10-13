@@ -12,7 +12,8 @@
     "test": "jest",
     "test:tz": "TZ=UTC jest && TZ=Pacific/Auckland jest && TZ=America/Los_Angeles jest",
     "verify:receiver": "node scripts/check-receiver-syntax.mjs",
-    "db:export": "tsx scripts/db-export.ts"
+    "db:export": "tsx scripts/db-export.ts",
+    "db:import": "tsx scripts/db-import.ts"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",

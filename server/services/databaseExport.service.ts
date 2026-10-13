@@ -96,7 +96,8 @@ export type DumpRunner = (plan: DumpPlan) => DumpProcess;
 const defaultRunner: DumpRunner = (plan) =>
   spawn(plan.command, plan.args, { env: plan.env ?? process.env, stdio: ['ignore', 'pipe', 'pipe'] });
 
-function dbSettings() {
+/** Aurora's database connection settings, the same defaults as server/database. */
+export function dbSettings() {
   return {
     user: process.env.DB_USER || 'musicuser',
     password: process.env.DB_PASSWORD || 'musicpass',

@@ -1,6 +1,6 @@
 # Database Export and Import
 
-**Status:** Proposed, 2026-10-13. Prerequisite for Phase 1 of
+**Status:** Export (step 1) built in PR #95; command-line import (step 2) built and rehearsed 2026-10-13; the deploy guard (step 3) is still to do. Prerequisite for Phase 1 of
 [playback_sessions.md](playback_sessions.md), whose schema changes will reach a
 database that prod and the Cast dev channel share.
 
