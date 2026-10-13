@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'child_process';
+import { Client, type ClientConfig } from 'pg';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -105,6 +106,39 @@ export function dbSettings() {
     name: process.env.DB_NAME || 'musicdb',
     container: process.env.DB_CONTAINER_NAME || 'music-postgres',
   };
+}
+
+export interface ConnectableClient extends QueryClient {
+  connect(): Promise<unknown>;
+  end(): Promise<void>;
+}
+
+/**
+ * Connect a command-line client with Aurora's settings. When the host is
+ * "localhost" and the connection fails, retry once on 127.0.0.1: Node resolves
+ * localhost to ::1 first, and rootless Podman publishes the database port on
+ * IPv4 only, so the IPv6 connection is accepted by the port forwarder and then
+ * dropped ("Connection terminated unexpectedly"; prod 2026-10-13).
+ */
+export async function connectDatabase(
+  database = dbSettings().name,
+  makeClient: (config: ClientConfig) => ConnectableClient = (config) => new Client(config) as unknown as ConnectableClient,
+  warn: (message: string) => void = (message) => console.warn(message),
+): Promise<ConnectableClient> {
+  const db = dbSettings();
+  const config: ClientConfig = { user: db.user, password: db.password, host: db.host, port: Number.parseInt(db.port, 10), database };
+  const first = makeClient(config);
+  try {
+    await first.connect();
+    return first;
+  } catch (error) {
+    await first.end().catch(() => undefined);
+    if (db.host !== 'localhost') throw error;
+    const fallback = makeClient({ ...config, host: '127.0.0.1' });
+    await fallback.connect();
+    warn(`Connected via 127.0.0.1: "localhost" (IPv6 first) did not reach the database (${error instanceof Error ? error.message : String(error)}). Set DB_HOST=127.0.0.1 to skip this.`);
+    return fallback;
+  }
 }
 
 /**
