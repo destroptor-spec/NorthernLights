@@ -128,6 +128,8 @@ These must be resolved before a first-party client can rely on the session API:
    `queueMoveOperation`). An index is only meaningful at one revision, so these
    ops cannot be rebased, and an optimistic client has no ID for an entry it just
    inserted until the server answers. See [Sync protocol](#sync-protocol).
+   *Fixed in Phase 1, PR 2: `afterEntryId` anchors, client-proposed `entryIds`
+   and a per-patch `requestId`.*
 10. **Reports have no ordering or output identity.** `playbackReportSchema` has
     `eventId`, `trackId`, `kind` and `positionMs`, but nothing that identifies
     which output sent it or orders it against other reports. See
@@ -800,3 +802,27 @@ Issue #72 remains deferred; these changes do not establish the cause of error 31
   Locally a 2,000-entry write went from about 105 ms to 25 ms for an append and
   about 55 ms for a full reorder; most of the remainder is serializing the
   response.
+
+**PR 2 — entry anchors, proposed entry IDs and request keys** (API contract
+change; one new table):
+- `insert` and `move` accept `afterEntryId` (`null` = head) as the alternative
+  to `index` / `toIndex`; exactly one is required. A missing anchor answers
+  `409 ANCHOR_NOT_FOUND` with the current session. Moving a missing entry stays
+  a no-op; moving an entry after itself leaves it in place.
+- `insert` and `replaceQueue` accept `entryIds`. On `insert`, an ID already in
+  the queue rejects the whole patch (`409 ENTRY_ID_CONFLICT`, with the current
+  session). On `replaceQueue`, an ID naming an existing entry for the same track
+  keeps that entry (and its `addedAt`), since a replacement is idempotent; for
+  another track it is a conflict.
+- `requestId` is optional in the schema so existing API v1 clients keep
+  working; first-party clients will always send it. Keys live in the new
+  `playback_session_requests` table (`session_id`, `request_id`, hash,
+  resulting revision), are written in the patch transaction, checked after the
+  ownership check and before the revision check, kept 24 h and capped at 1,000
+  per session. A replay answers `200` with the current session and
+  `meta.appliedRevision` / `meta.replayed`; a different body answers
+  `422 IDEMPOTENCY_KEY_REUSED`.
+- Contract tests cover anchors, anchor-gone, duplicate IDs (including within one
+  patch), replacement reuse, replay after a later change, key reuse, rejected
+  patches leaving no key, per-session scope, expiry, the cap, and a rebase of an
+  anchored insert after a concurrent change.

@@ -58,6 +58,29 @@ describe('Aurora API v1 contracts', () => {
     expect(playbackSessionDeleteSchema.safeParse({}).success).toBe(false);
   });
 
+  it('accepts an index or an anchor for insert and move, never both or neither', () => {
+    const entry = '00000000-0000-4000-8000-000000000001';
+    const other = '00000000-0000-4000-8000-000000000002';
+    const parses = (operation: unknown, extra: Record<string, unknown> = {}) =>
+      playbackSessionPatchSchema.safeParse({ expectedRevision: 1, operations: [operation], ...extra }).success;
+    expect(parses({ type: 'insert', index: 0, trackIds: ['a'] })).toBe(true);
+    expect(parses({ type: 'insert', afterEntryId: null, trackIds: ['a'] })).toBe(true);
+    expect(parses({ type: 'insert', afterEntryId: entry, trackIds: ['a', 'b'], entryIds: [other, entry] })).toBe(true);
+    expect(parses({ type: 'insert', trackIds: ['a'] })).toBe(false);
+    expect(parses({ type: 'insert', index: 0, afterEntryId: entry, trackIds: ['a'] })).toBe(false);
+    expect(parses({ type: 'move', queueEntryId: entry, afterEntryId: other })).toBe(true);
+    expect(parses({ type: 'move', queueEntryId: entry, toIndex: 2 })).toBe(true);
+    expect(parses({ type: 'move', queueEntryId: entry })).toBe(false);
+    expect(parses({ type: 'move', queueEntryId: entry, toIndex: 2, afterEntryId: null })).toBe(false);
+    // Proposed entry IDs: one UUID per track, no repeats.
+    expect(parses({ type: 'insert', index: 0, trackIds: ['a', 'b'], entryIds: [entry] })).toBe(false);
+    expect(parses({ type: 'insert', index: 0, trackIds: ['a', 'b'], entryIds: [entry, entry] })).toBe(false);
+    expect(parses({ type: 'replaceQueue', trackIds: ['a'], entryIds: ['queue-abc'] })).toBe(false);
+    // requestId is optional and must be a UUID.
+    expect(parses({ type: 'setTransport', playbackState: 'playing' }, { requestId: entry })).toBe(true);
+    expect(parses({ type: 'setTransport', playbackState: 'playing' }, { requestId: 'retry-1' })).toBe(false);
+  });
+
   it('labels measured loudness values as LUFS and true peak, never replay gain', () => {
     const descriptor = {
       track,

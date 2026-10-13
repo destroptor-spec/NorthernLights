@@ -164,7 +164,23 @@ path({ method: 'post', path: '/tracks/{id}/playback', summary: 'Resolve playback
 path({ method: 'get', path: '/playback-sessions', summary: 'List durable playback sessions', tags: ['Sessions'], security: authed, responses: ok(z.array(schemas.PlaybackSession)) });
 path({ method: 'post', path: '/playback-sessions', summary: 'Create a playback session owned by this client', tags: ['Sessions'], security: authed, request: { body: { required: true, content: json(playbackSessionCreateSchema) } }, responses: created(schemas.PlaybackSession) });
 path({ method: 'get', path: '/playback-sessions/{id}', summary: 'Get a playback session', tags: ['Sessions'], security: authed, request: { params: idParams }, responses: ok(schemas.PlaybackSession) });
-path({ method: 'patch', path: '/playback-sessions/{id}', summary: 'Apply optimistic queue or transport changes', tags: ['Sessions'], security: authed, request: { params: idParams, body: { required: true, content: json(playbackSessionPatchSchema) } }, responses: ok(schemas.PlaybackSession) });
+const sessionPatchResponses = {
+  ...ok(schemas.PlaybackSession),
+  200: {
+    description: 'The session after the patch. For a retried requestId, the current session and the revision the original attempt produced.',
+    content: json(z.object({
+      data: schemas.PlaybackSession,
+      meta: z.object({
+        requestId,
+        appliedRevision: z.number().int().positive().describe('Revision this patch produced.'),
+        replayed: z.boolean().describe('True when the requestId was already applied; nothing was applied again.'),
+      }),
+    })),
+  },
+  409: { description: 'REVISION_CONFLICT, ANCHOR_NOT_FOUND or ENTRY_ID_CONFLICT (each with the current session in details.current), PLAYBACK_SESSION_NOT_OWNER, or TRACKS_UNAVAILABLE', content: json(schemas.ApiError) },
+  422: { description: 'IDEMPOTENCY_KEY_REUSED: the requestId was used for a different body', content: json(schemas.ApiError) },
+};
+path({ method: 'patch', path: '/playback-sessions/{id}', summary: 'Apply optimistic queue or transport changes', tags: ['Sessions'], security: authed, request: { params: idParams, body: { required: true, content: json(playbackSessionPatchSchema) } }, responses: sessionPatchResponses });
 path({ method: 'post', path: '/playback-sessions/{id}/handoff', summary: 'Explicitly transfer session ownership', tags: ['Sessions'], security: authed, request: { params: idParams, body: { required: true, content: json(z.object({ expectedRevision: z.number().int().positive() })) } }, responses: ok(schemas.PlaybackSession) });
 path({ method: 'delete', path: '/playback-sessions/{id}', summary: 'Delete an owned playback session at an expected revision', tags: ['Sessions'], security: authed, request: { params: idParams, body: { required: true, content: json(playbackSessionDeleteSchema) } }, responses: noContent() });
 path({

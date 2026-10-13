@@ -41,6 +41,57 @@ export class PlaybackSessionTrackError extends Error {
     super('One or more tracks no longer exist');
   }
 }
+/** An insert or move named an anchor entry that is no longer in the queue. */
+export class PlaybackSessionAnchorError extends Error {
+  current: PlaybackSession | null = null;
+  constructor(public readonly anchorEntryId: string) {
+    super('Anchor entry not found');
+  }
+}
+/** A client-proposed entry ID is already used by another entry in the session. */
+export class PlaybackSessionEntryIdError extends Error {
+  current: PlaybackSession | null = null;
+  constructor(public readonly entryIds: string[]) {
+    super('Entry ID already in use');
+  }
+}
+/** A patch reused a requestId with a different body. */
+export class PlaybackSessionRequestReusedError extends Error {}
+
+export type PlaybackSessionPatchResult = {
+  session: PlaybackSession;
+  /** The revision this patch produced; older than `session.revision` on a replay that others have since built on. */
+  appliedRevision: number;
+  /** True when the requestId had already been applied and nothing was applied again. */
+  replayed: boolean;
+};
+
+// Request keys outlive any client retry, including an offline journal replay.
+const REQUEST_KEY_TTL = "INTERVAL '24 hours'";
+const REQUEST_KEYS_PER_SESSION = 1000;
+
+function hashPatch(patch: PlaybackSessionPatch): string {
+  const { requestId: _requestId, ...body } = patch;
+  return crypto.createHash('sha256').update(JSON.stringify(body)).digest('hex');
+}
+
+function newEntries(trackIds: string[], entryIds?: string[]): EntryRow[] {
+  const addedAt = new Date();
+  return trackIds.map((trackId, offset) => ({
+    queue_entry_id: entryIds?.[offset] ?? crypto.randomUUID(),
+    track_id: trackId,
+    position: offset,
+    added_at: addedAt,
+  }));
+}
+
+// `null` is the head of the queue; otherwise the slot after the anchor.
+function anchorSlot(entries: EntryRow[], afterEntryId: string | null): number {
+  if (afterEntryId === null) return 0;
+  const anchor = entries.findIndex((entry) => entry.queue_entry_id === afterEntryId);
+  if (anchor < 0) throw new PlaybackSessionAnchorError(afterEntryId);
+  return anchor + 1;
+}
 
 async function loadEntries(db: PoolClient | Awaited<ReturnType<typeof initDB>>, sessionId: string): Promise<EntryRow[]> {
   const result = await db.query(`
@@ -200,9 +251,10 @@ export async function patchPlaybackSession(input: {
   clientId: string;
   sessionId: string;
   patch: PlaybackSessionPatch;
-}): Promise<PlaybackSession> {
+}): Promise<PlaybackSessionPatchResult> {
   const db = await initDB();
   const client = await db.connect();
+  const { requestId } = input.patch;
   try {
     await client.query('BEGIN');
     const result = await client.query(`
@@ -211,6 +263,22 @@ export async function patchPlaybackSession(input: {
     const row = result.rows[0] as SessionRow | undefined;
     if (!row) throw new PlaybackSessionNotFoundError();
     if (row.owner_client_id !== input.clientId) throw new PlaybackSessionOwnershipError();
+
+    // The request key is checked before the revision, so a retry after a lost
+    // response gets its original success rather than a conflict with itself.
+    const requestHash = requestId ? hashPatch(input.patch) : null;
+    if (requestId) {
+      const prior = await client.query(`
+        SELECT request_hash, revision FROM playback_session_requests
+        WHERE session_id = $1 AND request_id = $2 AND created_at > NOW() - ${REQUEST_KEY_TTL}
+      `, [input.sessionId, requestId]);
+      if (prior.rows[0]) {
+        if (prior.rows[0].request_hash !== requestHash) throw new PlaybackSessionRequestReusedError();
+        await client.query('ROLLBACK');
+        return { session: await serializeSession(db, row), appliedRevision: Number(prior.rows[0].revision), replayed: true };
+      }
+    }
+
     if (Number(row.revision) !== input.patch.expectedRevision) {
       await client.query('ROLLBACK');
       const current = await getPlaybackSession(input.userId, input.sessionId);
@@ -231,12 +299,16 @@ export async function patchPlaybackSession(input: {
       switch (operation.type) {
         case 'replaceQueue': {
           await ensureTracksExist(client, operation.trackIds);
-          entries = operation.trackIds.map((trackId, position) => ({
-            queue_entry_id: crypto.randomUUID(),
-            track_id: trackId,
-            position,
-            added_at: new Date(),
-          }));
+          // A proposed ID may name an entry already in the queue, for the same
+          // track: replacing is idempotent, so that entry simply survives.
+          const existing = new Map(entries.map((entry) => [entry.queue_entry_id, entry]));
+          const clashes = (operation.entryIds || []).filter((id, offset) => {
+            const kept = existing.get(id);
+            return kept !== undefined && kept.track_id !== operation.trackIds[offset];
+          });
+          if (clashes.length) throw new PlaybackSessionEntryIdError(clashes);
+          entries = newEntries(operation.trackIds, operation.entryIds)
+            .map((entry) => existing.get(entry.queue_entry_id) ?? entry);
           currentEntryId = entries[Math.min(operation.currentIndex || 0, Math.max(0, entries.length - 1))]?.queue_entry_id || null;
           positionMs = 0;
           queueChanged = true;
@@ -244,13 +316,15 @@ export async function patchPlaybackSession(input: {
         }
         case 'insert': {
           await ensureTracksExist(client, operation.trackIds);
-          const at = Math.min(operation.index, entries.length);
-          entries.splice(at, 0, ...operation.trackIds.map((trackId, offset) => ({
-            queue_entry_id: crypto.randomUUID(),
-            track_id: trackId,
-            position: at + offset,
-            added_at: new Date(),
-          })));
+          if (operation.entryIds) {
+            const used = new Set(entries.map((entry) => entry.queue_entry_id));
+            const clashes = operation.entryIds.filter((id) => used.has(id));
+            if (clashes.length) throw new PlaybackSessionEntryIdError(clashes);
+          }
+          const at = operation.afterEntryId !== undefined
+            ? anchorSlot(entries, operation.afterEntryId)
+            : Math.min(operation.index ?? entries.length, entries.length);
+          entries.splice(at, 0, ...newEntries(operation.trackIds, operation.entryIds));
           if (!currentEntryId) currentEntryId = entries[0]?.queue_entry_id || null;
           queueChanged = true;
           break;
@@ -266,12 +340,18 @@ export async function patchPlaybackSession(input: {
           break;
         }
         case 'move': {
+          // Moving an entry that is already gone is a no-op, which is what a
+          // rebase would make of it anyway.
           const from = entries.findIndex((entry) => entry.queue_entry_id === operation.queueEntryId);
-          if (from >= 0) {
-            const [entry] = entries.splice(from, 1);
-            entries.splice(Math.min(operation.toIndex, entries.length), 0, entry);
-            queueChanged = true;
-          }
+          if (from < 0) break;
+          const [entry] = entries.splice(from, 1);
+          const to = operation.afterEntryId === undefined
+            ? Math.min(operation.toIndex ?? entries.length, entries.length)
+            : operation.afterEntryId === operation.queueEntryId
+              ? from
+              : anchorSlot(entries, operation.afterEntryId);
+          entries.splice(to, 0, entry);
+          queueChanged = true;
           break;
         }
         case 'setTransport': {
@@ -299,13 +379,38 @@ export async function patchPlaybackSession(input: {
       WHERE id = $1 AND user_id = $2
       RETURNING *
     `, [input.sessionId, input.userId, currentEntryId, positionMs, playbackState, repeatMode, shuffle]);
+    const appliedRevision = Number(updated.rows[0].revision);
+    if (requestId) {
+      // An expired key that hasn't been pruned yet is reused as a new one.
+      await client.query(`
+        INSERT INTO playback_session_requests (session_id, request_id, request_hash, revision)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (session_id, request_id)
+        DO UPDATE SET request_hash = EXCLUDED.request_hash, revision = EXCLUDED.revision, created_at = NOW()
+      `, [input.sessionId, requestId, requestHash, appliedRevision]);
+      await client.query(`
+        DELETE FROM playback_session_requests
+        WHERE session_id = $1 AND (
+          created_at <= NOW() - ${REQUEST_KEY_TTL}
+          OR request_id IN (
+            SELECT request_id FROM playback_session_requests
+            WHERE session_id = $1 ORDER BY created_at DESC OFFSET $2
+          )
+        )
+      `, [input.sessionId, REQUEST_KEYS_PER_SESSION]);
+    }
     await client.query('COMMIT');
     const session = await serializeSession(db, updated.rows[0] as SessionRow);
     publishApiV1Event(input.userId, 'playbackSession.updated', { sessionId: session.id, revision: session.revision });
-    return session;
+    return { session, appliedRevision, replayed: false };
   } catch (error) {
     if (!(error instanceof PlaybackSessionRevisionError)) {
       try { await client.query('ROLLBACK'); } catch { /* transaction already closed */ }
+    }
+    // Anchor and entry-ID conflicts carry the current session, like a revision
+    // conflict, so the client can rebase without another read.
+    if (error instanceof PlaybackSessionAnchorError || error instanceof PlaybackSessionEntryIdError) {
+      error.current = await getPlaybackSession(input.userId, input.sessionId);
     }
     throw error;
   } finally {

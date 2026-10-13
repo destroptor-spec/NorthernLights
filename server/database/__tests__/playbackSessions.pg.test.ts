@@ -57,13 +57,19 @@ describeDb('playback sessions', () => {
   const create = (ids: string[], currentIndex = 0, clientId = 'phone') => sessions.createPlaybackSession({
     userId, clientId, name: 'Listening', trackIds: ids, currentIndex, positionMs: 0,
   });
-  const patch = (
+  type Operations = import('../../../shared/api/v1').PlaybackSessionPatch['operations'];
+  const send = (
     session: { id: string; revision: number },
-    operations: import('../../../shared/api/v1').PlaybackSessionPatch['operations'],
-    clientId = 'phone',
+    operations: Operations,
+    extra: { clientId?: string; requestId?: string } = {},
   ) => sessions.patchPlaybackSession({
-    userId, clientId, sessionId: session.id, patch: { expectedRevision: session.revision, operations },
+    userId,
+    clientId: extra.clientId ?? 'phone',
+    sessionId: session.id,
+    patch: { expectedRevision: session.revision, operations, ...(extra.requestId ? { requestId: extra.requestId } : {}) },
   });
+  const patch = async (session: { id: string; revision: number }, operations: Operations, clientId = 'phone') =>
+    (await send(session, operations, { clientId })).session;
   const storedRows = async (sessionId: string) => (await pool.query(
     'SELECT queue_entry_id, track_id, position FROM playback_session_entries WHERE session_id = $1 ORDER BY position',
     [sessionId],
@@ -266,6 +272,170 @@ describeDb('playback sessions', () => {
       const session = await create(trackIds(0, 3), 1);
       await pool.query('DELETE FROM tracks WHERE id = $1', [trackId(1)]);
       expect((await sessions.getPlaybackSession(userId, session.id))!.currentEntryId).toBeNull();
+    });
+  });
+
+  describe('entry anchors, proposed entry IDs and request keys', () => {
+    const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+    const rejection = async (pending: Promise<unknown>) => pending.then(() => { throw new Error('expected a rejection'); }, (error) => error);
+    const requestKeys = async (sessionId: string) => Number((await pool.query(
+      'SELECT COUNT(*)::int AS n FROM playback_session_requests WHERE session_id = $1', [sessionId],
+    )).rows[0].n);
+
+    it('inserts after an anchor entry, or at the head for null, using the proposed entry IDs', async () => {
+      let session = await create(trackIds(0, 3));
+      const [a, b, c] = session.queue.map((entry) => entry.queueEntryId);
+      session = await patch(session, [{ type: 'insert', afterEntryId: b, trackIds: trackIds(10, 2), entryIds: [uuid(1), uuid(2)] }]);
+      session = await patch(session, [{ type: 'insert', afterEntryId: null, trackIds: [trackId(12)], entryIds: [uuid(3)] }]);
+      expect(session.queue.map((entry) => entry.queueEntryId)).toEqual([uuid(3), a, b, uuid(1), uuid(2), c]);
+      expectContiguous(session);
+      // Without proposed IDs the server still makes its own.
+      session = await patch(session, [{ type: 'insert', afterEntryId: c, trackIds: [trackId(13)] }]);
+      expect(session.queue[6].queueEntryId).toMatch(/^[0-9a-f-]{36}$/);
+    });
+
+    it('moves after an anchor entry, to the head for null, and treats its own ID as staying put', async () => {
+      let session = await create(trackIds(0, 4));
+      const [a, b, c, d] = session.queue.map((entry) => entry.queueEntryId);
+      session = await patch(session, [{ type: 'move', queueEntryId: a, afterEntryId: c }]);
+      expect(session.queue.map((entry) => entry.queueEntryId)).toEqual([b, c, a, d]);
+      session = await patch(session, [{ type: 'move', queueEntryId: d, afterEntryId: null }]);
+      expect(session.queue.map((entry) => entry.queueEntryId)).toEqual([d, b, c, a]);
+      session = await patch(session, [{ type: 'move', queueEntryId: c, afterEntryId: c }]);
+      expect(session.queue.map((entry) => entry.queueEntryId)).toEqual([d, b, c, a]);
+      // Moving an entry that is already gone changes nothing in the queue.
+      session = await patch(session, [{ type: 'move', queueEntryId: uuid(99), afterEntryId: null }]);
+      expect(session.queue.map((entry) => entry.queueEntryId)).toEqual([d, b, c, a]);
+    });
+
+    it('answers ANCHOR_NOT_FOUND with the current session when the anchor is gone, and writes nothing', async () => {
+      let session = await create(trackIds(0, 3));
+      const [a, b] = session.queue.map((entry) => entry.queueEntryId);
+      session = await patch(session, [{ type: 'remove', queueEntryIds: [b] }]);
+      for (const operation of [
+        { type: 'insert' as const, afterEntryId: b, trackIds: [trackId(20)] },
+        { type: 'move' as const, queueEntryId: a, afterEntryId: b },
+      ]) {
+        const error = await rejection(send(session, [operation], { requestId: uuid(50) }));
+        expect(error).toBeInstanceOf(sessions.PlaybackSessionAnchorError);
+        expect(error.anchorEntryId).toBe(b);
+        expect(error.current.revision).toBe(session.revision);
+        expect(trackOrder(error.current)).toEqual(trackOrder(session));
+      }
+      expect(await requestKeys(session.id)).toBe(0);
+    });
+
+    it('rejects the whole patch when a proposed entry ID is already in the queue', async () => {
+      const session = await create(trackIds(0, 2));
+      const [a] = session.queue.map((entry) => entry.queueEntryId);
+      const inUse = await rejection(patch(session, [
+        { type: 'setTransport', playbackState: 'playing' },
+        { type: 'insert', afterEntryId: null, trackIds: [trackId(30)], entryIds: [a] },
+      ]));
+      expect(inUse).toBeInstanceOf(sessions.PlaybackSessionEntryIdError);
+      expect(inUse.entryIds).toEqual([a]);
+      expect(inUse.current.revision).toBe(1);
+      expect(inUse.current.playbackState).toBe('paused');
+
+      // Two ops in one patch proposing the same ID: the second clashes with the first.
+      const twice = await rejection(patch(session, [
+        { type: 'insert', afterEntryId: null, trackIds: [trackId(30)], entryIds: [uuid(1)] },
+        { type: 'insert', afterEntryId: null, trackIds: [trackId(31)], entryIds: [uuid(1)] },
+      ]));
+      expect(twice).toBeInstanceOf(sessions.PlaybackSessionEntryIdError);
+      expect(await storedRows(session.id)).toHaveLength(2);
+    });
+
+    it('keeps an entry a queue replacement names again for the same track, and refuses it for another track', async () => {
+      let session = await create(trackIds(0, 2));
+      const [a, b] = session.queue;
+      session = await patch(session, [{ type: 'replaceQueue', trackIds: [trackId(1), trackId(5)], entryIds: [b.queueEntryId, uuid(1)] }]);
+      expect(session.queue.map((entry) => entry.queueEntryId)).toEqual([b.queueEntryId, uuid(1)]);
+      expect(session.queue[0].addedAt).toBe(b.addedAt);
+      const error = await rejection(patch(session, [{ type: 'replaceQueue', trackIds: [trackId(9)], entryIds: [uuid(1)] }]));
+      expect(error).toBeInstanceOf(sessions.PlaybackSessionEntryIdError);
+      expect(a.queueEntryId).not.toBe(uuid(1));
+    });
+
+    it('returns the original success for a retried requestId instead of applying it again', async () => {
+      const session = await create(trackIds(0, 2));
+      const operations: Operations = [{ type: 'insert', afterEntryId: null, trackIds: [trackId(40)], entryIds: [uuid(1)] }];
+      const first = await send(session, operations, { requestId: uuid(70) });
+      expect(first).toMatchObject({ appliedRevision: 2, replayed: false });
+
+      // Another change lands, then the lost-response retry arrives: same key,
+      // same body, now a stale revision and an ID that is already in use.
+      const later = await patch(first.session, [{ type: 'setTransport', playbackState: 'playing' }]);
+      const retry = await send(session, operations, { requestId: uuid(70) });
+      expect(retry).toMatchObject({ appliedRevision: 2, replayed: true });
+      expect(retry.session.revision).toBe(later.revision);
+      expect(retry.session.queue.filter((entry) => entry.queueEntryId === uuid(1))).toHaveLength(1);
+      expect(await storedRows(session.id)).toHaveLength(3);
+    });
+
+    it('refuses a reused requestId with a different body, and records no key for a rejected patch', async () => {
+      const session = await create(trackIds(0, 2));
+      await send(session, [{ type: 'setTransport', positionMs: 100 }], { requestId: uuid(80) });
+      await expect(send(session, [{ type: 'setTransport', positionMs: 200 }], { requestId: uuid(80) }))
+        .rejects.toBeInstanceOf(sessions.PlaybackSessionRequestReusedError);
+
+      // A stale revision is rejected and leaves no key, so the rebased patch
+      // goes out under a new key and the old one stays free.
+      await expect(send(session, [{ type: 'setTransport', positionMs: 300 }], { requestId: uuid(81) }))
+        .rejects.toBeInstanceOf(sessions.PlaybackSessionRevisionError);
+      expect(await requestKeys(session.id)).toBe(1);
+      const current = (await sessions.getPlaybackSession(userId, session.id))!;
+      const rebased = await send(current, [{ type: 'setTransport', positionMs: 300 }], { requestId: uuid(81) });
+      expect(rebased.replayed).toBe(false);
+      expect(rebased.session.positionMs).toBe(300);
+    });
+
+    it('scopes keys to one session and forgets them after 24 hours', async () => {
+      const one = await create(trackIds(0, 1));
+      const two = await create(trackIds(0, 1));
+      await send(one, [{ type: 'setTransport', positionMs: 1 }], { requestId: uuid(90) });
+      expect((await send(two, [{ type: 'setTransport', positionMs: 2 }], { requestId: uuid(90) })).replayed).toBe(false);
+
+      await pool.query(`UPDATE playback_session_requests SET created_at = NOW() - INTERVAL '25 hours' WHERE session_id = $1`, [one.id]);
+      const current = (await sessions.getPlaybackSession(userId, one.id))!;
+      const again = await send(current, [{ type: 'setTransport', positionMs: 1 }], { requestId: uuid(90) });
+      expect(again).toMatchObject({ replayed: false, appliedRevision: current.revision + 1 });
+      expect(await requestKeys(one.id)).toBe(1);
+    });
+
+    it('keeps at most 1,000 keys per session, dropping the oldest', async () => {
+      const session = await create(trackIds(0, 1));
+      await pool.query(`
+        INSERT INTO playback_session_requests (session_id, request_id, request_hash, revision, created_at)
+        SELECT $1, gen_random_uuid(), 'x', 1, NOW() - (n || ' seconds')::interval FROM generate_series(1, 1000) AS n
+      `, [session.id]);
+      await send(session, [{ type: 'setTransport', positionMs: 5 }], { requestId: uuid(95) });
+      expect(await requestKeys(session.id)).toBe(1000);
+      // Of the 1,000 older keys, exactly the oldest one made room for the new key.
+      const kept = await pool.query(`
+        SELECT COUNT(*)::int AS n
+        FROM playback_session_requests WHERE session_id = $1 AND request_hash = 'x'
+      `, [session.id]);
+      expect(kept.rows[0].n).toBe(999);
+      const ages = await pool.query(`
+        SELECT EXTRACT(EPOCH FROM (MAX(created_at) - MIN(created_at)))::int AS span
+        FROM playback_session_requests WHERE session_id = $1 AND request_hash = 'x'
+      `, [session.id]);
+      expect(ages.rows[0].span).toBe(998);
+      expect((await send(session, [{ type: 'setTransport', positionMs: 5 }], { requestId: uuid(95) })).replayed).toBe(true);
+    });
+
+    it('rebases an anchored insert onto a concurrent change without moving its target', async () => {
+      let session = await create(trackIds(0, 3));
+      const [, b] = session.queue.map((entry) => entry.queueEntryId);
+      // This client means "play after b" while another tab inserts at the head.
+      const intent: Operations = [{ type: 'insert', afterEntryId: b, trackIds: [trackId(60)], entryIds: [uuid(6)] }];
+      await patch(session, [{ type: 'insert', afterEntryId: null, trackIds: [trackId(61)] }]);
+      const conflict = await rejection(send(session, intent, { requestId: uuid(100) }));
+      expect(conflict).toBeInstanceOf(sessions.PlaybackSessionRevisionError);
+      session = (await send(conflict.current, intent, { requestId: uuid(101) })).session;
+      const ids = session.queue.map((entry) => entry.queueEntryId);
+      expect(ids[ids.indexOf(b) + 1]).toBe(uuid(6));
     });
   });
 
