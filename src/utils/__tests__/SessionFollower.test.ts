@@ -250,9 +250,9 @@ describe('another device taking over', () => {
     await jest.advanceTimersByTimeAsync(0);
     expect(mirror.noteReplaced).not.toHaveBeenCalled();
 
-    source().emit('playbackSession.handedOff', { sessionId: 'session-1', outputId: 'phone', generation: 5, revision: 13 });
+    source().emit('playbackSession.handedOff', { sessionId: 'session-1', outputId: 'phone', outputKind: 'cast', outputName: 'NAD Forstærker', generation: 5, revision: 13 });
     await jest.advanceTimersByTimeAsync(0);
-    expect(mirror.noteReplaced).toHaveBeenCalledWith('session-1', 5);
+    expect(mirror.noteReplaced).toHaveBeenCalledWith('session-1', 5, { kind: 'cast', name: 'NAD Forstærker' });
   });
 
   it("ignores this device's own claim", async () => {
@@ -271,7 +271,7 @@ describe('another device taking over', () => {
     api.getPlaybackSession.mockResolvedValueOnce(later);
     source().emit('playbackSession.updated', { sessionId: 'session-1', revision: 14 });
     await jest.advanceTimersByTimeAsync(0);
-    expect(mirror.noteReplaced).toHaveBeenCalledWith('session-1', 6);
+    expect(mirror.noteReplaced).toHaveBeenCalledWith('session-1', 6, { kind: 'browser', name: 'NAD Forstærker' });
   });
 });
 

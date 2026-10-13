@@ -48,7 +48,10 @@ export interface SessionFollowerOptions {
   createEventSource?: (url: string) => EventSourceLike;
   /** This device's client ID, as the server knows it (X-Aurora-Client-Id). */
   clientId: () => string;
-  mirror: { holdsOutput: () => boolean; noteReplaced: (sessionId: string, generation: number) => Promise<void> };
+  mirror: {
+    holdsOutput: () => boolean;
+    noteReplaced: (sessionId: string, generation: number, replacement: { kind: string; name: string | null } | null) => Promise<void>;
+  };
   /** The session's queue as playable tracks, keeping each entry's ID. */
   toTracks: (session: PlaybackSession) => TrackInfo[];
   setPlaybackTime: (currentTime: number, duration: number) => void;
@@ -228,7 +231,10 @@ export class SessionFollower {
       case 'playbackSession.handedOff': {
         if (!sessionId) return;
         const generation = Number(data.generation);
-        if (data.outputId !== myId) await this.noteClaim(sessionId, generation);
+        const replacement = typeof data.outputKind === 'string'
+          ? { kind: data.outputKind, name: typeof data.outputName === 'string' ? data.outputName : null }
+          : null;
+        if (data.outputId !== myId) await this.noteClaim(sessionId, generation, replacement);
         this.fetchSession(sessionId);
         return;
       }
@@ -244,10 +250,10 @@ export class SessionFollower {
   }
 
   /** Another device claimed `sessionId`'s output at `generation`. */
-  private async noteClaim(sessionId: string, generation: number) {
+  private async noteClaim(sessionId: string, generation: number, replacement: { kind: string; name: string | null } | null) {
     if (!Number.isFinite(generation) || generation <= (this.generations.get(sessionId) ?? 0)) return;
     this.generations.set(sessionId, generation);
-    await this.options!.mirror.noteReplaced(sessionId, generation);
+    await this.options!.mirror.noteReplaced(sessionId, generation, replacement);
   }
 
   private onProgress(data: ProgressData, myId: string) {
@@ -325,7 +331,7 @@ export class SessionFollower {
         this.generations.set(session.id, Math.max(this.generations.get(session.id) ?? 0, output.generation));
       } else {
         // A claim whose event this device missed, or read before its event arrived.
-        await this.noteClaim(session.id, output.generation);
+        await this.noteClaim(session.id, output.generation, { kind: output.kind, name: output.name });
       }
     }
     this.session = session;

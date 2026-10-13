@@ -40,8 +40,12 @@ export interface SessionMirrorOptions {
   /** Name shown for this output: the Cast device while casting, else this browser. */
   getOutputName: () => string;
   log?: (message: string, detail?: unknown) => void;
-  /** Another device plays the session now: stop playing here (one device at a time). */
-  onDisplaced?: () => void;
+  /**
+   * Another device plays the session now: stop playing here (one device at a
+   * time). `replacement` is the new output, when known, so a device that took
+   * over the same Cast device this one casts to can be told apart.
+   */
+  onDisplaced?: (replacement: ReplacingOutput | null) => void;
   /** The server refused with PLAYBACK_SYNC_DISABLED: sync is off for this account. */
   onSyncDisabled?: () => void;
 }
@@ -59,8 +63,22 @@ const CONFLICT_CODES = new Set(['REVISION_CONFLICT', 'ANCHOR_NOT_FOUND', 'ENTRY_
 
 interface Grant { sessionId: string; credential: PlaybackOutputCredential; seq: number }
 
+/** The output that replaced this device: what kind of device, and its name. */
+export interface ReplacingOutput { kind: string; name: string | null }
+
 const entriesOf = (playlist: TrackInfo[]): QueueEntryRef[] =>
   playlist.map((track) => ({ entryId: track.queueEntryId || '', trackId: track.id }));
+
+/**
+ * Another device took over by casting to the very Cast device this one casts
+ * to (both joined one Cast session, prod 2026-10-13 19:50). The music never
+ * moved, so nothing stops here: pausing would pause the speaker for both.
+ * Matched by the Cast device's name, which is what the claim carries.
+ */
+export function isSameCastDevice(replacement: ReplacingOutput | null, castConnected: boolean, castDeviceName: string | null | undefined): boolean {
+  return !!replacement && castConnected && replacement.kind === 'cast'
+    && !!replacement.name && !!castDeviceName && replacement.name === castDeviceName;
+}
 
 export class SessionMirror {
   private store: MirroredStore | null = null;
@@ -119,16 +137,16 @@ export class SessionMirror {
    * device plays now, so this one stops, even when its own claim never got
    * through.
    */
-  async noteReplaced(sessionId: string, generation: number): Promise<void> {
+  async noteReplaced(sessionId: string, generation: number, replacement: ReplacingOutput | null = null): Promise<void> {
     if (this.claiming) await this.claiming.catch(() => undefined);
     const state = this.store?.getState();
     if (!state || !this.enabled(state)) return;
     if (this.grant) {
       if (this.grant.sessionId === sessionId && this.grant.credential.generation >= generation) return;
-      this.onDisplaced();
+      this.onDisplaced(replacement);
       return;
     }
-    if (state.playbackState === 'playing') this.onDisplaced();
+    if (state.playbackState === 'playing') this.onDisplaced(replacement);
   }
 
   private get api() { return this.options?.api ?? sessionApi; }
@@ -187,13 +205,13 @@ export class SessionMirror {
     return true;
   }
 
-  private onDisplaced() {
+  private onDisplaced(replacement: ReplacingOutput | null = null) {
     this.log('another device is playing this session now');
     this.release();
     this.displaced = true;
     if (this.claimRetryTimer) clearTimeout(this.claimRetryTimer);
     this.claimRetryTimer = null;
-    this.options?.onDisplaced?.();
+    this.options?.onDisplaced?.(replacement);
   }
 
   private claim(): Promise<void> {
@@ -357,7 +375,7 @@ export class SessionMirror {
     } catch (error) {
       if (this.grant !== grant) return;
       if (error instanceof AuroraApiError && error.code === 'OUTPUT_GRANT_REPLACED') {
-        this.onDisplaced();
+        this.onDisplaced(currentSessionFromError(error)?.output ?? null);
         return;
       }
       if (this.syncDisabled(error)) return;
@@ -392,7 +410,7 @@ export class SessionMirror {
     } catch (error) {
       if (this.grant !== grant) return;
       if (error instanceof AuroraApiError && error.code === 'OUTPUT_GRANT_REPLACED') {
-        this.onDisplaced();
+        this.onDisplaced(currentSessionFromError(error)?.output ?? null);
         return;
       }
       this.refreshTimer = setTimeout(() => void this.refresh(), 60_000);

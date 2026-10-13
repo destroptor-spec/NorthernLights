@@ -2,7 +2,7 @@ import { createStore } from 'zustand/vanilla';
 import type { PlaybackSession, PlaybackSessionPatch } from '../../../shared/api/v1';
 import { AuroraApiError } from '../../api/auroraApi';
 import type * as sessionApi from '../../api/playbackSessions';
-import { SessionMirror, REPORT_INTERVAL_PAUSED_MS, REPORT_INTERVAL_PLAYING_MS, type MirroredPlayerState } from '../SessionMirror';
+import { isSameCastDevice, SessionMirror, REPORT_INTERVAL_PAUSED_MS, REPORT_INTERVAL_PLAYING_MS, type MirroredPlayerState } from '../SessionMirror';
 import type { TrackInfo } from '../fileSystem';
 
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -330,5 +330,36 @@ it('stops at once, without retrying, when the server says sync is off for the ac
   await jest.advanceTimersByTimeAsync(REPORT_INTERVAL_PLAYING_MS);
   expect(mirror.holdsOutput()).toBe(false);
   expect(onSyncDisabled).toHaveBeenCalledTimes(2);
+});
+
+/**
+ * Prod 2026-10-13 19:50: the phone cast to the NAD, then the desktop joined
+ * the same Cast session and, playing, claimed the output. The music never
+ * moved, so the phone must not pause the NAD.
+ */
+describe('a take-over on the same Cast device', () => {
+  it('is told apart by kind and Cast device name', () => {
+    const nad = { kind: 'cast', name: 'NAD Forstærker' };
+    expect(isSameCastDevice(nad, true, 'NAD Forstærker')).toBe(true);
+    expect(isSameCastDevice(nad, false, 'NAD Forstærker')).toBe(false);
+    expect(isSameCastDevice(nad, true, 'Stue TV')).toBe(false);
+    expect(isSameCastDevice({ kind: 'browser', name: 'NAD Forstærker' }, true, 'NAD Forstærker')).toBe(false);
+    expect(isSameCastDevice(null, true, 'NAD Forstærker')).toBe(false);
+    expect(isSameCastDevice({ kind: 'cast', name: null }, true, '')).toBe(false);
+  });
+
+  it('passes the replacing output on from the event and from a refused report', async () => {
+    const { api, store, mirror, onDisplaced } = setup();
+    await play(store);
+    await mirror.noteReplaced('session-1', credential.generation + 1, { kind: 'cast', name: 'NAD Forstærker' });
+    expect(onDisplaced).toHaveBeenCalledWith({ kind: 'cast', name: 'NAD Forstærker' });
+
+    mirror.notePlayIntent();
+    await jest.advanceTimersByTimeAsync(0);
+    const current = sessionOf([], 9, { output: { id: 'desktop', kind: 'cast', name: 'NAD Forstærker', generation: 7, claimedAt: '2026-10-13T19:50:38.000Z', status: 'active', report: null } });
+    api.reportPlaybackOutput.mockRejectedValueOnce(new AuroraApiError('replaced', 409, 'OUTPUT_GRANT_REPLACED', undefined, { current }));
+    await jest.advanceTimersByTimeAsync(REPORT_INTERVAL_PLAYING_MS);
+    expect(onDisplaced).toHaveBeenLastCalledWith(current.output);
+  });
 });
 
