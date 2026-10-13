@@ -6,8 +6,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import { Client } from 'pg';
-import { runExport } from '../server/services/databaseExport.service';
+import { connectDatabase, runExport } from '../server/services/databaseExport.service';
 
 function argValue(flag: string): string | undefined {
   const index = process.argv.indexOf(flag);
@@ -16,14 +15,7 @@ function argValue(flag: string): string | undefined {
 
 async function main() {
   // A plain client with Aurora's settings; importing the server would run its schema statements.
-  const client = new Client({
-    user: process.env.DB_USER || 'musicuser',
-    password: process.env.DB_PASSWORD || 'musicpass',
-    host: process.env.DB_HOST || 'localhost',
-    port: parseInt(process.env.DB_PORT || '5432', 10),
-    database: process.env.DB_NAME || 'musicdb',
-  });
-  await client.connect();
+  const client = await connectDatabase();
   try {
     const started = Date.now();
     const manifest = await runExport({ client, label: argValue('--label') });
