@@ -1,7 +1,9 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { usePlayerStore } from '../store/index';
-import { useFollowedDeviceName } from '../hooks/useFollowedDeviceName';
+import { selectDisplayedPlaying } from '../utils/sessionFollow';
+import { useFollowedDeviceLabel } from '../hooks/useFollowedDeviceName';
+import { useDisplayedPlaying } from '../hooks/useDisplayedPlaying';
 import { hasNextTrack } from '../utils/queue';
 import { usePlaybackTimeStore } from '../store/playbackTime';
 import { useVolumeSync } from '../hooks/useVolumeSync';
@@ -243,7 +245,7 @@ const InlineWaveformImpl: React.FC = () => {
     (!isFinite(duration) || duration === 0) && dbDuration ? dbDuration : duration;
 
   const handleSeek = React.useCallback((time: number) => {
-    playbackManager.seek(time);
+    usePlayerStore.getState().seekTo(time);
   }, []);
 
   // The WaveformProgressBar internally handles container resize via
@@ -334,12 +336,12 @@ export const PlayerControls: React.FC = () => {
   const cycleRepeatAction = usePlayerStore((state) => state.cycleRepeat);
   const toggleInfinityMode = usePlayerStore((state) => state.toggleInfinityMode);
 
-  const isPlaying = playbackState === 'playing';
+  const isPlaying = useDisplayedPlaying();
 
   const togglePlay = React.useCallback(() => {
     const state = usePlayerStore.getState();
     if (state.playlist.length === 0) return;
-    if (state.playbackState === 'playing') {
+    if (selectDisplayedPlaying(state)) {
       state.pause();
     } else if (state.currentIndex === null) {
       state.playAtIndex(0);
@@ -392,7 +394,7 @@ export const PlayerControls: React.FC = () => {
 
   const [showLyrics, setShowLyrics] = useState(false);
   const [castDeviceName, setCastDeviceName] = useState(castManager.getCastDeviceName());
-  const followedDeviceName = useFollowedDeviceName();
+  const followedDeviceLabel = useFollowedDeviceLabel();
 
   useEffect(() => {
     const unsub = castManager.addStateChangeListener((state) => {
@@ -464,10 +466,15 @@ export const PlayerControls: React.FC = () => {
                   {currentTrack.artist || 'Unknown Artist'}
                 </span>
               )}
-              {followedDeviceName ? (
-                <span className="player-follow" title={`Playing on ${followedDeviceName}`}>
-                  Playing on {followedDeviceName}
-                </span>
+              {followedDeviceLabel ? (
+                <button
+                  type="button"
+                  className="player-follow"
+                  title={`${followedDeviceLabel}. Choose where to play`}
+                  onClick={() => usePlayerStore.getState().openPlayWhere()}
+                >
+                  {followedDeviceLabel}
+                </button>
               ) : (sourceFormat || castConnected || audioOutputActive) && (
                 <SignalChain
                   sourceFormat={sourceFormat}

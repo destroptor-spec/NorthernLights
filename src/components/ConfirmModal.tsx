@@ -11,6 +11,11 @@ interface ConfirmModalProps {
   confirmTone?: 'danger' | 'primary';
   onConfirm: () => void;
   onCancel: () => void;
+  /**
+   * The second button's own action. Without it, that button cancels; with
+   * it, only Escape, the backdrop and the close button cancel.
+   */
+  onCancelButton?: () => void;
 }
 
 export const ConfirmModal: React.FC<ConfirmModalProps> = ({
@@ -22,6 +27,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   confirmTone = 'danger',
   onConfirm,
   onCancel,
+  onCancelButton,
 }) => {
   const titleId = useId();
   const descriptionId = useId();
@@ -116,7 +122,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
           <button
             ref={cancelButtonRef}
             type="button"
-            onClick={onCancel}
+            onClick={onCancelButton ?? onCancel}
             className="btn btn-ghost flex-1 py-2.5"
           >
             {cancelLabel}

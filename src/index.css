@@ -9019,6 +9019,27 @@ a:focus-visible > .genre-card .genre-card__label {
   color: var(--color-primary);
 }
 
+button.player-follow {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+button.player-follow:hover {
+  text-decoration: underline;
+}
+
+.mobile-now-heading-device-button {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
 .player-follow::before {
   content: '';
   inline-size: 0.4rem;

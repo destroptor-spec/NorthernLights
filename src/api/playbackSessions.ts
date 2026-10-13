@@ -1,4 +1,5 @@
 import type {
+  PlaybackCommandRequest,
   PlaybackOutputClaim,
   PlaybackOutputCredential,
   PlaybackOutputReport,
@@ -60,6 +61,11 @@ export function reportPlaybackOutput(
     { Authorization: `Bearer ${credential.token}` },
     json('POST', report),
   );
+}
+
+/** Remote control: ask the session's output to act (it confirms through its next report). */
+export function issuePlaybackCommand(auth: AuthHeaders, sessionId: string, request: PlaybackCommandRequest): Promise<{ accepted: boolean }> {
+  return auroraApiRequest(`/playback-sessions/${encodeURIComponent(sessionId)}/commands`, auth, json('POST', request));
 }
 
 /** The session an error answered with (`details.current`), when it carries one. */

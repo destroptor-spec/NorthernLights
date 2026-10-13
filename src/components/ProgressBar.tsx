@@ -27,7 +27,7 @@ const ProgressBarImpl = () => {
     : duration;
 
   const handleSeek = React.useCallback((time: number) => {
-    playbackManager.seek(time);
+    usePlayerStore.getState().seekTo(time);
   }, []);
 
   // A start in progress shows the normal bar (the play button spins); only
