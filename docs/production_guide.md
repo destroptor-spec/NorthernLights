@@ -341,15 +341,19 @@ keys). Store and move it like a password file.
 ## Moving to a new server
 
 1. **On the old server:** export (Settings → Database → Backups, or
-   `npm run db:export -- --label move`) and copy both files across, the
-   `.dump` and its `.json`, for example with `scp backups/aurora-… new-host:`.
+   `npm run db:export -- --label move`). Copy both files, the `.dump` and its
+   `.json`, into the new server's Aurora `backups/` folder, for example
+   `scp backups/aurora-…{.dump,.json} new-host:NorthernLights/backups/`
+   (on a fresh server, create the folder first: `mkdir -p ~/NorthernLights/backups`).
 2. **On the new server:** install Aurora and start it once, so its database
    container exists. Then stop it (`pm2 stop aurora`).
 3. **Put the music at the same paths** as on the old server. Track IDs are
    derived from file paths. The import checks every library folder and refuses
    to run if one is missing, before a scan could treat the tracks as deleted.
 4. **Import:**
-   `npm run db:import -- ~/aurora-….dump --keep-secrets`
+   `npm run db:import -- backups/aurora-….dump --keep-secrets`, from the Aurora
+   folder. Settings → Database → Backups shows this command for the newest
+   export, ready to copy.
    - The import checks the file against its manifest, and checks the Postgres
      version and pgvector.
    - It restores into a new database and verifies every table's row count.

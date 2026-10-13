@@ -35,6 +35,20 @@ describe('DatabaseBackups', () => {
     click.mockRestore();
   });
 
+  it('explains how to restore, with the newest export filled in and a link to the full steps', async () => {
+    global.fetch = jest.fn(() => respond({ available: { ok: true, method: 'container' }, job: null, exports: [manifest], keep: 10 })) as unknown as typeof fetch;
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    render(<DatabaseBackups />);
+    const command = `npm run db:import -- backups/${manifest.name} --keep-secrets`;
+    expect(await screen.findByText(command)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy the restore command' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(command));
+    const guide = screen.getByRole('link', { name: /Full steps/ });
+    expect(guide.getAttribute('href')).toMatch(/docs\/production_guide\.md#moving-to-a-new-server$/);
+    expect(guide.getAttribute('target')).toBe('_blank');
+  });
+
   it('explains why exporting is unavailable and disables the button', async () => {
     global.fetch = jest.fn(() => respond({ available: { ok: false, reason: 'No running database container' }, job: null, exports: [], keep: 10 })) as unknown as typeof fetch;
     render(<DatabaseBackups />);
