@@ -29,6 +29,8 @@ import { CAST_MEDIA_NAMESPACE, ReconcileBurst, probeCastTransport } from './cast
 import { applyCastStreamingQualityToHlsUrl, applyStreamingQualityToHlsUrl } from './streaming';
 import { createQueueEntryId, ensureQueueEntryIds } from './queue';
 import type { TrackInfo } from './fileSystem';
+import { castEndSnapshot, shouldContinuePlayingAfterCast, type CastEndSnapshot } from './castEndHandoff';
+import { getPlaybackTimeSnapshot } from '../store/playbackTime';
 declare const chrome: any;
 declare const cast: any;
 
@@ -251,6 +253,11 @@ export class CastManager {
     private readonly diagnosticsSync = new CastDiagnosticsSync();
     private diagnosticsStatusSession: unknown = null;
     private suppressRemoteEndedDuringDisconnect = false;
+    // Stopping from this device (castEndHandoff.ts): the "Stop casting"
+    // button, or the Cast dialog opened from this device's Cast icon.
+    private userStopRequested = false;
+    private userCastDialogAt = 0;
+    private castEndSnapshotAtStop: CastEndSnapshot | null = null;
     private lastCastButtonStateKey = '';
     private lastRemotePlayerStateKey = '';
     private lastRemoteMediaStatusKey = '';
@@ -787,6 +794,45 @@ export class CastManager {
             clearTimeout(this.userSessionIntentTimer);
             this.userSessionIntentTimer = null;
         }
+    }
+
+    /** The Cast icon was tapped while casting: its dialog can stop the session from here. */
+    public noteUserCastDialogOpened(reason: string = 'launcher') {
+        if (!this.isConnected()) return;
+        this.userCastDialogAt = Date.now();
+        this.logCast('ok', 'User opened Cast dialog while connected', `reason=${reason}`);
+    }
+
+    private captureCastEndSnapshot(): CastEndSnapshot | null {
+        const state = usePlayerStore.getState();
+        return castEndSnapshot({
+            anchor: this.positionAnchor,
+            now: Date.now(),
+            playlist: state.playlist,
+            currentIndex: state.currentIndex,
+            wasPlaying: state.playbackState === 'playing',
+            storePositionSeconds: getPlaybackTimeSnapshot().currentTime,
+        });
+    }
+
+    private resetCastEndIntent() {
+        this.userStopRequested = false;
+        this.userCastDialogAt = 0;
+        this.castEndSnapshotAtStop = null;
+    }
+
+    /** Hands playback back to this device after its Cast session ended for good. */
+    private handOffToLocalAfterSessionEnd(snapshot: CastEndSnapshot | null) {
+        const userStopRequested = this.userStopRequested;
+        const dialogOpenedAt = this.userCastDialogAt;
+        this.resetCastEndIntent();
+        if (!snapshot) {
+            this.logCast('warn', 'cast-ended-handoff skipped', 'reason=no-current-track');
+            return;
+        }
+        const play = shouldContinuePlayingAfterCast({ userStopRequested, dialogOpenedAt, now: Date.now(), wasPlaying: snapshot.wasPlaying });
+        this.logCast('ok', 'cast-ended-handoff', `play=${play} wasPlaying=${snapshot.wasPlaying} userStop=${userStopRequested} dialog=${dialogOpenedAt ? 'recent' : 'none'} index=${snapshot.index} position=${snapshot.positionSeconds.toFixed(1)}`);
+        void usePlayerStore.getState().continueLocallyAfterCast(snapshot.index, snapshot.positionSeconds, play);
     }
 
     public noteUserCastLaunchIntent(reason: string = 'launcher') {
@@ -1858,6 +1904,7 @@ export class CastManager {
                             break;
 
                         case cast.framework.SessionState.SESSION_STARTED:
+                            this.resetCastEndIntent();
                             const storedSessionBeforeStart = this.getStoredSessionId();
                             const startedSession = this.castContext.getCurrentSession();
                             const startedSessionId = startedSession?.getSessionId?.() || '';
@@ -1893,6 +1940,7 @@ export class CastManager {
                             break;
 
                         case cast.framework.SessionState.SESSION_RESUMED:
+                            this.resetCastEndIntent();
                             this.state = this.castContext.getCastState();
                             this.notifyStateChange();
                             this.logCast('ok', 'SESSION_RESUMED');
@@ -1949,9 +1997,12 @@ export class CastManager {
                             this.logCast('ok', 'SESSION_ENDING');
                             this.setHealthStatus('rejoining', 'Stopping Cast session...');
                             break;
-                        case cast.framework.SessionState.SESSION_ENDED:
+                        case cast.framework.SessionState.SESSION_ENDED: {
                             console.log('[Cast] Session ended');
                             this.logCast('ok', 'SESSION_ENDED');
+                            // Where the Cast device was, taken before the
+                            // state change below drops the position anchor.
+                            const endSnapshot = this.castEndSnapshotAtStop ?? this.captureCastEndSnapshot();
                             if (this.preserveSessionOnNextEnd) {
                                 this.preserveSessionOnNextEnd = false;
                                 const preservedSessionId =
@@ -1997,7 +2048,9 @@ export class CastManager {
                             this.state = 'NOT_CONNECTED';
                             this.setHealthStatus('idle', '');
                             this.notifyStateChange();
+                            this.handOffToLocalAfterSessionEnd(endSnapshot);
                             break;
+                        }
                     }
                 }
             );
@@ -4072,11 +4125,11 @@ export class CastManager {
     public async disconnect() {
         if (!this.castContext) return;
 
-        // Capture current cast playback position
-        const castTime = this.getCurrentCastTime();
-        const isPlaying = this.player && !this.player.isPaused;
-
-        console.log(`[Cast] Disconnecting — position: ${castTime.toFixed(1)}s, wasPlaying: ${isPlaying}`);
+        // Where the Cast device is now, before stopping it resets that. The
+        // SESSION_ENDED that follows hands playback back to this device.
+        this.castEndSnapshotAtStop = this.captureCastEndSnapshot();
+        this.userStopRequested = true;
+        console.log(`[Cast] Disconnecting — position: ${this.castEndSnapshotAtStop?.positionSeconds.toFixed(1) ?? 'none'}s, wasPlaying: ${this.castEndSnapshotAtStop?.wasPlaying ?? false}`);
 
         // Clear stored session ID before ending
         localStorage.removeItem(SESSION_STORAGE_KEY);
@@ -4091,16 +4144,6 @@ export class CastManager {
         } catch (e) {
             console.error('[Cast] Error during disconnect:', e);
             toast.error('Error disconnecting from Cast device.');
-        }
-
-        // Resume local playback at the position we left off
-        try {
-            const trackInfo = playbackManager.getCurrentTrackInfo();
-            if (trackInfo && (castTime > 0 || isPlaying)) {
-                await playbackManager.resumeLocalAt(castTime, Boolean(isPlaying));
-            }
-        } catch (e) {
-            console.error('[Cast] Error resuming local playback after disconnect:', e);
         }
     }
 

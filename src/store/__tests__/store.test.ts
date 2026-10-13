@@ -1,6 +1,8 @@
 import { usePlayerStore } from '../index';
 import { TrackInfo } from '../../utils/fileSystem';
 import { hasNextTrack } from '../../utils/queue';
+import { playbackManager } from '../../utils/PlaybackManager';
+import { getPlaybackTimeSnapshot } from '../playbackTime';
 
 describe('Music Store Logic', () => {
   beforeEach(() => {
@@ -92,6 +94,47 @@ describe('Music Store Logic', () => {
       usePlayerStore.setState({ playlist: queue(), currentIndex: 0, repeat: 'none', isInfinityMode: false });
       await usePlayerStore.getState().nextTrack();
       expect(playAtIndex).toHaveBeenCalledWith(1);
+    });
+  });
+
+  // Prod 2026-10-13: after a Cast session ended, the browser's own player still
+  // held the track from before casting, so Play resumed that (or nothing).
+  describe('after a Cast session ends', () => {
+    const queue = () => [
+      { id: 'a', path: '/a.mp3', title: 'a', duration: 200 },
+      { id: 'b', path: '/b.mp3', title: 'b', duration: 170 },
+    ];
+    let seek: jest.SpyInstance;
+    let resume: jest.SpyInstance;
+    let playAtIndex: jest.Mock;
+    beforeEach(() => {
+      seek = jest.spyOn(playbackManager, 'seek').mockImplementation(() => {});
+      resume = jest.spyOn(playbackManager, 'resume').mockResolvedValue(undefined);
+      jest.spyOn(playbackManager, 'pause').mockImplementation(() => {});
+      playAtIndex = jest.fn().mockResolvedValue(undefined);
+      usePlayerStore.setState({ playlist: queue(), currentIndex: 0, playbackState: 'playing', playAtIndex } as never);
+    });
+    afterEach(() => jest.restoreAllMocks());
+
+    it('plays the Cast track here from its position when told to', async () => {
+      await usePlayerStore.getState().continueLocallyAfterCast(1, 130, true);
+      expect(playAtIndex).toHaveBeenCalledWith(1);
+      expect(seek).toHaveBeenCalledWith(130);
+    });
+
+    it('otherwise shows it paused, and the next Play starts it from there', async () => {
+      await usePlayerStore.getState().continueLocallyAfterCast(1, 130, false);
+      expect(playAtIndex).not.toHaveBeenCalled();
+      expect(usePlayerStore.getState()).toMatchObject({ currentIndex: 1, playbackState: 'paused' });
+      expect(getPlaybackTimeSnapshot()).toEqual({ currentTime: 130, duration: 170 });
+
+      await usePlayerStore.getState().resume();
+      expect(resume).not.toHaveBeenCalled();
+      expect(playAtIndex).toHaveBeenCalledWith(1);
+      expect(seek).toHaveBeenCalledWith(130);
+
+      await usePlayerStore.getState().resume();
+      expect(resume).toHaveBeenCalledTimes(1);
     });
   });
 });

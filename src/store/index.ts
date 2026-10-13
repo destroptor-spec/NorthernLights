@@ -66,6 +66,10 @@ export interface AddLibraryFolderOptions {
 
 // Re-entrancy guard: incremented on each playAtIndex call to discard stale callbacks
 let playGeneration = 0;
+// After a Cast session ends with playback left paused here, the track and
+// position to start from on the next Play (local audio still holds whatever
+// played before casting, so a plain resume would play the wrong thing).
+let pendingLocalStart: { index: number; positionSeconds: number } | null = null;
 
 // Compute + apply the loudness-normalization gain for a track becoming current.
 // Applies what's cached immediately (unity if disabled/unmeasured), then fetches
@@ -805,6 +809,8 @@ export interface PlayerState {
   playAtIndex: (index: number) => Promise<void>;
   pause: () => void;
   resume: () => Promise<void>;
+  /** Cast session ended: show the Cast device's track and position here, and play it if `play`. */
+  continueLocallyAfterCast: (index: number, positionSeconds: number, play: boolean) => Promise<void>;
   stop: () => void;
   nextTrack: (options?: NextTrackOptions) => Promise<void>;
   prevTrack: () => Promise<void>;
@@ -1069,6 +1075,19 @@ export const usePlayerStore = create<PlayerState>()(
           });
         });
       }, 0);
+
+      // Loads and plays the track a Cast session ended on, from where it was.
+      const startPendingLocal = async () => {
+        const pending = pendingLocalStart;
+        if (!pending) return;
+        pendingLocalStart = null;
+        await get().playAtIndex(pending.index);
+        if (castManager.isConnected() || get().currentIndex !== pending.index) return;
+        if (pending.positionSeconds > 1) {
+          playbackManager.seek(pending.positionSeconds);
+          setPlaybackCurrentTime(pending.positionSeconds);
+        }
+      };
 
       const prewarmNextFromState = (state: PlayerState, currentIndex: number | null = state.currentIndex) => {
         const nextIndex = currentIndex !== null ? currentIndex + 1 : null;
@@ -2659,6 +2678,7 @@ export const usePlayerStore = create<PlayerState>()(
 
         // Playback Actions
         playAtIndex: async (index: number) => {
+          pendingLocalStart = null;
           const { volume, repeat } = get();
           const normalized = ensureQueueEntryIds(get().playlist);
           const playlist = normalized.tracks;
@@ -2789,8 +2809,23 @@ export const usePlayerStore = create<PlayerState>()(
         },
 
         resume: async () => {
+          if (pendingLocalStart && !castManager.isConnected()) {
+            await startPendingLocal();
+            return;
+          }
           await playbackManager.resume();
           persistContinuitySnapshot(true);
+        },
+
+        continueLocallyAfterCast: async (index: number, positionSeconds: number, play: boolean) => {
+          const track = get().playlist[index];
+          if (!track || castManager.isConnected()) return;
+          pendingLocalStart = { index, positionSeconds };
+          playbackManager.pause();
+          setPlaybackTimeState({ currentTime: positionSeconds, duration: track.duration || 0 });
+          set({ currentIndex: index, playbackState: 'paused', isBuffering: false });
+          persistContinuitySnapshot(true);
+          if (play) await startPendingLocal();
         },
 
         stop: () => {
