@@ -825,6 +825,12 @@ export class CastManager {
     }
 
     /** The Cast icon was tapped while casting: its dialog can stop the session from here. */
+    /** Remote control relayed through this sender (sessionCommands.ts), for the Cast log. */
+    public logSessionCommand(type: string, applied: boolean) {
+        if (!this.isConnected()) return;
+        this.logCast(applied ? 'ok' : 'warn', 'session-command', `type=${type} applied=${applied}`);
+    }
+
     public noteUserCastDialogOpened(reason: string = 'launcher') {
         if (!this.isConnected()) return;
         this.userCastDialogAt = Date.now();

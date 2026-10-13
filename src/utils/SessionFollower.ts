@@ -1,4 +1,4 @@
-import type { PlaybackSession } from '../../shared/api/v1';
+import type { PlaybackCommand, PlaybackSession } from '../../shared/api/v1';
 import { AuroraApiError } from '../api/auroraApi';
 import * as sessionApi from '../api/playbackSessions';
 import type { TrackInfo } from './fileSystem';
@@ -50,6 +50,7 @@ export interface SessionFollowerOptions {
   clientId: () => string;
   mirror: {
     holdsOutput: () => boolean;
+    currentGrant: () => { sessionId: string; outputId: string; generation: number } | null;
     noteReplaced: (sessionId: string, generation: number, replacement: { kind: string; name: string | null } | null) => Promise<void>;
   };
   /** The session's queue as playable tracks, keeping each entry's ID. */
@@ -60,6 +61,8 @@ export interface SessionFollowerOptions {
    * (`playbackSync.changed`), or refused a call with PLAYBACK_SYNC_DISABLED.
    */
   onPlaybackSyncChanged?: (enabled: boolean) => void;
+  /** A remote command for the grant this device holds (`playbackSession.command`). */
+  onCommand?: (sessionId: string, command: PlaybackCommand) => void;
   log?: (message: string, detail?: unknown) => void;
 }
 
@@ -73,6 +76,7 @@ const SESSION_EVENTS = [
   'playbackSession.handedOff',
   'playbackSession.deleted',
   'playbackSession.progress',
+  'playbackSession.command',
   'playbackSync.changed',
   'resync.required',
 ] as const;
@@ -218,6 +222,16 @@ export class SessionFollower {
       case 'resync.required':
         await this.refresh(false);
         return;
+      case 'playbackSession.command': {
+        // Only for this device, and only for the grant it holds now: a
+        // command meant for an earlier claim is not acted on.
+        const grant = this.options!.mirror.currentGrant();
+        const command = data.command as PlaybackCommand | undefined;
+        if (!grant || !sessionId || !command || data.outputId !== myId
+          || grant.sessionId !== sessionId || grant.generation !== Number(data.generation)) return;
+        this.options!.onCommand?.(sessionId, command);
+        return;
+      }
       case 'playbackSync.changed':
         this.options!.onPlaybackSyncChanged?.(data.enabled === true);
         return;

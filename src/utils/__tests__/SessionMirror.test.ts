@@ -363,3 +363,10 @@ describe('a take-over on the same Cast device', () => {
   });
 });
 
+it('names the grant it holds, for remote commands', async () => {
+  const { store, mirror } = setup();
+  expect(mirror.currentGrant()).toBeNull();
+  await play(store);
+  expect(mirror.currentGrant()).toEqual({ sessionId: 'session-1', outputId: 'phone', generation: 1 });
+});
+

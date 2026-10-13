@@ -61,7 +61,11 @@ function setup(initial: Partial<FollowerPlayerState> = {}, latest: PlaybackSessi
     listPlaybackSessions: jest.fn(async () => (latest ? [latest] : [])),
     getPlaybackSession: jest.fn(async (_auth: unknown, _id: string) => latest!),
   };
-  const mirror = { holdsOutput: jest.fn(() => false), noteReplaced: jest.fn(async () => undefined) };
+  const mirror = {
+    holdsOutput: jest.fn(() => false),
+    currentGrant: jest.fn((): { sessionId: string; outputId: string; generation: number } | null => null),
+    noteReplaced: jest.fn(async () => undefined),
+  };
   const setPlaybackTime = jest.fn();
   const store = createStore<FollowerPlayerState>((set, get) => ({
     syncPlaybackAcrossDevices: true,
@@ -82,8 +86,10 @@ function setup(initial: Partial<FollowerPlayerState> = {}, latest: PlaybackSessi
   }));
   const follower = new SessionFollower();
   const onPlaybackSyncChanged = jest.fn();
+  const onCommand = jest.fn();
   follower.start(store, {
     onPlaybackSyncChanged,
+    onCommand,
     api,
     createEventSource: (url) => {
       const source = new FakeEventSource(url);
@@ -100,7 +106,7 @@ function setup(initial: Partial<FollowerPlayerState> = {}, latest: PlaybackSessi
     source().open();
     await jest.advanceTimersByTimeAsync(0);
   };
-  return { api, mirror, store, follower, sources, source, connect, setPlaybackTime, onPlaybackSyncChanged };
+  return { api, mirror, store, follower, sources, source, connect, setPlaybackTime, onPlaybackSyncChanged, onCommand };
 }
 
 beforeEach(() => {
@@ -287,5 +293,30 @@ it('takes a refused session read as sync being off', async () => {
   api.listPlaybackSessions.mockRejectedValueOnce(new AuroraApiError('off', 403, 'PLAYBACK_SYNC_DISABLED'));
   await connect();
   expect(onPlaybackSyncChanged).toHaveBeenCalledWith(false);
+});
+
+describe('remote commands for this device', () => {
+  const command = (extra: Record<string, unknown> = {}) => ({
+    sessionId: 'session-1', outputId: 'laptop', generation: 7, requestId: 'r1', issuedBy: 'phone', command: { type: 'next' }, ...extra,
+  });
+
+  it('passes on a command for the grant this device holds', async () => {
+    const { mirror, source, connect, onCommand } = setup({ playbackState: 'playing' });
+    mirror.currentGrant.mockReturnValue({ sessionId: 'session-1', outputId: 'laptop', generation: 7 });
+    await connect();
+    source().emit('playbackSession.command', command());
+    expect(onCommand).toHaveBeenCalledWith('session-1', { type: 'next' });
+  });
+
+  it('ignores commands for another device, an earlier grant, or when it holds none', async () => {
+    const { mirror, source, connect, onCommand } = setup({ playbackState: 'playing' });
+    await connect();
+    source().emit('playbackSession.command', command());
+    mirror.currentGrant.mockReturnValue({ sessionId: 'session-1', outputId: 'laptop', generation: 7 });
+    source().emit('playbackSession.command', command({ outputId: 'phone' }));
+    source().emit('playbackSession.command', command({ generation: 6 }));
+    source().emit('playbackSession.command', command({ sessionId: 'session-2' }));
+    expect(onCommand).not.toHaveBeenCalled();
+  });
 });
 

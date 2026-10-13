@@ -131,6 +131,13 @@ export class SessionMirror {
     return !!this.grant;
   }
 
+  /** The grant this device holds, to tell which remote commands are for it. */
+  currentGrant(): { sessionId: string; outputId: string; generation: number } | null {
+    return this.grant
+      ? { sessionId: this.grant.sessionId, outputId: this.grant.credential.outputId, generation: this.grant.credential.generation }
+      : null;
+  }
+
   /**
    * Another device claimed a session's output (`playbackSession.handedOff`).
    * A claim this device made later wins; anything else means the other
