@@ -11,7 +11,8 @@
     "verify:cast": "node scripts/verify-cast-design-checklist.mjs",
     "test": "jest",
     "test:tz": "TZ=UTC jest && TZ=Pacific/Auckland jest && TZ=America/Los_Angeles jest",
-    "verify:receiver": "node scripts/check-receiver-syntax.mjs"
+    "verify:receiver": "node scripts/check-receiver-syntax.mjs",
+    "db:export": "tsx scripts/db-export.ts"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",

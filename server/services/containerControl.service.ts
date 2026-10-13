@@ -67,6 +67,12 @@ function detectRuntime(): 'podman' | 'docker' | null {
 // Initial detection at import time
 containerRuntime = detectRuntime();
 
+/** The detected container runtime and the binary to spawn, for callers that stream (pg_dump). */
+export function getContainerRuntime(): { runtime: 'podman' | 'docker'; bin: string } | null {
+  if (!containerRuntime) containerRuntime = detectRuntime();
+  return containerRuntime ? { runtime: containerRuntime, bin: containerRuntimeBin || containerRuntime } : null;
+}
+
 export interface ContainerConfig {
   name: string;
   image: string;

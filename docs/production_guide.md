@@ -313,24 +313,30 @@ If your PM2 process is named `northernlights`, replace `aurora` with `northernli
 
 ## Backups
 
-Back up:
+Use a database export rather than copying the data directory: it is a
+consistent `pg_dump` of the whole database, made while Aurora keeps running,
+with a manifest that an import can verify. See
+[database_export_import.md](database_export_import.md).
+
+- **From the UI:** Settings → Database → Backups → Export now. Exports are kept
+  on the server in `backups/` (the newest 10; `DB_EXPORT_KEEP` changes that),
+  and each one can be downloaded or deleted.
+- **From the shell:** `npm run db:export -- --label before-upgrade`. It exits
+  non-zero on failure, so scripts can rely on it.
+
+Aurora runs `pg_dump` inside its managed database container. With an external
+database (`DB_HOST`), it needs `pg_dump` installed on the host instead.
+
+Also back up:
 
 - `.env`
-- `DB_DATA_DIR`
 - any manually hosted Chromecast receiver files
 - optional `logs/` if you need diagnostics
 
 `ART_CACHE_DIR` does **not** need backing up — it is a derived cache of pre-encoded covers and rebuilds on the next scan or via Settings → Library → Refresh Metadata.
 
-At minimum, stop Aurora before copying a file-backed database volume:
-
-```bash
-pm2 stop aurora
-tar -czf aurora-postgres-backup.tgz /home/aurora/aurora-data/postgres
-pm2 start aurora
-```
-
-For larger installs, prefer PostgreSQL-native backups from inside the container.
+An export contains the server's secrets (the JWT signing secret and stored API
+keys). Store and move it like a password file.
 
 ## Operations Notes
 
