@@ -12,8 +12,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import readline from 'readline';
-import { Client } from 'pg';
-import { dbSettings } from '../server/services/databaseExport.service';
+import { connectDatabase, dbSettings } from '../server/services/databaseExport.service';
 import { importDatabase, ImportRefusedError, type ClosableClient } from '../server/services/databaseImport.service';
 
 const args = process.argv.slice(2);
@@ -30,10 +29,7 @@ function ask(question: string): Promise<string> {
 }
 
 async function connect(database: string): Promise<ClosableClient> {
-  const db = dbSettings();
-  const client = new Client({ user: db.user, password: db.password, host: db.host, port: Number.parseInt(db.port, 10), database });
-  await client.connect();
-  return client as unknown as ClosableClient;
+  return connectDatabase(database);
 }
 
 async function main() {
