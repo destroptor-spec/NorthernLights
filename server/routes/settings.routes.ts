@@ -5,7 +5,7 @@ import { getSystemSetting, setSystemSetting, getUserSetting, setUserSetting, get
 import { requireAdmin } from '../middleware/auth';
 import { genreMatrixService } from '../services/genreMatrix.service';
 import OpenAI from 'openai';
-import { publishApiV1SettingsChanged } from '../services/apiV1Events.service';
+import { publishPlaybackSyncChanged } from '../services/playbackSync.service';
 import { PLAYBACK_SYNC_MODES } from '../../shared/playbackSync';
 
 const router = Router();
@@ -136,9 +136,9 @@ router.post('/settings', async (req, res) => {
 
     applyLoggingSettings(settings);
 
-    // Every open device of the affected users re-reads the setting.
-    if (settings.playbackSyncMode !== undefined) void publishApiV1SettingsChanged(['playbackSyncMode']);
-    if (settings.playbackSyncEnabled !== undefined) void publishApiV1SettingsChanged(['playbackSyncEnabled'], userId!);
+    // Clients learn whether the session API now works for them.
+    if (settings.playbackSyncMode !== undefined) void publishPlaybackSyncChanged();
+    else if (settings.playbackSyncEnabled !== undefined) void publishPlaybackSyncChanged(userId!);
 
     res.json({ status: 'updated' });
   } catch (error) {

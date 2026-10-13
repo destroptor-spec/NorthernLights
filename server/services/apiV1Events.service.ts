@@ -12,7 +12,7 @@ export type ApiV1EventType =
   | 'playlist.changed'
   | 'annotation.changed'
   | 'library.revision'
-  | 'settings.changed';
+  | 'playbackSync.changed';
 
 export interface ApiV1Event {
   id: string;
@@ -71,26 +71,6 @@ export async function publishApiV1LibraryRevision(data: Record<string, unknown> 
     // mutation into a failed scan. Reconnect/resync still repairs missed SSE.
     console.error('[API v1] failed to publish library revision:', error);
     return null;
-  }
-}
-
-/**
- * A setting changed: `userId`'s devices when it is that user's own, every
- * user's when it is server-wide. Clients re-read the keys they use.
- */
-export async function publishApiV1SettingsChanged(keys: string[], userId?: string) {
-  if (userId) {
-    publishApiV1Event(userId, 'settings.changed', { keys });
-    return;
-  }
-  try {
-    const db = await initDB();
-    const users = await db.query('SELECT id FROM users');
-    for (const row of users.rows) publishApiV1Event(String(row.id), 'settings.changed', { keys });
-  } catch (error) {
-    // Best-effort, like the library revision: devices also re-read settings
-    // when they come back to the foreground.
-    console.error('[API v1] failed to publish settings change:', error);
   }
 }
 

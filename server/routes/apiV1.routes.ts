@@ -123,6 +123,7 @@ import {
   claimPlaybackOutput,
   getCurrentOutputGrant,
 } from '../services/playbackSession.service';
+import { isPlaybackSyncEnabledFor } from '../services/playbackSync.service';
 import { publishApiV1Event, replayApiV1Events, subscribeApiV1Events } from '../services/apiV1Events.service';
 import { generateEphemeralScopedToken, generateOutputCredential, verifyScopedToken } from '../services/scopedToken.service';
 import { generateAuroraApiDocument } from '../api/v1/openapi';
@@ -368,6 +369,19 @@ router.get('/media/tracks/:id', mediaLimiter, async (req, res) => {
 });
 
 router.use(requireApiV1Auth, listenerLimiter);
+
+// Playback sessions exist for "Sync playback across devices". When that is
+// off for the account (the admin's choice, or the user's where delegated),
+// every client gets the same answer: the web app, the PWA and other API v1
+// clients alike.
+router.use('/playback-sessions', async (req, res, next) => {
+  try {
+    if (await isPlaybackSyncEnabledFor(req.apiV1!.userId)) return next();
+    sendApiV1Error(req, res, 403, 'PLAYBACK_SYNC_DISABLED', 'Playback sync across devices is turned off for this account.');
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.get('/artwork/:hash', (req, res) => {
   const hash = routeParam(req, 'hash');

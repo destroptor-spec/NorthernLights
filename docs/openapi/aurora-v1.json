@@ -7939,7 +7939,7 @@
             }
           },
           "403": {
-            "description": "Insufficient access",
+            "description": "Insufficient access; or PLAYBACK_SYNC_DISABLED: playback sync across devices is turned off for this account (the server admin's choice, or the user's where the admin lets each user decide)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8084,7 +8084,7 @@
             }
           },
           "403": {
-            "description": "Insufficient access",
+            "description": "Insufficient access; or PLAYBACK_SYNC_DISABLED: playback sync across devices is turned off for this account (the server admin's choice, or the user's where the admin lets each user decide)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8201,7 +8201,7 @@
             }
           },
           "403": {
-            "description": "Insufficient access",
+            "description": "Insufficient access; or PLAYBACK_SYNC_DISABLED: playback sync across devices is turned off for this account (the server admin's choice, or the user's where the admin lets each user decide)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8337,7 +8337,7 @@
             }
           },
           "403": {
-            "description": "Insufficient access",
+            "description": "Insufficient access; or PLAYBACK_SYNC_DISABLED: playback sync across devices is turned off for this account (the server admin's choice, or the user's where the admin lets each user decide)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8444,7 +8444,7 @@
             }
           },
           "403": {
-            "description": "Insufficient access",
+            "description": "Insufficient access; or PLAYBACK_SYNC_DISABLED: playback sync across devices is turned off for this account (the server admin's choice, or the user's where the admin lets each user decide)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8571,7 +8571,7 @@
             }
           },
           "403": {
-            "description": "Insufficient access",
+            "description": "Insufficient access; or PLAYBACK_SYNC_DISABLED: playback sync across devices is turned off for this account (the server admin's choice, or the user's where the admin lets each user decide)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8698,7 +8698,7 @@
             }
           },
           "403": {
-            "description": "Insufficient access",
+            "description": "Insufficient access; or PLAYBACK_SYNC_DISABLED: playback sync across devices is turned off for this account (the server admin's choice, or the user's where the admin lets each user decide)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8825,7 +8825,7 @@
             }
           },
           "403": {
-            "description": "OUTPUT_CREDENTIAL_REQUIRED, or SCOPED_TOKEN_NOT_ALLOWED for another session",
+            "description": "OUTPUT_CREDENTIAL_REQUIRED, or SCOPED_TOKEN_NOT_ALLOWED for another session; or PLAYBACK_SYNC_DISABLED: playback sync across devices is turned off for this account (the server admin's choice, or the user's where the admin lets each user decide)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8971,7 +8971,7 @@
             }
           },
           "403": {
-            "description": "Insufficient access",
+            "description": "Insufficient access; or PLAYBACK_SYNC_DISABLED: playback sync across devices is turned off for this account (the server admin's choice, or the user's where the admin lets each user decide)",
             "content": {
               "application/json": {
                 "schema": {
@@ -9019,7 +9019,7 @@
         "tags": [
           "Events"
         ],
-        "description": "Use a short-lived sse token in the query string because EventSource cannot set Authorization headers; a full session token is refused. Each event's data is JSON `{id, type, occurredAt, data}`. Types: playbackSession.created / updated / handedOff / deleted (fetch the session when its revision is newer), playbackSession.progress (every accepted output report: `{sessionId, revision, outputId, generation, report}`; live only, never replayed), playlist.changed, annotation.changed, library.revision, settings.changed (`{keys}`: re-read those settings), and resync.required (the replay window was lost: re-fetch everything).",
+        "description": "Use a short-lived sse token in the query string because EventSource cannot set Authorization headers; a full session token is refused. Each event's data is JSON `{id, type, occurredAt, data}`. Types: playbackSession.created / updated / handedOff / deleted (fetch the session when its revision is newer), playbackSession.progress (every accepted output report: `{sessionId, revision, outputId, generation, report}`; live only, never replayed), playlist.changed, annotation.changed, library.revision, playbackSync.changed (`{enabled}`: whether the playback-session API works for this account now), and resync.required (the replay window was lost: re-fetch everything).",
         "security": [
           {
             "listenerAuth": []

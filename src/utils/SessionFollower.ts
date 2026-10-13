@@ -1,4 +1,5 @@
 import type { PlaybackSession } from '../../shared/api/v1';
+import { AuroraApiError } from '../api/auroraApi';
 import * as sessionApi from '../api/playbackSessions';
 import type { TrackInfo } from './fileSystem';
 import { FOLLOW_STALE_MS, followFromSession, followedPositionMs, isFollowedOutputPlaying, type FollowedOutput } from './sessionFollow';
@@ -51,8 +52,11 @@ export interface SessionFollowerOptions {
   /** The session's queue as playable tracks, keeping each entry's ID. */
   toTracks: (session: PlaybackSession) => TrackInfo[];
   setPlaybackTime: (currentTime: number, duration: number) => void;
-  /** `settings.changed`: an admin or this user changed settings with these keys. */
-  onSettingsChanged?: (keys: string[]) => void;
+  /**
+   * The server says whether the session API works for this account now
+   * (`playbackSync.changed`), or refused a call with PLAYBACK_SYNC_DISABLED.
+   */
+  onPlaybackSyncChanged?: (enabled: boolean) => void;
   log?: (message: string, detail?: unknown) => void;
 }
 
@@ -66,7 +70,7 @@ const SESSION_EVENTS = [
   'playbackSession.handedOff',
   'playbackSession.deleted',
   'playbackSession.progress',
-  'settings.changed',
+  'playbackSync.changed',
   'resync.required',
 ] as const;
 
@@ -211,8 +215,8 @@ export class SessionFollower {
       case 'resync.required':
         await this.refresh(false);
         return;
-      case 'settings.changed':
-        this.options!.onSettingsChanged?.(Array.isArray(data.keys) ? data.keys.filter((key): key is string => typeof key === 'string') : []);
+      case 'playbackSync.changed':
+        this.options!.onPlaybackSyncChanged?.(data.enabled === true);
         return;
       case 'playbackSession.deleted':
         if (sessionId && this.session?.id === sessionId) {
@@ -279,7 +283,7 @@ export class SessionFollower {
       }
       await this.apply(latest, initial);
     } catch (error) {
-      this.log('could not read the playback session', error);
+      this.onError(error);
     }
   }
 
@@ -294,7 +298,7 @@ export class SessionFollower {
         const session = await this.api.getPlaybackSession(this.store!.getState().getAuthHeader(), sessionId);
         if (this.source) await this.apply(session, false);
       } catch (error) {
-        this.log('could not read the playback session', error);
+        this.onError(error);
       } finally {
         this.fetching = false;
         const next = this.refetch;
@@ -302,6 +306,14 @@ export class SessionFollower {
         if (next && this.source) this.fetchSession(next);
       }
     })();
+  }
+
+  private onError(error: unknown) {
+    if (error instanceof AuroraApiError && error.code === 'PLAYBACK_SYNC_DISABLED') {
+      this.options!.onPlaybackSyncChanged?.(false);
+      return;
+    }
+    this.log('could not read the playback session', error);
   }
 
   private async apply(session: PlaybackSession, initial: boolean) {

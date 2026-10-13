@@ -1036,9 +1036,17 @@ user setting.
 - `shared/playbackSync.ts` holds the rule; the store derives
   `syncPlaybackAcrossDevices` from the two, which is all SessionMirror and
   SessionFollower read. The old per-device flag in local storage is ignored.
-- A change publishes `settings.changed` (`{keys}`): to every user for the mode,
-  to that user for their own choice. Devices on the event stream re-read the
-  two settings at once. A device with sync off has no stream, so every device
-  also re-reads them when it returns to the foreground (at most every 15 s).
-- Enforcement is in the client: the session API itself stays open to API v1
-  clients, as before.
+- The server enforces it for every API v1 client alike (Andreas: "All API v1
+  clients should be treated equally, as PWA and web"). While sync is off for
+  the account, every `/api/v1/playback-sessions` route answers
+  `403 PLAYBACK_SYNC_DISABLED` (`server/services/playbackSync.service.ts`,
+  a path middleware in `apiV1.routes.ts`). Stored sessions are kept.
+- Settings stay out of API v1 (Andreas): both keys are written and read only
+  through the legacy `/api/settings`. What v1 clients see is the session API's
+  availability: the 403 above, and `playbackSync.changed` (`{enabled}`) on
+  `/events` after the admin's mode (to every user) or a user's own choice (to
+  that user) changes.
+- The web app re-reads the two settings on that event, when a session call
+  is refused with `PLAYBACK_SYNC_DISABLED` (SessionMirror and SessionFollower
+  stop at once, without retrying), and when it returns to the foreground (at
+  most every 15 s), since a device with sync off has no event stream.
