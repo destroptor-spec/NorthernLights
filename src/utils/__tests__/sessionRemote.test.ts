@@ -58,6 +58,8 @@ it('says when that device no longer plays, or could not be reached', async () =>
   expect(await sendRemoteAction({ type: 'next' }, target, d)).toBe('replaced');
   api.issuePlaybackCommand.mockRejectedValueOnce(new AuroraApiError('idle', 409, 'OUTPUT_NOT_ACTIVE'));
   expect(await sendRemoteAction({ type: 'next' }, target, d)).toBe('replaced');
+  api.issuePlaybackCommand.mockRejectedValueOnce(new AuroraApiError('closed', 409, 'OUTPUT_UNREACHABLE'));
+  expect(await sendRemoteAction({ type: 'next' }, target, d)).toBe('unreachable');
   api.issuePlaybackCommand.mockRejectedValueOnce(new TypeError('Failed to fetch'));
   expect(await sendRemoteAction({ type: 'next' }, target, d)).toBe('failed');
   // Without a session read yet there is nothing to replace.

@@ -1,6 +1,7 @@
 import { usePlayerStore } from '../index';
 import { selectDisplayedPlaying } from '../../utils/sessionFollow';
 import { sendRemoteAction } from '../../utils/sessionRemote';
+import { sessionFollower } from '../../utils/SessionFollower';
 
 jest.mock('../../utils/sessionRemote', () => ({ sendRemoteAction: jest.fn(async () => 'sent') }));
 import { TrackInfo } from '../../utils/fileSystem';
@@ -289,6 +290,35 @@ describe('Music Store Logic', () => {
       expect(usePlayerStore.getState().remoteControlOutputId).toBe('desktop');
       expect(sendRemoteAction).not.toHaveBeenCalled();
       expect(playAtIndex).not.toHaveBeenCalled();
+    });
+
+    it('forgets the choice and says so when that device cannot be reached', async () => {
+      following();
+      usePlayerStore.setState({ remoteControlOutputId: 'desktop', toasts: [] } as never);
+      (sendRemoteAction as jest.Mock).mockResolvedValueOnce('unreachable');
+      await usePlayerStore.getState().nextTrack();
+      await Promise.resolve();
+      expect(usePlayerStore.getState().remoteControlOutputId).toBeNull();
+      expect(usePlayerStore.getState().toasts.map((t) => t.message)).toContain("NAD Forstærker isn't reachable.");
+    });
+
+    it("says when a connected device does not answer a command (asleep in the background)", async () => {
+      jest.useFakeTimers({ now: 1_000_000 });
+      following();
+      usePlayerStore.setState({ remoteControlOutputId: 'desktop', toasts: [] } as never);
+      const heard = jest.spyOn(sessionFollower, 'lastHeardFrom').mockReturnValue(0);
+      await usePlayerStore.getState().nextTrack();
+      await jest.advanceTimersByTimeAsync(4_900);
+      expect(usePlayerStore.getState().toasts).toHaveLength(0);
+      await jest.advanceTimersByTimeAsync(200);
+      expect(usePlayerStore.getState().toasts.map((t) => t.message)).toContain("NAD Forstærker isn't responding.");
+
+      // An answer in time means no message.
+      usePlayerStore.setState({ toasts: [] } as never);
+      heard.mockReturnValue(Number.MAX_SAFE_INTEGER);
+      await usePlayerStore.getState().nextTrack();
+      await jest.advanceTimersByTimeAsync(6_000);
+      expect(usePlayerStore.getState().toasts).toHaveLength(0);
     });
 
     it('a remote load keeps the session entry IDs and plays the chosen entry', async () => {

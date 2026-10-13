@@ -9107,7 +9107,7 @@
             }
           },
           "409": {
-            "description": "OUTPUT_GRANT_REPLACED: another device plays the session now; or OUTPUT_NOT_ACTIVE: nothing plays it (current session in details.current)",
+            "description": "OUTPUT_GRANT_REPLACED: another device plays the session now; OUTPUT_NOT_ACTIVE: nothing plays it; or OUTPUT_UNREACHABLE: the output has no event stream open (current session in details.current)",
             "content": {
               "application/json": {
                 "schema": {
@@ -9274,6 +9274,16 @@
             },
             "required": false,
             "name": "token",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "With an sse token: the device this stream belongs to, so remote commands can reach it."
+            },
+            "required": false,
+            "description": "With an sse token: the device this stream belongs to, so remote commands can reach it.",
+            "name": "clientId",
             "in": "query"
           },
           {

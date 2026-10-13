@@ -28,6 +28,7 @@ describeDb('playback sessions', () => {
   let pool: Pool;
   let sessions: typeof import('../../services/playbackSession.service');
   let subscribeApiV1Events: typeof import('../../services/apiV1Events.service').subscribeApiV1Events;
+  let noteClientListening: typeof import('../../services/apiV1Events.service').noteClientListening;
   let userId: string;
   let otherUserId: string;
 
@@ -38,7 +39,7 @@ describeDb('playback sessions', () => {
     const db = await import('../index');
     pool = await db.initDB();
     sessions = await import('../../services/playbackSession.service');
-    ({ subscribeApiV1Events } = await import('../../services/apiV1Events.service'));
+    ({ subscribeApiV1Events, noteClientListening } = await import('../../services/apiV1Events.service'));
     userId = (await db.createUser('listener', 'x', 'user')).id;
     otherUserId = (await db.createUser('other', 'x', 'user')).id;
     await pool.query(`
@@ -364,6 +365,10 @@ describeDb('playback sessions', () => {
 
   describe('remote commands', () => {
     const uuidOf = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+    // The output's own event stream, which is how a command reaches it.
+    let stopListening: () => void = () => undefined;
+    beforeEach(() => { stopListening = noteClientListening(userId, 'desktop-5678'); });
+    afterEach(() => stopListening());
     const playingOn = async (clientId: string) => {
       const created = await create(trackIds(0, 3));
       const session = await sessions.claimPlaybackOutput({ userId, clientId, sessionId: created.id, output: { kind: 'cast', name: 'NAD Forstærker' } });
@@ -418,6 +423,17 @@ describeDb('playback sessions', () => {
         report: { seq: 2, state: 'stopped', queueEntryId: null, positionMs: 0 },
       });
       await expect(send(session, uuidOf(4), { type: 'play' })).rejects.toBeInstanceOf(sessions.PlaybackOutputNotActiveError);
+    });
+
+    it('refuses at once a command for a device with no event stream open (its app closed)', async () => {
+      const session = await playingOn('desktop-5678');
+      stopListening();
+      const refused = await rejection(send(session, uuidOf(6), { type: 'play' }));
+      expect(refused).toBeInstanceOf(sessions.PlaybackOutputUnreachableError);
+      // Another stream for the same device (a second tab) is enough.
+      const tab = noteClientListening(userId, 'desktop-5678');
+      expect(await send(session, uuidOf(7), { type: 'play' })).toEqual({ accepted: true });
+      tab();
     });
 
     it("keeps one user's commands away from another user's devices", async () => {

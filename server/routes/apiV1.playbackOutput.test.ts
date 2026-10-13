@@ -24,6 +24,7 @@ import {
   reportPlaybackOutput,
   issuePlaybackCommand,
   PlaybackOutputNotActiveError,
+  PlaybackOutputUnreachableError,
 } from '../services/playbackSession.service';
 import { generateEphemeralScopedToken, generateOutputCredential } from '../services/scopedToken.service';
 
@@ -169,6 +170,9 @@ describe('remote commands', () => {
     const notActive = await call('post', '/playback-sessions/:id/commands', body({ type: 'next' }), { id: 's-1' });
     expect(notActive.status).toBe(409);
     expect(notActive.body.error).toMatchObject({ code: 'OUTPUT_NOT_ACTIVE' });
+    (issuePlaybackCommand as jest.Mock).mockRejectedValueOnce(new PlaybackOutputUnreachableError(session(output)));
+    expect((await call('post', '/playback-sessions/:id/commands', body({ type: 'next' }), { id: 's-1' })).body.error)
+      .toMatchObject({ code: 'OUTPUT_UNREACHABLE' });
   });
 });
 

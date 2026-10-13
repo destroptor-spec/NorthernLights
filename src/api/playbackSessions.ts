@@ -55,11 +55,13 @@ export function reportPlaybackOutput(
   credential: PlaybackOutputCredential,
   sessionId: string,
   report: PlaybackOutputReport,
+  options: { keepalive?: boolean } = {},
 ): Promise<{ accepted: boolean; revision: number }> {
   return auroraApiRequest(
     `/playback-sessions/${encodeURIComponent(sessionId)}/reports`,
     { Authorization: `Bearer ${credential.token}` },
-    json('POST', report),
+    // keepalive: a last report sent as the page closes still gets out.
+    { ...json('POST', report), ...(options.keepalive ? { keepalive: true } : {}) },
   );
 }
 

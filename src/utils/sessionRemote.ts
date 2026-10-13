@@ -26,7 +26,7 @@ export interface RemoteDeps {
   sessionRevision: () => number | null;
 }
 
-export type RemoteResult = 'sent' | 'replaced' | 'failed';
+export type RemoteResult = 'sent' | 'replaced' | 'unreachable' | 'failed';
 
 export async function sendRemoteAction(action: RemoteAction, target: FollowedOutput, deps: RemoteDeps): Promise<RemoteResult> {
   const api = deps.api ?? sessionApi;
@@ -58,6 +58,7 @@ export async function sendRemoteAction(action: RemoteAction, target: FollowedOut
     return 'sent';
   } catch (error) {
     if (error instanceof AuroraApiError && (error.code === 'OUTPUT_GRANT_REPLACED' || error.code === 'OUTPUT_NOT_ACTIVE')) return 'replaced';
+    if (error instanceof AuroraApiError && error.code === 'OUTPUT_UNREACHABLE') return 'unreachable';
     return 'failed';
   }
 }

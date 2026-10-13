@@ -370,3 +370,42 @@ it('names the grant it holds, for remote commands', async () => {
   expect(mirror.currentGrant()).toEqual({ sessionId: 'session-1', outputId: 'phone', generation: 1 });
 });
 
+/**
+ * Prod 2026-10-13: the desktop controlled the phone; the phone was paused and
+ * its app closed. The desktop went on sending commands into the void until
+ * the server called the phone unreachable a minute later.
+ */
+describe('closing the page', () => {
+  it('reports "stopped" with keepalive while this device plays the session', async () => {
+    const { api, store } = setup();
+    await play(store);
+    api.reportPlaybackOutput.mockClear();
+    window.dispatchEvent(new Event('pagehide'));
+    expect(api.reportPlaybackOutput).toHaveBeenCalledWith(credential, 'session-1',
+      expect.objectContaining({ state: 'stopped', reason: 'closed', queueEntryId: uuid(1) }), { keepalive: true });
+  });
+
+  it('reports nothing while casting (the Cast device plays on) or without the output', async () => {
+    const idle = setup();
+    window.dispatchEvent(new Event('pagehide'));
+    expect(idle.api.reportPlaybackOutput).not.toHaveBeenCalled();
+    idle.mirror.stop();
+
+    const casting = setup({ castConnected: true });
+    await play(casting.store);
+    casting.api.reportPlaybackOutput.mockClear();
+    window.dispatchEvent(new Event('pagehide'));
+    expect(casting.api.reportPlaybackOutput).not.toHaveBeenCalled();
+    casting.mirror.stop();
+  });
+});
+
+it('reports right after a remote command, even when nothing visible changed', async () => {
+  const { api, store, mirror } = setup();
+  await play(store);
+  api.reportPlaybackOutput.mockClear();
+  mirror.reportNow();
+  await jest.advanceTimersByTimeAsync(300);
+  expect(api.reportPlaybackOutput).toHaveBeenCalledTimes(1);
+});
+

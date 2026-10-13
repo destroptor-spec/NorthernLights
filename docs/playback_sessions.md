@@ -1048,6 +1048,15 @@ without asking":
 - Until Phase 5, controlling a Cast device relays through the device casting
   to it, so that device must be awake.
 
+Reachability (prod test 2026-10-13: the desktop controlled the phone, the
+phone's app was closed, and the desktop sent commands into the void for a
+minute): the closing device sends a last `stopped` report (`pagehide`,
+keepalive; not while casting); the server refuses commands for an output with
+no event stream open (`409 OUTPUT_UNREACHABLE`; streams name their device
+with `clientId`), and the controller then forgets the choice; and the output
+reports right after each command, so a controller hearing nothing for 5 s
+says "<device> isn't responding".
+
 PRs: (1) `POST /playback-sessions/:id/commands` and the live-only
 `playbackSession.command` event (server only); (2) the output carries
 commands out (`src/utils/sessionCommands.ts`: SessionFollower passes on
