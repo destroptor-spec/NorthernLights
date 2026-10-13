@@ -33,6 +33,9 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     path === '/api/admin/db/start' ||
     path === '/api/admin/db/create' ||
     path === '/api/admin/db/recreate' ||
+    // A browser download cannot send the Authorization header; the route
+    // authenticates it by redeeming a single-use, 60 s ticket minted for an admin.
+    path === '/api/admin/db/exports/download' ||
     path === '/api/providers/lastfm/callback' ||
     path === '/api/providers/musicbrainz/callback' ||
     path === '/api/providers/external/proxy-image'

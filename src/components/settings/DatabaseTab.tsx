@@ -2,9 +2,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { usePlayerStore } from '../../store/index';
 import { useToast } from '../../hooks/useToast';
 import { DatabaseControl } from '../DatabaseControl';
+import { DatabaseBackups } from './DatabaseBackups';
 import { ConfirmModal } from '../ConfirmModal';
 import { DependencyBadge, DependencyGroup, DependencyInfoBox } from '../DependencyBadge';
-import { BarChart2, Wrench, Globe, AlertCircle, Clock, Database, Check, ArrowRight, Trash2, X, Sparkles } from 'lucide-react';
+import { BarChart2, Wrench, Globe, HardDriveDownload, AlertCircle, Clock, Database, Check, ArrowRight, Trash2, X, Sparkles } from 'lucide-react';
 
 export const DatabaseTab: React.FC = () => {
     const authToken = usePlayerStore(state => state.authToken);
@@ -14,7 +15,7 @@ export const DatabaseTab: React.FC = () => {
     const { addToast } = useToast();
     const showToast = useCallback((msg: string, type: 'success' | 'error' | 'info') => addToast(msg, type), [addToast]);
 
-    const [dbTab, setDbTab] = useState<'stats' | 'maintenance' | 'mbdb'>('stats');
+    const [dbTab, setDbTab] = useState<'stats' | 'maintenance' | 'backups' | 'mbdb'>('stats');
     const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; confirmLabel?: string; onConfirm: () => void } | null>(null);
 
     const [mbdbProgress, setMbdbProgress] = useState<{
@@ -138,6 +139,9 @@ export const DatabaseTab: React.FC = () => {
                 <button onClick={() => setDbTab('maintenance')} className={`btn-tab ${dbTab === 'maintenance' ? 'active' : ''}`}>
                     <Wrench size={16} className="inline mr-1 relative -top-[1px]" /> Maintenance
                 </button>
+                <button onClick={() => setDbTab('backups')} className={`btn-tab ${dbTab === 'backups' ? 'active' : ''}`}>
+                    <HardDriveDownload size={16} className="inline mr-1 relative -top-[1px]" /> Backups
+                </button>
                 <button onClick={() => setDbTab('mbdb')} className={`btn-tab ${dbTab === 'mbdb' ? 'active' : ''}`}>
                     <Globe size={16} className="inline mr-1 relative -top-[1px]" /> MBDB
                 </button>
@@ -167,6 +171,8 @@ export const DatabaseTab: React.FC = () => {
                     </div>
                 </div>
             )}
+
+            {dbTab === 'backups' && <DatabaseBackups />}
 
             {dbTab === 'mbdb' && (
                 <div className="space-y-4">

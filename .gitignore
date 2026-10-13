@@ -9,6 +9,7 @@ dist/
 *.db
 *.sqlite
 postgres-data/
+backups/
 mbdb-data/
 
 # IDE & OS
