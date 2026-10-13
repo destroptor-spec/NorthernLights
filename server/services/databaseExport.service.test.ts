@@ -112,6 +112,29 @@ describe('runExport', () => {
     expect(queries.at(-1)).toBe('COMMIT');
   });
 
+  it('reports a failed dump only after its file stream has closed, so cleanup cannot race a late write (CI flake)', async () => {
+    // CI left a .partial behind: the stream was still opening (fs syscall on the
+    // thread pool) when the caller removed the file. The fix makes the failure
+    // wait for the stream's close; this pins that order down deterministically.
+    const dir = tmp();
+    const realCreate = fs.createWriteStream;
+    let streamClosed = false;
+    const spy = jest.spyOn(fs, 'createWriteStream').mockImplementation(((...args: Parameters<typeof fs.createWriteStream>) => {
+      const stream = realCreate(...args);
+      stream.on('close', () => { streamClosed = true; });
+      return stream;
+    }) as typeof fs.createWriteStream);
+    try {
+      const { runner } = fakeRunner([Buffer.from('partial')], 1, 'pg_dump: error');
+      let closedWhenReported: boolean | null = null;
+      await runExport({ client: fakeClient().client, runner, plan, dir, now: fixedNow }).catch(() => { closedWhenReported = streamClosed; });
+      expect(closedWhenReported).toBe(true);
+      expect(fs.readdirSync(dir)).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('refuses an empty dump', async () => {
     const dir = tmp();
     const { runner } = fakeRunner([]);
