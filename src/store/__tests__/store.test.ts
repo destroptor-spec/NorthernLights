@@ -1,4 +1,4 @@
-import { usePlayerStore } from '../index';
+import { restorePersistedPlayerState, usePlayerStore } from '../index';
 import { selectDisplayedPlaying } from '../../utils/sessionFollow';
 import { sendRemoteAction } from '../../utils/sessionRemote';
 import { sessionFollower } from '../../utils/SessionFollower';
@@ -363,6 +363,19 @@ describe('Music Store Logic', () => {
       usePlayerStore.setState({ playbackSyncMode: 'user', playbackSyncUserEnabled: true, syncPlaybackAcrossDevices: true } as never);
       usePlayerStore.getState().clearAuthToken();
       expect(usePlayerStore.getState()).toMatchObject({ playbackSyncUserEnabled: false, syncPlaybackAcrossDevices: false });
+    });
+  });
+
+  // Prod 2026-10-14: reopening the phone PWA, which had been playing when it
+  // was closed, took playback back from the desktop.
+  describe('a reload', () => {
+    it('never restores "playing", so nothing reads it as sync switching on mid-playback', () => {
+      const restored = restorePersistedPlayerState(
+        { playbackState: 'playing', playbackSyncMode: 'on', currentIndex: 3 },
+        { playbackState: 'stopped', syncPlaybackAcrossDevices: false, currentIndex: null },
+      );
+      expect(restored).toMatchObject({ playbackState: 'paused', syncPlaybackAcrossDevices: true, currentIndex: 3 });
+      expect(restorePersistedPlayerState({ playbackState: 'paused' }, { playbackState: 'stopped' }).playbackState).toBe('paused');
     });
   });
 });

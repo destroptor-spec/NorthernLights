@@ -74,6 +74,29 @@ let playGeneration = 0;
 // After a Cast session ends with playback left paused here, the track and
 // position to start from on the next Play (local audio still holds whatever
 // played before casting, so a plain resume would play the wrong thing).
+/**
+ * The player state as a reload restores it from local storage.
+ *
+ * Never `playing`: nothing plays on a fresh page. It used to be corrected to
+ * `paused` only after the restore was published, so subscribers saw sync
+ * "switch on while playing". The mirror then claimed the session's output,
+ * and another device that was playing meanwhile was stopped (prod 2026-10-14:
+ * reopening the phone PWA took playback back from the desktop).
+ */
+export function restorePersistedPlayerState<S extends object>(persisted: unknown, current: S): S {
+  const saved = (persisted || {}) as Partial<PlayerState>;
+  // Before the admin setting, the per-device flag itself was saved here;
+  // it is now always derived from what the server says.
+  const sync = playbackSyncFrom(saved.playbackSyncMode, saved.playbackSyncUserEnabled);
+  return {
+    ...current,
+    ...saved,
+    ...resolveLoggingPreferences(saved),
+    ...sync,
+    ...(saved.playbackState === 'playing' ? { playbackState: 'paused' as const } : {}),
+  };
+}
+
 /** The three playback-sync fields, from what the server (or local storage) holds. */
 function playbackSyncFrom(mode: unknown, userEnabled: unknown) {
   const playbackSyncMode = parsePlaybackSyncMode(mode);
@@ -3350,13 +3373,7 @@ export const usePlayerStore = create<PlayerState>()(
       name: "player-store",
       // Only persist lightweight user settings, NOT the library.
       // The library is always fetched fresh from the server on boot.
-      merge: (persisted, current) => {
-        const saved = (persisted || {}) as Partial<PlayerState>;
-        // Before the admin setting, the per-device flag itself was saved here;
-        // it is now always derived from what the server says.
-        const sync = playbackSyncFrom(saved.playbackSyncMode, saved.playbackSyncUserEnabled);
-        return { ...current, ...saved, ...resolveLoggingPreferences(saved), ...sync };
-      },
+      merge: (persisted, current) => restorePersistedPlayerState(persisted, current),
       partialize: (state: PlayerState) => ({
         volume: state.volume,
         shuffle: state.shuffle,
