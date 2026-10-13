@@ -295,8 +295,15 @@ function writeDump(plan: DumpPlan, target: string, runner: DumpRunner): Promise<
     const fail = (error: Error) => {
       if (settled) return;
       settled = true;
+      // Reject only once the file stream has closed: it opens and flushes
+      // asynchronously, and could otherwise recreate the .partial file after
+      // the caller has removed it (seen as a flaky test in CI).
+      if (out.closed) {
+        reject(error);
+        return;
+      }
+      out.once('close', () => reject(error));
       out.destroy();
-      reject(error);
     };
     const out = fs.createWriteStream(target, { mode: 0o600 });
     const child = runner(plan);
