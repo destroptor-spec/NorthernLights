@@ -1189,6 +1189,7 @@ export const usePlayerStore = create<PlayerState>()(
           auth: get().getAuthHeader(),
           sessionRevision: () => sessionFollower.sessionRevision(),
         });
+        castManager.logSyncEvent(result === 'sent' ? 'ok' : 'warn', 'sync-command-sent', `type=${action.type} to=${target.kind}:${target.name} result=${result}`);
         if (result === 'replaced' || result === 'unreachable') {
           // Asking "Play where?" again beats sending into the void.
           if (get().remoteControlOutputId === target.outputId) set({ remoteControlOutputId: null });
@@ -3108,6 +3109,7 @@ export const usePlayerStore = create<PlayerState>()(
           pendingPlayWhere = null;
           const follow = get().sessionFollow;
           set({ playWherePrompt: null });
+          castManager.logSyncEvent('ok', 'sync-play-where', `choice=${choice ?? 'dismissed'} output=${follow ? `${follow.kind}:${follow.name}${follow.silent ? ':silent' : ''}` : 'none'}`);
           if (!choice || !follow) return;
           if (choice === 'remote') {
             if (follow.silent) return;

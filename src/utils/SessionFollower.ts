@@ -64,6 +64,8 @@ export interface SessionFollowerOptions {
   /** A remote command for the grant this device holds (`playbackSession.command`). */
   onCommand?: (sessionId: string, command: PlaybackCommand) => void;
   log?: (message: string, detail?: unknown) => void;
+  /** Server-side diagnostics (`sync-…` markers in the Cast log). */
+  diagnostic?: (level: 'ok' | 'warn' | 'error', marker: string, detail?: string) => void;
 }
 
 const EVENTS_PATH = '/api/v1/events';
@@ -257,6 +259,7 @@ export class SessionFollower {
         const command = data.command as PlaybackCommand | undefined;
         if (!grant || !sessionId || !command || data.outputId !== myId
           || grant.sessionId !== sessionId || grant.generation !== Number(data.generation)) return;
+        this.options!.diagnostic?.('ok', 'sync-command-received', `type=${command.type} from=${String(data.issuedBy ?? 'unknown')}`);
         this.options!.onCommand?.(sessionId, command);
         return;
       }
@@ -379,7 +382,12 @@ export class SessionFollower {
       }
     }
     this.session = session;
+    const previous = this.follow;
     this.follow = followFromSession(session, this.options!.clientId(), Date.now());
+    const describe = (f: FollowedOutput | null) => (f ? `${f.kind}:${f.name}${f.silent ? ':silent' : ''}` : 'none');
+    if (describe(previous) !== describe(this.follow)) {
+      this.options!.diagnostic?.('ok', 'sync-follow', `output=${describe(this.follow)} was=${describe(previous)} status=${session.output?.status ?? 'none'}`);
+    }
     this.render();
   }
 

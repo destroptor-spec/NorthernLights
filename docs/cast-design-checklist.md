@@ -312,6 +312,16 @@ Run these against at least one Chromecast and one Google TV target when availabl
 | 15 | With sync on: the phone casts to the NAD, then pick the NAD in the desktop's Cast dialog | The desktop does not stay a second Cast sender: it leaves the Cast session again, the NAD keeps playing untouched, and the desktop shows "Playing on NAD Forstærker" and controls it (no "Play where?" needed); no "Cast device disconnected" toast (Chrome's own dialog may still list the NAD as casting, from the phone) | `cast-join-left` and `cast-ended-handoff skipped reason=left-joined-session` from the desktop's `sender=`; no `Auto-casting` or `Queue load requested` from it |
 | 16 | With sync on: the desktop casts to the NAD, then pick the NAD in the phone's Cast dialog (Android starts a new Cast session, ending the desktop's) | The phone casts normally from its own queue and keeps the NAD; it does not leave its new session | no `cast-join-left` from the phone's `sender=`; the desktop logs `SESSION_ENDED` |
 
+### Sync playback markers
+
+With "Sync playback across devices" on, the same log carries `sync-…` lines, tagged with `sender=` like Cast lines:
+- `sync-app-start` (cold start, with the restored play state) and `sync-page-restored` (a page brought back as it was);
+- `sync-claimed` (this device became the session's output: kind, generation, Cast session) and `sync-claim-failed`;
+- `sync-replaced` (another device took over: by whom, and whether this one was playing) and `sync-closing` (last report as the page closes);
+- `sync-follow` (which device this idle one follows, `:silent` when unreachable);
+- `sync-play-where` (the listener's choice), `sync-command-sent` (with its result) and `sync-command-received`, then `session-command` when a casting device carried it out;
+- `sync-disabled-by-server`.
+
 ### Automated Log Verification
 
 Run after the manual cases:

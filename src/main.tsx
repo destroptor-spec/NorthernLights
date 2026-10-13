@@ -31,6 +31,7 @@ sessionMirror.start(usePlayerStore, {
   getOutputName: () => (usePlayerStore.getState().castConnected && castManager.getCastDeviceName()) || describeThisDevice(),
   getCastSessionId: () => castManager.getCastSessionId() || null,
   log: logPlaybackInfo,
+  diagnostic: (level, marker, detail) => castManager.logSyncEvent(level, marker, detail),
   onSyncDisabled: () => void usePlayerStore.getState().refreshPlaybackSync(),
   // One device plays at a time: another device took over, so stop here.
   onDisplaced: (replacement) => {
@@ -45,6 +46,7 @@ sessionFollower.start(usePlayerStore, {
   toTracks: sessionQueueTracks,
   setPlaybackTime: (currentTime, duration) => setPlaybackTimeState({ currentTime, duration }),
   onPlaybackSyncChanged: () => void usePlayerStore.getState().refreshPlaybackSync(),
+  diagnostic: (level, marker, detail) => castManager.logSyncEvent(level, marker, detail),
   // Another of the user's devices controls this one (it plays the session).
   onCommand: (sessionId, command) => {
     const store = () => usePlayerStore.getState();
@@ -97,6 +99,23 @@ castManager.addStateChangeListener((state) => {
     // Only a real disconnect forgets it; a reconnect passes through CONNECTING.
     lastCastSessionId = '';
   }
+});
+
+// A page brought back as it was (Android may keep a closed PWA in the
+// back/forward cache): note it, with what the restored page thinks it plays,
+// since another device may have taken over meanwhile.
+// A cold start, once the saved state is restored: what this page thinks it plays.
+const logAppStart = () => {
+  const state = usePlayerStore.getState();
+  castManager.logSyncEvent('ok', 'sync-app-start', `state=${state.playbackState} sync=${state.syncPlaybackAcrossDevices}`);
+};
+if (usePlayerStore.persist.hasHydrated()) logAppStart();
+else usePlayerStore.persist.onFinishHydration(logAppStart);
+
+window.addEventListener('pageshow', (event) => {
+  if (!event.persisted) return;
+  const state = usePlayerStore.getState();
+  castManager.logSyncEvent('ok', 'sync-page-restored', `state=${state.playbackState} holdsOutput=${sessionMirror.holdsOutput()} cast=${state.castConnected}`);
 });
 
 // The sync setting lives on the server (an admin's, or this user's from another

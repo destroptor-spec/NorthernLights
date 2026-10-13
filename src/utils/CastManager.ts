@@ -826,6 +826,15 @@ export class CastManager {
     }
 
     /** The Cast icon was tapped while casting: its dialog can stop the session from here. */
+    /**
+     * "Sync playback across devices" events (claims, take-overs, following,
+     * remote commands, page close and restore), in the same log and with the
+     * same sender tag as Cast, so a multi-device test reads as one story.
+     */
+    public logSyncEvent(level: CastLogLevel, message: string, detail?: string) {
+        this.logCast(level, message, detail);
+    }
+
     /** Remote control relayed through this sender (sessionCommands.ts), for the Cast log. */
     public logSessionCommand(type: string, applied: boolean) {
         if (!this.isConnected()) return;

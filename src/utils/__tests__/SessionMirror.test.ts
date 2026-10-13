@@ -421,3 +421,15 @@ it('reports right after a remote command, even when nothing visible changed', as
   expect(api.reportPlaybackOutput).toHaveBeenCalledTimes(1);
 });
 
+it('tells the server log about claims, being replaced and closing', async () => {
+  const diagnostic = jest.fn();
+  const { store, mirror } = setup({}, [], { diagnostic });
+  await play(store);
+  expect(diagnostic).toHaveBeenCalledWith('ok', 'sync-claimed', expect.stringContaining('kind=browser generation=1'));
+  window.dispatchEvent(new Event('pagehide'));
+  expect(diagnostic).toHaveBeenCalledWith('ok', 'sync-closing', 'state=playing');
+  await mirror.noteReplaced('session-1', 5, { kind: 'cast', name: 'NAD Forstærker' });
+  expect(diagnostic).toHaveBeenCalledWith('ok', 'sync-replaced', 'by=cast:NAD Forstærker wasPlaying=true');
+  mirror.stop();
+});
+
