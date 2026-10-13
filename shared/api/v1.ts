@@ -253,6 +253,8 @@ export const playbackOutputSchema = z.object({
   name: z.string().nullable(),
   generation: z.number().int().positive().describe('Grant generation; goes up on every claim.'),
   claimedAt: ISO_DATE_TIME,
+  castSessionId: z.string().nullable().optional()
+    .describe("kind cast: the Cast session the output sends to, when the server knows it (it is not kept across a server restart)."),
   status: z.enum(['active', 'unreachable', 'ended']).describe(
     'active: reporting. unreachable: silent for over a minute, last state kept; only a report or a new claim changes it. ended: the output itself reported stopped, idle or error.',
   ),
@@ -350,6 +352,8 @@ export const playbackSessionPatchSchema = z.object({
 export const playbackOutputClaimSchema = z.object({
   kind: z.enum(PLAYBACK_OUTPUT_KINDS).describe(PLAYBACK_OUTPUT_KIND_DESCRIPTION),
   name: z.string().trim().min(1).max(120).optional(),
+  castSessionId: z.string().trim().min(1).max(128).optional()
+    .describe('kind cast: the Cast session this device sends to, so another device can tell joining it from starting a new one.'),
 }).strict().meta({ id: 'PlaybackOutputClaim' });
 
 export const playbackOutputReportSchema = z.object({

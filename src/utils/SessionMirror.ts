@@ -39,6 +39,8 @@ export interface SessionMirrorOptions {
   getPositionSeconds: () => number;
   /** Name shown for this output: the Cast device while casting, else this browser. */
   getOutputName: () => string;
+  /** While casting: the Cast session this device sends to (told to the server with the claim). */
+  getCastSessionId?: () => string | null;
   log?: (message: string, detail?: unknown) => void;
   /**
    * Another device plays the session now: stop playing here (one device at a
@@ -157,6 +159,15 @@ export class SessionMirror {
     void this.report();
   }
 
+  /**
+   * This device casts to a different Cast session than it told the server
+   * (a reconnect after a stale transport starts a new one): claim again, so
+   * another device can tell joining it from starting a new one.
+   */
+  noteCastSessionChanged(): void {
+    if (this.grant && this.store?.getState().castConnected) void this.claim();
+  }
+
   /** This device is the session's output (playing or paused). */
   holdsOutput(): boolean {
     return !!this.grant;
@@ -263,9 +274,11 @@ export class SessionMirror {
           const [latest] = await this.api.listPlaybackSessions(auth);
           sessionId = latest?.id ?? (await this.api.createPlaybackSession(auth, SESSION_NAME)).id;
         }
+        const castSessionId = state.castConnected ? this.options!.getCastSessionId?.() || undefined : undefined;
         const { session, credential } = await this.api.claimPlaybackOutput(auth, sessionId, {
           kind: state.castConnected ? 'cast' : 'browser',
           name: this.options!.getOutputName().slice(0, 120) || undefined,
+          ...(castSessionId ? { castSessionId } : {}),
         });
         // Settings may have changed while the claim was on its way.
         if (!this.enabled(this.store!.getState())) return;

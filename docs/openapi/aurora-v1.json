@@ -970,6 +970,13 @@
                 "type": "string",
                 "format": "date-time"
               },
+              "castSessionId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "kind cast: the Cast session the output sends to, when the server knows it (it is not kept across a server restart)."
+              },
               "status": {
                 "type": "string",
                 "enum": [
@@ -1936,6 +1943,12 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 120
+          },
+          "castSessionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "kind cast: the Cast session this device sends to, so another device can tell joining it from starting a new one."
           }
         },
         "required": [

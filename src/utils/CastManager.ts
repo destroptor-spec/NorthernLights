@@ -865,6 +865,11 @@ export class CastManager {
      * other device's and kept re-sending it. Such a device leaves the Cast
      * session again (the receiver plays on) and controls it remotely.
      */
+    /** The Cast session this device is connected to, or '' (for the playback session's claim). */
+    public getCastSessionId(): string {
+        return this.getCurrentSessionId();
+    }
+
     public setCastingElsewhereCheck(check: ((castDeviceName: string) => boolean) | null) {
         this.castingElsewhereCheck = check;
     }
