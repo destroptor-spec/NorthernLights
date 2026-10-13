@@ -5,8 +5,13 @@
 // the Cast position but stays paused, so the device never starts sound by
 // itself and Play continues from there.
 
-/** A Cast dialog opened from this device this recently counts as "stopped from here". */
-export const USER_STOP_WINDOW_MS = 2 * 60_000;
+/**
+ * A Cast dialog opened from this device this recently, on a page that is on
+ * screen, counts as "stopped from here". It was 2 minutes until prod
+ * 2026-10-13 19:51:42: two devices attached to one Cast session had both
+ * opened their dialog within that time, and both took over when it ended.
+ */
+export const USER_STOP_WINDOW_MS = 20_000;
 
 export interface CastEndSnapshot {
   index: number;
@@ -19,10 +24,12 @@ export function shouldContinuePlayingAfterCast(input: {
   dialogOpenedAt: number;
   now: number;
   wasPlaying: boolean;
+  /** This page is on screen (document.visibilityState). */
+  visible: boolean;
 }): boolean {
   if (!input.wasPlaying) return false;
   if (input.userStopRequested) return true;
-  return input.dialogOpenedAt > 0 && input.now - input.dialogOpenedAt <= USER_STOP_WINDOW_MS;
+  return input.visible && input.dialogOpenedAt > 0 && input.now - input.dialogOpenedAt <= USER_STOP_WINDOW_MS;
 }
 
 /**

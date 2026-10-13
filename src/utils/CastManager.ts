@@ -858,8 +858,10 @@ export class CastManager {
             this.logCast('warn', 'cast-ended-handoff skipped', 'reason=no-current-track');
             return;
         }
-        const play = shouldContinuePlayingAfterCast({ userStopRequested, dialogOpenedAt, now: Date.now(), wasPlaying: snapshot.wasPlaying });
-        this.logCast('ok', 'cast-ended-handoff', `play=${play} wasPlaying=${snapshot.wasPlaying} userStop=${userStopRequested} dialog=${dialogOpenedAt ? 'recent' : 'none'} index=${snapshot.index} position=${snapshot.positionSeconds.toFixed(1)}`);
+        const now = Date.now();
+        const visible = typeof document === 'undefined' || document.visibilityState === 'visible';
+        const play = shouldContinuePlayingAfterCast({ userStopRequested, dialogOpenedAt, now, wasPlaying: snapshot.wasPlaying, visible });
+        this.logCast('ok', 'cast-ended-handoff', `play=${play} wasPlaying=${snapshot.wasPlaying} userStop=${userStopRequested} dialog=${dialogOpenedAt ? 'recent' : 'none'} dialogAgoMs=${dialogOpenedAt ? now - dialogOpenedAt : 'none'} visible=${visible} index=${snapshot.index} position=${snapshot.positionSeconds.toFixed(1)}`);
         void usePlayerStore.getState().continueLocallyAfterCast(snapshot.index, snapshot.positionSeconds, play);
     }
 
