@@ -234,6 +234,8 @@ CREATE INDEX track_features_effnet_idx ON track_features USING hnsw (embedding_v
 ### Feature versions and reanalysis
 Version 2 corrects the dance tag and energy mapping and uses a single decode plus resampling. Existing rows migrate to version 1. The next regular scan/analysis selects missing or outdated vectors and rewrites them with version 2; no scan is started by the migration itself. Failed extraction retains the existing explicit simulated-fallback behavior and is stamped with the attempted version, so it does not retry forever. Use **Re-analyze Fallbacks** to retry those failures. Loudness columns are preserved when feature vectors are replaced.
 
+Settings → Library reports current analysis coverage using the scanner's own eligibility rule and separates tracks awaiting analysis from those needing analysis updates. A rescan that discovers a few new files can also process an older library-wide analysis backlog. Coverage reaches 100% only when no missing or outdated analysis remains; simulated fallback results are still tracked separately for explicit retries.
+
 The extractor uses fixed per-feature mappings and L2-normalized embeddings. It does not use library-wide z-score statistics; the unused batch statistics query and worker payload have been removed.
 
 Infinity reads acoustic and embedding seed vectors together and restricts similarity comparisons to the newest valid seed's feature version. This prevents mixing version 1's saturated energy/happy-tag values with version 2's RMS energy/dance-tag values during reanalysis. If that version has no eligible neighbors, the fallback can choose another unplayed track without comparing incompatible coordinates; queued/recent tracks and their duplicate editions remain excluded.

@@ -4,6 +4,7 @@ import { useToast } from '../../hooks/useToast';
 import { Activity, AlertCircle, BarChart3, BrainCircuit, CheckCircle2, Download, Folder, FolderPlus, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 import { PromptModal } from '../PromptModal';
 import { ConfirmModal } from '../ConfirmModal';
+import type { LibraryDirectoryStats } from '../../../shared/libraryStats';
 
 interface SimulatedFeatureTrack {
     id: string;
@@ -45,7 +46,7 @@ export const LibraryTab: React.FC = () => {
     const authToken = usePlayerStore(state => state.authToken);
     const sseAccessToken = usePlayerStore(state => state.sseAccessToken);
 
-    const [dirStats, setDirStats] = useState<Record<string, { totalTracks: number; withMetadata: number; analyzed: number }>>({});
+    const [dirStats, setDirStats] = useState<Record<string, LibraryDirectoryStats>>({});
     const [dirStatsLoading, setDirStatsLoading] = useState(false);
     const [simulatedTracks, setSimulatedTracks] = useState<SimulatedFeatureTrack[]>([]);
     const [simulatedLoading, setSimulatedLoading] = useState(false);
@@ -68,9 +69,9 @@ export const LibraryTab: React.FC = () => {
             const res = await fetch('/api/library/stats', { headers: { ...authHeaders } });
             if (!res.ok) return;
             const data = await res.json();
-            const statsMap: Record<string, { totalTracks: number; withMetadata: number; analyzed: number }> = {};
+            const statsMap: Record<string, LibraryDirectoryStats> = {};
             for (const d of data.directories || []) {
-                statsMap[d.path] = { totalTracks: d.totalTracks, withMetadata: d.withMetadata, analyzed: d.analyzed };
+                statsMap[d.path] = { ...d, missingAnalysis: d.missingAnalysis ?? 0, outdatedAnalysis: d.outdatedAnalysis ?? 0 };
             }
             setDirStats(statsMap);
         } catch (e) {
@@ -345,11 +346,16 @@ export const LibraryTab: React.FC = () => {
         (acc, s) => ({
             totalTracks: acc.totalTracks + s.totalTracks,
             withMetadata: acc.withMetadata + s.withMetadata,
-            analyzed: acc.analyzed + s.analyzed
+            analyzed: acc.analyzed + s.analyzed,
+            missingAnalysis: acc.missingAnalysis + s.missingAnalysis,
+            outdatedAnalysis: acc.outdatedAnalysis + s.outdatedAnalysis,
         }),
-        { totalTracks: 0, withMetadata: 0, analyzed: 0 }
+        { totalTracks: 0, withMetadata: 0, analyzed: 0, missingAnalysis: 0, outdatedAnalysis: 0 }
     );
-    const analysisPct = totalStats.totalTracks > 0 ? Math.round((totalStats.analyzed / totalStats.totalTracks) * 100) : 0;
+    const analysisPct = totalStats.totalTracks > 0
+        ? Math.min(totalStats.analyzed === totalStats.totalTracks ? 100 : 99,
+            Math.round((totalStats.analyzed / totalStats.totalTracks) * 100))
+        : 0;
     const hasModels = modelStatus.length > 0;
     const allModelsCached = hasModels && modelStatus.every(m => m.cached);
 
@@ -431,7 +437,9 @@ export const LibraryTab: React.FC = () => {
                                         <div className="library-folder-row__stats">
                                             <span>{stats.totalTracks} tracks</span>
                                             <span>{stats.withMetadata} with metadata</span>
-                                            <span data-state={analysisState}>{stats.analyzed} analyzed</span>
+                                            <span data-state={analysisState}>{stats.analyzed} analysis up to date</span>
+                                            {stats.missingAnalysis > 0 && <span>{stats.missingAnalysis} awaiting analysis</span>}
+                                            {stats.outdatedAnalysis > 0 && <span>{stats.outdatedAnalysis} need analysis updates</span>}
                                         </div>
                                     )}
                                     {stats && stats.totalTracks === 0 && (
@@ -469,7 +477,7 @@ export const LibraryTab: React.FC = () => {
                     </div>
                     <div className="library-panel__actions">
                         <button type="button" className="btn btn-primary btn-sm" onClick={handleAnalyze} disabled={isScanning}>
-                            {isScanning ? 'Analyzing...' : 'Analyze Missing'}
+                            {isScanning ? 'Analyzing...' : 'Analyze Pending'}
                         </button>
                         <button type="button" className="btn btn-ghost btn-sm" onClick={handleForceAnalyze} disabled={isScanning}>
                             Re-analyze All
@@ -479,11 +487,11 @@ export const LibraryTab: React.FC = () => {
                         </button>
                     </div>
                 </div>
-                <p className="library-panel__description">Runs native Essentia feature extraction on tracks that have not been analyzed yet. Requires ML models below. "Measure Loudness" computes EBU R128 loudness (for volume normalization) across tracks that don't have it yet.</p>
+                <p className="library-panel__description">Analyzes tracks with missing or outdated results. Rescans also process this backlog across the library, including older tracks that need updates after analyzer improvements. Requires ML models below. "Measure Loudness" computes loudness for volume normalization where it is missing.</p>
                 {dirStatsLoading ? (
                     <div className="library-progress" aria-live="polite">
                         <div className="library-progress__label">
-                            <span>Library Coverage</span>
+                            <span>Analysis up to date</span>
                             <span className="library-progress__loading">Loading...</span>
                         </div>
                         <div className="library-progress__track" />
@@ -491,7 +499,7 @@ export const LibraryTab: React.FC = () => {
                 ) : totalStats.totalTracks > 0 ? (
                     <div className="library-progress">
                         <div className="library-progress__label">
-                            <span>Library Coverage</span>
+                            <span>Analysis up to date</span>
                             <span>{totalStats.analyzed} / {totalStats.totalTracks} tracks ({analysisPct}%)</span>
                         </div>
                         <div className="library-progress__track">
@@ -499,6 +507,11 @@ export const LibraryTab: React.FC = () => {
                         </div>
                     </div>
                 ) : null}
+                {(totalStats.missingAnalysis > 0 || totalStats.outdatedAnalysis > 0) && (
+                    <p className="library-panel__description">
+                        {totalStats.missingAnalysis} awaiting analysis; {totalStats.outdatedAnalysis} need analysis updates.
+                    </p>
+                )}
 
                 <div className="library-simulated">
                     <div className="library-simulated__head">

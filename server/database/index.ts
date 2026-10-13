@@ -2,7 +2,8 @@ import { Pool } from 'pg';
 import path from 'path';
 import fs from 'fs';
 import { ARTWORK_EXTRACTION_VERSION } from '../services/artworkVersion';
-import { AUDIO_FEATURE_VERSION } from '../services/audioFeatureVersion';
+import { AUDIO_FEATURE_VERSION, PENDING_AUDIO_FEATURES_SQL } from '../services/audioFeatureVersion';
+import type { LibraryDirectoryStats } from '../../shared/libraryStats';
 import { normalizeGenreIdentity } from '../utils/genreIdentity';
 // Canonical artist-credit splitter, shared with the client (see
 // shared/artistCredit.ts). Re-exported so existing `import('../database')`
@@ -2174,6 +2175,42 @@ export async function getTracksWithFailedLoudness(): Promise<{ id: string; fileP
   }));
 }
 
+/** Coverage uses exactly the same completion rule as incremental analysis. */
+export async function getLibraryDirectoryStats(): Promise<LibraryDirectoryStats[]> {
+  const dirs = await getDirectories();
+  if (dirs.length === 0) return [];
+  const db = await initDB();
+  const result = await db.query<{
+    path: string; has_metadata: boolean; analyzed: boolean;
+    missing_analysis: boolean; outdated_analysis: boolean;
+  }>(`
+    SELECT t.path,
+           (COALESCE(t.artist, '') <> '' OR COALESCE(t.album, '') <> '') AS has_metadata,
+           NOT ${PENDING_AUDIO_FEATURES_SQL} AS analyzed,
+           tf.acoustic_vector_8d IS NULL AS missing_analysis,
+           (tf.acoustic_vector_8d IS NOT NULL AND tf.feature_version < $1) AS outdated_analysis
+    FROM tracks t
+    LEFT JOIN track_features tf ON t.id = tf.track_id
+  `, [AUDIO_FEATURE_VERSION]);
+  // Decode byte-encoded filesystem paths once, retaining directory boundaries.
+  const tracks = result.rows.map(row => ({ ...row, path: Buffer.from(row.path, 'base64').toString('utf8') }));
+  return dirs.map((directory: string) => {
+    const prefix = directory.endsWith('/') ? directory : directory + '/';
+    const stats: LibraryDirectoryStats = {
+      path: directory, totalTracks: 0, withMetadata: 0, analyzed: 0, missingAnalysis: 0, outdatedAnalysis: 0,
+    };
+    for (const track of tracks) {
+      if (!track.path.startsWith(prefix)) continue;
+      stats.totalTracks++;
+      if (track.has_metadata) stats.withMetadata++;
+      if (track.analyzed) stats.analyzed++;
+      if (track.missing_analysis) stats.missingAnalysis++;
+      if (track.outdated_analysis) stats.outdatedAnalysis++;
+    }
+    return stats;
+  });
+}
+
 export async function getTracksWithoutFeatures(): Promise<{ id: string; filePath: Buffer; title: string; artist: string | null }[]> {
   const db = await initDB();
   const res = await db.query(`
@@ -2183,7 +2220,7 @@ export async function getTracksWithoutFeatures(): Promise<{ id: string; filePath
     -- Key on the acoustic vector, not row presence: loudness measurement can
     -- create a track_features row (loudness columns only) before feature
     -- analysis runs, so "row exists" no longer means "features computed".
-    WHERE tf.acoustic_vector_8d IS NULL OR tf.feature_version < $1
+    WHERE ${PENDING_AUDIO_FEATURES_SQL}
     ORDER BY t.title
   `, [AUDIO_FEATURE_VERSION]);
   return res.rows.map((r: any) => ({

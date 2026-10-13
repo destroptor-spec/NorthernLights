@@ -1,6 +1,7 @@
 import { logScanner, logAnalyzer, logLoudness } from '../services/loggingConfig';
 import { setTrackLovedAndSync } from '../services/lovedTrack.service';
 import { decideStaleRemoval, partitionStaleByFailures, walkAudioFiles, type RemovalSkipReason, type WalkedFile } from '../services/libraryWalk';
+import { getLibraryDirectoryStats } from '../database';
 import { analysisWorkerCount } from '../services/analysisResources';
 import { Router, Response } from 'express';
 import fs from 'fs';
@@ -1434,58 +1435,7 @@ router.get('/directories', async (_req, res) => {
 // Get per-directory stats (total tracks, with metadata, analyzed)
 router.get('/stats', async (req, res) => {
   try {
-    const { getDirectories } = await import('../database');
-    const db = await (await import('../database')).initDB();
-
-    const dirs = await getDirectories();
-    if (dirs.length === 0) {
-      return res.json({ directories: [] });
-    }
-
-    // path is stored as base64 in the tracks table.
-    // Fetch all tracks once and decode them for fast accurate matching.
-    const tracksRes = await db.query(`
-      SELECT t.path,
-             t.artist IS NOT NULL AND t.artist != '' AS has_artist,
-             t.album IS NOT NULL AND t.album != '' AS has_album,
-             tf.embedding_vector IS NOT NULL AS has_features
-      FROM tracks t
-      LEFT JOIN track_features tf ON t.id = tf.track_id
-    `);
-
-    // Pre-decode all paths
-    const tracks = tracksRes.rows.map(row => ({
-      decodedPath: Buffer.from(row.path, 'base64').toString('utf8'),
-      has_metadata: row.has_artist || row.has_album,
-      has_features: row.has_features
-    }));
-
-    const result = [];
-
-    for (const rawDir of dirs) {
-      // Ensure trailing slash for accurate prefix matching
-      const prefix = rawDir.endsWith('/') ? rawDir : rawDir + '/';
-      
-      let total = 0;
-      let withMetadata = 0;
-      let analyzed = 0;
-
-      for (const t of tracks) {
-        if (t.decodedPath.startsWith(prefix)) {
-          total++;
-          if (t.has_metadata) withMetadata++;
-          if (t.has_features) analyzed++;
-        }
-      }
-
-      result.push({
-        path: rawDir,
-        totalTracks: total,
-        withMetadata,
-        analyzed
-      });
-    }
-
+    const result = await getLibraryDirectoryStats();
     res.json({ directories: result });
   } catch (error) {
     console.error('Library stats error:', error);

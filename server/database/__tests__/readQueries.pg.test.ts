@@ -111,6 +111,40 @@ describeDb('database read queries', () => {
     }
   });
 
+  it('reports the same missing and outdated backlog that incremental analysis selects', async () => {
+    const directory = "/coverage/Blå — O'Brien";
+    const ids = ['missing', 'loudness', 'embedding-only', 'legacy', 'current', 'future', 'simulated']
+      .map(name => `coverage-${name}`);
+    const features = { bpm: 120, acoustic_vector: Array(8).fill(0.5), embedding_vector: [1, ...Array(1279).fill(0)] };
+    try {
+      await db.addDirectory(directory);
+      for (const id of ids) {
+        await pool.query('INSERT INTO tracks (id, title, path) VALUES ($1, $1, $2)',
+          [id, Buffer.from(`${directory}/${id}.flac`).toString('base64')]);
+      }
+      await db.setTrackLoudness(ids[1], -12, -1);
+      await db.addTrackFeatures(ids[2], { ...features, feature_version: 2 });
+      await pool.query('UPDATE track_features SET acoustic_vector_8d = NULL WHERE track_id = $1', [ids[2]]);
+      await db.addTrackFeatures(ids[3], { ...features, feature_version: 1 });
+      await db.addTrackFeatures(ids[4], { ...features, feature_version: 2 });
+      await db.addTrackFeatures(ids[5], { bpm: 120, acoustic_vector: features.acoustic_vector, feature_version: 3 });
+      await db.addTrackFeatures(ids[6], { ...features, feature_version: 2, is_simulated: true });
+      const stats = (await db.getLibraryDirectoryStats()).find(row => row.path === directory)!;
+      expect(stats).toEqual({ path: directory, totalTracks: 7, withMetadata: 0, analyzed: 3, missingAnalysis: 3, outdatedAnalysis: 1 });
+      const pending = (await db.getTracksWithoutFeatures()).filter(row => ids.includes(row.id));
+      expect(pending.map(row => row.id).sort()).toEqual(ids.slice(0, 4).sort());
+      expect(pending).toHaveLength(stats.missingAnalysis + stats.outdatedAnalysis);
+      // Completing the backlog changes coverage and eligibility together.
+      for (const track of pending) await db.addTrackFeatures(track.id, { ...features, feature_version: 2 });
+      expect((await db.getLibraryDirectoryStats()).find(row => row.path === directory))
+        .toMatchObject({ analyzed: 7, missingAnalysis: 0, outdatedAnalysis: 0 });
+      expect((await db.getTracksWithoutFeatures()).filter(row => ids.includes(row.id))).toEqual([]);
+    } finally {
+      await pool.query('DELETE FROM tracks WHERE id = ANY($1::text[])', [ids]);
+      await db.removeDirectory(directory);
+    }
+  });
+
   it.each([true, false])('Infinity reads stored vectors by version and never repeats excluded tracks (embedding=%s)', async withEmbedding => {
     const ids = [0, 1, 2].map(index => `${TRACK_ID}${index}`);
     const features = { bpm: 120, acoustic_vector: [0.7, 0.1, 0.1, 0.5, 0.1, 0.1, 0.1, 0.6], embedding_vector: withEmbedding ? [1, ...Array(1279).fill(0)] : undefined };
