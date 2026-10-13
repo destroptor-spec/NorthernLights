@@ -38,8 +38,16 @@ export function resolveExportFile(name: string, dir = getExportDir()): string {
 
 export function sanitizeLabel(label: unknown): string | null {
   if (typeof label !== 'string') return null;
-  const cleaned = label.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
-  return cleaned || null;
+  // Cap the input before any pattern runs, and trim dashes without a
+  // backtracking pattern (CodeQL js/polynomial-redos on `-+$`).
+  let cleaned = label.slice(0, 200).toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  let start = 0;
+  let end = cleaned.length;
+  while (start < end && cleaned[start] === '-') start++;
+  while (end > start && cleaned[end - 1] === '-') end--;
+  cleaned = cleaned.slice(start, end);
+  while (cleaned.includes('--')) cleaned = cleaned.split('--').join('-');
+  return cleaned.slice(0, 40) || null;
 }
 
 export function exportNameFor(date: Date, commit: string, label: string | null): string {
