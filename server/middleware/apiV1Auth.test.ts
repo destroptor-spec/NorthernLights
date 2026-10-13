@@ -1,10 +1,10 @@
 jest.mock('../services/auth.service', () => ({ verifyToken: jest.fn() }));
 jest.mock('../services/auroraAppAuth.service', () => ({ verifyAuroraAppKey: jest.fn() }));
-jest.mock('../services/scopedToken.service', () => ({ verifyScopedToken: jest.fn() }));
+jest.mock('../services/scopedToken.service', () => ({ verifyScopedToken: jest.fn(), verifyOutputCredential: jest.fn() }));
 
 import type { NextFunction, Request, Response } from 'express';
 import { verifyToken } from '../services/auth.service';
-import { verifyScopedToken } from '../services/scopedToken.service';
+import { verifyOutputCredential, verifyScopedToken } from '../services/scopedToken.service';
 import { requireApiV1Auth, requireApiV1WebSession } from './apiV1Auth';
 
 function responseMock() {
@@ -136,10 +136,12 @@ describe('scoped token endpoint allowlist', () => {
       ['media', 'GET', '/events'],
       ['sse', 'GET', '/artwork/abc'],
       ['sse', 'POST', '/recommendations/next'],
-      // An output credential authenticates nothing until reports accept it.
+      // An output credential reports for its own session and does nothing else.
       ['output', 'POST', '/playback/reports'],
       ['output', 'GET', '/playback-sessions/s-1'],
       ['output', 'PATCH', '/playback-sessions/s-1'],
+      ['output', 'GET', '/playback-sessions/s-1/reports'],
+      ['output', 'POST', '/playback-sessions/s-1/reports/extra'],
       ['output', 'POST', '/playback-sessions/s-1/output'],
       ['output', 'POST', '/playback-sessions/s-1/output/refresh'],
       ['output', 'GET', '/events'],
@@ -159,5 +161,54 @@ describe('scoped token endpoint allowlist', () => {
         expect((await attempt('receiver', 'POST', path)).allowed).toBe(false);
       }
     });
+  });
+});
+
+/**
+ * An output credential proves one grant on one session. The middleware binds
+ * it to that session; whether the grant is still current is the report's job.
+ */
+describe('output credentials', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const report = async (path: string) => {
+    (verifyToken as jest.MockedFunction<typeof verifyToken>).mockResolvedValue({
+      userId: 'user-1', username: 'alice', role: 'user', scope: 'output',
+    } as never);
+    (verifyOutputCredential as jest.MockedFunction<typeof verifyOutputCredential>).mockResolvedValue({
+      userId: 'user-1', username: 'alice', role: 'user', scope: 'output', sid: 's-1', oid: 'laptop-5678', gen: 4, jti: 'j',
+    } as never);
+    const req = { headers: { authorization: 'Bearer output-token' }, method: 'POST', path, query: {}, requestId: 'r1' } as unknown as Request;
+    const res = responseMock();
+    const next = jest.fn() as unknown as NextFunction;
+    await requireApiV1Auth(req, res, next);
+    return {
+      allowed: (next as jest.Mock).mock.calls.length > 0,
+      code: res.json.mock.calls[0]?.[0]?.error?.code,
+      principal: (req as Request & { apiV1?: Record<string, unknown> }).apiV1,
+    };
+  };
+
+  it("reports for its own session, as the grant's device", async () => {
+    const { allowed, principal } = await report('/playback-sessions/s-1/reports');
+    expect(allowed).toBe(true);
+    expect(principal).toMatchObject({ scope: 'output', clientId: 'laptop-5678', outputGrant: { sid: 's-1', oid: 'laptop-5678', gen: 4 } });
+  });
+
+  it("is refused on any other session's reports", async () => {
+    const { allowed, code } = await report('/playback-sessions/s-2/reports');
+    expect(allowed).toBe(false);
+    expect(code).toBe('SCOPED_TOKEN_NOT_ALLOWED');
+  });
+
+  it('is refused when it does not verify as an output credential', async () => {
+    (verifyToken as jest.MockedFunction<typeof verifyToken>).mockResolvedValue({ userId: 'user-1', username: 'alice', role: 'user', scope: 'output' } as never);
+    (verifyOutputCredential as jest.MockedFunction<typeof verifyOutputCredential>).mockResolvedValue(null);
+    const req = { headers: { authorization: 'Bearer forged' }, method: 'POST', path: '/playback-sessions/s-1/reports', query: {}, requestId: 'r1' } as unknown as Request;
+    const res = responseMock();
+    const next = jest.fn() as unknown as NextFunction;
+    await requireApiV1Auth(req, res, next);
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(401);
   });
 });

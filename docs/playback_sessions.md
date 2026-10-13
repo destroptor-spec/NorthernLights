@@ -107,6 +107,8 @@ These must be resolved before a first-party client can rely on the session API:
    may change it, and the output role moves by claiming a grant.*
 3. **No live position.** `setTransport` stores a position, but nothing reports it
    periodically, and `nowPlaying.positionMs` is discarded.
+   *Fixed in Phase 1, PR 4: the output reports to
+   `POST /playback-sessions/:id/reports`.*
 4. **Queue writes rewrite every row.** Queue changes delete and re-insert entries
    one row at a time, which is too slow for a 2,000-entry queue under frequent
    Infinity top-ups. *Fixed in Phase 1, PR 1: only entries whose position
@@ -136,6 +138,7 @@ These must be resolved before a first-party client can rely on the session API:
     `eventId`, `trackId`, `kind` and `positionMs`, but nothing that identifies
     which output sent it or orders it against other reports. See
     [Position and progress](#position-and-progress).
+    *Fixed in Phase 1, PR 4: identity from the output credential, `seq` per grant.*
 
 ## Proposed model
 
@@ -857,3 +860,31 @@ change; one new table):
   revision.
 - Creating a session does not claim the output; a client starting playback
   creates and claims in one step, so the listener never sees two.
+
+**PR 4 — output reports and the unreachable state** (API addition; additive
+columns):
+- `POST /playback-sessions/:id/reports` accepts only an output credential, and
+  only for its own session: the middleware binds the credential's `sid` to the
+  path, and the report is checked against the current grant (`409
+  OUTPUT_GRANT_REPLACED`). Identity comes from the claims; a body that names
+  another output or generation gets `422 OUTPUT_IDENTITY_MISMATCH`. A web
+  session or app key gets `403 OUTPUT_CREDENTIAL_REQUIRED`, whatever it knows
+  about the grant.
+- `seq` must exceed the last accepted one within the grant (reset by each
+  claim); older reports are dropped with `{ accepted: false }`.
+- The latest report is stored on the session (`output_seq`, `output_state`,
+  `output_reason`, `output_entry_id`, `output_position_ms`,
+  `output_reported_at`). **Position-only reports change no revision**, so
+  controllers' edits never conflict with playback. A track change (to an entry
+  still queued) or a play-state change moves `currentEntryId` /
+  `playbackState`, bumps the revision and publishes an update. Position stays
+  bound to its entry.
+- `output.status` is derived on read: `unreachable` after 60 s (two missed
+  heartbeats) without a report, `ended` only after the output's own `stopped`,
+  `idle` or `error`, otherwise `active`. Silence never ends an output; any
+  report on the grant makes it active again, and a new claim replaces it.
+- Choices made here: the stored time is the server's receive time, not a
+  client `at`, so clock skew between devices doesn't matter. Position-only
+  reports publish no event; they would push real changes out of the 200-event
+  replay buffer within half an hour. How controllers follow live position
+  (polling, or an unbuffered event) is decided in Phase 2.

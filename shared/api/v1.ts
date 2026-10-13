@@ -233,12 +233,27 @@ export const queueEntrySchema = z.object({
   addedAt: ISO_DATE_TIME,
 }).meta({ id: 'PlaybackQueueEntry' });
 
+export const PLAYBACK_OUTPUT_STATES = ['playing', 'paused', 'buffering', 'stopped', 'idle', 'error'] as const;
+
+export const playbackOutputReportStateSchema = z.object({
+  seq: z.number().int().nonnegative(),
+  state: z.enum(PLAYBACK_OUTPUT_STATES),
+  reason: z.string().nullable(),
+  queueEntryId: z.string().uuid().nullable().describe('The entry the output is playing. Position belongs to this entry only.'),
+  positionMs: z.number().int().nonnegative(),
+  reportedAt: ISO_DATE_TIME.describe('Server time the report was accepted; interpolate from here while playing.'),
+}).meta({ id: 'PlaybackOutputReportState' });
+
 export const playbackOutputSchema = z.object({
   id: z.string().describe('The device that plays the session (its client ID).'),
   kind: z.enum(['browser']),
   name: z.string().nullable(),
   generation: z.number().int().positive().describe('Grant generation; goes up on every claim.'),
   claimedAt: ISO_DATE_TIME,
+  status: z.enum(['active', 'unreachable', 'ended']).describe(
+    'active: reporting. unreachable: silent for over a minute, last state kept; only a report or a new claim changes it. ended: the output itself reported stopped, idle or error.',
+  ),
+  report: playbackOutputReportStateSchema.nullable().describe("The output's latest accepted report."),
 }).meta({ id: 'PlaybackOutput' });
 
 export const playbackSessionSchema = z.object({
@@ -333,6 +348,21 @@ export const playbackOutputClaimSchema = z.object({
   kind: z.enum(['browser']),
   name: z.string().trim().min(1).max(120).optional(),
 }).strict().meta({ id: 'PlaybackOutputClaim' });
+
+export const playbackOutputReportSchema = z.object({
+  seq: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).describe('Increases with every report within one grant; a report not above the last accepted one is dropped.'),
+  state: z.enum(PLAYBACK_OUTPUT_STATES),
+  reason: z.string().trim().min(1).max(40).optional().describe('Why the output stopped, e.g. "shutdown".'),
+  queueEntryId: z.string().uuid().nullable(),
+  positionMs: z.number().int().nonnegative(),
+  outputId: z.string().max(128).optional().describe('Optional; must match the output credential.'),
+  outputGeneration: z.number().int().positive().optional().describe('Optional; must match the output credential.'),
+}).strict().meta({ id: 'PlaybackOutputReport' });
+
+export const playbackOutputReportResultSchema = z.object({
+  accepted: z.boolean().describe('False when the report was older than one already accepted (by seq) and was dropped.'),
+  revision: z.number().int().positive(),
+}).meta({ id: 'PlaybackOutputReportResult' });
 
 export const playbackOutputRefreshSchema = z.object({
   outputId: z.string().min(1).max(128),
@@ -457,6 +487,7 @@ export type PlaybackSession = z.infer<typeof playbackSessionSchema>;
 export type PlaybackSessionPatch = z.infer<typeof playbackSessionPatchSchema>;
 export type PlaybackOutput = z.infer<typeof playbackOutputSchema>;
 export type PlaybackOutputClaim = z.infer<typeof playbackOutputClaimSchema>;
+export type PlaybackOutputReport = z.infer<typeof playbackOutputReportSchema>;
 export type PlaybackOutputCredential = z.infer<typeof playbackOutputCredentialSchema>;
 export type ListenerPreferences = z.infer<typeof listenerPreferencesSchema>;
 export type NextRecommendationRequest = z.input<typeof nextRecommendationSchema>;

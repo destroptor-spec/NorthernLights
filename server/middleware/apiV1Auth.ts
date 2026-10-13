@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import type { NextFunction, Request, Response } from 'express';
 import { verifyToken } from '../services/auth.service';
 import { verifyAuroraAppKey } from '../services/auroraAppAuth.service';
-import { verifyScopedToken, type ScopedTokenScope } from '../services/scopedToken.service';
+import { verifyOutputCredential, verifyScopedToken, type OutputGrantClaims, type ScopedTokenScope } from '../services/scopedToken.service';
 
 export interface ApiV1Principal {
   userId: string;
@@ -13,6 +13,8 @@ export interface ApiV1Principal {
   authKind: 'jwt' | 'appKey' | 'scoped';
   scope?: ScopedTokenScope;
   keyId?: string;
+  /** Set for an output credential: the one grant it proves. */
+  outputGrant?: OutputGrantClaims;
 }
 
 declare global {
@@ -63,6 +65,8 @@ export function sendApiV1Error(
  * is refused with SCOPED_TOKEN_NOT_ALLOWED, which is the security guarantee
  * these tokens rest on — see the deny cases in apiV1Auth.test.ts.
  */
+const OUTPUT_REPORT_PATH = /^\/playback-sessions\/([^/]+)\/reports$/;
+
 const SCOPE_ALLOWED_ENDPOINTS: Record<string, (method: string, path: string) => boolean> = {
   media: (_method, path) => path.startsWith('/artwork/'),
   sse: (_method, path) => path === '/events',
@@ -77,9 +81,10 @@ const SCOPE_ALLOWED_ENDPOINTS: Record<string, (method: string, path: string) => 
     || (method === 'POST' && path === '/playback/reports')
     || (method === 'GET' && path === '/preferences')
   ),
-  // An output credential proves a session's output grant. Reports (Phase 1,
-  // PR 4) will be its only use; until then it authenticates nothing.
-  output: () => false,
+  // An output credential proves one session's output grant, and reporting is
+  // all it is for. The session in the path must be the credential's own; that
+  // is checked below, where the claims are known.
+  output: (method, path) => method === 'POST' && OUTPUT_REPORT_PATH.test(path),
 };
 
 const SCOPE_CLIENT_NAMES: Record<string, string> = {
@@ -147,6 +152,25 @@ export async function requireApiV1Auth(req: Request, res: Response, next: NextFu
           'SCOPED_TOKEN_NOT_ALLOWED',
           'This scoped token cannot authenticate the requested endpoint.',
         );
+      }
+      if (allowedScope === 'output') {
+        const grant = await verifyOutputCredential(token);
+        if (!grant) return sendApiV1Error(req, res, 401, 'INVALID_SCOPED_TOKEN', 'The scoped token is invalid or expired.');
+        if (OUTPUT_REPORT_PATH.exec(req.path)?.[1] !== grant.sid) {
+          return sendApiV1Error(req, res, 403, 'SCOPED_TOKEN_NOT_ALLOWED', 'This scoped token cannot authenticate the requested endpoint.');
+        }
+        req.apiV1 = {
+          userId: grant.userId,
+          username: grant.username,
+          role: grant.role,
+          clientId: grant.oid,
+          clientName: SCOPE_CLIENT_NAMES.output,
+          authKind: 'scoped',
+          scope: 'output',
+          outputGrant: { sid: grant.sid, oid: grant.oid, gen: grant.gen },
+        };
+        req.user = { userId: grant.userId, username: grant.username, role: grant.role };
+        return next();
       }
       const scoped = await verifyScopedToken(token, allowedScope);
       if (!scoped) {

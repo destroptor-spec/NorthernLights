@@ -908,6 +908,14 @@ export async function initDB(): Promise<Pool> {
         ALTER TABLE playback_sessions ADD COLUMN IF NOT EXISTS output_name TEXT;
         ALTER TABLE playback_sessions ADD COLUMN IF NOT EXISTS output_generation BIGINT NOT NULL DEFAULT 0;
         ALTER TABLE playback_sessions ADD COLUMN IF NOT EXISTS output_claimed_at TIMESTAMPTZ;
+        -- The output's latest accepted report (Position and progress). Position
+        -- moves here without a revision bump; seq orders reports within a grant.
+        ALTER TABLE playback_sessions ADD COLUMN IF NOT EXISTS output_seq BIGINT;
+        ALTER TABLE playback_sessions ADD COLUMN IF NOT EXISTS output_state TEXT;
+        ALTER TABLE playback_sessions ADD COLUMN IF NOT EXISTS output_reason TEXT;
+        ALTER TABLE playback_sessions ADD COLUMN IF NOT EXISTS output_entry_id UUID;
+        ALTER TABLE playback_sessions ADD COLUMN IF NOT EXISTS output_position_ms INTEGER;
+        ALTER TABLE playback_sessions ADD COLUMN IF NOT EXISTS output_reported_at TIMESTAMPTZ;
 
         CREATE TABLE IF NOT EXISTS playback_session_entries (
           session_id UUID NOT NULL REFERENCES playback_sessions(id) ON DELETE CASCADE,

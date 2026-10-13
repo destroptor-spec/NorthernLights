@@ -967,6 +967,70 @@
               "claimedAt": {
                 "type": "string",
                 "format": "date-time"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "unreachable",
+                  "ended"
+                ],
+                "description": "active: reporting. unreachable: silent for over a minute, last state kept; only a report or a new claim changes it. ended: the output itself reported stopped, idle or error."
+              },
+              "report": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "seq": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "playing",
+                      "paused",
+                      "buffering",
+                      "stopped",
+                      "idle",
+                      "error"
+                    ]
+                  },
+                  "reason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "queueEntryId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uuid",
+                    "description": "The entry the output is playing. Position belongs to this entry only."
+                  },
+                  "positionMs": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "reportedAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Server time the report was accepted; interpolate from here while playing."
+                  }
+                },
+                "required": [
+                  "seq",
+                  "state",
+                  "reason",
+                  "queueEntryId",
+                  "positionMs",
+                  "reportedAt"
+                ],
+                "description": "The output's latest accepted report."
               }
             },
             "required": [
@@ -974,7 +1038,9 @@
               "kind",
               "name",
               "generation",
-              "claimedAt"
+              "claimedAt",
+              "status",
+              "report"
             ],
             "description": "The device currently playing the session, if any."
           },
@@ -1130,6 +1196,23 @@
           "expiresAt",
           "outputId",
           "generation"
+        ]
+      },
+      "PlaybackOutputReportResult": {
+        "type": "object",
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "description": "False when the report was older than one already accepted (by seq) and was dropped."
+          },
+          "revision": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "accepted",
+          "revision"
         ]
       },
       "ListenerPreferences": {
@@ -1860,6 +1943,62 @@
         "required": [
           "outputId",
           "generation"
+        ],
+        "additionalProperties": false
+      },
+      "PlaybackOutputReport": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "Increases with every report within one grant; a report not above the last accepted one is dropped."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "playing",
+              "paused",
+              "buffering",
+              "stopped",
+              "idle",
+              "error"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "Why the output stopped, e.g. \"shutdown\"."
+          },
+          "queueEntryId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "positionMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "outputId": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "Optional; must match the output credential."
+          },
+          "outputGeneration": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "Optional; must match the output credential."
+          }
+        },
+        "required": [
+          "seq",
+          "state",
+          "queueEntryId",
+          "positionMs"
         ],
         "additionalProperties": false
       },
@@ -8576,6 +8715,143 @@
           },
           "409": {
             "description": "OUTPUT_GRANT_REPLACED: another device has claimed the output since (current session in details.current)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/playback-sessions/{id}/reports": {
+      "post": {
+        "summary": "Report what the output is playing (output credential only)",
+        "tags": [
+          "Sessions"
+        ],
+        "security": [
+          {
+            "listenerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybackOutputReport"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PlaybackOutputReportResult"
+                    },
+                    "meta": {
+                      "type": "object",
+                      "properties": {
+                        "requestId": {
+                          "type": "string",
+                          "description": "Request ID echoed in the X-Request-Id response header."
+                        }
+                      },
+                      "required": [
+                        "requestId"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "OUTPUT_CREDENTIAL_REQUIRED, or SCOPED_TOKEN_NOT_ALLOWED for another session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "OUTPUT_GRANT_REPLACED: another device has claimed the output (current session in details.current)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "OUTPUT_IDENTITY_MISMATCH: the body names another output or generation than the credential",
             "content": {
               "application/json": {
                 "schema": {

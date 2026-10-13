@@ -5,6 +5,7 @@ jest.mock('../services/playbackSession.service', () => ({
   ...jest.requireActual('../services/playbackSession.service'),
   claimPlaybackOutput: jest.fn(),
   getCurrentOutputGrant: jest.fn(),
+  reportPlaybackOutput: jest.fn(),
 }));
 jest.mock('../services/scopedToken.service', () => ({
   ...jest.requireActual('../services/scopedToken.service'),
@@ -18,15 +19,17 @@ import {
   claimPlaybackOutput,
   getCurrentOutputGrant,
   PlaybackOutputGrantReplacedError,
+  PlaybackOutputIdentityError,
+  reportPlaybackOutput,
 } from '../services/playbackSession.service';
 import { generateEphemeralScopedToken, generateOutputCredential } from '../services/scopedToken.service';
 
 const principal = { userId: 'user-1', username: 'andreas', role: 'admin', authKind: 'jwt', clientId: 'laptop-5678', clientName: 'Aurora Web' };
 
-async function call(method: 'post', path: string, body: unknown, params: Record<string, string> = {}) {
+async function call(method: 'post', path: string, body: unknown, params: Record<string, string> = {}, apiV1: Record<string, unknown> = principal) {
   const layer = router.stack.find((l) => l.route?.path === path && l.route.stack.some((h) => h.method === method))!;
   const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis(), end: jest.fn() };
-  const req = { apiV1: principal, requestId: 'r1', body, params, headers: {} } as unknown as Request;
+  const req = { apiV1, requestId: 'r1', body, params, headers: {} } as unknown as Request;
   for (const handler of layer.route!.stack) await handler.handle(req, res as unknown as Response, jest.fn());
   return { status: res.status.mock.calls.at(-1)?.[0] ?? 200, body: res.json.mock.calls.at(-1)?.[0] };
 }
@@ -47,7 +50,7 @@ const session = (output: PlaybackSession['output']): PlaybackSession => ({
   createdAt: '2026-10-13T10:00:00.000Z',
   updatedAt: '2026-10-13T11:00:00.000Z',
 });
-const output = { id: 'laptop-5678', kind: 'browser' as const, name: 'Aurora Web', generation: 2, claimedAt: '2026-10-13T11:00:00.000Z' };
+const output = { id: 'laptop-5678', kind: 'browser' as const, name: 'Aurora Web', generation: 2, claimedAt: '2026-10-13T11:00:00.000Z', status: 'active' as const, report: null };
 
 beforeEach(() => jest.clearAllMocks());
 
@@ -90,4 +93,43 @@ it('never mints an output credential from the generic scoped-token endpoint', as
   expect(status).toBe(400);
   expect(generateEphemeralScopedToken).not.toHaveBeenCalled();
   expect(generateOutputCredential).not.toHaveBeenCalled();
+});
+
+describe('output reports', () => {
+  const outputPrincipal = {
+    userId: 'user-1', username: 'andreas', role: 'admin', authKind: 'scoped', scope: 'output',
+    clientId: 'laptop-5678', clientName: 'Aurora playback output', outputGrant: { sid: 's-1', oid: 'laptop-5678', gen: 2 },
+  };
+  const body = { seq: 3, state: 'playing', queueEntryId: '22222222-2222-4222-8222-222222222222', positionMs: 41000 };
+
+  it('passes the identity from the credential, not the body', async () => {
+    (reportPlaybackOutput as jest.Mock).mockResolvedValue({ accepted: true, revision: 5 });
+    const { status, body: response } = await call('post', '/playback-sessions/:id/reports', body, { id: 's-1' }, outputPrincipal);
+    expect(status).toBe(200);
+    expect(response.data).toEqual({ accepted: true, revision: 5 });
+    expect(reportPlaybackOutput).toHaveBeenCalledWith({ userId: 'user-1', grant: { sid: 's-1', oid: 'laptop-5678', gen: 2 }, sessionId: 's-1', report: body });
+  });
+
+  it("refuses a controller's own session token, even one that knows the generation", async () => {
+    const { status, body: response } = await call('post', '/playback-sessions/:id/reports',
+      { ...body, outputId: 'laptop-5678', outputGeneration: 2 }, { id: 's-1' });
+    expect(status).toBe(403);
+    expect(response.error.code).toBe('OUTPUT_CREDENTIAL_REQUIRED');
+    expect(reportPlaybackOutput).not.toHaveBeenCalled();
+  });
+
+  it('answers a body that disagrees with its credential with 422, and a replaced grant with 409', async () => {
+    (reportPlaybackOutput as jest.Mock).mockRejectedValueOnce(new PlaybackOutputIdentityError());
+    const mismatch = await call('post', '/playback-sessions/:id/reports', { ...body, outputGeneration: 1 }, { id: 's-1' }, outputPrincipal);
+    expect([mismatch.status, mismatch.body.error.code]).toEqual([422, 'OUTPUT_IDENTITY_MISMATCH']);
+
+    (reportPlaybackOutput as jest.Mock).mockRejectedValueOnce(new PlaybackOutputGrantReplacedError(session({ ...output, id: 'phone-1234', generation: 3 })));
+    const replaced = await call('post', '/playback-sessions/:id/reports', body, { id: 's-1' }, outputPrincipal);
+    expect([replaced.status, replaced.body.error.code]).toEqual([409, 'OUTPUT_GRANT_REPLACED']);
+  });
+
+  it('refuses a malformed report', async () => {
+    const { status } = await call('post', '/playback-sessions/:id/reports', { ...body, state: 'dancing' }, { id: 's-1' }, outputPrincipal);
+    expect(status).toBe(400);
+  });
 });
