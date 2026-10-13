@@ -1,4 +1,4 @@
-import type { PlaybackSession } from '../../shared/api/v1';
+import type { PlaybackOutput, PlaybackSession } from '../../shared/api/v1';
 
 // The following side of "Sync playback across devices" (docs/playback_sessions.md,
 // Phase 2): what an idle device knows about the device that plays the session.
@@ -8,6 +8,8 @@ export interface FollowedOutput {
   outputId: string;
   /** The playing device's name ("NAD Forstærker", "Chrome on Android"). */
   name: string;
+  /** `cast`: that device plays through a Cast device, which `name` names. */
+  kind: PlaybackOutput['kind'];
   generation: number;
   state: 'playing' | 'paused' | 'buffering' | 'stopped' | 'idle' | 'error';
   entryId: string | null;
@@ -46,6 +48,7 @@ export function followFromSession(session: PlaybackSession, myClientId: string, 
     sessionId: session.id,
     outputId: output.id,
     name: output.name || 'another device',
+    kind: output.kind,
     generation: output.generation,
     state: report?.state ?? (session.playbackState === 'playing' ? 'playing' : 'paused'),
     entryId: report?.queueEntryId ?? session.currentEntryId,

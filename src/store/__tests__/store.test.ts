@@ -147,7 +147,7 @@ describe('Music Store Logic', () => {
       { id: 'c', path: '/c.mp3', title: 'c', duration: 180, queueEntryId: entry(3) },
     ];
     const follow = (extra: Record<string, unknown> = {}) => ({
-      sessionId: 's', outputId: 'phone', name: 'NAD Forstærker', generation: 4,
+      sessionId: 's', outputId: 'phone', name: 'NAD Forstærker', kind: 'browser' as const, generation: 4,
       state: 'playing' as const, entryId: entry(2), positionMs: 30_000, anchorMs: Date.now(), ...extra,
     });
     let seek: jest.SpyInstance;
@@ -214,6 +214,33 @@ describe('Music Store Logic', () => {
       expect(playAtIndex).toHaveBeenCalledWith(1);
     });
 
+    it('asks before Play takes over from a device that is casting, and keeps the music there on No', async () => {
+      jest.useFakeTimers({ now: 1_000_000 });
+      usePlayerStore.getState().adoptSessionQueue(queue(), 1, 30);
+      usePlayerStore.getState().setSessionFollow(follow({ kind: 'cast', anchorMs: 1_000_000 }));
+
+      await usePlayerStore.getState().resume();
+      expect(playAtIndex).not.toHaveBeenCalled();
+      expect(usePlayerStore.getState().takeOverPrompt).toEqual({ action: 'play', outputName: 'NAD Forstærker' });
+      await usePlayerStore.getState().resolveTakeOverPrompt(false);
+      expect(playAtIndex).not.toHaveBeenCalled();
+
+      await usePlayerStore.getState().resume();
+      jest.setSystemTime(1_005_000);
+      await usePlayerStore.getState().resolveTakeOverPrompt(true);
+      // From where the Cast device is when the listener says yes.
+      expect(playAtIndex).toHaveBeenCalledWith(1);
+      expect(seek).toHaveBeenCalledWith(35);
+    });
+
+    it('does not ask before Play when the other device plays by itself', async () => {
+      usePlayerStore.getState().adoptSessionQueue(queue(), 1, 30);
+      usePlayerStore.getState().setSessionFollow(follow());
+      await usePlayerStore.getState().resume();
+      expect(usePlayerStore.getState().takeOverPrompt).toBeNull();
+      expect(playAtIndex).toHaveBeenCalledWith(1);
+    });
+
     it('does not ask when the other device is paused', async () => {
       usePlayerStore.getState().adoptSessionQueue(queue(), 1, 30);
       usePlayerStore.getState().setSessionFollow(follow({ state: 'paused' }));
@@ -223,4 +250,3 @@ describe('Music Store Logic', () => {
     });
   });
 });
-

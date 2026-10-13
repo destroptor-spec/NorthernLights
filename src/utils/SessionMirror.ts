@@ -192,7 +192,7 @@ export class SessionMirror {
           sessionId = latest?.id ?? (await this.api.createPlaybackSession(auth, SESSION_NAME)).id;
         }
         const { session, credential } = await this.api.claimPlaybackOutput(auth, sessionId, {
-          kind: 'browser',
+          kind: state.castConnected ? 'cast' : 'browser',
           name: this.options!.getOutputName().slice(0, 120) || undefined,
         });
         // Settings may have changed while the claim was on its way.

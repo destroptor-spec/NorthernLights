@@ -72,6 +72,8 @@ let playGeneration = 0;
 // position to start from on the next Play (local audio still holds whatever
 // played before casting, so a plain resume would play the wrong thing).
 let pendingLocalStart: { index: number; positionSeconds: number } | null = null;
+// The listener said "Play here" to the take-over question: the next resume() goes ahead.
+let takeOverConfirmed = false;
 
 // Compute + apply the loudness-normalization gain for a track becoming current.
 // Applies what's cached immediately (unity if disabled/unmeasured), then fetches
@@ -661,7 +663,7 @@ export interface PlayerState {
   /** Another device plays the user's session and this idle one follows it (SessionFollower). Not persisted. */
   sessionFollow: FollowedOutput | null;
   /** Next/Previous pressed here while another device plays: ask before taking over. */
-  takeOverPrompt: { action: 'next' | 'previous'; outputName: string } | null;
+  takeOverPrompt: { action: 'play' | 'next' | 'previous'; outputName: string } | null;
   prebufferPolicy: PrebufferPolicy;
 
   // Current User State
@@ -1094,7 +1096,10 @@ export const usePlayerStore = create<PlayerState>()(
 
       // Next/Previous on an idle device while another device plays would move
       // playback here without saying so: ask first (remote control is Phase 3).
-      const askBeforeTakingOver = (action: 'next' | 'previous') => {
+      // Play asks only when that device is casting: the listener most likely
+      // wants the music to stay on the Cast device, which this device cannot
+      // control until the receiver is its own output (Phase 5).
+      const askBeforeTakingOver = (action: 'play' | 'next' | 'previous') => {
         const { sessionFollow, playbackState } = get();
         if (playbackState === 'playing' || castManager.isConnected() || !isFollowedOutputPlaying(sessionFollow)) return false;
         set({ takeOverPrompt: { action, outputName: sessionFollow!.name } });
@@ -1306,7 +1311,7 @@ export const usePlayerStore = create<PlayerState>()(
         castDebugLogging: false as boolean,
         syncPlaybackAcrossDevices: false as boolean,
         sessionFollow: null as FollowedOutput | null,
-        takeOverPrompt: null as { action: 'next' | 'previous'; outputName: string } | null,
+        takeOverPrompt: null as { action: 'play' | 'next' | 'previous'; outputName: string } | null,
         prebufferPolicy: 'conservative' as PrebufferPolicy,
         currentUser: null as { id: string; username: string; role: string } | null,
 
@@ -2841,6 +2846,9 @@ export const usePlayerStore = create<PlayerState>()(
         },
 
         resume: async () => {
+          const confirmed = takeOverConfirmed;
+          takeOverConfirmed = false;
+          if (!confirmed && get().sessionFollow?.kind === 'cast' && askBeforeTakingOver('play')) return;
           sessionMirror.notePlayIntent();
           const follow = get().sessionFollow;
           const pendingTrack = pendingLocalStart ? get().playlist[pendingLocalStart.index] : undefined;
@@ -2893,6 +2901,12 @@ export const usePlayerStore = create<PlayerState>()(
           const follow = get().sessionFollow;
           set({ takeOverPrompt: null });
           if (!prompt || !takeOver) return;
+          if (prompt.action === 'play') {
+            // resume() reads where the other device is from sessionFollow.
+            takeOverConfirmed = true;
+            await get().resume();
+            return;
+          }
           set({ sessionFollow: null });
           sessionMirror.notePlayIntent();
           if (prompt.action === 'next') {

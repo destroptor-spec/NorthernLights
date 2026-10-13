@@ -19,7 +19,7 @@ type SessionRow = {
   source_id: string | null;
   revision: string | number;
   output_id: string | null;
-  output_kind: 'browser' | null;
+  output_kind: PlaybackOutput['kind'] | null;
   output_name: string | null;
   output_generation: string | number;
   output_claimed_at: Date | string | null;

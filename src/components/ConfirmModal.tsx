@@ -7,6 +7,7 @@ interface ConfirmModalProps {
   message?: string;
   body?: React.ReactNode;
   confirmLabel?: string;
+  cancelLabel?: string;
   confirmTone?: 'danger' | 'primary';
   onConfirm: () => void;
   onCancel: () => void;
@@ -17,6 +18,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   message,
   body,
   confirmLabel = 'Confirm',
+  cancelLabel = 'Cancel',
   confirmTone = 'danger',
   onConfirm,
   onCancel,
@@ -117,7 +119,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
             onClick={onCancel}
             className="btn btn-ghost flex-1 py-2.5"
           >
-            Cancel
+            {cancelLabel}
           </button>
         </div>
       </div>
