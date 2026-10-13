@@ -8,7 +8,7 @@ import { PassThrough } from 'stream';
 import { EventEmitter } from 'events';
 import {
   exportNameFor, isExportName, issueDownloadTicket, listExports, pruneExports, redeemDownloadTicket,
-  resolveExportFile, runExport, sanitizeLabel, startExportJob, getExportJob,
+  resolveExportFile, runExport, sanitizeLabel, startExportJob, getExportJob, connectDatabase,
   type DumpPlan, type DumpProcess, type ExportManifest, type QueryClient,
 } from './databaseExport.service';
 
@@ -162,5 +162,38 @@ describe('export job', () => {
     finish({ name: 'aurora-20261013T074103Z-2fb18b6.dump' } as ExportManifest);
     await new Promise(resolve => setImmediate(resolve));
     expect(getExportJob()).toMatchObject({ state: 'done', name: 'aurora-20261013T074103Z-2fb18b6.dump' });
+  });
+});
+
+describe('connectDatabase', () => {
+  const env = { ...process.env };
+  afterEach(() => { process.env = { ...env }; });
+  const factory = (failHosts: string[]) => {
+    const hosts: string[] = [];
+    const make = (config: { host?: string }) => ({
+      connect: async () => {
+        hosts.push(String(config.host));
+        if (failHosts.includes(String(config.host))) throw new Error('Connection terminated unexpectedly');
+      },
+      end: async () => undefined,
+      query: async () => ({ rows: [] }),
+    });
+    return { make, hosts };
+  };
+
+  it('retries localhost on 127.0.0.1 when the IPv6 connection is dropped (rootless Podman, prod 2026-10-13)', async () => {
+    process.env.DB_HOST = 'localhost';
+    const { make, hosts } = factory(['localhost']);
+    const warn = jest.fn();
+    await connectDatabase('musicdb', make, warn);
+    expect(hosts).toEqual(['localhost', '127.0.0.1']);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Set DB_HOST=127.0.0.1'));
+  });
+
+  it('does not second-guess an explicit host', async () => {
+    process.env.DB_HOST = 'db.internal';
+    const { make, hosts } = factory(['db.internal']);
+    await expect(connectDatabase('musicdb', make, jest.fn())).rejects.toThrow('Connection terminated unexpectedly');
+    expect(hosts).toEqual(['db.internal']);
   });
 });
