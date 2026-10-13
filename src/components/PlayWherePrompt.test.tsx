@@ -28,6 +28,14 @@ describe('PlayWherePrompt', () => {
     expect(resolvePlayWhere).toHaveBeenLastCalledWith(null);
   });
 
+  it('offers only this device when the other one is not responding', () => {
+    usePlayerStore.setState({ playWherePrompt: { outputName: 'NAD Forstærker', silent: true } } as never);
+    render(<PlayWherePrompt />);
+    expect(screen.queryByRole('button', { name: 'On NAD Forstærker' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Play here' }));
+    expect(resolvePlayWhere).toHaveBeenLastCalledWith('here');
+  });
+
   it('shows nothing when not asked', () => {
     usePlayerStore.setState({ playWherePrompt: null } as never);
     const { container } = render(<PlayWherePrompt />);

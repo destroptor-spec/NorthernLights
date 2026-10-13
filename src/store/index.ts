@@ -74,6 +74,11 @@ let playGeneration = 0;
 // After a Cast session ends with playback left paused here, the track and
 // position to start from on the next Play (local audio still holds whatever
 // played before casting, so a plain resume would play the wrong thing).
+/** This idle device shows another device's playback (SessionFollower). */
+function isFollowingAnotherDevice(state: { sessionFollow: FollowedOutput | null; playbackState: string }): boolean {
+  return !!state.sessionFollow && state.playbackState !== 'playing' && !castManager.isConnected();
+}
+
 /**
  * The player state as a reload restores it from local storage.
  *
@@ -734,8 +739,11 @@ export interface PlayerState {
    * "Play where?". Remembered while that device plays; persisted.
    */
   remoteControlOutputId: string | null;
-  /** "Play where?" is open: an action here while another device plays. */
-  playWherePrompt: { outputName: string } | null;
+  /**
+   * "Play where?" is open: an action here while another device plays.
+   * `silent`: that device is not responding, so only "here" is offered.
+   */
+  playWherePrompt: { outputName: string; silent?: boolean } | null;
   prebufferPolicy: PrebufferPolicy;
 
   // Current User State
@@ -1214,6 +1222,13 @@ export const usePlayerStore = create<PlayerState>()(
         }
         const { sessionFollow, playbackState, remoteControlOutputId } = get();
         if (!sessionFollow || playbackState === 'playing' || castManager.isConnected()) return false;
+        if (sessionFollow.silent) {
+          // Nothing can reach it; still never start a second playback unasked.
+          if (options.ask === false) return false;
+          pendingPlayWhere = { remote: null, local };
+          set({ playWherePrompt: { outputName: sessionFollow.name, silent: true } });
+          return true;
+        }
         if (remoteControlOutputId === sessionFollow.outputId) {
           void sendToPlayingDevice(remote, sessionFollow);
           return true;
@@ -1441,7 +1456,7 @@ export const usePlayerStore = create<PlayerState>()(
         syncPlaybackAcrossDevices: false as boolean,
         sessionFollow: null as FollowedOutput | null,
         remoteControlOutputId: null as string | null,
-        playWherePrompt: null as { outputName: string } | null,
+        playWherePrompt: null as { outputName: string; silent?: boolean } | null,
         prebufferPolicy: 'conservative' as PrebufferPolicy,
         currentUser: null as { id: string; username: string; role: string } | null,
 
@@ -2078,13 +2093,16 @@ export const usePlayerStore = create<PlayerState>()(
           const state = get();
           const newMode = !state.isInfinityMode;
           set({ isInfinityMode: newMode });
-          if (newMode) {
+          if (newMode && !isFollowingAnotherDevice(get())) {
             get().ensureInfinityQueue();
           }
         },
 
         ensureInfinityQueue: async () => {
           if (infinityTopUp) return infinityTopUp;
+          // The queue here is a copy of the playing device's; topping it up
+          // here would only diverge from it (prod 2026-10-14).
+          if (isFollowingAnotherDevice(get())) return;
           if (!get().isInfinityMode || get().isFetchingInfinity) return;
           // One bounded worker fills three upcoming slots. Yield first so its
           // promise exists before any store subscriber can ask for another top-up.
@@ -3092,6 +3110,7 @@ export const usePlayerStore = create<PlayerState>()(
           set({ playWherePrompt: null });
           if (!choice || !follow) return;
           if (choice === 'remote') {
+            if (follow.silent) return;
             set({ remoteControlOutputId: follow.outputId });
             if (pending?.remote) await sendToPlayingDevice(pending.remote, follow);
             return;

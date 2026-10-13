@@ -306,6 +306,7 @@ export class SessionFollower {
     }
     this.follow = {
       ...follow,
+      silent: false,
       state: data.report.state,
       entryId: data.report.queueEntryId,
       positionMs: data.report.positionMs,
