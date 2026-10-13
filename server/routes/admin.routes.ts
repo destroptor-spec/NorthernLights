@@ -1,5 +1,10 @@
 import { Router } from 'express';
-import { listUsers, createUser, getUserByUsername, updateUser, changeProtectedAccount, listInvites, createInvite, getInvite, deleteInvite, cleanupOrphanedPlaylists, getDatabaseStats, getPoolStats } from '../database';
+import { listUsers, createUser, getUserByUsername, updateUser, changeProtectedAccount, listInvites, createInvite, getInvite, deleteInvite, cleanupOrphanedPlaylists, getDatabaseStats, getPoolStats, initDB } from '../database';
+import fs from 'fs';
+import {
+  deleteExport, getExportJob, getExportKeep, isExportName, issueDownloadTicket, listExports, planDump,
+  redeemDownloadTicket, resolveExportFile, runExport, startExportJob,
+} from '../services/databaseExport.service';
 import { hashPassword } from '../services/auth.service';
 import { requireAdmin } from '../middleware/auth';
 import { ACCOUNT_PROTECTION_MESSAGES } from '../../shared/accountProtection';
@@ -235,6 +240,77 @@ router.post('/cleanup-playlists', adminMutationRateLimit, requireAdmin, async (r
     console.error('Cleanup orphaned playlists error:', error);
     res.status(500).json({ error: 'Failed to cleanup orphaned playlists' });
   }
+});
+
+// ─── Database Export ─────────────────────────────────────────────────
+// docs/database_export_import.md. Exports live on the server; downloads use a
+// single-use ticket so no login token ever goes into a URL.
+
+router.get('/db/exports', adminReadRateLimit, requireAdmin, async (_req, res) => {
+  try {
+    const planned = await planDump();
+    res.json({
+      available: planned.plan ? { ok: true, method: planned.plan.method } : { ok: false, reason: planned.reason },
+      job: getExportJob(),
+      exports: listExports(),
+      keep: getExportKeep(),
+    });
+  } catch (error: any) {
+    console.error('DB export list error:', error);
+    res.status(500).json({ error: 'Failed to list database exports' });
+  }
+});
+
+router.post('/db/exports', adminMutationRateLimit, requireAdmin, async (req, res) => {
+  try {
+    const pool = await initDB();
+    const label = req.body?.label;
+    const job = startExportJob(async () => {
+      // A dedicated connection: the export holds its snapshot transaction open while pg_dump runs.
+      const client = await pool.connect();
+      try {
+        return await runExport({ client, label });
+      } finally {
+        client.release();
+      }
+    });
+    res.status(202).json({ job });
+  } catch (error: any) {
+    console.error('DB export start error:', error);
+    res.status(500).json({ error: 'Failed to start the database export' });
+  }
+});
+
+router.post('/db/exports/:name/download-ticket', adminMutationRateLimit, requireAdmin, (req, res) => {
+  const name = req.params.name;
+  if (!isExportName(name)) return res.status(400).json({ error: 'Invalid export name' });
+  if (!fs.existsSync(resolveExportFile(name))) return res.status(404).json({ error: 'Export not found' });
+  res.json({ url: `/api/admin/db/exports/download?ticket=${issueDownloadTicket(name)}` });
+});
+
+router.get('/db/exports/download', adminReadRateLimit, (req, res) => {
+  const name = redeemDownloadTicket(req.query.ticket);
+  if (!name) return res.status(403).json({ error: 'Download link expired. Start the download again.' });
+  const file = resolveExportFile(name);
+  let size: number;
+  try {
+    size = fs.statSync(file).size;
+  } catch {
+    return res.status(404).json({ error: 'Export not found' });
+  }
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Length', String(size));
+  res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+  res.setHeader('Cache-Control', 'no-store');
+  fs.createReadStream(file).on('error', () => res.destroy()).pipe(res);
+});
+
+router.delete('/db/exports/:name', adminMutationRateLimit, requireAdmin, (req, res) => {
+  const name = req.params.name;
+  if (!isExportName(name)) return res.status(400).json({ error: 'Invalid export name' });
+  if (getExportJob()?.state === 'running') return res.status(409).json({ error: 'An export is running' });
+  deleteExport(name);
+  res.json({ ok: true });
 });
 
 // ─── Database Container Control ─────────────────────────────────────

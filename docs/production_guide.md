@@ -313,24 +313,59 @@ If your PM2 process is named `northernlights`, replace `aurora` with `northernli
 
 ## Backups
 
-Back up:
+Use a database export rather than copying the data directory: it is a
+consistent `pg_dump` of the whole database, made while Aurora keeps running,
+with a manifest that an import can verify. See
+[database_export_import.md](database_export_import.md).
+
+- **From the UI:** Settings → Database → Backups → Export now. Exports are kept
+  on the server in `backups/` (the newest 10; `DB_EXPORT_KEEP` changes that),
+  and each one can be downloaded or deleted.
+- **From the shell:** `npm run db:export -- --label before-upgrade`. It exits
+  non-zero on failure, so scripts can rely on it.
+
+Aurora runs `pg_dump` inside its managed database container. With an external
+database (`DB_HOST`), it needs `pg_dump` installed on the host instead.
+
+Also back up:
 
 - `.env`
-- `DB_DATA_DIR`
 - any manually hosted Chromecast receiver files
 - optional `logs/` if you need diagnostics
 
 `ART_CACHE_DIR` does **not** need backing up — it is a derived cache of pre-encoded covers and rebuilds on the next scan or via Settings → Library → Refresh Metadata.
 
-At minimum, stop Aurora before copying a file-backed database volume:
+An export contains the server's secrets (the JWT signing secret and stored API
+keys). Store and move it like a password file.
 
-```bash
-pm2 stop aurora
-tar -czf aurora-postgres-backup.tgz /home/aurora/aurora-data/postgres
-pm2 start aurora
-```
+## Moving to a new server
 
-For larger installs, prefer PostgreSQL-native backups from inside the container.
+1. **On the old server:** export (Settings → Database → Backups, or
+   `npm run db:export -- --label move`). Copy both files, the `.dump` and its
+   `.json`, into the new server's Aurora `backups/` folder, for example
+   `scp backups/aurora-…{.dump,.json} new-host:NorthernLights/backups/`
+   (on a fresh server, create the folder first: `mkdir -p ~/NorthernLights/backups`).
+2. **On the new server:** install Aurora and start it once, so its database
+   container exists. Then stop it (`pm2 stop aurora`).
+3. **Put the music at the same paths** as on the old server. Track IDs are
+   derived from file paths. The import checks every library folder and refuses
+   to run if one is missing, before a scan could treat the tracks as deleted.
+4. **Import:**
+   `npm run db:import -- backups/aurora-….dump --keep-secrets`, from the Aurora
+   folder. Settings → Database → Backups shows this command for the newest
+   export, ready to copy.
+   - The import checks the file against its manifest, and checks the Postgres
+     version and pgvector.
+   - It restores into a new database and verifies every table's row count.
+   - It asks before switching, and keeps the previous database as
+     `<name>_prev_<time>`.
+   - `--keep-secrets` keeps logins and paired apps working. For a test copy
+     use `--rotate-secrets` instead, which gives it its own JWT secret,
+     removes app keys and turns Turnstile off.
+5. **Copy `.env`** (adjusting host-specific values), then start Aurora.
+
+To undo a switch, stop Aurora and rename `<name>_prev_<time>` back to
+`<name>` in Postgres.
 
 ## Operations Notes
 
