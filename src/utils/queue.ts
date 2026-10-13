@@ -1,7 +1,12 @@
 import type { TrackInfo } from './fileSystem';
+import { createUuid, isUuid } from './uuid';
 
+/**
+ * Queue entry IDs are UUIDs, the form the server's playback sessions require,
+ * so an entry keeps one ID locally, on the session and on a Cast receiver.
+ */
 export function createQueueEntryId(): string {
-  return `queue-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return createUuid();
 }
 
 export function cloneTrackForQueue(track: TrackInfo): TrackInfo {
@@ -22,6 +27,21 @@ export function ensureQueueEntryIds(tracks: TrackInfo[]): { tracks: TrackInfo[];
     };
   });
   return { tracks: normalized, changed };
+}
+
+/**
+ * Gives every entry whose ID predates UUID entry IDs (`queue-<time>-<random>`)
+ * a UUID, keeping UUIDs as they are. Only safe when no Cast receiver can still
+ * hold the old IDs: the receiver's window is matched by entry ID.
+ */
+export function rekeyLegacyQueueEntryIds(tracks: TrackInfo[]): { tracks: TrackInfo[]; changed: boolean } {
+  let changed = false;
+  const rekeyed = tracks.map((track) => {
+    if (isUuid(track.queueEntryId)) return track;
+    changed = true;
+    return { ...track, queueEntryId: createQueueEntryId() };
+  });
+  return { tracks: changed ? rekeyed : tracks, changed };
 }
 
 /**
