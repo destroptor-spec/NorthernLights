@@ -934,7 +934,49 @@
             "type": "string"
           },
           "ownerClientId": {
-            "type": "string"
+            "type": "string",
+            "description": "Deprecated: the client that last created or claimed the session. A session belongs to its user; any of their devices may change it."
+          },
+          "output": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "The device that plays the session (its client ID)."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "browser"
+                ]
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "generation": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "description": "Grant generation; goes up on every claim."
+              },
+              "claimedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "name",
+              "generation",
+              "claimedAt"
+            ],
+            "description": "The device currently playing the session, if any."
           },
           "currentEntryId": {
             "type": [
@@ -1010,6 +1052,7 @@
           "id",
           "name",
           "ownerClientId",
+          "output",
           "currentEntryId",
           "positionMs",
           "playbackState",
@@ -1046,6 +1089,47 @@
           "position",
           "track",
           "addedAt"
+        ]
+      },
+      "PlaybackOutputClaimResult": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "$ref": "#/components/schemas/PlaybackSession"
+          },
+          "credential": {
+            "$ref": "#/components/schemas/PlaybackOutputCredential"
+          }
+        },
+        "required": [
+          "session",
+          "credential"
+        ]
+      },
+      "PlaybackOutputCredential": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "Output credential: a short-lived token bound to this session and grant. Keep it in memory only."
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "outputId": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "token",
+          "expiresAt",
+          "outputId",
+          "generation"
         ]
       },
       "ListenerPreferences": {
@@ -1737,6 +1821,45 @@
         "required": [
           "expectedRevision",
           "operations"
+        ],
+        "additionalProperties": false
+      },
+      "PlaybackOutputClaim": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "browser"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "additionalProperties": false
+      },
+      "PlaybackOutputRefresh": {
+        "type": "object",
+        "properties": {
+          "outputId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "generation": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "outputId",
+          "generation"
         ],
         "additionalProperties": false
       },
@@ -7715,7 +7838,7 @@
         }
       },
       "post": {
-        "summary": "Create a playback session owned by this client",
+        "summary": "Create a playback session for this user",
         "tags": [
           "Sessions"
         ],
@@ -8091,7 +8214,7 @@
             }
           },
           "409": {
-            "description": "REVISION_CONFLICT, ANCHOR_NOT_FOUND or ENTRY_ID_CONFLICT (each with the current session in details.current), PLAYBACK_SESSION_NOT_OWNER, or TRACKS_UNAVAILABLE",
+            "description": "REVISION_CONFLICT, ANCHOR_NOT_FOUND or ENTRY_ID_CONFLICT (each with the current session in details.current), or TRACKS_UNAVAILABLE",
             "content": {
               "application/json": {
                 "schema": {
@@ -8123,7 +8246,7 @@
         }
       },
       "delete": {
-        "summary": "Delete an owned playback session at an expected revision",
+        "summary": "Delete a playback session at an expected revision",
         "tags": [
           "Sessions"
         ],
@@ -8220,9 +8343,263 @@
         }
       }
     },
+    "/playback-sessions/{id}/output": {
+      "post": {
+        "summary": "Play here: make the calling device the session output and get its output credential",
+        "tags": [
+          "Sessions"
+        ],
+        "security": [
+          {
+            "listenerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybackOutputClaim"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PlaybackOutputClaimResult"
+                    },
+                    "meta": {
+                      "type": "object",
+                      "properties": {
+                        "requestId": {
+                          "type": "string",
+                          "description": "Request ID echoed in the X-Request-Id response header."
+                        }
+                      },
+                      "required": [
+                        "requestId"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Revision or state conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/playback-sessions/{id}/output/refresh": {
+      "post": {
+        "summary": "Mint a fresh output credential for the session's current output grant",
+        "tags": [
+          "Sessions"
+        ],
+        "security": [
+          {
+            "listenerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybackOutputRefresh"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PlaybackOutputCredential"
+                    },
+                    "meta": {
+                      "type": "object",
+                      "properties": {
+                        "requestId": {
+                          "type": "string",
+                          "description": "Request ID echoed in the X-Request-Id response header."
+                        }
+                      },
+                      "required": [
+                        "requestId"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "OUTPUT_GRANT_REPLACED: another device has claimed the output since (current session in details.current)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/playback-sessions/{id}/handoff": {
       "post": {
-        "summary": "Explicitly transfer session ownership",
+        "summary": "Legacy alias: claim the output for the calling browser at an expected revision",
         "tags": [
           "Sessions"
         ],

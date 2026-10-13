@@ -74,6 +74,7 @@ describeDb('playback sessions', () => {
     'SELECT queue_entry_id, track_id, position FROM playback_session_entries WHERE session_id = $1 ORDER BY position',
     [sessionId],
   )).rows as Array<{ queue_entry_id: string; track_id: string; position: number }>;
+  const rejection = async (pending: Promise<unknown>) => pending.then(() => { throw new Error('expected a rejection'); }, (error) => error);
   const trackOrder = (session: { queue: Array<{ track: { id: string } }> }) => session.queue.map((entry) => entry.track.id);
   const expectContiguous = (session: { queue: Array<{ position: number }> }) =>
     expect(session.queue.map((entry) => entry.position)).toEqual(session.queue.map((_, index) => index));
@@ -217,24 +218,103 @@ describeDb('playback sessions', () => {
     await expect(create(['bm8tc3VjaC10cmFjaw'])).rejects.toBeInstanceOf(sessions.PlaybackSessionTrackError);
   });
 
-  it('allows only the owning client to patch or delete until a handoff', async () => {
-    let session = await create(trackIds(0, 2));
-    await expect(patch(session, [{ type: 'setTransport', playbackState: 'playing' }], 'tv'))
-      .rejects.toBeInstanceOf(sessions.PlaybackSessionOwnershipError);
-    await expect(sessions.deletePlaybackSession(userId, 'tv', session.id, session.revision))
-      .rejects.toBeInstanceOf(sessions.PlaybackSessionOwnershipError);
+  it("lets any of the owner's devices change or delete the session, no handoff needed", async () => {
+    let session = await create(trackIds(0, 2), 0, 'phone');
+    session = await patch(session, [{ type: 'insert', afterEntryId: null, trackIds: [trackId(5)] }], 'laptop');
+    session = await patch(session, [{ type: 'setTransport', playbackState: 'playing' }], 'tablet');
+    expect(session.playbackState).toBe('playing');
+    expect(session.ownerClientId).toBe('phone');
 
-    session = await sessions.handoffPlaybackSession({ userId, clientId: 'tv', sessionId: session.id, expectedRevision: session.revision });
-    expect(session.ownerClientId).toBe('tv');
-    session = await patch(session, [{ type: 'setTransport', playbackState: 'playing' }], 'tv');
-    await expect(patch(session, [{ type: 'setTransport', playbackState: 'paused' }], 'phone'))
-      .rejects.toBeInstanceOf(sessions.PlaybackSessionOwnershipError);
-
-    await expect(sessions.deletePlaybackSession(userId, 'tv', session.id, session.revision - 1))
+    await expect(sessions.deletePlaybackSession(userId, session.id, session.revision - 1))
       .rejects.toBeInstanceOf(sessions.PlaybackSessionRevisionError);
-    await sessions.deletePlaybackSession(userId, 'tv', session.id, session.revision);
+    await sessions.deletePlaybackSession(userId, session.id, session.revision);
     expect(await sessions.getPlaybackSession(userId, session.id)).toBeNull();
     expect(await storedRows(session.id)).toHaveLength(0);
+  });
+
+  describe('output grants', () => {
+    const claim = (session: { id: string }, clientId: string, name?: string) => sessions.claimPlaybackOutput({
+      userId, clientId, sessionId: session.id, output: { kind: 'browser', ...(name ? { name } : {}) },
+    });
+    const grantOf = (session: { id: string; output: { id: string; generation: number } | null }) => sessions.getCurrentOutputGrant({
+      userId, sessionId: session.id, outputId: session.output!.id, generation: session.output!.generation,
+    });
+
+    it('starts without an output; a claim makes the calling device the output', async () => {
+      const created = await create(trackIds(0, 2));
+      expect(created.output).toBeNull();
+      const claimed = await claim(created, 'phone-1234', 'Pixel');
+      expect(claimed.output).toMatchObject({ id: 'phone-1234', kind: 'browser', name: 'Pixel', generation: 1 });
+      expect(claimed.revision).toBe(created.revision + 1);
+      expect(claimed.ownerClientId).toBe('phone-1234');
+      expect(await grantOf(claimed)).toEqual({ sid: claimed.id, oid: 'phone-1234', gen: 1 });
+    });
+
+    it('moves playback to another device at any time, without a revision, and retires the old grant', async () => {
+      let session = await create(trackIds(0, 2));
+      const onPhone = await claim(session, 'phone-1234');
+      // The queue changes after the phone claimed; the laptop still takes over.
+      session = await patch(onPhone, [{ type: 'insert', afterEntryId: null, trackIds: [trackId(7)] }], 'tablet');
+      const onLaptop = await claim(session, 'laptop-5678');
+      expect(onLaptop.output).toMatchObject({ id: 'laptop-5678', generation: 2 });
+      expect(trackOrder(onLaptop)).toEqual(trackOrder(session));
+
+      const replaced = await rejection(grantOf(onPhone));
+      expect(replaced).toBeInstanceOf(sessions.PlaybackOutputGrantReplacedError);
+      expect(replaced.current.output.id).toBe('laptop-5678');
+
+      // Coming back to the phone is a new grant, never the old one revived.
+      const backOnPhone = await claim(onLaptop, 'phone-1234');
+      expect(backOnPhone.output!.generation).toBe(3);
+      await expect(grantOf(onPhone)).rejects.toBeInstanceOf(sessions.PlaybackOutputGrantReplacedError);
+      expect(await grantOf(backOnPhone)).toMatchObject({ oid: 'phone-1234', gen: 3 });
+    });
+
+    it('settles two claims at once on one device with distinct generations', async () => {
+      const session = await create(trackIds(0, 1));
+      const [a, b] = await Promise.all([claim(session, 'phone-1234'), claim(session, 'laptop-5678')]);
+      expect([a.output!.generation, b.output!.generation].sort()).toEqual([1, 2]);
+      const winner = a.output!.generation === 2 ? a : b;
+      const current = (await sessions.getPlaybackSession(userId, session.id))!;
+      expect(current.output).toEqual(winner.output);
+      await expect(grantOf(a.output!.generation === 2 ? b : a)).rejects.toBeInstanceOf(sessions.PlaybackOutputGrantReplacedError);
+    });
+
+    it('keeps the handoff alias: a browser claim by the caller at an expected revision', async () => {
+      const session = await create(trackIds(0, 1));
+      await expect(sessions.handoffPlaybackSession({ userId, clientId: 'tv-0001', sessionId: session.id, expectedRevision: session.revision + 5 }))
+        .rejects.toBeInstanceOf(sessions.PlaybackSessionRevisionError);
+      const handedOff = await sessions.handoffPlaybackSession({
+        userId, clientId: 'tv-0001', clientName: 'Aurora Web', sessionId: session.id, expectedRevision: session.revision,
+      });
+      expect(handedOff.output).toMatchObject({ id: 'tv-0001', kind: 'browser', name: 'Aurora Web', generation: 1 });
+    });
+
+    it("never lets another user claim or check a grant, and ends the grant with the session", async () => {
+      const session = await claim(await create(trackIds(0, 1)), 'phone-1234');
+      await expect(sessions.claimPlaybackOutput({ userId: otherUserId, clientId: 'x-0000001', sessionId: session.id, output: { kind: 'browser' } }))
+        .rejects.toBeInstanceOf(sessions.PlaybackSessionNotFoundError);
+      await expect(sessions.getCurrentOutputGrant({ userId: otherUserId, sessionId: session.id, outputId: 'phone-1234', generation: 1 }))
+        .rejects.toBeInstanceOf(sessions.PlaybackSessionNotFoundError);
+      await sessions.deletePlaybackSession(userId, session.id, session.revision);
+      await expect(grantOf(session)).rejects.toBeInstanceOf(sessions.PlaybackSessionNotFoundError);
+    });
+
+    it('mints an output credential that names exactly its grant', async () => {
+      const tokens = await import('../../services/scopedToken.service');
+      const session = await claim(await create(trackIds(0, 1)), 'phone-1234');
+      const user = { userId, username: 'listener', role: 'user' };
+      const { token, expiresAt } = await tokens.generateOutputCredential(user, await grantOf(session));
+      const claims = await tokens.verifyOutputCredential(token);
+      expect(claims).toMatchObject({ scope: 'output', userId, sid: session.id, oid: 'phone-1234', gen: 1 });
+      expect(claims!.jti).toMatch(/^[0-9a-f-]{36}$/);
+      expect(Date.parse(expiresAt) - Date.now()).toBeGreaterThan(55 * 60 * 1000);
+      // It is no other kind of token.
+      for (const scope of ['sse', 'media', 'receiver'] as const) expect(await tokens.verifyScopedToken(token, scope)).toBeNull();
+      expect(await tokens.verifyOutputCredential(
+        await tokens.generateEphemeralScopedToken('sse', user),
+      )).toBeNull();
+    });
   });
 
   it("keeps one user's sessions invisible to another", async () => {
@@ -277,7 +357,6 @@ describeDb('playback sessions', () => {
 
   describe('entry anchors, proposed entry IDs and request keys', () => {
     const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
-    const rejection = async (pending: Promise<unknown>) => pending.then(() => { throw new Error('expected a rejection'); }, (error) => error);
     const requestKeys = async (sessionId: string) => Number((await pool.query(
       'SELECT COUNT(*)::int AS n FROM playback_session_requests WHERE session_id = $1', [sessionId],
     )).rows[0].n);

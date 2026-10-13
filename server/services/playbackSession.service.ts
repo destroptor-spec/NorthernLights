@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import type { PoolClient } from 'pg';
 import { initDB } from '../database';
-import type { PlaybackSession, PlaybackSessionPatch, Track } from '../../shared/api/v1';
+import type { PlaybackOutputClaim, PlaybackSession, PlaybackSessionPatch, Track } from '../../shared/api/v1';
 import { getApiV1TracksByIds } from './apiV1Dto.service';
 import { publishApiV1Event } from './apiV1Events.service';
 
@@ -18,6 +18,11 @@ type SessionRow = {
   source_kind: string | null;
   source_id: string | null;
   revision: string | number;
+  output_id: string | null;
+  output_kind: 'browser' | null;
+  output_name: string | null;
+  output_generation: string | number;
+  output_claimed_at: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
 };
@@ -30,7 +35,14 @@ type EntryRow = {
 };
 
 export class PlaybackSessionNotFoundError extends Error {}
+/** A device-level request from a device that does not hold the session's output grant. */
 export class PlaybackSessionOwnershipError extends Error {}
+/** A refresh named an output grant that has since been replaced by a newer claim. */
+export class PlaybackOutputGrantReplacedError extends Error {
+  constructor(public readonly current: PlaybackSession) {
+    super('Output grant replaced');
+  }
+}
 export class PlaybackSessionRevisionError extends Error {
   constructor(public readonly current: PlaybackSession) {
     super('Playback session revision conflict');
@@ -121,6 +133,13 @@ async function serializeSession(db: PoolClient | Awaited<ReturnType<typeof initD
     id: row.id,
     name: row.name,
     ownerClientId: row.owner_client_id,
+    output: row.output_id && row.output_kind && row.output_claimed_at ? {
+      id: row.output_id,
+      kind: row.output_kind,
+      name: row.output_name,
+      generation: Number(row.output_generation),
+      claimedAt: new Date(row.output_claimed_at).toISOString(),
+    } : null,
     currentEntryId,
     positionMs: Number(row.position_ms) || 0,
     playbackState: row.playback_state,
@@ -262,7 +281,8 @@ export async function patchPlaybackSession(input: {
     `, [input.sessionId, input.userId]);
     const row = result.rows[0] as SessionRow | undefined;
     if (!row) throw new PlaybackSessionNotFoundError();
-    if (row.owner_client_id !== input.clientId) throw new PlaybackSessionOwnershipError();
+    // No device check: a session belongs to its user, and any of their devices
+    // may change it. Only reports are tied to the output grant.
 
     // The request key is checked before the revision, so a retry after a lost
     // response gets its original success rather than a conflict with itself.
@@ -418,19 +438,28 @@ export async function patchPlaybackSession(input: {
   }
 }
 
-export async function handoffPlaybackSession(input: {
+/**
+ * Makes the calling device the session's output ("play here"). Any of the
+ * owner's devices may claim at any time, without a revision check, so moving
+ * playback between devices is seamless. Each claim raises the generation;
+ * reports from an earlier grant are stale from that moment.
+ */
+export async function claimPlaybackOutput(input: {
   userId: string;
   clientId: string;
   sessionId: string;
-  expectedRevision: number;
+  output: PlaybackOutputClaim;
+  expectedRevision?: number;
 }): Promise<PlaybackSession> {
   const db = await initDB();
   const result = await db.query(`
     UPDATE playback_sessions
-    SET owner_client_id = $3, revision = revision + 1, updated_at = NOW()
-    WHERE id = $1 AND user_id = $2 AND revision = $4
+    SET owner_client_id = $3, output_id = $3, output_kind = $4, output_name = $5,
+        output_generation = output_generation + 1, output_claimed_at = NOW(),
+        revision = revision + 1, updated_at = NOW()
+    WHERE id = $1 AND user_id = $2 AND ($6::bigint IS NULL OR revision = $6::bigint)
     RETURNING *
-  `, [input.sessionId, input.userId, input.clientId, input.expectedRevision]);
+  `, [input.sessionId, input.userId, input.clientId, input.output.kind, input.output.name ?? null, input.expectedRevision ?? null]);
   if (!result.rows[0]) {
     const current = await getPlaybackSession(input.userId, input.sessionId);
     if (!current) throw new PlaybackSessionNotFoundError();
@@ -440,26 +469,62 @@ export async function handoffPlaybackSession(input: {
   publishApiV1Event(input.userId, 'playbackSession.handedOff', {
     sessionId: session.id,
     ownerClientId: input.clientId,
+    outputId: input.clientId,
+    generation: session.output!.generation,
     revision: session.revision,
   });
   return session;
 }
 
+/**
+ * Checks that `outputId`/`generation` is still the session's current grant,
+ * so a fresh output credential can be minted for it. It never revives a
+ * replaced grant: that takes a new claim.
+ */
+export async function getCurrentOutputGrant(input: {
+  userId: string;
+  sessionId: string;
+  outputId: string;
+  generation: number;
+}): Promise<{ sid: string; oid: string; gen: number }> {
+  const session = await getPlaybackSession(input.userId, input.sessionId);
+  if (!session) throw new PlaybackSessionNotFoundError();
+  if (session.output?.id !== input.outputId || session.output.generation !== input.generation) {
+    throw new PlaybackOutputGrantReplacedError(session);
+  }
+  return { sid: session.id, oid: session.output.id, gen: session.output.generation };
+}
+
+/** Legacy alias for a browser claim by the caller, at an expected revision. */
+export async function handoffPlaybackSession(input: {
+  userId: string;
+  clientId: string;
+  clientName?: string;
+  sessionId: string;
+  expectedRevision: number;
+}): Promise<PlaybackSession> {
+  return claimPlaybackOutput({
+    userId: input.userId,
+    clientId: input.clientId,
+    sessionId: input.sessionId,
+    output: { kind: 'browser', ...(input.clientName ? { name: input.clientName } : {}) },
+    expectedRevision: input.expectedRevision,
+  });
+}
+
 export async function deletePlaybackSession(
   userId: string,
-  clientId: string,
   sessionId: string,
   expectedRevision: number,
 ): Promise<void> {
   const db = await initDB();
   const result = await db.query(
-    'DELETE FROM playback_sessions WHERE id = $1 AND user_id = $2 AND owner_client_id = $3 AND revision = $4 RETURNING id',
-    [sessionId, userId, clientId, expectedRevision],
+    'DELETE FROM playback_sessions WHERE id = $1 AND user_id = $2 AND revision = $3 RETURNING id',
+    [sessionId, userId, expectedRevision],
   );
   if ((result.rowCount || 0) === 0) {
     const current = await getPlaybackSession(userId, sessionId);
     if (!current) throw new PlaybackSessionNotFoundError();
-    if (current.ownerClientId !== clientId) throw new PlaybackSessionOwnershipError();
     throw new PlaybackSessionRevisionError(current);
   }
   publishApiV1Event(userId, 'playbackSession.deleted', { sessionId });

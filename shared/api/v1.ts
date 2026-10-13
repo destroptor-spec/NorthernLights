@@ -233,10 +233,19 @@ export const queueEntrySchema = z.object({
   addedAt: ISO_DATE_TIME,
 }).meta({ id: 'PlaybackQueueEntry' });
 
+export const playbackOutputSchema = z.object({
+  id: z.string().describe('The device that plays the session (its client ID).'),
+  kind: z.enum(['browser']),
+  name: z.string().nullable(),
+  generation: z.number().int().positive().describe('Grant generation; goes up on every claim.'),
+  claimedAt: ISO_DATE_TIME,
+}).meta({ id: 'PlaybackOutput' });
+
 export const playbackSessionSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
-  ownerClientId: z.string(),
+  ownerClientId: z.string().describe('Deprecated: the client that last created or claimed the session. A session belongs to its user; any of their devices may change it.'),
+  output: playbackOutputSchema.nullable().describe('The device currently playing the session, if any.'),
   currentEntryId: z.string().uuid().nullable(),
   positionMs: z.number().int().nonnegative(),
   playbackState: z.enum(['playing', 'paused', 'stopped']),
@@ -319,6 +328,28 @@ export const playbackSessionPatchSchema = z.object({
     transportOperation,
   ])).min(1).max(50),
 }).strict().meta({ id: 'PlaybackSessionPatch' });
+
+export const playbackOutputClaimSchema = z.object({
+  kind: z.enum(['browser']),
+  name: z.string().trim().min(1).max(120).optional(),
+}).strict().meta({ id: 'PlaybackOutputClaim' });
+
+export const playbackOutputRefreshSchema = z.object({
+  outputId: z.string().min(1).max(128),
+  generation: z.number().int().positive(),
+}).strict().meta({ id: 'PlaybackOutputRefresh' });
+
+export const playbackOutputCredentialSchema = z.object({
+  token: z.string().describe('Output credential: a short-lived token bound to this session and grant. Keep it in memory only.'),
+  expiresAt: ISO_DATE_TIME,
+  outputId: z.string(),
+  generation: z.number().int().positive(),
+}).meta({ id: 'PlaybackOutputCredential' });
+
+export const playbackOutputClaimResultSchema = z.object({
+  session: playbackSessionSchema,
+  credential: playbackOutputCredentialSchema,
+}).meta({ id: 'PlaybackOutputClaimResult' });
 
 export const playbackSessionDeleteSchema = z.object({
   expectedRevision: z.number().int().positive(),
@@ -424,5 +455,8 @@ export type PlaybackDescriptor = z.infer<typeof playbackDescriptorSchema>;
 export type TrackLyrics = z.infer<typeof lyricsSchema>;
 export type PlaybackSession = z.infer<typeof playbackSessionSchema>;
 export type PlaybackSessionPatch = z.infer<typeof playbackSessionPatchSchema>;
+export type PlaybackOutput = z.infer<typeof playbackOutputSchema>;
+export type PlaybackOutputClaim = z.infer<typeof playbackOutputClaimSchema>;
+export type PlaybackOutputCredential = z.infer<typeof playbackOutputCredentialSchema>;
 export type ListenerPreferences = z.infer<typeof listenerPreferencesSchema>;
 export type NextRecommendationRequest = z.input<typeof nextRecommendationSchema>;

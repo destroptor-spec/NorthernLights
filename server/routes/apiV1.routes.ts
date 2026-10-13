@@ -76,6 +76,8 @@ import {
   playbackSessionCreateSchema,
   playbackSessionDeleteSchema,
   playbackSessionPatchSchema,
+  playbackOutputClaimSchema,
+  playbackOutputRefreshSchema,
   OPAQUE_ID,
 } from '../../shared/api/v1';
 import {
@@ -115,9 +117,12 @@ import {
   PlaybackSessionAnchorError,
   PlaybackSessionEntryIdError,
   PlaybackSessionRequestReusedError,
+  PlaybackOutputGrantReplacedError,
+  claimPlaybackOutput,
+  getCurrentOutputGrant,
 } from '../services/playbackSession.service';
 import { publishApiV1Event, replayApiV1Events, subscribeApiV1Events } from '../services/apiV1Events.service';
-import { generateEphemeralScopedToken, verifyScopedToken } from '../services/scopedToken.service';
+import { generateEphemeralScopedToken, generateOutputCredential, verifyScopedToken } from '../services/scopedToken.service';
 import { generateAuroraApiDocument } from '../api/v1/openapi';
 import { artCachePath, DEFAULT_ART_SIZE, isValidArtSize } from '../services/artCache';
 
@@ -1013,6 +1018,47 @@ router.patch('/playback-sessions/:id', async (req, res) => {
   }
 });
 
+// "Play here": the calling device becomes the session's output and receives
+// the output credential for its grant. Any of the owner's devices may claim at
+// any time, so moving playback between them needs no confirmation.
+router.post('/playback-sessions/:id/output', async (req, res) => {
+  const output = parseBody(playbackOutputClaimSchema, req, res);
+  if (!output) return;
+  try {
+    const session = await claimPlaybackOutput({
+      userId: req.apiV1!.userId,
+      clientId: req.apiV1!.clientId,
+      sessionId: req.params.id,
+      output,
+    });
+    const credential = await generateOutputCredential(req.apiV1!, {
+      sid: session.id, oid: session.output!.id, gen: session.output!.generation,
+    });
+    dataResponse(req, res, {
+      session,
+      credential: { ...credential, outputId: session.output!.id, generation: session.output!.generation },
+    });
+  } catch (error) {
+    handleSessionError(req, res, error);
+  }
+});
+
+// A fresh credential for the session's current grant. Any of the owner's
+// devices may ask (a phone renews its Cast receiver's credential this way), but
+// a replaced grant is never revived.
+router.post('/playback-sessions/:id/output/refresh', async (req, res) => {
+  const input = parseBody(playbackOutputRefreshSchema, req, res);
+  if (!input) return;
+  try {
+    const grant = await getCurrentOutputGrant({ userId: req.apiV1!.userId, sessionId: req.params.id, ...input });
+    const credential = await generateOutputCredential(req.apiV1!, grant);
+    dataResponse(req, res, { ...credential, outputId: grant.oid, generation: grant.gen });
+  } catch (error) {
+    handleSessionError(req, res, error);
+  }
+});
+
+// Legacy alias for claiming the output as a browser, at an expected revision.
 router.post('/playback-sessions/:id/handoff', async (req, res) => {
   const input = parseBody(z.object({ expectedRevision: z.number().int().positive() }).strict(), req, res);
   if (!input) return;
@@ -1020,6 +1066,7 @@ router.post('/playback-sessions/:id/handoff', async (req, res) => {
     dataResponse(req, res, await handoffPlaybackSession({
       userId: req.apiV1!.userId,
       clientId: req.apiV1!.clientId,
+      clientName: req.apiV1!.clientName,
       sessionId: req.params.id,
       expectedRevision: input.expectedRevision,
     }));
@@ -1032,7 +1079,7 @@ router.delete('/playback-sessions/:id', async (req, res) => {
   const input = parseBody(playbackSessionDeleteSchema, req, res);
   if (!input) return;
   try {
-    await deletePlaybackSession(req.apiV1!.userId, req.apiV1!.clientId, req.params.id, input.expectedRevision);
+    await deletePlaybackSession(req.apiV1!.userId, req.params.id, input.expectedRevision);
     res.status(204).end();
   } catch (error) {
     handleSessionError(req, res, error);
@@ -1041,7 +1088,8 @@ router.delete('/playback-sessions/:id', async (req, res) => {
 
 function handleSessionError(req: Request, res: Response, error: unknown) {
   if (error instanceof PlaybackSessionNotFoundError) return sendApiV1Error(req, res, 404, 'PLAYBACK_SESSION_NOT_FOUND', 'Playback session not found.');
-  if (error instanceof PlaybackSessionOwnershipError) return sendApiV1Error(req, res, 409, 'PLAYBACK_SESSION_NOT_OWNER', 'Take over this playback session before changing it.');
+  if (error instanceof PlaybackSessionOwnershipError) return sendApiV1Error(req, res, 409, 'PLAYBACK_SESSION_NOT_OWNER', 'This device is not playing the session.');
+  if (error instanceof PlaybackOutputGrantReplacedError) return sendApiV1Error(req, res, 409, 'OUTPUT_GRANT_REPLACED', 'Another device has since started playing this session.', { current: error.current });
   if (error instanceof PlaybackSessionRevisionError) return sendApiV1Error(req, res, 409, 'REVISION_CONFLICT', 'The playback session changed on another client.', { current: error.current });
   if (error instanceof PlaybackSessionTrackError) return sendApiV1Error(req, res, 409, 'TRACKS_UNAVAILABLE', 'One or more queue tracks are unavailable.', { missingIds: error.missingIds });
   if (error instanceof PlaybackSessionAnchorError) return sendApiV1Error(req, res, 409, 'ANCHOR_NOT_FOUND', 'The entry to insert or move after is no longer in the queue.', { anchorEntryId: error.anchorEntryId, current: error.current });
