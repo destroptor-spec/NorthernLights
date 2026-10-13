@@ -107,9 +107,11 @@ These must be resolved before a first-party client can rely on the session API:
    periodically, and `nowPlaying.positionMs` is discarded.
 4. **Queue writes rewrite every row.** Queue changes delete and re-insert entries
    one row at a time, which is too slow for a 2,000-entry queue under frequent
-   Infinity top-ups.
+   Infinity top-ups. *Fixed in Phase 1, PR 1: only entries whose position
+   changed are written, in one statement.*
 5. **Missing tracks leave gaps.** `serializeSession` silently drops entries whose
-   track no longer exists, so `position` values can have holes.
+   track no longer exists, so `position` values can have holes. *Fixed in
+   Phase 1, PR 1: positions are renumbered when served and when written.*
 6. **Session history is in memory.** The rolling 50-track history Infinity relies
    on (`server/state.ts`, `userSessionHistory`) is lost on every restart.
 7. **Shuffle has no order.** The client picks `Math.random()` at each skip, so
@@ -780,3 +782,21 @@ inside/outside the window, successful and deliberately failed starts, another
 sender taking over, and the installed phone PWA backgrounded for three tracks.
 The Phase 1–5 server/session/receiver work remains unimplemented by these PRs.
 Issue #72 remains deferred; these changes do not establish the cause of error 310.
+
+## Implementation status — Phase 1
+
+**PR 1 — bulk entry writes and gap-free positions** (no API or schema change):
+- `writeEntries` replaces the row-at-a-time rewrite. Entries that kept their
+  position are left alone. Removed and moved entries are deleted, and moved and
+  new entries are inserted in one `unnest` statement. An Infinity append to a
+  2,000-entry queue writes only its new rows.
+- `serializeSession` renumbers positions after leaving out entries whose track
+  is gone. The next write closes the hole in the stored rows too.
+- `server/database/__tests__/playbackSessions.pg.test.ts` is the real-Postgres
+  contract suite that later Phase 1 PRs extend. It covers each queue op,
+  multi-op patches, revision conflicts (including two concurrent patches),
+  unknown tracks and entries, ownership and handoff, user isolation, deleted
+  tracks, which rows a write touches (via `xmin`), and a 2,000-entry load test.
+  Locally a 2,000-entry write went from about 105 ms to 25 ms for an append and
+  about 55 ms for a full reorder; most of the remainder is serializing the
+  response.

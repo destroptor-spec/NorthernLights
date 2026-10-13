@@ -57,7 +57,13 @@ async function serializeSession(db: PoolClient | Awaited<ReturnType<typeof initD
   const tracks = await getApiV1TracksByIds(row.user_id, entries.map((entry) => entry.track_id));
   const trackById = new Map<string, Track>();
   for (const track of tracks) trackById.set(track.id, track);
-  const currentEntryId = row.current_entry_id && entries.some((entry) => entry.queue_entry_id === row.current_entry_id)
+  // Entries whose track is gone are left out, and positions are renumbered so
+  // the queue a client sees never has holes.
+  const queue = entries.flatMap((entry) => {
+    const track = trackById.get(entry.track_id);
+    return track ? [{ entry, track }] : [];
+  });
+  const currentEntryId = row.current_entry_id && queue.some(({ entry }) => entry.queue_entry_id === row.current_entry_id)
     ? row.current_entry_id
     : null;
   return {
@@ -71,15 +77,12 @@ async function serializeSession(db: PoolClient | Awaited<ReturnType<typeof initD
     shuffle: row.shuffle,
     source: row.source_kind ? { kind: row.source_kind, id: row.source_id } : null,
     revision: Number(row.revision),
-    queue: entries.flatMap((entry) => {
-      const track = trackById.get(entry.track_id);
-      return track ? [{
-        queueEntryId: entry.queue_entry_id,
-        position: Number(entry.position),
-        track,
-        addedAt: new Date(entry.added_at).toISOString(),
-      }] : [];
-    }),
+    queue: queue.map(({ entry, track }, position) => ({
+      queueEntryId: entry.queue_entry_id,
+      position,
+      track,
+      addedAt: new Date(entry.added_at).toISOString(),
+    })),
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
   };
@@ -94,15 +97,40 @@ async function ensureTracksExist(db: PoolClient, trackIds: string[]) {
   if (missing.length) throw new PlaybackSessionTrackError(missing);
 }
 
-async function replaceEntries(db: PoolClient, sessionId: string, entries: EntryRow[]) {
-  await db.query('DELETE FROM playback_session_entries WHERE session_id = $1', [sessionId]);
-  for (let index = 0; index < entries.length; index++) {
-    const entry = entries[index];
-    await db.query(`
-      INSERT INTO playback_session_entries (session_id, queue_entry_id, track_id, position, added_at)
-      VALUES ($1, $2, $3, $4, $5)
-    `, [sessionId, entry.queue_entry_id, entry.track_id, index, entry.added_at]);
+// Writes only what changed: entries that kept their position stay untouched;
+// removed entries and entries that moved are deleted, and the moved and new
+// ones are inserted at their new positions in one statement. An Infinity
+// append to a 2,000-entry queue therefore writes only the appended rows.
+// Positions come out as 0..n-1, which also closes holes left by tracks that
+// were deleted from the library (their entries cascade away).
+async function writeEntries(db: PoolClient, sessionId: string, previous: EntryRow[], next: EntryRow[]) {
+  const previousPosition = new Map(previous.map((entry) => [entry.queue_entry_id, Number(entry.position)]));
+  const unchanged = new Set<string>();
+  const changed: Array<{ entry: EntryRow; position: number }> = [];
+  next.forEach((entry, position) => {
+    if (previousPosition.get(entry.queue_entry_id) === position) unchanged.add(entry.queue_entry_id);
+    else changed.push({ entry, position });
+  });
+  const stale = previous.map((entry) => entry.queue_entry_id).filter((id) => !unchanged.has(id));
+  if (stale.length) {
+    await db.query(
+      'DELETE FROM playback_session_entries WHERE session_id = $1 AND queue_entry_id = ANY($2::uuid[])',
+      [sessionId, stale],
+    );
   }
+  if (changed.length === 0) return;
+  await db.query(`
+    INSERT INTO playback_session_entries (session_id, queue_entry_id, track_id, position, added_at)
+    SELECT $1, entry.queue_entry_id, entry.track_id, entry.position, entry.added_at
+    FROM unnest($2::uuid[], $3::text[], $4::int[], $5::timestamptz[])
+      AS entry(queue_entry_id, track_id, position, added_at)
+  `, [
+    sessionId,
+    changed.map(({ entry }) => entry.queue_entry_id),
+    changed.map(({ entry }) => entry.track_id),
+    changed.map(({ position }) => position),
+    changed.map(({ entry }) => new Date(entry.added_at)),
+  ]);
 }
 
 export async function createPlaybackSession(input: {
@@ -140,7 +168,7 @@ export async function createPlaybackSession(input: {
       input.source?.kind || null,
       input.source?.id || null,
     ]);
-    await replaceEntries(client, result.rows[0].id, entries);
+    await writeEntries(client, result.rows[0].id, [], entries);
     await client.query('COMMIT');
     const session = await serializeSession(db, result.rows[0] as SessionRow);
     publishApiV1Event(input.userId, 'playbackSession.created', { sessionId: session.id, revision: session.revision });
@@ -190,7 +218,8 @@ export async function patchPlaybackSession(input: {
       throw new PlaybackSessionRevisionError(current);
     }
 
-    let entries = await loadEntries(client, input.sessionId);
+    const storedEntries = await loadEntries(client, input.sessionId);
+    let entries = [...storedEntries];
     let queueChanged = false;
     let currentEntryId = row.current_entry_id;
     let positionMs = Number(row.position_ms) || 0;
@@ -262,7 +291,7 @@ export async function patchPlaybackSession(input: {
       }
     }
 
-    if (queueChanged) await replaceEntries(client, input.sessionId, entries);
+    if (queueChanged) await writeEntries(client, input.sessionId, storedEntries, entries);
     const updated = await client.query(`
       UPDATE playback_sessions
       SET current_entry_id = $3, position_ms = $4, playback_state = $5,
