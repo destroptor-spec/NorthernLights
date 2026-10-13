@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import type { PoolClient } from 'pg';
 import { initDB } from '../database';
-import type { PlaybackOutput, PlaybackOutputClaim, PlaybackOutputReport, PlaybackSession, PlaybackSessionPatch, Track } from '../../shared/api/v1';
+import type { PlaybackCommandRequest, PlaybackOutput, PlaybackOutputClaim, PlaybackOutputReport, PlaybackSession, PlaybackSessionPatch, Track } from '../../shared/api/v1';
 import { getApiV1TracksByIds } from './apiV1Dto.service';
 import { publishApiV1Event } from './apiV1Events.service';
 
@@ -513,6 +513,58 @@ export async function claimPlaybackOutput(input: {
     revision: session.revision,
   });
   return session;
+}
+
+export class PlaybackOutputNotActiveError extends Error {
+  constructor(public readonly current: PlaybackSession) {
+    super('The session output is not playing anywhere right now.');
+  }
+}
+
+/** requestIds already sent, per session, for a few minutes. */
+const recentCommandIds = new Map<string, Map<string, number>>();
+const COMMAND_ID_TTL_MS = 5 * 60_000;
+
+function firstUseOfCommandId(sessionId: string, requestId: string, now: number): boolean {
+  const seen = recentCommandIds.get(sessionId) ?? new Map<string, number>();
+  for (const [id, at] of seen) if (now - at > COMMAND_ID_TTL_MS) seen.delete(id);
+  if (seen.has(requestId)) return false;
+  seen.set(requestId, now);
+  recentCommandIds.set(sessionId, seen);
+  return true;
+}
+
+/**
+ * Remote control: sends a command to the session's output as a live-only
+ * `playbackSession.command` event. It is checked against the output the
+ * caller means (id and generation), so a command never reaches a device that
+ * has since been replaced. Nothing is stored: the output's next report shows
+ * whether it took effect.
+ */
+export async function issuePlaybackCommand(input: {
+  userId: string;
+  clientId: string;
+  sessionId: string;
+  request: PlaybackCommandRequest;
+}): Promise<{ accepted: boolean }> {
+  const session = await getPlaybackSession(input.userId, input.sessionId);
+  if (!session) throw new PlaybackSessionNotFoundError();
+  const output = session.output;
+  if (!output) throw new PlaybackOutputNotActiveError(session);
+  if (output.id !== input.request.outputId || output.generation !== input.request.outputGeneration) {
+    throw new PlaybackOutputGrantReplacedError(session);
+  }
+  if (output.status !== 'active') throw new PlaybackOutputNotActiveError(session);
+  if (!firstUseOfCommandId(session.id, input.request.requestId, Date.now())) return { accepted: false };
+  publishApiV1Event(input.userId, 'playbackSession.command', {
+    sessionId: session.id,
+    outputId: output.id,
+    generation: output.generation,
+    requestId: input.request.requestId,
+    issuedBy: input.clientId,
+    command: input.request.command,
+  }, { transient: true });
+  return { accepted: true };
 }
 
 /**

@@ -1029,6 +1029,31 @@ an idle device following a `cast` output that is playing asks "Play here
 instead?" with "Play here" / "Keep on <Cast device>"; Play still never asks
 when the other device plays by itself.
 
+**Device choice and remote control (decided with Andreas 2026-10-13, after
+the PR 3–5 tests).** This replaces "Play on an idle device continues there
+without asking":
+- Any playback action on an idle device while another device plays asks
+  **Play where?**, offering the playing device (or the Cast device it casts
+  to) or this device: Play, Pause, Next, Previous, tapping a queue track, or
+  tapping a song or album elsewhere.
+- The answer is remembered **while that device plays**. It resets when another
+  device takes over, or playback there stops or goes unreachable. It survives a
+  reload, and a device chip next to "Playing on …" changes it.
+- With the playing device chosen, the idle device is a **full remote**: its
+  controls show and drive that device. A new song or album replaces the
+  session queue (`PATCH replaceQueue`), then `load` starts it on that device.
+- With this device chosen, it takes over. A device that was casting stops
+  casting and follows (rather than staying connected, paused, with a stale
+  queue).
+- Until Phase 5, controlling a Cast device relays through the device casting
+  to it, so that device must be awake.
+
+PRs: (1) `POST /playback-sessions/:id/commands` and the live-only
+`playbackSession.command` event (server only); (2) the output carries
+commands out; (3) the idle device's choice, remembered target, remote controls
+and device chip; (4) a casting device that is taken over stops casting and
+follows.
+
 **PR 5 (who turns sync on, decided with Andreas 2026-10-13):** not a per-device
 user setting.
 - The admin chooses in Settings → System → Service: **Off** (the default),

@@ -77,6 +77,7 @@ import {
   playbackSessionDeleteSchema,
   playbackSessionPatchSchema,
   playbackOutputClaimSchema,
+  playbackCommandRequestSchema,
   playbackOutputRefreshSchema,
   playbackOutputReportSchema,
   OPAQUE_ID,
@@ -122,6 +123,8 @@ import {
   PlaybackOutputGrantReplacedError,
   claimPlaybackOutput,
   getCurrentOutputGrant,
+  issuePlaybackCommand,
+  PlaybackOutputNotActiveError,
 } from '../services/playbackSession.service';
 import { isPlaybackSyncEnabledFor } from '../services/playbackSync.service';
 import { publishApiV1Event, replayApiV1Events, subscribeApiV1Events } from '../services/apiV1Events.service';
@@ -1090,6 +1093,22 @@ router.post('/playback-sessions/:id/reports', async (req, res) => {
 });
 
 // Legacy alias for claiming the output as a browser, at an expected revision.
+router.post('/playback-sessions/:id/commands', async (req, res) => {
+  const request = parseBody(playbackCommandRequestSchema, req, res);
+  if (!request) return;
+  try {
+    const result = await issuePlaybackCommand({
+      userId: req.apiV1!.userId,
+      clientId: req.apiV1!.clientId,
+      sessionId: req.params.id,
+      request,
+    });
+    dataResponse(req, res, result, 202);
+  } catch (error) {
+    handleSessionError(req, res, error);
+  }
+});
+
 router.post('/playback-sessions/:id/handoff', async (req, res) => {
   const input = parseBody(z.object({ expectedRevision: z.number().int().positive() }).strict(), req, res);
   if (!input) return;
@@ -1120,6 +1139,7 @@ router.delete('/playback-sessions/:id', async (req, res) => {
 function handleSessionError(req: Request, res: Response, error: unknown) {
   if (error instanceof PlaybackSessionNotFoundError) return sendApiV1Error(req, res, 404, 'PLAYBACK_SESSION_NOT_FOUND', 'Playback session not found.');
   if (error instanceof PlaybackOutputIdentityError) return sendApiV1Error(req, res, 422, 'OUTPUT_IDENTITY_MISMATCH', 'The report names a different output or generation than its credential.');
+  if (error instanceof PlaybackOutputNotActiveError) return sendApiV1Error(req, res, 409, 'OUTPUT_NOT_ACTIVE', 'Nothing is playing the session right now.', { current: error.current });
   if (error instanceof PlaybackOutputGrantReplacedError) return sendApiV1Error(req, res, 409, 'OUTPUT_GRANT_REPLACED', 'Another device has since started playing this session.', { current: error.current });
   if (error instanceof PlaybackSessionRevisionError) return sendApiV1Error(req, res, 409, 'REVISION_CONFLICT', 'The playback session changed on another client.', { current: error.current });
   if (error instanceof PlaybackSessionTrackError) return sendApiV1Error(req, res, 409, 'TRACKS_UNAVAILABLE', 'One or more queue tracks are unavailable.', { missingIds: error.missingIds });

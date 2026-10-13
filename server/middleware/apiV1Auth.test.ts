@@ -144,6 +144,9 @@ describe('scoped token endpoint allowlist', () => {
       ['output', 'POST', '/playback-sessions/s-1/reports/extra'],
       ['output', 'POST', '/playback-sessions/s-1/output'],
       ['output', 'POST', '/playback-sessions/s-1/output/refresh'],
+      // Remote control comes from the user's devices, never from an output.
+      ['output', 'POST', '/playback-sessions/s-1/commands'],
+      ['receiver', 'POST', '/playback-sessions/s-1/commands'],
       ['output', 'GET', '/events'],
       ['output', 'POST', '/auth/scoped-token'],
       // An unrecognised scope claim is not a free pass.

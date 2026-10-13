@@ -9,6 +9,7 @@ export type ApiV1EventType =
   | 'playbackSession.handedOff'
   | 'playbackSession.deleted'
   | 'playbackSession.progress'
+  | 'playbackSession.command'
   | 'playlist.changed'
   | 'annotation.changed'
   | 'library.revision'

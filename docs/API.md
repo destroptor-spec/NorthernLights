@@ -195,6 +195,13 @@ Playback sessions are server-backed queue snapshots with transport state:
 - Every accepted report is also published as `playbackSession.progress` with `{ sessionId, revision, outputId, generation, report: { seq, state, reason, queueEntryId, positionMs, reportedAt } }`, so other devices can show live progress without fetching the session. Progress events go to connected clients only and are never replayed.
 - `output.report` holds the latest accepted report, with the server time it arrived (`reportedAt`); interpolate from it while playing. `output.status` is `active`, `unreachable` after a minute without reports (the last state is kept), or `ended` once the output itself reported `stopped`, `idle` or `error`. Silence never ends an output: only its own report or a new claim does, and any later report on the grant makes it `active` again.
 
+**Remote control.** Any of the user's devices may ask the session's output to act: `POST /playback-sessions/:id/commands` with `{ requestId, outputId, outputGeneration, command }`, where `command` is one of `{ type: "play" | "pause" | "next" | "previous" }`, `{ type: "seek", positionMs }`, `{ type: "jump", entryId }` or `{ type: "load", revision, entryId }`.
+- `outputId`/`outputGeneration` name the output the caller means. A newer claim since then gets `409 OUTPUT_GRANT_REPLACED`, and a session with no active output gets `409 OUTPUT_NOT_ACTIVE` (both with `details.current`).
+- The answer is `202 { accepted }`. The command goes to the user's event stream as `playbackSession.command` (`{ sessionId, outputId, generation, requestId, issuedBy, command }`), live only, never replayed. A repeated `requestId` within five minutes is answered `{ accepted: false }` and not sent again.
+- The output carries the command out. Its next report confirms the effect; nothing else is stored.
+- To start something new remotely, replace the queue with a normal `PATCH` (`replaceQueue`), then send `load` with the resulting revision and the entry to start from. The output adopts the session queue at that revision before playing.
+- Output and receiver credentials cannot send commands.
+
 Every queue mutation includes `expectedRevision`. A stale revision returns `409 REVISION_CONFLICT` with the current session in `error.details.current`.
 
 Supported patch operations are `replaceQueue`, `insert`, `remove`, `move`, and `setTransport`. Queue entries have stable UUIDs so duplicate track IDs remain independently addressable.
@@ -775,10 +782,12 @@ Get per-directory statistics.
   ```json
   {
     "directories": [
-      { "path": "/home/user/music", "totalTracks": 500, "withMetadata": 480, "analyzed": 450 }
+      { "path": "/home/user/music", "totalTracks": 500, "withMetadata": 480, "analyzed": 450, "missingAnalysis": 10, "outdatedAnalysis": 40 }
     ]
   }
   ```
+
+`analyzed` counts tracks with an acoustic vector at the current feature version or newer, using the same rule as incremental analysis. `missingAnalysis` counts absent acoustic vectors (including loudness-only rows); `outdatedAnalysis` counts existing acoustic vectors from older versions. Their sum is the backlog that a regular scan or **Analyze Pending** processes across the library. Current-version simulated fallback results count as processed and remain available in the separate fallback retry list.
 
 ### [POST] `/api/library/love`
 Toggle loved status of a track for the current user, optionally syncing to Last.fm and/or MusicBrainz. The web client now uses `PUT /api/v1/tracks/:id/loved`, which shares this route's implementation; this route remains for compatibility. A failed provider is reported as `{ "provider": "lastfm", "status": "failed", "error": "…" }`.
