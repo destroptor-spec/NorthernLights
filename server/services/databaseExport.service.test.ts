@@ -63,6 +63,14 @@ describe('export names and paths', () => {
     expect(exportNameFor(fixedNow(), 'not a commit', null)).toBe('aurora-20261013T074103Z-unknown.dump');
   });
 
+  it('sanitises labels in linear time, whatever they contain', () => {
+    expect(sanitizeLabel('  --Before Upgrade!!--  ')).toBe('before-upgrade');
+    expect(sanitizeLabel('-'.repeat(100_000) + 'x')).toBe(null); // capped before it reaches the x
+    expect(sanitizeLabel('a' + '-'.repeat(50) + 'b')).toBe('a-b');
+    expect(sanitizeLabel('!!!')).toBeNull();
+    expect(sanitizeLabel(42)).toBeNull();
+  });
+
   it('accepts only its own names and never resolves outside the export directory', () => {
     const dir = tmp();
     expect(isExportName('aurora-20261013T074103Z-2fb18b6.dump')).toBe(true);
