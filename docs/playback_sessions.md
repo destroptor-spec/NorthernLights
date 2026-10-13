@@ -909,8 +909,9 @@ columns):
   replaces its own older queue. **Play** there continues from the current
   position without asking; **Pause / Next / Previous** ask whether to take over
   here (remote control of the playing device is Phase 3).
-- Rollout behind a per-device setting, "Sync playback across devices", off by
-  default, because prod serves every user.
+- Rollout behind "Sync playback across devices", off by default, because prod
+  serves every user. Changed 2026-10-13 (Andreas): this is a server setting
+  only admins change, not a per-device one; see PR 5 below.
 
 **PRs:**
 1. UUID entry IDs. `createQueueEntryId` produces UUIDs; queues saved before the
@@ -927,9 +928,8 @@ columns):
 **PR 1 (UUID entry IDs):** done, draft PR #101.
 
 **PR 2 (the playing side):**
-- Setting: `syncPlaybackAcrossDevices` in the player store, persisted per
-  device and off by default (Settings → Playback → "Sync playback across
-  devices").
+- Setting: `syncPlaybackAcrossDevices` in the player store, at first persisted
+  per device (replaced by the server setting in PR 5).
 - `src/api/playbackSessions.ts`: the session calls. `AuroraApiError` now carries
   the error `details`, so a conflict hands back `details.current`.
 - `src/utils/sessionQueueDiff.ts`: `planSessionPatch` turns "session queue A,
@@ -1024,3 +1024,21 @@ Until then (PR 4): a casting device claims with output `kind: 'cast'`. Play on
 an idle device following a `cast` output that is playing asks "Play here
 instead?" with "Play here" / "Keep on <Cast device>"; Play still never asks
 when the other device plays by itself.
+
+**PR 5 (who turns sync on, decided with Andreas 2026-10-13):** not a per-device
+user setting.
+- The admin chooses in Settings → System → Service: **Off** (the default),
+  **On for everyone**, or **Each user decides** (`playbackSyncMode`, a system
+  setting; only admins may write it, every user may read it).
+- With "Each user decides", Settings → Playback shows the user's own toggle
+  (`playbackSyncEnabled`, a per-user server setting with no admin fallback),
+  so the choice is the same on every device they sign in on.
+- `shared/playbackSync.ts` holds the rule; the store derives
+  `syncPlaybackAcrossDevices` from the two, which is all SessionMirror and
+  SessionFollower read. The old per-device flag in local storage is ignored.
+- A change publishes `settings.changed` (`{keys}`): to every user for the mode,
+  to that user for their own choice. Devices on the event stream re-read the
+  two settings at once. A device with sync off has no stream, so every device
+  also re-reads them when it returns to the foreground (at most every 15 s).
+- Enforcement is in the client: the session API itself stays open to API v1
+  clients, as before.

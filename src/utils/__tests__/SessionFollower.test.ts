@@ -80,7 +80,9 @@ function setup(initial: Partial<FollowerPlayerState> = {}, latest: PlaybackSessi
     ...initial,
   }));
   const follower = new SessionFollower();
+  const onSettingsChanged = jest.fn();
   follower.start(store, {
+    onSettingsChanged,
     api,
     createEventSource: (url) => {
       const source = new FakeEventSource(url);
@@ -97,7 +99,7 @@ function setup(initial: Partial<FollowerPlayerState> = {}, latest: PlaybackSessi
     source().open();
     await jest.advanceTimersByTimeAsync(0);
   };
-  return { api, mirror, store, follower, sources, source, connect, setPlaybackTime };
+  return { api, mirror, store, follower, sources, source, connect, setPlaybackTime, onSettingsChanged };
 }
 
 beforeEach(() => {
@@ -271,3 +273,11 @@ describe('another device taking over', () => {
     expect(mirror.noteReplaced).toHaveBeenCalledWith('session-1', 6);
   });
 });
+
+it('passes settings changes on, so every device re-reads the sync setting', async () => {
+  const { source, connect, onSettingsChanged } = setup();
+  await connect();
+  source().emit('settings.changed', { keys: ['playbackSyncMode'] });
+  expect(onSettingsChanged).toHaveBeenCalledWith(['playbackSyncMode']);
+});
+

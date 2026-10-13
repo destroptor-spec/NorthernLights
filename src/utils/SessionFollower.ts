@@ -51,6 +51,8 @@ export interface SessionFollowerOptions {
   /** The session's queue as playable tracks, keeping each entry's ID. */
   toTracks: (session: PlaybackSession) => TrackInfo[];
   setPlaybackTime: (currentTime: number, duration: number) => void;
+  /** `settings.changed`: an admin or this user changed settings with these keys. */
+  onSettingsChanged?: (keys: string[]) => void;
   log?: (message: string, detail?: unknown) => void;
 }
 
@@ -64,6 +66,7 @@ const SESSION_EVENTS = [
   'playbackSession.handedOff',
   'playbackSession.deleted',
   'playbackSession.progress',
+  'settings.changed',
   'resync.required',
 ] as const;
 
@@ -207,6 +210,9 @@ export class SessionFollower {
     switch (type) {
       case 'resync.required':
         await this.refresh(false);
+        return;
+      case 'settings.changed':
+        this.options!.onSettingsChanged?.(Array.isArray(data.keys) ? data.keys.filter((key): key is string => typeof key === 'string') : []);
         return;
       case 'playbackSession.deleted':
         if (sessionId && this.session?.id === sessionId) {

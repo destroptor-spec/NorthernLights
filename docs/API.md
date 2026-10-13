@@ -212,7 +212,7 @@ Keys are scoped to the session, kept for 24 hours and capped at the newest 1,000
 
 `GET /api/v1/events` is a user-scoped Server-Sent Events stream for playback-session, playlist, annotation, and library-revision changes. Browser `EventSource` callers first mint a short-lived `sse` token using `POST /api/v1/auth/scoped-token`, then pass it in the `token` query parameter. Native clients may use a normal bearer header. Scanner/auto-walk changes and mutations made through Aurora web or OpenSubsonic publish the same invalidations, so a dedicated client does not stay stale when another surface changes state.
 
-The query parameter accepts only an `sse` token; a full session token is refused there. Session events are `playbackSession.created`, `updated`, `handedOff` and `deleted` (fetch the session when the revision is newer than yours), plus `playbackSession.progress` (see Reports).
+The query parameter accepts only an `sse` token; a full session token is refused there. `settings.changed` (`{ keys }`) tells a user's devices to re-read those settings, after an admin changed a server-wide one or the user changed their own. Session events are `playbackSession.created`, `updated`, `handedOff` and `deleted` (fetch the session when the revision is newer than yours), plus `playbackSession.progress` (see Reports).
 
 Reconnect with `Last-Event-ID`. If the in-memory replay window no longer includes that ID, Aurora emits `resync.required`; refetch affected resources and sessions. SSE is a cache-invalidation signal, not a complete event-sourced history. Progress events are not part of the replay window, so a client whose last seen event was one of them gets `resync.required`.
 

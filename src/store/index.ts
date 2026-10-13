@@ -24,6 +24,7 @@ import { clearExternalCache } from '../utils/externalImagery';
 import { readSessionAuth, writeSessionAuth, clearSessionAuth } from '../utils/sessionAuth';
 import { sessionMirror } from '../utils/SessionMirror';
 import { followedPositionMs, isFollowedOutputPlaying, type FollowedOutput } from '../utils/sessionFollow';
+import { isPlaybackSyncEnabled, parsePlaybackSyncMode, type PlaybackSyncMode } from '../../shared/playbackSync';
 import { computeLoudnessGainDb, type LoudnessData } from '../utils/loudness';
 import { getCachedLoudness, fetchLoudness, invalidateLoudness, type TrackLoudnessEntry } from '../utils/loudnessCache';
 import type { ToastType } from '../components/Toast';
@@ -71,6 +72,29 @@ let playGeneration = 0;
 // After a Cast session ends with playback left paused here, the track and
 // position to start from on the next Play (local audio still holds whatever
 // played before casting, so a plain resume would play the wrong thing).
+/** The three playback-sync fields, from what the server (or local storage) holds. */
+function playbackSyncFrom(mode: unknown, userEnabled: unknown) {
+  const playbackSyncMode = parsePlaybackSyncMode(mode);
+  const playbackSyncUserEnabled = userEnabled === true;
+  return {
+    playbackSyncMode,
+    playbackSyncUserEnabled,
+    syncPlaybackAcrossDevices: isPlaybackSyncEnabled(playbackSyncMode, playbackSyncUserEnabled),
+  };
+}
+
+async function postSettings(authHeaders: Record<string, string>, settings: Record<string, unknown>) {
+  const res = await fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders },
+    body: JSON.stringify(settings),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Could not save the setting.');
+  }
+}
+
 let pendingLocalStart: { index: number; positionSeconds: number } | null = null;
 // The listener said "Play here" to the take-over question: the next resume() goes ahead.
 let takeOverConfirmed = false;
@@ -658,8 +682,21 @@ export interface PlayerState {
   streamingQuality: 'auto' | '64k' | '128k' | '160k' | '320k' | 'source';
   playbackDebugLogging: boolean;
   castDebugLogging: boolean;
-  /** Per device: mirror this device's playback into the user's playback session (docs/playback_sessions.md). */
+  /**
+   * "Sync playback across devices" (docs/playback_sessions.md). The admin sets
+   * the mode (server setting); with `user` each listener decides with their own
+   * `playbackSyncUserEnabled` (stored per user on the server, so every device
+   * agrees). Both persist locally too so a reload applies them at once.
+   */
+  playbackSyncMode: PlaybackSyncMode;
+  playbackSyncUserEnabled: boolean;
+  /** Derived from the two above: sync runs for this user (SessionMirror, SessionFollower). */
   syncPlaybackAcrossDevices: boolean;
+  /** Admin only. */
+  savePlaybackSyncMode: (mode: PlaybackSyncMode) => Promise<void>;
+  savePlaybackSyncUserEnabled: (enabled: boolean) => Promise<void>;
+  /** Re-reads the two settings, e.g. after another device or an admin changed them. */
+  refreshPlaybackSync: () => Promise<void>;
   /** Another device plays the user's session and this idle one follows it (SessionFollower). Not persisted. */
   sessionFollow: FollowedOutput | null;
   /** Next/Previous pressed here while another device plays: ask before taking over. */
@@ -1309,6 +1346,8 @@ export const usePlayerStore = create<PlayerState>()(
         streamingQuality: 'auto' as 'auto' | '64k' | '128k' | '160k' | '320k' | 'source',
         playbackDebugLogging: false as boolean,
         castDebugLogging: false as boolean,
+        playbackSyncMode: 'off' as PlaybackSyncMode,
+        playbackSyncUserEnabled: false as boolean,
         syncPlaybackAcrossDevices: false as boolean,
         sessionFollow: null as FollowedOutput | null,
         takeOverPrompt: null as { action: 'play' | 'next' | 'previous'; outputName: string } | null,
@@ -1538,7 +1577,43 @@ export const usePlayerStore = create<PlayerState>()(
             authExpired: false,
             authExpiredMessage: null,
             authExpiredUsername: '',
+            // The next account's own choice comes from the server.
+            ...playbackSyncFrom(get().playbackSyncMode, false),
           });
+        },
+
+        savePlaybackSyncMode: async (mode: PlaybackSyncMode) => {
+          const previous = get().playbackSyncMode;
+          set(playbackSyncFrom(mode, get().playbackSyncUserEnabled));
+          try {
+            await postSettings(get().getAuthHeader(), { playbackSyncMode: mode });
+          } catch (error) {
+            set(playbackSyncFrom(previous, get().playbackSyncUserEnabled));
+            get().addToast(error instanceof Error ? error.message : 'Could not change playback sync.', 'error');
+          }
+        },
+
+        savePlaybackSyncUserEnabled: async (enabled: boolean) => {
+          const previous = get().playbackSyncUserEnabled;
+          set(playbackSyncFrom(get().playbackSyncMode, enabled));
+          try {
+            await postSettings(get().getAuthHeader(), { playbackSyncEnabled: enabled });
+          } catch (error) {
+            set(playbackSyncFrom(get().playbackSyncMode, previous));
+            get().addToast(error instanceof Error ? error.message : 'Could not change playback sync.', 'error');
+          }
+        },
+
+        refreshPlaybackSync: async () => {
+          if (!get().authToken) return;
+          try {
+            const res = await fetch('/api/settings', { headers: get().getAuthHeader() });
+            if (!res.ok) return;
+            const data = await res.json();
+            set(playbackSyncFrom(data.playbackSyncMode, data.playbackSyncEnabled));
+          } catch {
+            // Offline: keep what we know; the next refresh corrects it.
+          }
         },
 
         expireAuthSession: (message = 'Your session expired. Log in again to continue.') => {
@@ -1739,6 +1814,7 @@ export const usePlayerStore = create<PlayerState>()(
                 analyzerLoggingEnabled: data.analyzerLoggingEnabled === true,
                 loudnessLoggingEnabled: data.loudnessLoggingEnabled === true,
                 openSubsonicEnabled: data.openSubsonicEnabled !== false,
+                ...playbackSyncFrom(data.playbackSyncMode, data.playbackSyncEnabled),
                 loudnessNormEnabled: data.loudnessNormEnabled === true,
                 loudnessTargetLufs: typeof data.loudnessTargetLufs === 'number' ? data.loudnessTargetLufs : -18,
                 loudnessPreampDb: typeof data.loudnessPreampDb === 'number' ? data.loudnessPreampDb : 0,
@@ -3165,7 +3241,10 @@ export const usePlayerStore = create<PlayerState>()(
       // The library is always fetched fresh from the server on boot.
       merge: (persisted, current) => {
         const saved = (persisted || {}) as Partial<PlayerState>;
-        return { ...current, ...saved, ...resolveLoggingPreferences(saved) };
+        // Before the admin setting, the per-device flag itself was saved here;
+        // it is now always derived from what the server says.
+        const sync = playbackSyncFrom(saved.playbackSyncMode, saved.playbackSyncUserEnabled);
+        return { ...current, ...saved, ...resolveLoggingPreferences(saved), ...sync };
       },
       partialize: (state: PlayerState) => ({
         volume: state.volume,
@@ -3206,7 +3285,8 @@ export const usePlayerStore = create<PlayerState>()(
         streamingQuality: state.streamingQuality,
         playbackDebugLogging: state.playbackDebugLogging,
         castDebugLogging: state.castDebugLogging,
-        syncPlaybackAcrossDevices: state.syncPlaybackAcrossDevices,
+        playbackSyncMode: state.playbackSyncMode,
+        playbackSyncUserEnabled: state.playbackSyncUserEnabled,
         prebufferPolicy: state.prebufferPolicy,
         // Persisted locally too (though server-synced) so normalization applies
         // instantly on reload, before loadSettings round-trips.

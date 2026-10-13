@@ -34,7 +34,19 @@ sessionFollower.start(usePlayerStore, {
   toTracks: (session) => toPlayableTracks(session.queue.map((entry) => entry.track))
     .map((track, index) => ({ ...track, queueEntryId: session.queue[index].queueEntryId })),
   setPlaybackTime: (currentTime, duration) => setPlaybackTimeState({ currentTime, duration }),
+  onSettingsChanged: (keys) => {
+    if (keys.some((key) => key.startsWith('playbackSync'))) void usePlayerStore.getState().refreshPlaybackSync();
+  },
   log: logPlaybackInfo,
+});
+// The sync setting lives on the server (an admin's, or this user's from another
+// device). A device with sync off has no event stream to hear it turn on, so
+// every device re-reads it when it comes back to the foreground.
+let playbackSyncReadAt = 0;
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || Date.now() - playbackSyncReadAt < 15_000) return;
+  playbackSyncReadAt = Date.now();
+  void usePlayerStore.getState().refreshPlaybackSync();
 });
 
 // Auto-recover from stale lazy chunks. After a deploy the hashed route chunks

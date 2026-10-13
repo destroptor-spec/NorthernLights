@@ -200,7 +200,7 @@ path({
   description: 'Use a short-lived sse token in the query string because EventSource cannot set Authorization headers; a full session token is refused. '
     + 'Each event\'s data is JSON `{id, type, occurredAt, data}`. Types: playbackSession.created / updated / handedOff / deleted (fetch the session when its revision is newer), '
     + 'playbackSession.progress (every accepted output report: `{sessionId, revision, outputId, generation, report}`; live only, never replayed), '
-    + 'playlist.changed, annotation.changed, library.revision, and resync.required (the replay window was lost: re-fetch everything).',
+    + 'playlist.changed, annotation.changed, library.revision, settings.changed (`{keys}`: re-read those settings), and resync.required (the replay window was lost: re-fetch everything).',
   request: { query: z.object({ token: z.string().optional() }), headers: z.object({ 'last-event-id': z.string().optional() }) }, security: authed,
   responses: { 200: { description: 'Server-Sent Events stream', content: { 'text/event-stream': { schema: z.string() } } }, 401: { description: 'Authentication failed', content: json(schemas.ApiError) } },
 });

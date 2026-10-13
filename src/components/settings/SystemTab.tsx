@@ -4,6 +4,13 @@ import { usePlayerStore } from '../../store/index';
 import { useToast } from '../../hooks/useToast';
 import { ConfirmModal } from '../ConfirmModal';
 import { auroraApiRequest } from '../../api/auroraApi';
+import type { PlaybackSyncMode } from '../../../shared/playbackSync';
+
+const PLAYBACK_SYNC_OPTIONS: Array<{ mode: PlaybackSyncMode; label: string }> = [
+    { mode: 'off', label: 'Off' },
+    { mode: 'on', label: 'On for everyone' },
+    { mode: 'user', label: 'Each user decides' },
+];
 
 type SystemSubTab = 'processing' | 'hub' | 'service' | 'logging' | 'security';
 
@@ -76,6 +83,8 @@ export const SystemTab: React.FC = () => {
     const hubGenerationSchedule = usePlayerStore(state => state.hubGenerationSchedule);
     const systemPlaylistConfig = usePlayerStore(state => state.systemPlaylistConfig);
     const openSubsonicEnabled = usePlayerStore(state => state.openSubsonicEnabled);
+    const playbackSyncMode = usePlayerStore(state => state.playbackSyncMode);
+    const savePlaybackSyncMode = usePlayerStore(state => state.savePlaybackSyncMode);
     const turnstileEnabled = usePlayerStore(state => state.turnstileEnabled);
     const turnstileSiteKey = usePlayerStore(state => state.turnstileSiteKey);
     const turnstileSecretKey = usePlayerStore(state => state.turnstileSecretKey);
@@ -397,6 +406,27 @@ export const SystemTab: React.FC = () => {
 
             {activeSubTab === 'service' && (
                 <div>
+                    <div className="mb-6 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] p-4">
+                        <h4 className="text-lg font-semibold text-[var(--color-text-primary)]">Sync playback across devices</h4>
+                        <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]">
+                            Share what a listener plays, and their queue, between all their devices: an idle device shows the queue and progress, and Play there continues from the same spot.
+                        </p>
+                        <div className="mt-3 flex flex-wrap gap-2" role="radiogroup" aria-label="Sync playback across devices">
+                            {PLAYBACK_SYNC_OPTIONS.map((option) => (
+                                <button
+                                    key={option.mode}
+                                    type="button"
+                                    role="radio"
+                                    aria-checked={playbackSyncMode === option.mode}
+                                    onClick={() => void savePlaybackSyncMode(option.mode)}
+                                    className={`btn-tab ${playbackSyncMode === option.mode ? 'active' : ''}`}
+                                >
+                                    {option.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
                     <div className="mb-6 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] p-4">
                         <div className="flex items-start justify-between gap-4">
                             <div className="min-w-0">
