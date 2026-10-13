@@ -50,6 +50,7 @@ export const PlaybackTab: React.FC = () => {
     const prebufferPolicy = usePlayerStore(state => state.prebufferPolicy);
     const resumeStalenessDays = usePlayerStore(state => state.resumeStalenessDays);
     const playbackDebugLogging = usePlayerStore(state => state.playbackDebugLogging);
+    const syncPlaybackAcrossDevices = usePlayerStore(state => state.syncPlaybackAcrossDevices);
     const loudnessNormEnabled = usePlayerStore(state => state.loudnessNormEnabled);
     const loudnessTargetLufs = usePlayerStore(state => state.loudnessTargetLufs);
     const loudnessPreampDb = usePlayerStore(state => state.loudnessPreampDb);
@@ -233,6 +234,25 @@ export const PlaybackTab: React.FC = () => {
                         <p className="text-xs text-[var(--color-text-muted)] mt-1.5">
                             How much of a track you must listen to before it counts as played — this drives both your play counts/stats on the server and what gets scrobbled to Last.fm &amp; ListenBrainz. A 4-minute cap and a 30-second minimum track length always apply, matching standard scrobbling rules.
                         </p>
+                    </div>
+
+                    <div className="mb-6 p-4 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)]">
+                        <div className="flex items-center justify-between">
+                            <div className="pr-4">
+                                <p className="text-sm font-medium text-[var(--color-text-primary)]">Sync playback across devices</p>
+                                <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+                                    Share what this device plays, and its queue, with your other devices. Applies to this device only; turn it on on each device you use.
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setSettings({ syncPlaybackAcrossDevices: !syncPlaybackAcrossDevices })}
+                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${syncPlaybackAcrossDevices ? 'bg-[var(--color-primary)]' : 'bg-gray-200 dark:bg-[var(--color-bg-tertiary)]'}`}
+                                aria-pressed={syncPlaybackAcrossDevices}
+                                aria-label="Toggle sync playback across devices"
+                            >
+                                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${syncPlaybackAcrossDevices ? 'translate-x-6' : 'translate-x-1'}`} />
+                            </button>
+                        </div>
                     </div>
 
                     <div className="mb-6 p-4 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)]">

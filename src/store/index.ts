@@ -22,6 +22,7 @@ import {
 
 import { clearExternalCache } from '../utils/externalImagery';
 import { readSessionAuth, writeSessionAuth, clearSessionAuth } from '../utils/sessionAuth';
+import { sessionMirror } from '../utils/SessionMirror';
 import { computeLoudnessGainDb, type LoudnessData } from '../utils/loudness';
 import { getCachedLoudness, fetchLoudness, invalidateLoudness, type TrackLoudnessEntry } from '../utils/loudnessCache';
 import type { ToastType } from '../components/Toast';
@@ -654,6 +655,8 @@ export interface PlayerState {
   streamingQuality: 'auto' | '64k' | '128k' | '160k' | '320k' | 'source';
   playbackDebugLogging: boolean;
   castDebugLogging: boolean;
+  /** Per device: mirror this device's playback into the user's playback session (docs/playback_sessions.md). */
+  syncPlaybackAcrossDevices: boolean;
   prebufferPolicy: PrebufferPolicy;
 
   // Current User State
@@ -1279,6 +1282,7 @@ export const usePlayerStore = create<PlayerState>()(
         streamingQuality: 'auto' as 'auto' | '64k' | '128k' | '160k' | '320k' | 'source',
         playbackDebugLogging: false as boolean,
         castDebugLogging: false as boolean,
+        syncPlaybackAcrossDevices: false as boolean,
         prebufferPolicy: 'conservative' as PrebufferPolicy,
         currentUser: null as { id: string; username: string; role: string } | null,
 
@@ -2516,6 +2520,7 @@ export const usePlayerStore = create<PlayerState>()(
         },
 
         setPlaylist: async (playlist: TrackInfo[], startIndex: number = 0, source: QueueSource | null = null) => {
+          sessionMirror.notePlayIntent();
           const queuePlaylist = playlist.map((track) => cloneTrackForQueue(track));
           set({ playlist: queuePlaylist, currentIndex: startIndex, queueSource: source });
           persistContinuitySnapshot(true);
@@ -2809,6 +2814,7 @@ export const usePlayerStore = create<PlayerState>()(
         },
 
         resume: async () => {
+          sessionMirror.notePlayIntent();
           if (pendingLocalStart && !castManager.isConnected()) {
             await startPendingLocal();
             return;
@@ -3109,6 +3115,7 @@ export const usePlayerStore = create<PlayerState>()(
         streamingQuality: state.streamingQuality,
         playbackDebugLogging: state.playbackDebugLogging,
         castDebugLogging: state.castDebugLogging,
+        syncPlaybackAcrossDevices: state.syncPlaybackAcrossDevices,
         prebufferPolicy: state.prebufferPolicy,
         // Persisted locally too (though server-synced) so normalization applies
         // instantly on reload, before loadSettings round-trips.

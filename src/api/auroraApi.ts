@@ -23,6 +23,7 @@ export class AuroraApiError extends Error {
     public readonly status: number,
     public readonly code: string,
     public readonly requestId?: string,
+    public readonly details?: unknown,
   ) {
     super(message);
   }
@@ -65,6 +66,7 @@ export async function auroraApiRequest<T>(
       response.status,
       payload?.error?.code || 'REQUEST_FAILED',
       payload?.error?.requestId || response.headers.get('X-Request-Id') || undefined,
+      payload?.error?.details,
     );
   }
   if (payload && typeof payload === 'object' && 'data' in payload) {

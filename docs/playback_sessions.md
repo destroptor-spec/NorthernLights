@@ -921,3 +921,49 @@ columns):
 3. The following side: `/events` subscription, adopting the session queue, the
    device line, take-over prompts, pausing the replaced output. Also closes the
    event stream's fallback to the full session JWT (Security).
+
+### Phase 2 — implementation status
+
+**PR 1 (UUID entry IDs):** done, draft PR #101.
+
+**PR 2 (the playing side):**
+- Setting: `syncPlaybackAcrossDevices` in the player store, persisted per
+  device and off by default (Settings → Playback → "Sync playback across
+  devices").
+- `src/api/playbackSessions.ts`: the session calls. `AuroraApiError` now carries
+  the error `details`, so a conflict hands back `details.current`.
+- `src/utils/sessionQueueDiff.ts`: `planSessionPatch` turns "session queue A,
+  device queue B" into anchored operations.
+  - Removes come first. Kept entries already in order (a longest increasing
+    run) stay put; the rest move after their local predecessor. New entries
+    are inserted in runs of at most 200.
+  - Repeat and shuffle go in a `setTransport`.
+  - It sends one `replaceQueue` instead when fewer than half the local entries
+    are already in the session, when an entry ID names another track, or when
+    the plan would need 50 operations or more.
+  - Tested by a fuzz test against a simulator, and against the real service in
+    `playbackSessions.pg.test.ts`.
+- `src/utils/SessionMirror.ts`: the singleton, started in `main.tsx`.
+  - Playback starting (or the setting turned on while playing) claims the
+    output. The device reuses the user's latest session, or creates one if
+    there is none. A failed claim is retried every 30 s while still playing.
+  - Store changes to the queue, repeat or shuffle are debounced (250 ms) into
+    one PATCH at a time, planned from the session the server last confirmed.
+  - A conflict re-plans from `details.current`, up to 3 times. A lost answer is
+    retried with the same `requestId`. `TRACKS_UNAVAILABLE` stops mirroring
+    while those tracks are queued. A queue with legacy entry IDs is not
+    mirrored.
+  - Reports are the only writer of the current entry and play state. They go
+    out on every state, track and buffering change, then every 10 s while
+    playing and every 30 s while paused, with position from the shared
+    playback-time store (Cast or local).
+  - Starting or stopping casting claims again, so the output's name becomes
+    the Cast device's or this browser's (`describeThisDevice`, e.g. "Chrome on
+    Android").
+  - The credential is refreshed 5 minutes before it expires, and at once after
+    a 401.
+- **Replaced output:** a report or refresh answered with
+  `OUTPUT_GRANT_REPLACED` means another device plays now. This device stops
+  writing and reporting, and does not claim again until an explicit Play here
+  (`resume`, `setPlaylist` → `notePlayIntent`). Pausing it, and the prompt
+  for Next/Previous, come in PR 3.
