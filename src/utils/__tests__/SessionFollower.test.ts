@@ -333,3 +333,22 @@ it('remembers when it last heard from each playing device', async () => {
   expect(follower.lastHeardFrom('phone')).toBe(NOW + 4_000);
 });
 
+it('knows when another of my devices is casting to a given Cast device', async () => {
+  const casting = sessionOf([1, 2, 3]);
+  casting.output = { ...casting.output!, kind: 'cast' };
+  const { follower, connect } = setup({}, casting);
+  await connect();
+  expect(follower.castingElsewhere('NAD Forstærker')).toEqual({ outputId: 'phone' });
+  expect(follower.castingElsewhere('Stue TV')).toBeNull();
+
+  const browser = setup({}, sessionOf([1, 2, 3]));
+  await browser.connect();
+  expect(browser.follower.castingElsewhere('NAD Forstærker')).toBeNull();
+
+  const quiet = sessionOf([1, 2, 3]);
+  quiet.output = { ...quiet.output!, kind: 'cast', status: 'unreachable' };
+  const gone = setup({}, quiet);
+  await gone.connect();
+  expect(gone.follower.castingElsewhere('NAD Forstærker')).toBeNull();
+});
+

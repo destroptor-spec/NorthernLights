@@ -111,6 +111,18 @@ export class SessionFollower {
   private refetch: string | null = null;
   private rendering = false;
 
+  /**
+   * Another of the user's devices is casting to the Cast device with this
+   * name right now (the session's output). Picking that device in this
+   * device's Cast dialog would join its Cast session as a second sender.
+   */
+  castingElsewhere(castDeviceName: string): { outputId: string } | null {
+    const output = this.session?.output;
+    if (!output || !this.options || output.id === this.options.clientId()) return null;
+    if (output.kind !== 'cast' || output.status !== 'active' || output.name !== castDeviceName) return null;
+    return { outputId: output.id };
+  }
+
   /** When this device last heard a report from `outputId` (local clock), or 0. */
   lastHeardFrom(outputId: string): number {
     return this.heardAt.get(outputId) ?? 0;
