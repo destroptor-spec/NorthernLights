@@ -8,6 +8,8 @@ import { getAuroraStatusNamespace } from './castNamespace';
 import { CastDiagnosticsSync } from './castDiagnostics';
 import { playbackManager } from './PlaybackManager';
 import { usePlayerStore } from '../store';
+import { getAuroraClientId } from '../api/auroraApi';
+import { describeThisDevice } from './deviceName';
 import {
     POSITION_TICK_MS,
     RECEIVER_MESSAGE_MAX_BYTES,
@@ -157,6 +159,23 @@ function stripQueryParam(url: string, key: string): string {
     } catch {
         return url;
     }
+}
+
+/**
+ * Which of the user's devices wrote a sender log line ("Chrome-on-Android/1a2b":
+ * this browser, plus the end of its client ID). Several devices can be
+ * attached to one Cast session at once (prod 2026-10-13 19:50), and without
+ * this their lines cannot be told apart.
+ */
+let senderTag: string | null = null;
+export function castLogSenderTag(): string {
+    if (senderTag) return senderTag;
+    try {
+        senderTag = `${describeThisDevice().replace(/\s+/g, '-')}/${getAuroraClientId().slice(-4)}`;
+    } catch {
+        senderTag = describeThisDevice().replace(/\s+/g, '-');
+    }
+    return senderTag;
 }
 
 export class CastManager {
@@ -712,6 +731,7 @@ export class CastManager {
                     detail: [
                         `state=${this.state}`,
                         `sid=${this.getCurrentSessionId() || 'none'}`,
+                        `sender=${castLogSenderTag()}`,
                         safeDetail,
                     ].filter(Boolean).join(' '),
                 }),
