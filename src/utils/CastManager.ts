@@ -10,7 +10,7 @@ import { playbackManager } from './PlaybackManager';
 import { usePlayerStore } from '../store';
 import { getAuroraClientId } from '../api/auroraApi';
 import { describeThisDevice } from './deviceName';
-import { decideJoin } from './castJoinPolicy';
+import { decideJoin, isOwnLeaveDisconnect } from './castJoinPolicy';
 import {
     POSITION_TICK_MS,
     RECEIVER_MESSAGE_MAX_BYTES,
@@ -44,6 +44,7 @@ const toast = {
 };
 
 export type CastState = 'NO_DEVICES_AVAILABLE' | 'NOT_CONNECTED' | 'CONNECTING' | 'CONNECTED';
+
 /**
  * Status the receiver pushes on `urn:x-cast:aurora.status`.
  *
@@ -871,11 +872,14 @@ export class CastManager {
     private castingElsewhereCheck: ((castDeviceName: string) => boolean) | null = null;
     /** This sender left a session another device casts, on purpose: no handoff. */
     private leftJoinedSession = false;
+    /** When it left, so the disconnect that follows is not reported as a failure. */
+    private leftJoinedSessionAt = 0;
 
     private leaveIfCastingElsewhere(reason: string): boolean {
         const name = this.getCastDeviceName();
         if (!name || !this.castContext?.getCurrentSession?.() || !this.castingElsewhereCheck?.(name)) return false;
         this.leftJoinedSession = true;
+        this.leftJoinedSessionAt = Date.now();
         this.logCast('ok', 'cast-join-left', `reason=${reason} device=${name}`);
         try {
             // false: leave the session, do not stop the receiver.
@@ -2157,7 +2161,10 @@ export class CastManager {
                         this.rejoinHydrationRunId += 1;
                         this.clearRejoinHydrationTimer();
                         this.state = 'NOT_CONNECTED';
-                        this.setHealthStatus('error', 'Cast device disconnected.');
+                        // Leaving another device's Cast session on purpose
+                        // (cast-join-left) disconnects too; that is no failure.
+                        if (isOwnLeaveDisconnect(this.leftJoinedSessionAt, Date.now())) this.setHealthStatus('idle', '');
+                        else this.setHealthStatus('error', 'Cast device disconnected.');
                         this.notifyStateChange();
                     }
                 }

@@ -1,4 +1,4 @@
-import { decideJoin, JOIN_MEDIA_WAIT_MS } from '../castJoinPolicy';
+import { decideJoin, isOwnLeaveDisconnect, JOIN_MEDIA_WAIT_MS, OWN_LEAVE_QUIET_MS } from '../castJoinPolicy';
 
 /**
  * Prod 2026-10-13 19:53:48: the desktop's Cast dialog joined the NAD, paused
@@ -33,3 +33,16 @@ describe('decideJoin', () => {
     expect(decideJoin({ sdkHasMedia: false, receiverStatus: null, elapsedMs: JOIN_MEDIA_WAIT_MS })).toBe('fresh');
   });
 });
+
+describe('isOwnLeaveDisconnect', () => {
+  it('treats the disconnect right after leaving on purpose as that leave', () => {
+    expect(isOwnLeaveDisconnect(1_000, 1_400)).toBe(true);
+    expect(isOwnLeaveDisconnect(1_000, 1_000 + OWN_LEAVE_QUIET_MS - 1)).toBe(true);
+  });
+
+  it('still reports a real disconnect', () => {
+    expect(isOwnLeaveDisconnect(0, 5_000)).toBe(false);
+    expect(isOwnLeaveDisconnect(1_000, 1_000 + OWN_LEAVE_QUIET_MS)).toBe(false);
+  });
+});
+

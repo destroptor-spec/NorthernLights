@@ -39,3 +39,16 @@ export function decideJoin(input: {
   }
   return input.elapsedMs < max ? 'wait' : 'fresh';
 }
+
+/** A disconnect this soon after leaving another device's session is that leave. */
+export const OWN_LEAVE_QUIET_MS = 10_000;
+
+/**
+ * This device left a Cast session another of the user's devices casts
+ * (cast-join-left) at `leftAt`; the remote player's disconnect that follows
+ * is the leave itself, not a failure to report (prod 2026-10-13: "Cast device
+ * disconnected" right after picking the NAD).
+ */
+export function isOwnLeaveDisconnect(leftAt: number, now: number): boolean {
+  return leftAt > 0 && now - leftAt >= 0 && now - leftAt < OWN_LEAVE_QUIET_MS;
+}
