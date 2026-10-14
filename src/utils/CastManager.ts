@@ -893,6 +893,35 @@ export class CastManager {
         return !!sid && this.isConnected() && this.sessionFollowCapSid === sid;
     }
 
+    /**
+     * Phase 5 probe (docs/cast-receiver-output.md): asks the receiver to try
+     * an event stream and fetch with a 15-minute `sse` token, and to list the
+     * queue APIs it has, and to log the results as `receiver-probe` markers.
+     * It never edits the live queue: every inserted item uses up a CAF item
+     * ID, and this sender predicts those IDs (castQueueWindow.ts). Started by
+     * hand from the Cast diagnostics setting; an older receiver ignores it.
+     */
+    public async runReceiverProbe(sseToken: string): Promise<'started' | 'busy' | 'unanswered' | 'not-connected'> {
+        const session = this.castContext?.getCurrentSession?.() || null;
+        if (!session || typeof session.sendMessage !== 'function' || !this.isConnected()) return 'not-connected';
+        const requestId = ++this.auroraControlRequestId;
+        const answer = new Promise<boolean | null>((resolve) => {
+            const timer = setTimeout(() => { this.probeAcks.delete(requestId); resolve(null); }, 5_000);
+            this.probeAcks.set(requestId, (accepted) => { clearTimeout(timer); this.probeAcks.delete(requestId); resolve(accepted); });
+        });
+        try {
+            await session.sendMessage(getAuroraStatusNamespace(session), { type: 'aurora.probe', requestId, sseToken });
+        } catch (error) {
+            this.logCast('warn', 'receiver-probe-sent', `sid=${this.getCurrentSessionId() || 'none'} result=send-failed ${this.describeError(error)}`);
+        }
+        const accepted = await answer;
+        const result = accepted === null ? 'unanswered' : accepted ? 'started' : 'busy';
+        this.logCast(accepted ? 'ok' : 'warn', 'receiver-probe-sent', `sid=${this.getCurrentSessionId() || 'none'} result=${result}`);
+        return result;
+    }
+
+    private readonly probeAcks = new Map<number, (accepted: boolean) => void>();
+
     /** Called once per Cast session, when its receiver first says it can follow a session. */
     public addReceiverCanFollowListener(listener: () => void): () => void {
         this.receiverFollowListeners.add(listener);
@@ -1373,6 +1402,9 @@ export class CastManager {
                         'Cast queue insert acknowledged by receiver',
                         `ok=${Boolean(ack.ok)} inserted=${ack.inserted ?? 0} requestId=${ack.requestId ?? 'none'}${ack.detail ? ` ${ack.detail}` : ''}`,
                     );
+                } else if (status && (status as { type?: string }).type === 'aurora.probe.ack') {
+                    const ack = status as unknown as { requestId?: unknown; accepted?: unknown };
+                    this.probeAcks.get(Number(ack.requestId))?.(ack.accepted === true);
                 } else if (status && (status as { type?: string }).type === 'aurora.session.follow.ack') {
                     if (session !== this.castContext?.getCurrentSession?.()) return;
                     this.receiverFollowAcks.acknowledge(status as unknown as ReceiverFollowAck);

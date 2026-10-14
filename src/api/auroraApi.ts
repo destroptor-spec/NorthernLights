@@ -186,3 +186,12 @@ export function toLegacyPlaylist(playlist: Playlist, mediaToken: string, quality
 }
 
 export type { AlbumSummary, ArtistSummary, AuroraClient, Genre, PlaybackDescriptor, PlaybackSession, PlaybackSessionPatch, Playlist, Track };
+
+/** A short-lived scoped token (never a session) for a transport that cannot send headers. */
+export function mintScopedToken(authHeaders: Record<string, string>, scope: 'media' | 'sse', expiresIn: '5m' | '15m' | '1h' = '15m'): Promise<{ token: string; expiresAt: string }> {
+  return auroraApiRequest('/auth/scoped-token', authHeaders, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scope, expiresIn }),
+  });
+}

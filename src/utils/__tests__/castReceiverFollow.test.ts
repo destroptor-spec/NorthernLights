@@ -9,6 +9,7 @@ type Internals = {
     receiverCanFollowSession(): boolean;
     addReceiverCanFollowListener(listener: () => void): () => void;
     handOverSessionToReceiver(handover: Record<string, unknown>, reason: string): Promise<boolean>;
+    runReceiverProbe(sseToken: string): Promise<string>;
     logCast: jest.Mock;
 };
 
@@ -44,6 +45,7 @@ function harness(options: { answer?: (message: { requestId: number }) => unknown
         sessionFollowCapSid: '',
         receiverFollowListeners: new Set(),
         receiverFollowAcks: new ReceiverFollowAcks(),
+        probeAcks: new Map(),
         logCast: jest.fn(),
         applyAuroraStatus: jest.fn(),
         syncReceiverDiagnostics: jest.fn(),
@@ -96,4 +98,36 @@ it('reports a refusal', async () => {
     status(['session-follow']);
     await expect(manager.handOverSessionToReceiver(handover, 'claim')).resolves.toBe(false);
     expect(manager.logCast).toHaveBeenLastCalledWith('warn', 'receiver-session-handover', 'sid=cast-77 reason=claim generation=3 result=refused attempts=1');
+});
+
+describe('the receiver probe', () => {
+    it('asks the receiver to run it and says whether it started', async () => {
+        const { manager, sent } = harness({ answer: (message) => ({ type: 'aurora.probe.ack', requestId: message.requestId, accepted: true }) });
+        await expect(manager.runReceiverProbe('sse-15m')).resolves.toBe('started');
+        expect(sent).toEqual([{ ns: NS, message: { type: 'aurora.probe', requestId: 1, sseToken: 'sse-15m' } }]);
+        expect(manager.logCast).toHaveBeenLastCalledWith('ok', 'receiver-probe-sent', 'sid=cast-77 result=started');
+        expect(JSON.stringify(manager.logCast.mock.calls)).not.toContain('sse-15m');
+    });
+
+    it('tells a busy receiver from one without the probe', async () => {
+        const busy = harness({ answer: (message) => ({ type: 'aurora.probe.ack', requestId: message.requestId, accepted: false }) });
+        await expect(busy.manager.runReceiverProbe('sse-15m')).resolves.toBe('busy');
+
+        jest.useFakeTimers();
+        try {
+            const old = harness();
+            const result = old.manager.runReceiverProbe('sse-15m');
+            await jest.advanceTimersByTimeAsync(5_000);
+            await expect(result).resolves.toBe('unanswered');
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it('does nothing when not casting', async () => {
+        const { manager, session, disconnect } = harness();
+        disconnect();
+        await expect(manager.runReceiverProbe('sse-15m')).resolves.toBe('not-connected');
+        expect(session.sendMessage).not.toHaveBeenCalled();
+    });
 });

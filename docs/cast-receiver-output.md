@@ -1,8 +1,9 @@
 # Cast receiver as its own output (Phase 5 spec)
 
 Status: **in progress** (updated 2026-10-14). PR A shipped (#113–#115, with
-#118 and #122); PRs B–E are next. No receiver code is written until the probe
-below has run on the device matrix. Background and the full design: [playback_sessions.md](playback_sessions.md)
+#118 and #122); B and C are in review (#131, #132), the probe is built, and D
+and E follow. No receiver product code is written until the probe below has
+run on the device matrix. Background and the full design: [playback_sessions.md](playback_sessions.md)
 (Cast receiver as an output, Receiver authentication, Phase 5). Care rules:
 [cast-design-checklist.md](cast-design-checklist.md) and the receiver
 regression caution (one issue per PR, sender-side first, receiver only when
@@ -182,24 +183,49 @@ For sessions whose receiver follows the session:
 
 Older receivers keep today's sender behaviour.
 
-## Live checks before PR D (probe, no product change)
+## Live checks before PR D (probe, no product change) — built (feat/receiver-probe)
 
-`removeItems`, reorder and current-entry deletion have never been tried on a
-sender-loaded queue, and Castlite (B&O) may lack `EventSource` or `fetch`. A
-**probe build** of the receiver answers this per device before any product
-code:
+Castlite (B&O) may lack `EventSource` or `fetch`, and how long a stream
+survives idle is unknown per device. The probe answers this per device
+before any product code.
 
-- `EventSource` to `/api/v1/events` with a test `sse` token: does it connect,
-  and how long does it survive idle?
-- `fetch` polling of the same endpoint.
-- `insertItems`, `removeItems` and reorder on a queue loaded by the phone,
-  checking the receiver's status after each.
-- Results go to `/api/cast/log` as `receiver-probe` markers.
+**How it ships:** in the one receiver app, inside a new `aurora.probe`
+message handler that runs only when a sender asks. An older receiver ignores
+the message; nothing else in `receiver.html` changes. To run it: turn on
+Settings → Playback → Cast diagnostics, cast, then **Run probe** (shown only
+while casting). The sender mints a 15-minute `sse` token and sends it in
+`aurora.probe`; the receiver acknowledges (`aurora.probe.ack`, `accepted`
+false while a probe still runs) and logs to `/api/cast/log`:
+
+- `receiver-probe start`, then `receiver-probe env`: `eventSource`, `fetch`,
+  `readableStream`, `abortController`, the queue APIs it has (`queueApis=`),
+  whether `QUEUE_REORDER` exists, and the user agent;
+- `receiver-probe fetch`: a streaming fetch of `/api/v1/events` (status, ms to
+  headers, first chunk; the server's keepalive is every 20 s);
+- `receiver-probe eventsource`: an EventSource held for ten minutes, logging
+  open, every error (with `readyState`), reopen, and the close with
+  `heldMs`/`opens`/`errors`/`events`.
+
+The sender logs `receiver-probe-sent result=started|busy|unanswered`. The
+stream registers as client `receiver-probe`, which nothing sends commands to.
+
+**Not probed: queue edits.** The original plan inserted, removed and
+reordered items on the live queue. That is unsafe today: every inserted item
+uses up a CAF item ID, and the sender predicts the IDs of the items it
+inserts by counting (castQueueWindow.ts, `assignInsertedItemIds`). After a
+probe its Play Next and refills would map to the wrong items until
+contradicted (wrong-track jumps, failed mirrored edits, "Cast queue update
+unconfirmed"). An item inserted next could also be played. So the probe only
+lists which queue APIs exist; real `removeItems`/reorder behaviour is
+verified with PR D.
+
+**Consequence for PR D (and E):** once the receiver edits its own queue,
+the sender's item-ID prediction is wrong too. Before PR D ships, either the
+receiver reports its next item ID in `aurora.status` (and the sender
+corrects or drops its predictions), or the sender stops managing the
+window for a session whose receiver follows it (PR E's direction).
 
 Devices: NAD Forstærker, Stue TV, Beoplay A9, and one speaker group.
-
-**How the probe ships** is the one decision this spec needs (below). It must
-not touch the receiver app that everyone uses.
 
 ## Verification (Phase 5 "done when", from the design)
 
