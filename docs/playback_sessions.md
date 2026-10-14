@@ -1050,7 +1050,10 @@ without asking":
 
 PRs: (1) `POST /playback-sessions/:id/commands` and the live-only
 `playbackSession.command` event (server only); (2) the output carries
-commands out; (3) the idle device's choice, remembered target, remote controls
+commands out (`src/utils/sessionCommands.ts`: SessionFollower passes on
+commands for the grant this device holds, now; `load` adopts the session
+queue with its entry IDs via `playSessionQueue`; while casting, the player
+actions reach the Cast device and `session-command` goes to the Cast log); (3) the idle device's choice, remembered target, remote controls
 and device chip; (4) a casting device that is taken over stops casting and
 follows.
 

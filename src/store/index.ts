@@ -865,6 +865,8 @@ export interface PlayerState {
    */
   adoptSessionQueue: (tracks: TrackInfo[] | null, index: number, positionSeconds: number) => void;
   setSessionFollow: (follow: FollowedOutput | null) => void;
+  /** Remote control "load": replace the queue with these tracks (entry IDs kept) and play `index`. */
+  playSessionQueue: (tracks: TrackInfo[], index: number) => Promise<void>;
   resolveTakeOverPrompt: (takeOver: boolean) => Promise<void>;
   stop: () => void;
   nextTrack: (options?: NextTrackOptions) => Promise<void>;
@@ -2970,6 +2972,15 @@ export const usePlayerStore = create<PlayerState>()(
         setSessionFollow: (follow: FollowedOutput | null) => {
           if (get().sessionFollow === follow) return;
           set({ sessionFollow: follow, ...(follow ? {} : { takeOverPrompt: null }) });
+        },
+
+        playSessionQueue: async (tracks: TrackInfo[], index: number) => {
+          if (!tracks[index]) return;
+          // Not setPlaylist: that gives every entry a new ID, and these must
+          // stay the session's so the mirror sees nothing to change.
+          set({ playlist: tracks, currentIndex: index, queueSource: null });
+          persistContinuitySnapshot(true);
+          await get().playAtIndex(index);
         },
 
         resolveTakeOverPrompt: async (takeOver: boolean) => {

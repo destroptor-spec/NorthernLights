@@ -241,6 +241,13 @@ describe('Music Store Logic', () => {
       expect(playAtIndex).toHaveBeenCalledWith(1);
     });
 
+    it('a remote load keeps the session entry IDs and plays the chosen entry', async () => {
+      await usePlayerStore.getState().playSessionQueue(queue(), 2);
+      expect(usePlayerStore.getState().playlist.map((t) => t.queueEntryId)).toEqual([entry(1), entry(2), entry(3)]);
+      expect(usePlayerStore.getState()).toMatchObject({ currentIndex: 2, queueSource: null });
+      expect(playAtIndex).toHaveBeenCalledWith(2);
+    });
+
     it('does not ask when the other device is paused', async () => {
       usePlayerStore.getState().adoptSessionQueue(queue(), 1, 30);
       usePlayerStore.getState().setSessionFollow(follow({ state: 'paused' }));

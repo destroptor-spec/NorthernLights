@@ -12,10 +12,18 @@ import { isSameCastDevice, sessionMirror } from './utils/SessionMirror';
 import { sessionFollower } from './utils/SessionFollower';
 import { getAuroraClientId } from './api/auroraApi';
 import { toPlayableTracks } from './utils/playableTracks';
+import { applySessionCommand } from './utils/sessionCommands';
+import { getPlaybackSession } from './api/playbackSessions';
+import { playbackManager } from './utils/PlaybackManager';
+import type { PlaybackSession } from '../shared/api/v1';
 import { castManager } from './utils/CastManager';
 import { getPlaybackTimeSnapshot, setPlaybackTimeState } from './store/playbackTime';
 import { describeThisDevice } from './utils/deviceName';
 import { logPlaybackInfo } from './utils/playbackDebug';
+
+// The session's queue as playable tracks, each keeping its session entry ID.
+const sessionQueueTracks = (session: PlaybackSession) => toPlayableTracks(session.queue.map((entry) => entry.track))
+  .map((track, index) => ({ ...track, queueEntryId: session.queue[index].queueEntryId }));
 
 // "Sync playback across devices" (off unless the user turns it on here).
 sessionMirror.start(usePlayerStore, {
@@ -33,10 +41,31 @@ sessionMirror.start(usePlayerStore, {
 sessionFollower.start(usePlayerStore, {
   clientId: getAuroraClientId,
   mirror: sessionMirror,
-  toTracks: (session) => toPlayableTracks(session.queue.map((entry) => entry.track))
-    .map((track, index) => ({ ...track, queueEntryId: session.queue[index].queueEntryId })),
+  toTracks: sessionQueueTracks,
   setPlaybackTime: (currentTime, duration) => setPlaybackTimeState({ currentTime, duration }),
   onPlaybackSyncChanged: () => void usePlayerStore.getState().refreshPlaybackSync(),
+  // Another of the user's devices controls this one (it plays the session).
+  onCommand: (sessionId, command) => {
+    const store = () => usePlayerStore.getState();
+    void applySessionCommand(sessionId, command, {
+      resume: () => store().resume(),
+      pause: () => store().pause(),
+      next: () => store().nextTrack(),
+      previous: () => store().prevTrack(),
+      seek: (seconds) => playbackManager.seek(seconds),
+      playlist: () => store().playlist,
+      playAtIndex: (index) => store().playAtIndex(index),
+      playQueue: (tracks, index) => store().playSessionQueue(tracks, index),
+      fetchSession: (id) => getPlaybackSession(store().getAuthHeader(), id),
+      toTracks: sessionQueueTracks,
+      log: logPlaybackInfo,
+    })
+      .then((applied) => castManager.logSessionCommand(command.type, applied))
+      .catch((error) => {
+        castManager.logSessionCommand(command.type, false);
+        logPlaybackInfo('[SessionCommand] failed', error);
+      });
+  },
   log: logPlaybackInfo,
 });
 // The sync setting lives on the server (an admin's, or this user's from another
