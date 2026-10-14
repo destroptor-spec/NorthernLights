@@ -50,7 +50,9 @@ export const PlaybackTab: React.FC = () => {
     const prebufferPolicy = usePlayerStore(state => state.prebufferPolicy);
     const resumeStalenessDays = usePlayerStore(state => state.resumeStalenessDays);
     const playbackDebugLogging = usePlayerStore(state => state.playbackDebugLogging);
-    const syncPlaybackAcrossDevices = usePlayerStore(state => state.syncPlaybackAcrossDevices);
+    const playbackSyncMode = usePlayerStore(state => state.playbackSyncMode);
+    const playbackSyncUserEnabled = usePlayerStore(state => state.playbackSyncUserEnabled);
+    const savePlaybackSyncUserEnabled = usePlayerStore(state => state.savePlaybackSyncUserEnabled);
     const loudnessNormEnabled = usePlayerStore(state => state.loudnessNormEnabled);
     const loudnessTargetLufs = usePlayerStore(state => state.loudnessTargetLufs);
     const loudnessPreampDb = usePlayerStore(state => state.loudnessPreampDb);
@@ -236,24 +238,27 @@ export const PlaybackTab: React.FC = () => {
                         </p>
                     </div>
 
+                    {/* Only when the admin left it to each user (Settings → System). */}
+                    {playbackSyncMode === 'user' && (
                     <div className="mb-6 p-4 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)]">
                         <div className="flex items-center justify-between">
                             <div className="pr-4">
                                 <p className="text-sm font-medium text-[var(--color-text-primary)]">Sync playback across devices</p>
                                 <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                                    Share what this device plays, and its queue, with your other devices. Applies to this device only; turn it on on each device you use.
+                                    Share what you play, and your queue, between all your devices. Applies to every device you sign in on.
                                 </p>
                             </div>
                             <button
-                                onClick={() => setSettings({ syncPlaybackAcrossDevices: !syncPlaybackAcrossDevices })}
-                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${syncPlaybackAcrossDevices ? 'bg-[var(--color-primary)]' : 'bg-gray-200 dark:bg-[var(--color-bg-tertiary)]'}`}
-                                aria-pressed={syncPlaybackAcrossDevices}
+                                onClick={() => void savePlaybackSyncUserEnabled(!playbackSyncUserEnabled)}
+                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${playbackSyncUserEnabled ? 'bg-[var(--color-primary)]' : 'bg-gray-200 dark:bg-[var(--color-bg-tertiary)]'}`}
+                                aria-pressed={playbackSyncUserEnabled}
                                 aria-label="Toggle sync playback across devices"
                             >
-                                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${syncPlaybackAcrossDevices ? 'translate-x-6' : 'translate-x-1'}`} />
+                                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${playbackSyncUserEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
                             </button>
                         </div>
                     </div>
+                    )}
 
                     <div className="mb-6 p-4 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)]">
                         <div className="flex items-center justify-between">

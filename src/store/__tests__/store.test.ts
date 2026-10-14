@@ -249,4 +249,42 @@ describe('Music Store Logic', () => {
       expect(playAtIndex).toHaveBeenCalledWith(2);
     });
   });
+
+  // The admin decides; with "each user decides" the user's own choice, stored
+  // on the server, applies on all their devices.
+  describe('sync playback across devices', () => {
+    const originalFetch = global.fetch;
+    afterEach(() => { global.fetch = originalFetch; });
+    const respond = (body: unknown) => { global.fetch = jest.fn(async () => ({ ok: true, json: async () => body })) as never; };
+
+    it('reads the mode and the user choice from the server', async () => {
+      usePlayerStore.setState({ authToken: 'jwt', playbackSyncMode: 'off', playbackSyncUserEnabled: false, syncPlaybackAcrossDevices: false } as never);
+      respond({ playbackSyncMode: 'user', playbackSyncEnabled: true });
+      await usePlayerStore.getState().refreshPlaybackSync();
+      expect(usePlayerStore.getState()).toMatchObject({ playbackSyncMode: 'user', playbackSyncUserEnabled: true, syncPlaybackAcrossDevices: true });
+
+      respond({ playbackSyncMode: 'off', playbackSyncEnabled: true });
+      await usePlayerStore.getState().refreshPlaybackSync();
+      expect(usePlayerStore.getState().syncPlaybackAcrossDevices).toBe(false);
+    });
+
+    it('saves the user choice for all their devices, and goes back when that fails', async () => {
+      usePlayerStore.setState({ authToken: 'jwt', playbackSyncMode: 'user', playbackSyncUserEnabled: false, syncPlaybackAcrossDevices: false, toasts: [] } as never);
+      respond({});
+      await usePlayerStore.getState().savePlaybackSyncUserEnabled(true);
+      expect(JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body)).toEqual({ playbackSyncEnabled: true });
+      expect(usePlayerStore.getState().syncPlaybackAcrossDevices).toBe(true);
+
+      global.fetch = jest.fn(async () => ({ ok: false, json: async () => ({ error: 'nope' }) })) as never;
+      await usePlayerStore.getState().savePlaybackSyncUserEnabled(false);
+      expect(usePlayerStore.getState()).toMatchObject({ playbackSyncUserEnabled: true, syncPlaybackAcrossDevices: true });
+    });
+
+    it("forgets the signed-out user's choice", () => {
+      usePlayerStore.setState({ playbackSyncMode: 'user', playbackSyncUserEnabled: true, syncPlaybackAcrossDevices: true } as never);
+      usePlayerStore.getState().clearAuthToken();
+      expect(usePlayerStore.getState()).toMatchObject({ playbackSyncUserEnabled: false, syncPlaybackAcrossDevices: false });
+    });
+  });
 });
+

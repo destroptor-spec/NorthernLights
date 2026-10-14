@@ -42,6 +42,8 @@ export interface SessionMirrorOptions {
   log?: (message: string, detail?: unknown) => void;
   /** Another device plays the session now: stop playing here (one device at a time). */
   onDisplaced?: () => void;
+  /** The server refused with PLAYBACK_SYNC_DISABLED: sync is off for this account. */
+  onSyncDisabled?: () => void;
 }
 
 const SESSION_NAME = 'Listening';
@@ -171,6 +173,20 @@ export class SessionMirror {
     this.failedPatch = null;
   }
 
+  /**
+   * Sync was turned off on the server (by the admin, or by this user on
+   * another device) before this device heard: stop, and let the store
+   * re-read the setting instead of retrying.
+   */
+  private syncDisabled(error: unknown): boolean {
+    if (!(error instanceof AuroraApiError) || error.code !== 'PLAYBACK_SYNC_DISABLED') return false;
+    this.log('playback sync is off for this account');
+    this.release();
+    this.sessionId = null;
+    this.options?.onSyncDisabled?.();
+    return true;
+  }
+
   private onDisplaced() {
     this.log('another device is playing this session now');
     this.release();
@@ -206,6 +222,7 @@ export class SessionMirror {
         await this.flush();
         await this.report();
       } catch (error) {
+        if (this.syncDisabled(error)) return;
         if (error instanceof AuroraApiError && error.code === 'PLAYBACK_SESSION_NOT_FOUND') this.sessionId = null;
         this.log('claim failed', error);
         this.retryClaimLater();
@@ -287,6 +304,7 @@ export class SessionMirror {
       return;
     }
     this.failedPatch = null;
+    if (this.syncDisabled(error)) return;
     const current = currentSessionFromError(error);
     if (CONFLICT_CODES.has(error.code) && current) {
       this.session = current;
@@ -342,6 +360,7 @@ export class SessionMirror {
         this.onDisplaced();
         return;
       }
+      if (this.syncDisabled(error)) return;
       // An expired credential (a laptop that slept): renew it now.
       if (error instanceof AuroraApiError && error.status === 401) void this.refresh();
     }

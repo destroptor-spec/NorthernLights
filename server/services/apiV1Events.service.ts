@@ -11,7 +11,8 @@ export type ApiV1EventType =
   | 'playbackSession.progress'
   | 'playlist.changed'
   | 'annotation.changed'
-  | 'library.revision';
+  | 'library.revision'
+  | 'playbackSync.changed';
 
 export interface ApiV1Event {
   id: string;

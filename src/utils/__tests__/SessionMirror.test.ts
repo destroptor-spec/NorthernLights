@@ -59,13 +59,15 @@ function setup(initial: Partial<MirroredPlayerState> = {}, existing: PlaybackSes
   const mirror = new SessionMirror();
   let position = 41;
   const onDisplaced = jest.fn();
+  const onSyncDisabled = jest.fn();
   mirror.start(store, {
+    onSyncDisabled,
     api: api as unknown as typeof sessionApi,
     getPositionSeconds: () => position,
     getOutputName: () => 'Chrome on Android',
     onDisplaced,
   });
-  return { api, store, mirror, onDisplaced, setPosition: (seconds: number) => { position = seconds; } };
+  return { api, store, mirror, onDisplaced, onSyncDisabled, setPosition: (seconds: number) => { position = seconds; } };
 }
 
 const play = async (store: ReturnType<typeof setup>['store']) => {
@@ -310,3 +312,23 @@ describe('another device claiming the output', () => {
     expect(onDisplaced).not.toHaveBeenCalled();
   });
 });
+
+it('stops at once, without retrying, when the server says sync is off for the account', async () => {
+  const { api, store, mirror, onSyncDisabled } = setup();
+  api.claimPlaybackOutput.mockRejectedValueOnce(new AuroraApiError('off', 403, 'PLAYBACK_SYNC_DISABLED'));
+  await play(store);
+  expect(onSyncDisabled).toHaveBeenCalledTimes(1);
+  await jest.advanceTimersByTimeAsync(120_000);
+  expect(api.claimPlaybackOutput).toHaveBeenCalledTimes(1);
+
+  // Turned off while this device held the output: the next report stops it.
+  api.claimPlaybackOutput.mockClear();
+  mirror.notePlayIntent();
+  await jest.advanceTimersByTimeAsync(0);
+  expect(mirror.holdsOutput()).toBe(true);
+  api.reportPlaybackOutput.mockRejectedValueOnce(new AuroraApiError('off', 403, 'PLAYBACK_SYNC_DISABLED'));
+  await jest.advanceTimersByTimeAsync(REPORT_INTERVAL_PLAYING_MS);
+  expect(mirror.holdsOutput()).toBe(false);
+  expect(onSyncDisabled).toHaveBeenCalledTimes(2);
+});
+

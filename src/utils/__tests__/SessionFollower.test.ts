@@ -1,5 +1,6 @@
 import { createStore } from 'zustand/vanilla';
 import type { PlaybackSession } from '../../../shared/api/v1';
+import { AuroraApiError } from '../../api/auroraApi';
 import { SessionFollower, type EventSourceLike, type FollowerPlayerState } from '../SessionFollower';
 import type { TrackInfo } from '../fileSystem';
 import type { FollowedOutput } from '../sessionFollow';
@@ -80,7 +81,9 @@ function setup(initial: Partial<FollowerPlayerState> = {}, latest: PlaybackSessi
     ...initial,
   }));
   const follower = new SessionFollower();
+  const onPlaybackSyncChanged = jest.fn();
   follower.start(store, {
+    onPlaybackSyncChanged,
     api,
     createEventSource: (url) => {
       const source = new FakeEventSource(url);
@@ -97,7 +100,7 @@ function setup(initial: Partial<FollowerPlayerState> = {}, latest: PlaybackSessi
     source().open();
     await jest.advanceTimersByTimeAsync(0);
   };
-  return { api, mirror, store, follower, sources, source, connect, setPlaybackTime };
+  return { api, mirror, store, follower, sources, source, connect, setPlaybackTime, onPlaybackSyncChanged };
 }
 
 beforeEach(() => {
@@ -271,3 +274,18 @@ describe('another device taking over', () => {
     expect(mirror.noteReplaced).toHaveBeenCalledWith('session-1', 6);
   });
 });
+
+it('passes on whether sync is now on for this account', async () => {
+  const { source, connect, onPlaybackSyncChanged } = setup();
+  await connect();
+  source().emit('playbackSync.changed', { enabled: false });
+  expect(onPlaybackSyncChanged).toHaveBeenCalledWith(false);
+});
+
+it('takes a refused session read as sync being off', async () => {
+  const { api, connect, onPlaybackSyncChanged } = setup();
+  api.listPlaybackSessions.mockRejectedValueOnce(new AuroraApiError('off', 403, 'PLAYBACK_SYNC_DISABLED'));
+  await connect();
+  expect(onPlaybackSyncChanged).toHaveBeenCalledWith(false);
+});
+
