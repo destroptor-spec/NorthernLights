@@ -109,6 +109,9 @@ export class SessionFollower {
   /** The newest output grant seen per session; an older one is old news. */
   private readonly generations = new Map<string, number>();
   private readonly heardAt = new Map<string, number>();
+  /** Settles when the first session read after connecting is done. */
+  private firstRead: Promise<void> | null = null;
+  private resolveFirstRead: (() => void) | null = null;
   private fetching = false;
   private refetch: string | null = null;
   private rendering = false;
@@ -127,6 +130,22 @@ export class SessionFollower {
     // 22:16:20: the phone left a session it had just started).
     if (!castSessionId || output.castSessionId !== castSessionId) return null;
     return { outputId: output.id };
+  }
+
+  /**
+   * Resolves once the session has been read after connecting, or at once
+   * when there is no stream, or after `timeoutMs` at the latest.
+   */
+  ready(timeoutMs: number): Promise<void> {
+    if (!this.source || this.firstRead === null) return Promise.resolve();
+    return Promise.race([this.firstRead, new Promise<void>((resolve) => setTimeout(resolve, timeoutMs))]);
+  }
+
+  /** Another of the user's devices plays the session right now (or casts to a silent Cast device). */
+  anotherDevicePlaying(): boolean {
+    const output = this.session?.output;
+    if (!output || !this.options || output.id === this.options.clientId()) return false;
+    return output.status === 'active' || (output.status === 'unreachable' && output.kind === 'cast');
   }
 
   /** When this device last heard a report from `outputId` (local clock), or 0. */
@@ -201,6 +220,9 @@ export class SessionFollower {
     this.session = null;
     this.follow = null;
     this.generations.clear();
+    this.resolveFirstRead?.();
+    this.resolveFirstRead = null;
+    this.firstRead = null;
     const state = this.store?.getState();
     if (state?.sessionFollow) state.setSessionFollow(null);
   }
@@ -208,6 +230,7 @@ export class SessionFollower {
   private connect(token: string) {
     const create = this.options!.createEventSource ?? ((url: string) => new EventSource(url) as EventSourceLike);
     // The client ID tells the server this device can hear remote commands.
+    this.firstRead = new Promise<void>((resolve) => { this.resolveFirstRead = resolve; });
     const source = create(`${EVENTS_PATH}?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(this.options!.clientId())}`);
     this.source = source;
     let opened = false;
@@ -323,6 +346,17 @@ export class SessionFollower {
   }
 
   private async refresh(initial: boolean) {
+    try {
+      await this.readLatest(initial);
+    } finally {
+      if (initial) {
+        this.resolveFirstRead?.();
+        this.resolveFirstRead = null;
+      }
+    }
+  }
+
+  private async readLatest(initial: boolean) {
     const state = this.store?.getState();
     if (!state) return;
     try {

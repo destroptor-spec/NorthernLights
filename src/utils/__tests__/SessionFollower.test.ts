@@ -384,3 +384,21 @@ it('tells the server log which device it follows, and the commands it gets', asy
   expect(diagnostic).toHaveBeenCalledWith('ok', 'sync-command-received', 'type=pause from=phone');
 });
 
+it('is ready once it has read the session, and knows whether another device plays', async () => {
+  const { follower, connect } = setup();
+  let ready = false;
+  void follower.ready(10_000).then(() => { ready = true; });
+  await jest.advanceTimersByTimeAsync(0);
+  expect(ready).toBe(false);
+  await connect();
+  expect(ready).toBe(true);
+  expect(follower.anotherDevicePlaying()).toBe(true);
+
+  const nobody = setup({}, null);
+  await nobody.connect();
+  expect(nobody.follower.anotherDevicePlaying()).toBe(false);
+  // Without a stream there is nothing to wait for.
+  const off = setup({ syncPlaybackAcrossDevices: false });
+  await expect(off.follower.ready(10_000)).resolves.toBeUndefined();
+});
+
