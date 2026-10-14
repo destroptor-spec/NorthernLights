@@ -18,10 +18,13 @@ jest.mock('../../utils/CastManager', () => ({
     addHealthChangeListener: () => () => {},
     logCastButtonState: jest.fn(),
     noteUserCastLaunchIntent: jest.fn(),
+    noteUserCastDialogOpened: jest.fn(),
     disconnect: jest.fn(),
   },
 }));
 
+import { fireEvent } from '@testing-library/react';
+import { castManager } from '../../utils/CastManager';
 import { CastButton } from './CastButton';
 
 const emitCastState = (state: string) => {
@@ -80,5 +83,18 @@ describe('CastButton', () => {
     delete (window as any).cast;
     const { container } = render(<CastButton size="sm" />);
     expect(container.querySelector('google-cast-launcher')).toBeNull();
+  });
+
+  it('tells a tap that opens the Cast dialog while casting from one that starts a session', () => {
+    const { container } = render(<CastButton size="sm" />);
+    const shell = container.querySelector('.aurora-cast-button-shell')!;
+    fireEvent.pointerDown(shell);
+    expect(castManager.noteUserCastLaunchIntent).toHaveBeenCalledWith('launcher-sm');
+    expect(castManager.noteUserCastDialogOpened).not.toHaveBeenCalled();
+
+    emitCastState('CONNECTED');
+    fireEvent.pointerDown(shell);
+    expect(castManager.noteUserCastDialogOpened).toHaveBeenCalledWith('launcher-sm');
+    expect(castManager.noteUserCastLaunchIntent).toHaveBeenCalledTimes(1);
   });
 });

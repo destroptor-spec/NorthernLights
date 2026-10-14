@@ -94,7 +94,10 @@ export const CastButton: React.FC<CastButtonProps> = ({
   };
 
   const noteLaunchIntent = () => {
-    if (!isConnected && !isBusy) {
+    if (isConnected) {
+      // Opens the Cast dialog, whose "Stop casting" hands playback back here.
+      castManager.noteUserCastDialogOpened(`launcher-${size}`);
+    } else if (!isBusy) {
       castManager.noteUserCastLaunchIntent(`launcher-${size}`);
     }
   };
