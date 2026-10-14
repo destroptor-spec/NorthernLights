@@ -10,6 +10,7 @@ import { playbackManager } from './PlaybackManager';
 import { usePlayerStore } from '../store';
 import { getAuroraClientId } from '../api/auroraApi';
 import { describeThisDevice } from './deviceName';
+import { decideJoin } from './castJoinPolicy';
 import {
     POSITION_TICK_MS,
     RECEIVER_MESSAGE_MAX_BYTES,
@@ -596,15 +597,22 @@ export class CastManager {
      * has no media session object at all (so media.getStatus() is impossible):
      * the receiver answers with a MEDIA_STATUS the SDK ingests to rebuild it.
      */
+    private sendMediaGetStatus(session: any) {
+        if (!session || typeof session.sendMessage !== 'function') return;
+        this.watchdogMediaRequestId = (this.watchdogMediaRequestId % 100000) + 1;
+        try {
+            void Promise.resolve(session.sendMessage('urn:x-cast:com.google.cast.media', {
+                type: 'GET_STATUS',
+                requestId: this.watchdogMediaRequestId,
+            })).catch(() => { /* callers fall back to their own deadline */ });
+        } catch { /* likewise */ }
+    }
+
     private requestMediaStatusBroadcast(eventSilenceMs: number) {
         try {
             const session = this.castContext?.getCurrentSession?.();
             if (!session || typeof session.sendMessage !== 'function') return;
-            this.watchdogMediaRequestId = (this.watchdogMediaRequestId % 100000) + 1;
-            void session.sendMessage('urn:x-cast:com.google.cast.media', {
-                type: 'GET_STATUS',
-                requestId: this.watchdogMediaRequestId,
-            });
+            this.sendMediaGetStatus(session);
             const now = Date.now();
             if (now - this.lastWatchdogRecoveryLogAt > 30000) {
                 this.lastWatchdogRecoveryLogAt = now;
@@ -2753,6 +2761,15 @@ export class CastManager {
             return;
         }
 
+        // It may still be a join: another of the user's devices playing on
+        // this receiver, whose media the SDK has not heard about yet.
+        const joined = await this.waitForJoinedReceiverMedia(reason);
+        if (joined === 'stop') return;
+        if (joined) {
+            await this.hydrateSenderFromRemoteSession(joined, `${reason}:joined`);
+            return;
+        }
+
         // Fresh handover would load a queue whose media URLs the receiver
         // can't fetch from this origin — it would accept the load and sit
         // silently IDLE. End the session with an explicit error instead.
@@ -2781,6 +2798,41 @@ export class CastManager {
         this.applyFreshSessionStartupVolume(reason);
 
         await this.handleCastConnected();
+    }
+
+    /**
+     * A session that looks fresh waits up to JOIN_MEDIA_WAIT_MS for evidence
+     * (castJoinPolicy.ts). Returns the receiver's media to take on, null to
+     * go ahead with a fresh load, or 'stop' to load nothing.
+     */
+    private async waitForJoinedReceiverMedia(reason: string): Promise<any | null | 'stop'> {
+        const session = this.castContext?.getCurrentSession?.();
+        if (!session) return 'stop';
+        const startedAt = Date.now();
+        this.sendMediaGetStatus(session);
+        for (;;) {
+            if (this.castContext?.getCurrentSession?.() !== session) return 'stop';
+            const media = this.getHydratableMediaSession();
+            const elapsedMs = Date.now() - startedAt;
+            const verdict = decideJoin({
+                sdkHasMedia: this.hasActiveRemoteMediaSession(media),
+                receiverStatus: this.lastAuroraStatusAt >= startedAt ? this.lastAuroraStatus : null,
+                elapsedMs,
+            });
+            if (verdict === 'adopt') {
+                this.logCast('ok', 'cast-join-adopted', `reason=${reason} waitedMs=${elapsedMs}`);
+                return media;
+            }
+            if (verdict === 'hold') {
+                this.logCast('warn', 'cast-join-media-unseen', `reason=${reason} waitedMs=${elapsedMs} entryId=${this.lastAuroraStatus?.queueEntryId || 'none'} state=${this.lastAuroraStatus?.playerState || 'none'}`);
+                return 'stop';
+            }
+            if (verdict === 'fresh') {
+                if (elapsedMs > 0) this.logCast('ok', 'cast-join-none', `reason=${reason} waitedMs=${elapsedMs}`);
+                return null;
+            }
+            await this.delay(100);
+        }
     }
 
     private applyFreshSessionStartupVolume(reason: string) {
