@@ -123,6 +123,34 @@ describeDb('playback sessions', () => {
     expect(session.revision).toBe(2);
   });
 
+  it("rebuilds a device's queue from the operations the web app plans", async () => {
+    const { planSessionPatch } = await import('../../../src/utils/sessionQueueDiff');
+    let session = await create(trackIds(0, 20));
+    let seed = 11;
+    const random = () => { seed = (seed * 48271) % 2147483647; return seed / 2147483647; };
+    let next = 100;
+    const fresh = () => ({ entryId: crypto.randomUUID(), trackId: trackId(next++) });
+    for (let round = 0; round < 25; round += 1) {
+      // Round 10 starts something new, which is sent as one replaceQueue.
+      const local = round === 10
+        ? Array.from({ length: 8 }, fresh)
+        : session.queue.map((entry) => ({ entryId: entry.queueEntryId, trackId: entry.track.id })).filter(() => random() > 0.15);
+      for (let edit = 0; edit < 5; edit += 1) {
+        if (random() < 0.5 && local.length) {
+          const [moved] = local.splice(Math.floor(random() * local.length), 1);
+          local.splice(Math.floor(random() * (local.length + 1)), 0, moved);
+        } else {
+          local.splice(Math.floor(random() * (local.length + 1)), 0, fresh());
+        }
+      }
+      const operations = planSessionPatch(session, local, local.length ? 0 : null, { repeatMode: 'none', shuffle: false });
+      if (!operations.length) continue;
+      session = await patch(session, operations);
+      expect(session.queue.map((entry) => [entry.queueEntryId, entry.track.id])).toEqual(local.map((entry) => [entry.entryId, entry.trackId]));
+      expectContiguous(session);
+    }
+  });
+
   it('replaces the queue with fresh entry IDs and starts at the chosen index', async () => {
     let session = await create(trackIds(0, 3));
     const before = new Set(session.queue.map((entry) => entry.queueEntryId));

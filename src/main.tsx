@@ -8,6 +8,18 @@ import './utils/pwaInstall';
 import { usePlayerStore } from './store';
 import { createPwaUpdateHandler, reloadAppOnce, setPwaUpdateHandler, startPwaUpdateChecks, watchPwaUpdates } from './utils/pwaUpdate';
 import { OriginAccessGate } from './components/OriginAccessGate';
+import { sessionMirror } from './utils/SessionMirror';
+import { castManager } from './utils/CastManager';
+import { getPlaybackTimeSnapshot } from './store/playbackTime';
+import { describeThisDevice } from './utils/deviceName';
+import { logPlaybackInfo } from './utils/playbackDebug';
+
+// "Sync playback across devices" (off unless the user turns it on here).
+sessionMirror.start(usePlayerStore, {
+  getPositionSeconds: () => getPlaybackTimeSnapshot().currentTime,
+  getOutputName: () => (usePlayerStore.getState().castConnected && castManager.getCastDeviceName()) || describeThisDevice(),
+  log: logPlaybackInfo,
+});
 
 // Auto-recover from stale lazy chunks. After a deploy the hashed route chunks
 // change; a tab still running the old build that navigates to a not-yet-loaded
