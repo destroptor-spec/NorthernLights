@@ -87,7 +87,9 @@ function setup(initial: Partial<FollowerPlayerState> = {}, latest: PlaybackSessi
   const follower = new SessionFollower();
   const onPlaybackSyncChanged = jest.fn();
   const onCommand = jest.fn();
+  const diagnostic = jest.fn();
   follower.start(store, {
+    diagnostic,
     onPlaybackSyncChanged,
     onCommand,
     api,
@@ -106,7 +108,7 @@ function setup(initial: Partial<FollowerPlayerState> = {}, latest: PlaybackSessi
     source().open();
     await jest.advanceTimersByTimeAsync(0);
   };
-  return { api, mirror, store, follower, sources, source, connect, setPlaybackTime, onPlaybackSyncChanged, onCommand };
+  return { api, mirror, store, follower, sources, source, connect, setPlaybackTime, onPlaybackSyncChanged, onCommand, diagnostic };
 }
 
 beforeEach(() => {
@@ -373,4 +375,12 @@ it('knows when another of my devices is casting to the very Cast session this on
   expect(gone.follower.castingElsewhere('NAD Forstærker', '2bc27ebd')).toBeNull();
 });
 
+it('tells the server log which device it follows, and the commands it gets', async () => {
+  const { mirror, source, connect, diagnostic } = setup({ playbackState: 'playing' });
+  await connect();
+  expect(diagnostic).toHaveBeenCalledWith('ok', 'sync-follow', 'output=browser:NAD Forstærker was=none status=active');
+  mirror.currentGrant.mockReturnValue({ sessionId: 'session-1', outputId: 'laptop', generation: 7 });
+  source().emit('playbackSession.command', { sessionId: 'session-1', outputId: 'laptop', generation: 7, issuedBy: 'phone', command: { type: 'pause' } });
+  expect(diagnostic).toHaveBeenCalledWith('ok', 'sync-command-received', 'type=pause from=phone');
+});
 

@@ -42,6 +42,8 @@ export interface SessionMirrorOptions {
   /** While casting: the Cast session this device sends to (told to the server with the claim). */
   getCastSessionId?: () => string | null;
   log?: (message: string, detail?: unknown) => void;
+  /** Server-side diagnostics (`sync-…` markers in the Cast log). */
+  diagnostic?: (level: 'ok' | 'warn' | 'error', marker: string, detail?: string) => void;
   /**
    * Another device plays the session now: stop playing here (one device at a
    * time). `replacement` is the new output, when known, so a device that took
@@ -141,6 +143,7 @@ export class SessionMirror {
     const state = this.store?.getState();
     if (!grant || !state || state.castConnected) return;
     const entryId = state.currentIndex !== null ? state.playlist[state.currentIndex]?.queueEntryId : undefined;
+    this.options?.diagnostic?.('ok', 'sync-closing', `state=${state.playbackState}`);
     void this.api.reportPlaybackOutput(grant.credential, grant.sessionId, {
       seq: ++grant.seq,
       state: 'stopped',
@@ -248,6 +251,7 @@ export class SessionMirror {
   private syncDisabled(error: unknown): boolean {
     if (!(error instanceof AuroraApiError) || error.code !== 'PLAYBACK_SYNC_DISABLED') return false;
     this.log('playback sync is off for this account');
+    this.options?.diagnostic?.('warn', 'sync-disabled-by-server');
     this.release();
     this.sessionId = null;
     this.options?.onSyncDisabled?.();
@@ -256,6 +260,8 @@ export class SessionMirror {
 
   private onDisplaced(replacement: ReplacingOutput | null = null) {
     this.log('another device is playing this session now');
+    this.options?.diagnostic?.('ok', 'sync-replaced',
+      `by=${replacement ? `${replacement.kind}:${replacement.name ?? 'unnamed'}` : 'unknown'} wasPlaying=${this.store?.getState().playbackState === 'playing'}`);
     this.release();
     this.displaced = true;
     if (this.claimRetryTimer) clearTimeout(this.claimRetryTimer);
@@ -283,6 +289,8 @@ export class SessionMirror {
         // Settings may have changed while the claim was on its way.
         if (!this.enabled(this.store!.getState())) return;
         this.release();
+        this.options?.diagnostic?.('ok', 'sync-claimed',
+          `kind=${state.castConnected ? 'cast' : 'browser'} generation=${credential.generation} castSession=${castSessionId || 'none'} state=${this.store!.getState().playbackState}`);
         this.sessionId = sessionId;
         this.grant = { sessionId, credential, seq: 0 };
         this.session = session;
@@ -294,6 +302,7 @@ export class SessionMirror {
         if (this.syncDisabled(error)) return;
         if (error instanceof AuroraApiError && error.code === 'PLAYBACK_SESSION_NOT_FOUND') this.sessionId = null;
         this.log('claim failed', error);
+        this.options?.diagnostic?.('warn', 'sync-claim-failed', error instanceof AuroraApiError ? `code=${error.code}` : 'network');
         this.retryClaimLater();
       }
     })().finally(() => { this.claiming = null; });
