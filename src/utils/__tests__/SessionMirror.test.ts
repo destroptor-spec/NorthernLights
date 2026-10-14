@@ -433,3 +433,11 @@ it('tells the server log about claims, being replaced and closing', async () => 
   mirror.stop();
 });
 
+it('does not claim while this device is leaving another device\'s Cast session', async () => {
+  const diagnostic = jest.fn();
+  const { api, store } = setup({ castConnected: true }, [], { canClaim: () => false, diagnostic });
+  await play(store);
+  expect(api.claimPlaybackOutput).not.toHaveBeenCalled();
+  expect(diagnostic).toHaveBeenCalledWith('ok', 'sync-claim-skipped', 'reason=leaving-joined-cast-session');
+});
+
