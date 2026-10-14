@@ -16,6 +16,8 @@ type Harness = {
   clearUserSessionIntentTimer: jest.Mock;
   handOffToLocalAfterSessionEnd: jest.Mock;
   setCastingElsewhereCheck(check: ((name: string) => boolean) | null): void;
+  stopCastingBecauseReplaced(by: string): boolean;
+  stop: jest.Mock;
   hydrateSenderFromRemoteSession: jest.Mock;
   handleCastConnected: jest.Mock;
   logCast: jest.Mock;
@@ -36,6 +38,8 @@ function harness() {
     handOffToLocalAfterSessionEnd: jest.fn(),
     resetCastEndIntent: jest.fn(),
     clearUserSessionIntentTimer: jest.fn(),
+    isConnected: () => true,
+    stop: jest.fn(),
     staleTransportRecoveryPromise: null,
     userSessionRequestPending: true,
     notifyStateChange: jest.fn(),
@@ -203,5 +207,19 @@ it("takes on none of the receiver's state while leaving (it is the other device'
   Object.assign(manager, { syncCurrentTrackFromSession: sync });
   expect(await realHydrate.call(manager, nadMedia, 'remote-player-state-changed')).toBe(false);
   expect(sync).not.toHaveBeenCalled();
+});
+
+it('stops casting when another device took over elsewhere, and hands nothing back to this device', () => {
+  const { manager, endCurrentSession } = harness();
+  expect(manager.stopCastingBecauseReplaced('browser:Chrome on Android')).toBe(true);
+  expect(manager.stop).toHaveBeenCalled();
+  expect(endCurrentSession).toHaveBeenCalledWith(true);
+  expect(manager.logCast).toHaveBeenCalledWith('ok', 'cast-stopped-replaced', 'by=browser:Chrome on Android');
+  manager.afterSessionEnded({ index: 1, positionSeconds: 30, wasPlaying: true });
+  expect(manager.handOffToLocalAfterSessionEnd).not.toHaveBeenCalled();
+  expect(manager.logCast).toHaveBeenCalledWith('ok', 'cast-ended-handoff skipped', 'reason=replaced');
+  // A later, ordinary end hands back as usual.
+  manager.afterSessionEnded({ index: 1, positionSeconds: 30, wasPlaying: true });
+  expect(manager.handOffToLocalAfterSessionEnd).toHaveBeenCalledTimes(1);
 });
 

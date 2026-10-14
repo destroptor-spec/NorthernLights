@@ -1080,6 +1080,13 @@ playback alongside the Cast device, which most likely plays on. Infinity does
 not top up the queue on a following device (it is a copy). Infinity
 continuing with the phone asleep needs Phase 4/5.
 
+Step 4 (taken over while casting): `actionWhenReplaced` (SessionMirror.ts)
+decides. Another device casting to the same Cast device changes nothing. A
+take-over that plays elsewhere makes a casting device stop casting
+(`castManager.stopCastingBecauseReplaced`: stop + `endCurrentSession(true)`,
+`cast-stopped-replaced`, no handoff to this device), so it becomes idle and
+follows the new device. With the replacing output unknown it only pauses.
+
 PRs: (1) `POST /playback-sessions/:id/commands` and the live-only
 `playbackSession.command` event (server only); (2) the output carries
 commands out (`src/utils/sessionCommands.ts`: SessionFollower passes on
