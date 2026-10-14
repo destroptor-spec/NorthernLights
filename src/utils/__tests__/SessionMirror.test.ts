@@ -33,7 +33,7 @@ const sessionOf = (tracks: TrackInfo[], revision: number, extra: Partial<Playbac
 
 const credential = { token: 'output-token', expiresAt: new Date(Date.now() + 3_600_000).toISOString(), outputId: 'phone', generation: 1 };
 
-function setup(initial: Partial<MirroredPlayerState> = {}, existing: PlaybackSession[] = []) {
+function setup(initial: Partial<MirroredPlayerState> = {}, existing: PlaybackSession[] = [], extraOptions: Partial<import('../SessionMirror').SessionMirrorOptions> = {}) {
   let revision = 1;
   const api = {
     listPlaybackSessions: jest.fn(async () => existing),
@@ -66,6 +66,7 @@ function setup(initial: Partial<MirroredPlayerState> = {}, existing: PlaybackSes
     getPositionSeconds: () => position,
     getOutputName: () => 'Chrome on Android',
     onDisplaced,
+    ...extraOptions,
   });
   return { api, store, mirror, onDisplaced, onSyncDisabled, setPosition: (seconds: number) => { position = seconds; } };
 }
@@ -102,6 +103,17 @@ it('claims as a Cast output while casting, under the Cast device name', async ()
   const { api, store } = setup({ castConnected: true });
   await play(store);
   expect(api.claimPlaybackOutput).toHaveBeenCalledWith(expect.anything(), 'session-1', { kind: 'cast', name: 'Chrome on Android' });
+});
+
+it('names its Cast session in the claim, and claims again when that session changes', async () => {
+  const { api, store, mirror } = setup({ castConnected: true }, [], { getCastSessionId: () => castSessionId });
+  let castSessionId = '2bc27ebd';
+  await play(store);
+  expect(api.claimPlaybackOutput).toHaveBeenLastCalledWith(expect.anything(), 'session-1', { kind: 'cast', name: 'Chrome on Android', castSessionId: '2bc27ebd' });
+  castSessionId = 'd7ad4a51';
+  mirror.noteCastSessionChanged();
+  await jest.advanceTimersByTimeAsync(0);
+  expect(api.claimPlaybackOutput).toHaveBeenLastCalledWith(expect.anything(), 'session-1', { kind: 'cast', name: 'Chrome on Android', castSessionId: 'd7ad4a51' });
 });
 
 it("reuses the user's latest session instead of creating one", async () => {

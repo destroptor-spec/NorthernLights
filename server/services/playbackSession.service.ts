@@ -131,6 +131,13 @@ const TERMINAL_OUTPUT_STATES = new Set(['stopped', 'idle', 'error']);
  * lift and a killed receiver look the same. It ends only when the output says
  * so itself, and a new claim replaces it.
  */
+/**
+ * The Cast session each `cast` output sends to, by playback session, for the
+ * grant that named it. Only a hint, so it is not stored: after a restart it
+ * is unknown, and clients then act as if no other device casts there.
+ */
+const castSessionIds = new Map<string, { generation: number; castSessionId: string }>();
+
 function serializeOutput(row: SessionRow, now = Date.now()): PlaybackOutput | null {
   if (!row.output_id || !row.output_kind || !row.output_claimed_at) return null;
   const reported = row.output_reported_at && row.output_state ? {
@@ -145,10 +152,13 @@ function serializeOutput(row: SessionRow, now = Date.now()): PlaybackOutput | nu
   const status = reported && TERMINAL_OUTPUT_STATES.has(reported.state)
     ? 'ended'
     : now - lastHeard > OUTPUT_UNREACHABLE_AFTER_MS ? 'unreachable' : 'active';
+  const cast = castSessionIds.get(row.id);
+  const castSessionId = cast && cast.generation === Number(row.output_generation) ? cast.castSessionId : null;
   return {
     id: row.output_id,
     kind: row.output_kind,
     name: row.output_name,
+    ...(row.output_kind === 'cast' ? { castSessionId } : {}),
     generation: Number(row.output_generation),
     claimedAt: new Date(row.output_claimed_at).toISOString(),
     status,
@@ -502,6 +512,12 @@ export async function claimPlaybackOutput(input: {
     if (!current) throw new PlaybackSessionNotFoundError();
     throw new PlaybackSessionRevisionError(current);
   }
+  const generation = Number((result.rows[0] as SessionRow).output_generation);
+  if (input.output.kind === 'cast' && input.output.castSessionId) {
+    castSessionIds.set(input.sessionId, { generation, castSessionId: input.output.castSessionId });
+  } else {
+    castSessionIds.delete(input.sessionId);
+  }
   const session = await serializeSession(db, result.rows[0] as SessionRow);
   publishApiV1Event(input.userId, 'playbackSession.handedOff', {
     sessionId: session.id,
@@ -509,6 +525,7 @@ export async function claimPlaybackOutput(input: {
     outputId: input.clientId,
     outputKind: session.output!.kind,
     outputName: session.output!.name,
+    castSessionId: session.output!.castSessionId ?? null,
     generation: session.output!.generation,
     revision: session.revision,
   });

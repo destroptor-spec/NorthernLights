@@ -1063,7 +1063,10 @@ connection (it sends, but hears no media status, receiver status or load
 acknowledgements), so it loaded its own queue and kept re-sending it. With
 sync on, when the session says another of the user's devices is casting to
 the picked Cast device (`SessionFollower.castingElsewhere`: output kind `cast`,
-active, same name), the device leaves the Cast session again
+active, same name, and the same Cast session: a cast claim carries
+`castSessionId`, held in server memory per grant, and the device re-claims when
+its Cast session changes. Picking the device on Android starts a new Cast
+session instead of joining, which must not count; prod 22:16:20), the device leaves the Cast session again
 (`endCurrentSession(false)`, `cast-join-left`, no handoff) and remembers that
 device as the remote target, so it controls the Cast device through the
 device casting to it.

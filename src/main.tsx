@@ -29,6 +29,7 @@ const sessionQueueTracks = (session: PlaybackSession) => toPlayableTracks(sessio
 sessionMirror.start(usePlayerStore, {
   getPositionSeconds: () => getPlaybackTimeSnapshot().currentTime,
   getOutputName: () => (usePlayerStore.getState().castConnected && castManager.getCastDeviceName()) || describeThisDevice(),
+  getCastSessionId: () => castManager.getCastSessionId() || null,
   log: logPlaybackInfo,
   onSyncDisabled: () => void usePlayerStore.getState().refreshPlaybackSync(),
   // One device plays at a time: another device took over, so stop here.
@@ -78,10 +79,24 @@ sessionFollower.start(usePlayerStore, {
 // unreliable (CastManager.setCastingElsewhereCheck).
 castManager.setCastingElsewhereCheck((castDeviceName) => {
   if (!usePlayerStore.getState().syncPlaybackAcrossDevices) return false;
-  const other = sessionFollower.castingElsewhere(castDeviceName);
+  const other = sessionFollower.castingElsewhere(castDeviceName, castManager.getCastSessionId() || null);
   if (!other) return false;
   usePlayerStore.setState({ remoteControlOutputId: other.outputId });
   return true;
+});
+
+// A new Cast session while still casting (a stale-transport reconnect):
+// tell the server, so joins of the new session are recognised.
+let lastCastSessionId = '';
+castManager.addStateChangeListener((state) => {
+  if (state === 'CONNECTED') {
+    const castSessionId = castManager.getCastSessionId();
+    if (castSessionId && lastCastSessionId && castSessionId !== lastCastSessionId) sessionMirror.noteCastSessionChanged();
+    if (castSessionId) lastCastSessionId = castSessionId;
+  } else if (state !== 'CONNECTING') {
+    // Only a real disconnect forgets it; a reconnect passes through CONNECTING.
+    lastCastSessionId = '';
+  }
 });
 
 // The sync setting lives on the server (an admin's, or this user's from another

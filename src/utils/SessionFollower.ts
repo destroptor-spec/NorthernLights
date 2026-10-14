@@ -116,10 +116,14 @@ export class SessionFollower {
    * name right now (the session's output). Picking that device in this
    * device's Cast dialog would join its Cast session as a second sender.
    */
-  castingElsewhere(castDeviceName: string): { outputId: string } | null {
+  castingElsewhere(castDeviceName: string, castSessionId: string | null): { outputId: string } | null {
     const output = this.session?.output;
     if (!output || !this.options || output.id === this.options.clientId()) return null;
     if (output.kind !== 'cast' || output.status !== 'active' || output.name !== castDeviceName) return null;
+    // Only the very Cast session it sends to: picking the device may also
+    // start a new session, which ends the other device's (prod 2026-10-13
+    // 22:16:20: the phone left a session it had just started).
+    if (!castSessionId || output.castSessionId !== castSessionId) return null;
     return { outputId: output.id };
   }
 

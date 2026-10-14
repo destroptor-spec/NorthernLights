@@ -349,22 +349,28 @@ it('remembers when it last heard from each playing device', async () => {
   expect(follower.lastHeardFrom('phone')).toBe(NOW + 4_000);
 });
 
-it('knows when another of my devices is casting to a given Cast device', async () => {
+it('knows when another of my devices is casting to the very Cast session this one is in', async () => {
   const casting = sessionOf([1, 2, 3]);
-  casting.output = { ...casting.output!, kind: 'cast' };
+  casting.output = { ...casting.output!, kind: 'cast', castSessionId: '2bc27ebd' };
   const { follower, connect } = setup({}, casting);
   await connect();
-  expect(follower.castingElsewhere('NAD Forstærker')).toEqual({ outputId: 'phone' });
-  expect(follower.castingElsewhere('Stue TV')).toBeNull();
+  expect(follower.castingElsewhere('NAD Forstærker', '2bc27ebd')).toEqual({ outputId: 'phone' });
+  expect(follower.castingElsewhere('Stue TV', '2bc27ebd')).toBeNull();
+  // Picking the device started a new session (prod 22:16:20): not a join.
+  expect(follower.castingElsewhere('NAD Forstærker', '3da7d650')).toBeNull();
+  expect(follower.castingElsewhere('NAD Forstærker', null)).toBeNull();
 
-  const browser = setup({}, sessionOf([1, 2, 3]));
-  await browser.connect();
-  expect(browser.follower.castingElsewhere('NAD Forstærker')).toBeNull();
+  const unknown = sessionOf([1, 2, 3]);
+  unknown.output = { ...unknown.output!, kind: 'cast', castSessionId: null };
+  const restarted = setup({}, unknown);
+  await restarted.connect();
+  expect(restarted.follower.castingElsewhere('NAD Forstærker', '2bc27ebd')).toBeNull();
 
   const quiet = sessionOf([1, 2, 3]);
-  quiet.output = { ...quiet.output!, kind: 'cast', status: 'unreachable' };
+  quiet.output = { ...quiet.output!, kind: 'cast', status: 'unreachable', castSessionId: '2bc27ebd' };
   const gone = setup({}, quiet);
   await gone.connect();
-  expect(gone.follower.castingElsewhere('NAD Forstærker')).toBeNull();
+  expect(gone.follower.castingElsewhere('NAD Forstærker', '2bc27ebd')).toBeNull();
 });
+
 

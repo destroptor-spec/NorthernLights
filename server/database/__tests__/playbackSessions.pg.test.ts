@@ -296,6 +296,20 @@ describeDb('playback sessions', () => {
       expect((await sessions.getPlaybackSession(userId, created.id))!.output!.kind).toBe('cast');
     });
 
+    it('remembers the Cast session a cast output sends to, for its grant only', async () => {
+      const created = await create(trackIds(0, 2));
+      const onPhone = await sessions.claimPlaybackOutput({
+        userId, clientId: 'phone-1234', sessionId: created.id, output: { kind: 'cast', name: 'NAD Forstærker', castSessionId: '2bc27ebd' },
+      });
+      expect(onPhone.output).toMatchObject({ kind: 'cast', castSessionId: '2bc27ebd' });
+      expect((await sessions.getPlaybackSession(userId, created.id))!.output!.castSessionId).toBe('2bc27ebd');
+      // Another claim replaces it; a browser output has none.
+      const onLaptop = await sessions.claimPlaybackOutput({ userId, clientId: 'laptop-5678', sessionId: created.id, output: { kind: 'browser' } });
+      expect(onLaptop.output!.castSessionId).toBeUndefined();
+      const castWithout = await sessions.claimPlaybackOutput({ userId, clientId: 'phone-1234', sessionId: created.id, output: { kind: 'cast', name: 'NAD Forstærker' } });
+      expect(castWithout.output!.castSessionId).toBeNull();
+    });
+
     it('moves playback to another device at any time, without a revision, and retires the old grant', async () => {
       let session = await create(trackIds(0, 2));
       const onPhone = await claim(session, 'phone-1234');
