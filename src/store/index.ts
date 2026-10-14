@@ -101,6 +101,8 @@ let pendingLocalStart: { index: number; positionSeconds: number } | null = null;
 // The listener chose "on this device" in "Play where?": the next routed
 // action runs here instead of asking again.
 let takeOverConfirmed = false;
+// A device that carried out a remote command reports within this time.
+const REMOTE_COMMAND_CONFIRM_MS = 5_000;
 // What the listener did when "Play where?" opened, both ways it can go.
 let pendingPlayWhere: { remote: RemoteAction | null; local: () => Promise<void> } | null = null;
 
@@ -1156,8 +1158,25 @@ export const usePlayerStore = create<PlayerState>()(
           auth: get().getAuthHeader(),
           sessionRevision: () => sessionFollower.sessionRevision(),
         });
-        if (result === 'replaced') get().addToast(`${target.name} isn't playing any more.`, 'info');
-        else if (result === 'failed') get().addToast(`Couldn't reach ${target.name}.`, 'error');
+        if (result === 'replaced' || result === 'unreachable') {
+          // Asking "Play where?" again beats sending into the void.
+          if (get().remoteControlOutputId === target.outputId) set({ remoteControlOutputId: null });
+          get().addToast(result === 'replaced' ? `${target.name} isn't playing any more.` : `${target.name} isn't reachable.`, 'info');
+          return;
+        }
+        if (result === 'failed') {
+          get().addToast(`Couldn't reach ${target.name}.`, 'error');
+          return;
+        }
+        // Connected but frozen (a phone asleep in the background): the
+        // device reports right after acting, so silence means it did not.
+        const sentAt = Date.now();
+        setTimeout(() => {
+          const follow = get().sessionFollow;
+          if (!follow || follow.outputId !== target.outputId) return;
+          if (sessionFollower.lastHeardFrom(target.outputId) >= sentAt) return;
+          get().addToast(`${target.name} isn't responding.`, 'error');
+        }, REMOTE_COMMAND_CONFIRM_MS);
       };
 
       // An action on an idle device while another device plays the session

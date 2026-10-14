@@ -106,9 +106,15 @@ export class SessionFollower {
   private follow: FollowedOutput | null = null;
   /** The newest output grant seen per session; an older one is old news. */
   private readonly generations = new Map<string, number>();
+  private readonly heardAt = new Map<string, number>();
   private fetching = false;
   private refetch: string | null = null;
   private rendering = false;
+
+  /** When this device last heard a report from `outputId` (local clock), or 0. */
+  lastHeardFrom(outputId: string): number {
+    return this.heardAt.get(outputId) ?? 0;
+  }
 
   /** The session's revision as this device last read it, for a remote queue change. */
   sessionRevision(): number | null {
@@ -183,7 +189,8 @@ export class SessionFollower {
 
   private connect(token: string) {
     const create = this.options!.createEventSource ?? ((url: string) => new EventSource(url) as EventSourceLike);
-    const source = create(`${EVENTS_PATH}?token=${encodeURIComponent(token)}`);
+    // The client ID tells the server this device can hear remote commands.
+    const source = create(`${EVENTS_PATH}?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(this.options!.clientId())}`);
     this.source = source;
     let opened = false;
     source.onopen = () => {
@@ -277,6 +284,7 @@ export class SessionFollower {
 
   private onProgress(data: ProgressData, myId: string) {
     if (!data?.sessionId || data.outputId === myId || !data.report) return;
+    this.heardAt.set(data.outputId, Date.now());
     const follow = this.follow;
     if (!follow || this.session?.id !== data.sessionId || follow.generation !== data.generation
       || data.revision > (this.session?.revision ?? 0)) {

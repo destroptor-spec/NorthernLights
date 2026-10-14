@@ -75,6 +75,33 @@ export async function publishApiV1LibraryRevision(data: Record<string, unknown> 
   }
 }
 
+/**
+ * Which of a user's devices have an event stream open right now, by client
+ * ID. Remote commands reach a device only through its stream, so one sent to
+ * a device with none would go nowhere (a phone whose app was closed).
+ */
+const listening = new Map<string, Map<string, number>>();
+
+/** Records an open stream for `clientId`; call the returned function when it closes. */
+export function noteClientListening(userId: string, clientId: string): () => void {
+  const clients = listening.get(userId) ?? new Map<string, number>();
+  clients.set(clientId, (clients.get(clientId) ?? 0) + 1);
+  listening.set(userId, clients);
+  let closed = false;
+  return () => {
+    if (closed) return;
+    closed = true;
+    const count = (clients.get(clientId) ?? 1) - 1;
+    if (count > 0) clients.set(clientId, count);
+    else clients.delete(clientId);
+    if (!clients.size) listening.delete(userId);
+  };
+}
+
+export function isClientListening(userId: string, clientId: string): boolean {
+  return (listening.get(userId)?.get(clientId) ?? 0) > 0;
+}
+
 export function subscribeApiV1Events(userId: string, listener: (event: ApiV1Event) => void) {
   emitter.on(userId, listener);
   return () => emitter.off(userId, listener);

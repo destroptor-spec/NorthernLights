@@ -117,7 +117,8 @@ afterEach(() => jest.useRealTimers());
 
 describe('the event stream', () => {
   it('connects with the scoped sse token only', () => {
-    expect(setup().source().url).toBe('/api/v1/events?token=sse-token');
+    // The client ID tells the server this device can hear remote commands.
+    expect(setup().source().url).toBe('/api/v1/events?token=sse-token&clientId=laptop');
   });
 
   it('never puts the full session token in the URL', () => {
@@ -137,7 +138,7 @@ describe('the event stream', () => {
     const { store, sources, source } = setup();
     source().fail();
     store.setState({ sseAccessToken: 'sse-token-2' });
-    expect(sources[1].url).toBe('/api/v1/events?token=sse-token-2');
+    expect(sources[1].url).toBe('/api/v1/events?token=sse-token-2&clientId=laptop');
   });
 
   it('retries a closed stream after a while', async () => {
@@ -318,5 +319,17 @@ describe('remote commands for this device', () => {
     source().emit('playbackSession.command', command({ sessionId: 'session-2' }));
     expect(onCommand).not.toHaveBeenCalled();
   });
+});
+
+it('remembers when it last heard from each playing device', async () => {
+  const { follower, source, connect } = setup();
+  await connect();
+  expect(follower.lastHeardFrom('phone')).toBe(0);
+  jest.setSystemTime(NOW + 4_000);
+  source().emit('playbackSession.progress', {
+    sessionId: 'session-1', revision: 12, outputId: 'phone', generation: 4,
+    report: { state: 'paused', queueEntryId: uuid(2), positionMs: 31_000 },
+  });
+  expect(follower.lastHeardFrom('phone')).toBe(NOW + 4_000);
 });
 

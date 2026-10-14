@@ -1,4 +1,4 @@
-import { publishApiV1Event, replayApiV1Events, subscribeApiV1Events } from './apiV1Events.service';
+import { isClientListening, noteClientListening, publishApiV1Event, replayApiV1Events, subscribeApiV1Events } from './apiV1Events.service';
 
 describe('Aurora API v1 event stream', () => {
   it('isolates listeners and replay history by user', () => {
@@ -27,4 +27,17 @@ describe('Aurora API v1 event stream', () => {
     // A client whose last seen event was a transient one has lost its place.
     expect(replayApiV1Events('user-t', progress.id)).toBeNull();
   });
+
+  it('knows which devices have a stream open, counting each one', () => {
+    const first = noteClientListening('user-l', 'phone-1234');
+    const second = noteClientListening('user-l', 'phone-1234');
+    expect(isClientListening('user-l', 'phone-1234')).toBe(true);
+    expect(isClientListening('user-other', 'phone-1234')).toBe(false);
+    first();
+    first();
+    expect(isClientListening('user-l', 'phone-1234')).toBe(true);
+    second();
+    expect(isClientListening('user-l', 'phone-1234')).toBe(false);
+  });
 });
+

@@ -3,7 +3,7 @@ import type { PoolClient } from 'pg';
 import { initDB } from '../database';
 import type { PlaybackCommandRequest, PlaybackOutput, PlaybackOutputClaim, PlaybackOutputReport, PlaybackSession, PlaybackSessionPatch, Track } from '../../shared/api/v1';
 import { getApiV1TracksByIds } from './apiV1Dto.service';
-import { publishApiV1Event } from './apiV1Events.service';
+import { isClientListening, publishApiV1Event } from './apiV1Events.service';
 
 type SessionRow = {
   id: string;
@@ -515,6 +515,12 @@ export async function claimPlaybackOutput(input: {
   return session;
 }
 
+export class PlaybackOutputUnreachableError extends Error {
+  constructor(public readonly current: PlaybackSession) {
+    super('The device playing the session is not connected.');
+  }
+}
+
 export class PlaybackOutputNotActiveError extends Error {
   constructor(public readonly current: PlaybackSession) {
     super('The session output is not playing anywhere right now.');
@@ -555,6 +561,10 @@ export async function issuePlaybackCommand(input: {
     throw new PlaybackOutputGrantReplacedError(session);
   }
   if (output.status !== 'active') throw new PlaybackOutputNotActiveError(session);
+  // Commands travel over the output's event stream: without one open (its
+  // app closed, or offline), nothing would carry it out. Say so at once
+  // rather than after a minute of silence.
+  if (!isClientListening(input.userId, output.id)) throw new PlaybackOutputUnreachableError(session);
   if (!firstUseOfCommandId(session.id, input.request.requestId, Date.now())) return { accepted: false };
   publishApiV1Event(input.userId, 'playbackSession.command', {
     sessionId: session.id,

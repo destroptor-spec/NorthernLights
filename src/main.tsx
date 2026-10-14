@@ -60,7 +60,11 @@ sessionFollower.start(usePlayerStore, {
       toTracks: sessionQueueTracks,
       log: logPlaybackInfo,
     })
-      .then((applied) => castManager.logSessionCommand(command.type, applied))
+      .then((applied) => {
+        castManager.logSessionCommand(command.type, applied);
+        // Let the sender see it took, even when nothing visible changed (a seek).
+        sessionMirror.reportNow();
+      })
       .catch((error) => {
         castManager.logSessionCommand(command.type, false);
         logPlaybackInfo('[SessionCommand] failed', error);

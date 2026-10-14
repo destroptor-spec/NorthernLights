@@ -107,11 +107,13 @@ export class SessionMirror {
     this.store = store;
     this.options = options;
     this.unsubscribe = store.subscribe((state, previous) => this.onStateChange(state, previous));
+    if (typeof window !== 'undefined') window.addEventListener('pagehide', this.onPageHide);
   }
 
   stop(): void {
     this.unsubscribe?.();
     this.unsubscribe = null;
+    if (typeof window !== 'undefined') window.removeEventListener('pagehide', this.onPageHide);
     if (this.claimRetryTimer) clearTimeout(this.claimRetryTimer);
     this.claimRetryTimer = null;
     this.release();
@@ -124,6 +126,31 @@ export class SessionMirror {
     this.displaced = false;
     const state = this.store?.getState();
     if (state && this.enabled(state) && !this.grant && state.playbackState === 'playing') void this.claim();
+  }
+
+  /**
+   * The page is closing while this device plays the session. Playback here
+   * ends with it, so say so: other devices stop showing it and stop sending
+   * it commands at once, not after a minute of silence. While casting the
+   * Cast device plays on, so nothing is reported.
+   */
+  private readonly onPageHide = () => {
+    const grant = this.grant;
+    const state = this.store?.getState();
+    if (!grant || !state || state.castConnected) return;
+    const entryId = state.currentIndex !== null ? state.playlist[state.currentIndex]?.queueEntryId : undefined;
+    void this.api.reportPlaybackOutput(grant.credential, grant.sessionId, {
+      seq: ++grant.seq,
+      state: 'stopped',
+      reason: 'closed',
+      queueEntryId: entryId && isUuid(entryId) ? entryId : null,
+      positionMs: Math.max(0, Math.round((this.options!.getPositionSeconds() || 0) * 1000)),
+    }, { keepalive: true }).catch(() => undefined);
+  };
+
+  /** Report soon, e.g. after carrying out a remote command, so the sender sees it took. */
+  reportNow(): void {
+    this.reportSoon();
   }
 
   /** This device is the session's output (playing or paused). */

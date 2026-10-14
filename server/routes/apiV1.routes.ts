@@ -125,9 +125,10 @@ import {
   getCurrentOutputGrant,
   issuePlaybackCommand,
   PlaybackOutputNotActiveError,
+  PlaybackOutputUnreachableError,
 } from '../services/playbackSession.service';
 import { isPlaybackSyncEnabledFor } from '../services/playbackSync.service';
-import { publishApiV1Event, replayApiV1Events, subscribeApiV1Events } from '../services/apiV1Events.service';
+import { publishApiV1Event, replayApiV1Events, subscribeApiV1Events, noteClientListening } from '../services/apiV1Events.service';
 import { generateEphemeralScopedToken, generateOutputCredential, verifyScopedToken } from '../services/scopedToken.service';
 import { generateAuroraApiDocument } from '../api/v1/openapi';
 import { artCachePath, DEFAULT_ART_SIZE, isValidArtSize } from '../services/artCache';
@@ -1139,6 +1140,7 @@ router.delete('/playback-sessions/:id', async (req, res) => {
 function handleSessionError(req: Request, res: Response, error: unknown) {
   if (error instanceof PlaybackSessionNotFoundError) return sendApiV1Error(req, res, 404, 'PLAYBACK_SESSION_NOT_FOUND', 'Playback session not found.');
   if (error instanceof PlaybackOutputIdentityError) return sendApiV1Error(req, res, 422, 'OUTPUT_IDENTITY_MISMATCH', 'The report names a different output or generation than its credential.');
+  if (error instanceof PlaybackOutputUnreachableError) return sendApiV1Error(req, res, 409, 'OUTPUT_UNREACHABLE', 'The device playing the session is not connected right now.', { current: error.current });
   if (error instanceof PlaybackOutputNotActiveError) return sendApiV1Error(req, res, 409, 'OUTPUT_NOT_ACTIVE', 'Nothing is playing the session right now.', { current: error.current });
   if (error instanceof PlaybackOutputGrantReplacedError) return sendApiV1Error(req, res, 409, 'OUTPUT_GRANT_REPLACED', 'Another device has since started playing this session.', { current: error.current });
   if (error instanceof PlaybackSessionRevisionError) return sendApiV1Error(req, res, 409, 'REVISION_CONFLICT', 'The playback session changed on another client.', { current: error.current });
@@ -1171,10 +1173,18 @@ router.get('/events', async (req, res) => {
     replay.forEach(write);
   }
   const unsubscribe = subscribeApiV1Events(req.apiV1!.userId, write);
+  // Which device this stream belongs to, so remote commands are only sent
+  // to devices that can hear them. A browser's EventSource names itself in
+  // the query (it cannot send headers); others send X-Aurora-Client-Id.
+  const queryClientId = typeof req.query.clientId === 'string' && /^[A-Za-z0-9._:-]{8,128}$/.test(req.query.clientId)
+    ? req.query.clientId : null;
+  const streamClientId = req.apiV1!.scope === 'sse' ? queryClientId : req.apiV1!.clientId;
+  const stopListening = streamClientId ? noteClientListening(req.apiV1!.userId, streamClientId) : () => undefined;
   const keepalive = setInterval(() => res.write(': keepalive\n\n'), 20_000);
   req.on('close', () => {
     clearInterval(keepalive);
     unsubscribe();
+    stopListening();
   });
 });
 
