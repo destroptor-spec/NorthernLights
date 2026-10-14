@@ -96,3 +96,56 @@ export async function verifyOutputCredential(token: string): Promise<OutputCrede
   if (typeof decoded.sid !== 'string' || typeof decoded.oid !== 'string' || !Number.isInteger(decoded.gen)) return null;
   return decoded;
 }
+
+export interface ReceiverCredentialPayload extends ScopedTokenPayload, OutputGrantClaims {
+  scope: 'receiver';
+  jti: string;
+  /** Epoch seconds: no renewal of this credential reaches beyond it. */
+  cap: number;
+}
+
+/** One receiver credential lasts this long at most... */
+export const RECEIVER_CREDENTIAL_TTL_SECONDS = 12 * 3600;
+/** ...and renewals never reach beyond this long after a controller issued one. */
+export const RECEIVER_CREDENTIAL_CAP_SECONDS = 24 * 3600;
+
+/**
+ * A Cast receiver's own credential (docs/cast-receiver-output.md, PR B): bound
+ * to one session's output grant like an output credential, valid for up to
+ * 12 h, and renewable by the receiver itself while it plays the session, up
+ * to `cap`. A controller issuing one (a claim or a refresh) sets a new cap 24 h
+ * ahead; the receiver's own renewals keep the cap it has. Never minted by
+ * POST /auth/scoped-token.
+ */
+export async function generateReceiverCredential(
+  user: JwtPayload,
+  grant: OutputGrantClaims,
+  capEpochSeconds?: number,
+): Promise<{ token: string; expiresAt: string; cap: string } | null> {
+  const now = Math.floor(Date.now() / 1000);
+  const cap = capEpochSeconds ?? now + RECEIVER_CREDENTIAL_CAP_SECONDS;
+  const expiresAt = Math.min(now + RECEIVER_CREDENTIAL_TTL_SECONDS, cap);
+  if (expiresAt <= now) return null;
+  const secret = await getJwtSecret();
+  const payload: ReceiverCredentialPayload = {
+    userId: user.userId,
+    username: user.username,
+    role: user.role,
+    scope: 'receiver',
+    sid: grant.sid,
+    oid: grant.oid,
+    gen: grant.gen,
+    cap,
+    jti: crypto.randomUUID(),
+  };
+  const token = jwt.sign({ ...payload, exp: expiresAt }, secret);
+  return { token, expiresAt: new Date(expiresAt * 1000).toISOString(), cap: new Date(cap * 1000).toISOString() };
+}
+
+export async function verifyReceiverCredential(token: string): Promise<ReceiverCredentialPayload | null> {
+  const decoded = await verifyScopedToken(token, 'receiver') as ReceiverCredentialPayload | null;
+  if (!decoded) return null;
+  if (typeof decoded.sid !== 'string' || typeof decoded.oid !== 'string' || !Number.isInteger(decoded.gen)) return null;
+  if (!Number.isInteger(decoded.cap)) return null;
+  return decoded;
+}

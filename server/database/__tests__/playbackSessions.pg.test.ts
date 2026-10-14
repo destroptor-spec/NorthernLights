@@ -278,7 +278,7 @@ describeDb('playback sessions', () => {
       expect(claimed.output).toMatchObject({ id: 'phone-1234', kind: 'browser', name: 'Pixel', generation: 1 });
       expect(claimed.revision).toBe(created.revision + 1);
       expect(claimed.ownerClientId).toBe('phone-1234');
-      expect(await grantOf(claimed)).toEqual({ sid: claimed.id, oid: 'phone-1234', gen: 1 });
+      expect(await grantOf(claimed)).toEqual({ sid: claimed.id, oid: 'phone-1234', gen: 1, kind: 'browser' });
     });
 
     it('records a device that plays through a Cast device as a cast output under that name', async () => {
@@ -308,6 +308,75 @@ describeDb('playback sessions', () => {
       expect(onLaptop.output!.castSessionId).toBeUndefined();
       const castWithout = await sessions.claimPlaybackOutput({ userId, clientId: 'phone-1234', sessionId: created.id, output: { kind: 'cast', name: 'NAD Forstærker' } });
       expect(castWithout.output!.castSessionId).toBeNull();
+    });
+
+    describe('a Cast receiver as the output (Phase 5, PR B)', () => {
+      const forReceiver = (session: { id: string }, castSessionId = 'cast-77') => sessions.claimPlaybackOutput({
+        userId, clientId: 'phone-1234', sessionId: session.id, output: { kind: 'receiver', name: 'NAD Forstærker', castSessionId },
+      });
+
+      it('makes the receiver, not the claiming device, the output', async () => {
+        const created = await create(trackIds(0, 2));
+        const events: Array<{ type: string; data: Record<string, unknown> }> = [];
+        const unsubscribe = subscribeApiV1Events(userId, (event) => events.push(event));
+        const claimed = await forReceiver(created).finally(unsubscribe);
+        expect(claimed.output).toMatchObject({
+          id: 'receiver:cast-77', kind: 'receiver', name: 'NAD Forstærker', castSessionId: 'cast-77', generation: 1,
+        });
+        expect(claimed.ownerClientId).toBe('phone-1234');
+        expect(events.find((event) => event.type === 'playbackSession.handedOff')?.data)
+          .toMatchObject({ outputId: 'receiver:cast-77', outputKind: 'receiver', ownerClientId: 'phone-1234', castSessionId: 'cast-77' });
+        expect((await sessions.getPlaybackSession(userId, created.id))!.output).toMatchObject({ id: 'receiver:cast-77', kind: 'receiver' });
+        expect(await grantOf(claimed)).toEqual({ sid: created.id, oid: 'receiver:cast-77', gen: 1, kind: 'receiver' });
+      });
+
+      it('lets the receiver report on its grant until another device takes over', async () => {
+        const claimed = await forReceiver(await create(trackIds(0, 2)));
+        const grant = { sid: claimed.id, oid: 'receiver:cast-77', gen: 1 };
+        const report = { seq: 1, state: 'playing' as const, queueEntryId: claimed.queue[0].queueEntryId, positionMs: 500 };
+        expect(await sessions.reportPlaybackOutput({ userId, grant, sessionId: claimed.id, report })).toMatchObject({ accepted: true });
+
+        // "On this device" on the laptop: the receiver's grant is gone for good.
+        await sessions.claimPlaybackOutput({ userId, clientId: 'laptop-5678', sessionId: claimed.id, output: { kind: 'browser' } });
+        await expect(sessions.reportPlaybackOutput({ userId, grant, sessionId: claimed.id, report: { ...report, seq: 2 } }))
+          .rejects.toBeInstanceOf(sessions.PlaybackOutputGrantReplacedError);
+        await expect(grantOf(claimed)).rejects.toBeInstanceOf(sessions.PlaybackOutputGrantReplacedError);
+      });
+
+      it('is a new output in a new Cast session', async () => {
+        const first = await forReceiver(await create(trackIds(0, 1)), 'cast-77');
+        const second = await forReceiver(first, 'cast-88');
+        expect(second.output).toMatchObject({ id: 'receiver:cast-88', castSessionId: 'cast-88', generation: 2 });
+        await expect(grantOf(first)).rejects.toBeInstanceOf(sessions.PlaybackOutputGrantReplacedError);
+      });
+
+      it('receives commands while its own event stream is open', async () => {
+        const claimed = await forReceiver(await create(trackIds(0, 2)));
+        await sessions.reportPlaybackOutput({
+          userId, grant: { sid: claimed.id, oid: 'receiver:cast-77', gen: 1 }, sessionId: claimed.id,
+          report: { seq: 1, state: 'playing', queueEntryId: claimed.queue[0].queueEntryId, positionMs: 0 },
+        });
+        const request = { requestId: '00000000-0000-4000-8000-000000000771', outputId: 'receiver:cast-77', outputGeneration: 1, command: { type: 'pause' as const } };
+        await expect(sessions.issuePlaybackCommand({ userId, clientId: 'laptop-5678', sessionId: claimed.id, request }))
+          .rejects.toBeInstanceOf(sessions.PlaybackOutputUnreachableError);
+        const stop = noteClientListening(userId, 'receiver:cast-77');
+        try {
+          expect(await sessions.issuePlaybackCommand({ userId, clientId: 'laptop-5678', sessionId: claimed.id, request })).toEqual({ accepted: true });
+        } finally {
+          stop();
+        }
+      });
+
+      it('mints a receiver credential that names exactly its grant', async () => {
+        const tokens = await import('../../services/scopedToken.service');
+        const claimed = await forReceiver(await create(trackIds(0, 1)));
+        const { kind: _kind, ...grant } = await grantOf(claimed);
+        const credential = (await tokens.generateReceiverCredential({ userId, username: 'listener', role: 'user' }, grant))!;
+        expect(await tokens.verifyReceiverCredential(credential.token)).toMatchObject({
+          scope: 'receiver', userId, sid: claimed.id, oid: 'receiver:cast-77', gen: 1,
+        });
+        expect(await tokens.verifyOutputCredential(credential.token)).toBeNull();
+      });
     });
 
     it('moves playback to another device at any time, without a revision, and retires the old grant', async () => {

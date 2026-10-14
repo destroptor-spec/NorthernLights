@@ -73,7 +73,7 @@ prove it where it is safe first. This is also Phase 3's "remote control".
 Verify on prod with two browsers: pause, next and seek on one control the
 other.
 
-### B. Receiver credentials (server only) — next
+### B. Receiver credentials (server only) — built (feat/receiver-credentials)
 
 Phase 1's leftover "session-bound receiver tokens".
 
@@ -91,6 +91,11 @@ Phase 1's leftover "session-bound receiver tokens".
   - `/recommendations/next`, for Phase 4 later.
 - A refresh (`POST …/output/refresh`) re-mints for the same, still-current
   grant only.
+- As built: the claim needs `castSessionId` and the output ID is
+  `receiver:<castSessionId>`; the credential carries `renewableUntil` (the
+  `cap` claim, 24 h after a controller issued it), and the receiver renews it
+  itself with `POST …/output/renew` (same cap). Unbound `receiver` tokens from
+  `/auth/scoped-token` are gone. The API reference is docs/API.md.
 - Contract tests as in Phase 1: wrong `sid` denied everywhere, a replaced grant
   refused, a refresh cannot revive one, no access to other sessions or
   playlists.
