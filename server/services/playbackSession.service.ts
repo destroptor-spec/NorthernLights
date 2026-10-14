@@ -507,6 +507,8 @@ export async function claimPlaybackOutput(input: {
     sessionId: session.id,
     ownerClientId: input.clientId,
     outputId: input.clientId,
+    outputKind: session.output!.kind,
+    outputName: session.output!.name,
     generation: session.output!.generation,
     revision: session.revision,
   });

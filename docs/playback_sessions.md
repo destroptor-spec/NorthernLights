@@ -1007,6 +1007,10 @@ columns):
     grant (its claim failed) is stopped too. What was already true when the
     stream connected never counts as a claim. Without the event stream, the
     next report's `OUTPUT_GRANT_REPLACED` does the same within 10 s.
+    Exception (prod 2026-10-13 19:50, two devices joined to one Cast
+    session): a take-over by a `cast` output named like the Cast device this
+    device casts to pauses nothing, since the music never moved
+    (`isSameCastDevice`; `handedOff` carries `outputKind`/`outputName`).
   - A casting device never adopts a queue: a Cast receiver's queue is never
     replaced from here.
 

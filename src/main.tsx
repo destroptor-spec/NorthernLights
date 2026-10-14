@@ -8,7 +8,7 @@ import './utils/pwaInstall';
 import { usePlayerStore } from './store';
 import { createPwaUpdateHandler, reloadAppOnce, setPwaUpdateHandler, startPwaUpdateChecks, watchPwaUpdates } from './utils/pwaUpdate';
 import { OriginAccessGate } from './components/OriginAccessGate';
-import { sessionMirror } from './utils/SessionMirror';
+import { isSameCastDevice, sessionMirror } from './utils/SessionMirror';
 import { sessionFollower } from './utils/SessionFollower';
 import { getAuroraClientId } from './api/auroraApi';
 import { toPlayableTracks } from './utils/playableTracks';
@@ -24,8 +24,9 @@ sessionMirror.start(usePlayerStore, {
   log: logPlaybackInfo,
   onSyncDisabled: () => void usePlayerStore.getState().refreshPlaybackSync(),
   // One device plays at a time: another device took over, so stop here.
-  onDisplaced: () => {
+  onDisplaced: (replacement) => {
     const state = usePlayerStore.getState();
+    if (isSameCastDevice(replacement, state.castConnected, castManager.getCastDeviceName())) return;
     if (state.playbackState === 'playing') state.pause();
   },
 });

@@ -282,9 +282,15 @@ describeDb('playback sessions', () => {
 
     it('records a device that plays through a Cast device as a cast output under that name', async () => {
       const created = await create(trackIds(0, 2));
+      const events: Array<{ type: string; data: Record<string, unknown> }> = [];
+      const unsubscribe = subscribeApiV1Events(userId, (event) => events.push(event));
       const claimed = await sessions.claimPlaybackOutput({
         userId, clientId: 'phone-1234', sessionId: created.id, output: { kind: 'cast', name: 'NAD Forstærker' },
-      });
+      }).finally(unsubscribe);
+      // Other devices learn what took over, so one casting to the same
+      // device does not stop the music.
+      expect(events.find((event) => event.type === 'playbackSession.handedOff')?.data)
+        .toMatchObject({ outputId: 'phone-1234', outputKind: 'cast', outputName: 'NAD Forstærker' });
       expect(claimed.output).toMatchObject({ id: 'phone-1234', kind: 'cast', name: 'NAD Forstærker' });
       expect((await sessions.getPlaybackSession(userId, created.id))!.output!.kind).toBe('cast');
     });
