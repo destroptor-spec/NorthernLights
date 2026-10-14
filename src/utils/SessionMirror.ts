@@ -42,6 +42,8 @@ export interface SessionMirrorOptions {
   /** While casting: the Cast session this device sends to (told to the server with the claim). */
   getCastSessionId?: () => string | null;
   log?: (message: string, detail?: unknown) => void;
+  /** False while this device must not claim (it is leaving another device's Cast session). */
+  canClaim?: () => boolean;
   /** Server-side diagnostics (`sync-…` markers in the Cast log). */
   diagnostic?: (level: 'ok' | 'warn' | 'error', marker: string, detail?: string) => void;
   /**
@@ -271,6 +273,10 @@ export class SessionMirror {
 
   private claim(): Promise<void> {
     if (this.claiming) return this.claiming;
+    if (this.options?.canClaim && !this.options.canClaim()) {
+      this.options.diagnostic?.('ok', 'sync-claim-skipped', 'reason=leaving-joined-cast-session');
+      return Promise.resolve();
+    }
     this.claiming = (async () => {
       const state = this.store!.getState();
       const auth = state.getAuthHeader();

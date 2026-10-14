@@ -192,3 +192,16 @@ it('recovers a session it left once it connects to it again to stay', async () =
   await manager.startPlaybackForCurrentSession('cast-connected');
   expect(internals.leftJoinedSessionId).toBe('');
 });
+
+it("takes on none of the receiver's state while leaving (it is the other device's)", async () => {
+  const { manager, setMedia } = harness();
+  setMedia(nadMedia);
+  manager.setCastingElsewhereCheck(() => true);
+  await manager.startPlaybackForCurrentSession('cast-connected');
+  const realHydrate = (CastManager.prototype as unknown as { hydrateSenderFromRemoteSession: Harness['hydrateSenderFromRemoteSession'] }).hydrateSenderFromRemoteSession;
+  const sync = jest.fn();
+  Object.assign(manager, { syncCurrentTrackFromSession: sync });
+  expect(await realHydrate.call(manager, nadMedia, 'remote-player-state-changed')).toBe(false);
+  expect(sync).not.toHaveBeenCalled();
+});
+

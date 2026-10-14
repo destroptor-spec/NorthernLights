@@ -922,10 +922,19 @@ export class CastManager {
         return true;
     }
 
+    /** This device is leaving a Cast session another device casts (cast-join-left). */
+    public isLeavingJoinedSession(): boolean {
+        return this.leftJoinedSession;
+    }
+
     private afterSessionEnded(snapshot: CastEndSnapshot | null) {
         if (this.leftJoinedSession) {
             this.leftJoinedSession = false;
             this.resetCastEndIntent();
+            // Nothing plays here: never leave the store saying otherwise.
+            if (usePlayerStore.getState().playbackState === 'playing') {
+                usePlayerStore.setState({ playbackState: 'paused', isBuffering: false });
+            }
             this.logCast('ok', 'cast-ended-handoff skipped', 'reason=left-joined-session');
             return;
         }
@@ -2789,6 +2798,11 @@ export class CastManager {
     }
 
     private async hydrateSenderFromRemoteSession(mediaSession: any | null = null, reason: string = 'remote-session'): Promise<boolean> {
+        // Leaving another device's Cast session: its state is not this
+        // device's. Taking it on set the store to "playing" for a moment, and
+        // the sync mirror claimed the output from the device that casts
+        // (prod 2026-10-14 19:59:24).
+        if (this.leftJoinedSession) return false;
         mediaSession = this.getHydratableMediaSession(mediaSession);
         if (!mediaSession || !this.hasActiveRemoteMediaSession(mediaSession)) return false;
 

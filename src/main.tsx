@@ -30,6 +30,7 @@ sessionMirror.start(usePlayerStore, {
   getPositionSeconds: () => getPlaybackTimeSnapshot().currentTime,
   getOutputName: () => (usePlayerStore.getState().castConnected && castManager.getCastDeviceName()) || describeThisDevice(),
   getCastSessionId: () => castManager.getCastSessionId() || null,
+  canClaim: () => !castManager.isLeavingJoinedSession(),
   log: logPlaybackInfo,
   diagnostic: (level, marker, detail) => castManager.logSyncEvent(level, marker, detail),
   onSyncDisabled: () => void usePlayerStore.getState().refreshPlaybackSync(),
