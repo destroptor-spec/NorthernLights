@@ -888,3 +888,36 @@ columns):
   reports publish no event; they would push real changes out of the 200-event
   replay buffer within half an hour. How controllers follow live position
   (polling, or an unbuffered event) is decided in Phase 2.
+
+## Phase 2 — mirror: design (agreed 2026-10-13)
+
+**Behaviour** (Andreas's decisions):
+- One session per user; a device reuses the latest one, and starting an album
+  replaces its queue instead of creating a session.
+- The playing device's local queue is authoritative. `SessionMirror` (a client
+  singleton) watches the store, diffs each queue change into anchored ops with
+  client-proposed UUID entry IDs and a `requestId`, one PATCH in flight at a
+  time. On a conflict the playing device resends its queue as a `replaceQueue`
+  (entry IDs reused, so the server writes only what moved).
+- Pressing play claims the output; the playing device reports every ~10 s while
+  playing and ~30 s while paused. While casting, the phone reports for the Cast
+  device.
+- **One device plays at a time:** when another device claims, the old output
+  pauses at once.
+- An idle device follows `/events`: it shows the session's queue, current track
+  and live progress with a small "Playing on <device>" line, and silently
+  replaces its own older queue. **Play** there continues from the current
+  position without asking; **Pause / Next / Previous** ask whether to take over
+  here (remote control of the playing device is Phase 3).
+- Rollout behind a per-device setting, "Sync playback across devices", off by
+  default, because prod serves every user.
+
+**PRs:**
+1. UUID entry IDs. `createQueueEntryId` produces UUIDs; queues saved before the
+   upgrade are re-keyed at boot, but only with no active or stored Cast session
+   (the receiver window is matched by entry ID). While casting, old IDs stay and
+   that queue is not mirrored until it is replaced.
+2. The playing side: session client, mirror writer, claim, reports.
+3. The following side: `/events` subscription, adopting the session queue, the
+   device line, take-over prompts, pausing the replaced output. Also closes the
+   event stream's fallback to the full session JWT (Security).

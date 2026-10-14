@@ -8,7 +8,7 @@ import { EMPTY_FILTER_STATE } from '../utils/filterState';
 import { extractMetadata } from '../utils/fileSystem';
 import { playbackManager, PlaybackState } from '../utils/PlaybackManager';
 import { castManager } from '../utils/CastManager';
-import { cloneTrackForQueue, ensureQueueEntryIds, hasNextTrack } from '../utils/queue';
+import { cloneTrackForQueue, ensureQueueEntryIds, hasNextTrack, rekeyLegacyQueueEntryIds } from '../utils/queue';
 import { preloadManager } from '../utils/PreloadManager';
 import { setPlaybackDebugLogging } from '../utils/playbackDebug';
 import { savePlaybackContinuitySnapshot } from '../utils/playbackContinuity';
@@ -3105,6 +3105,13 @@ export const usePlayerStore = create<PlayerState>()(
         // so the next gesture resumes from the saved position, not 0:00.
         if (state && state.playbackState === 'playing') {
           state.playbackState = 'paused';
+        }
+        // Queues saved before entry IDs became UUIDs get UUIDs now, unless a
+        // Cast session may still be rejoined: its receiver matches its window
+        // by the old IDs. Such a queue keeps them until it is next replaced.
+        if (state && state.playlist.length > 0 && !castManager.hasStoredSession()) {
+          const { tracks, changed } = rekeyLegacyQueueEntryIds(state.playlist);
+          if (changed) state.playlist = tracks;
         }
         // Session-only sign-in: localStorage holds no tokens, but a same-tab
         // refresh should keep the session — restore it from sessionStorage.
