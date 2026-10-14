@@ -23,8 +23,11 @@ jest.mock('../../utils/CastManager', () => ({
   },
 }));
 
+jest.mock('../../utils/SessionMirror', () => ({ sessionMirror: { notePlayIntent: jest.fn() } }));
+
 import { fireEvent } from '@testing-library/react';
 import { castManager } from '../../utils/CastManager';
+import { sessionMirror } from '../../utils/SessionMirror';
 import { CastButton } from './CastButton';
 
 const emitCastState = (state: string) => {
@@ -96,5 +99,19 @@ describe('CastButton', () => {
     fireEvent.pointerDown(shell);
     expect(castManager.noteUserCastDialogOpened).toHaveBeenCalledWith('launcher-sm');
     expect(castManager.noteUserCastLaunchIntent).toHaveBeenCalledTimes(1);
+  });
+
+  // Prod 2026-10-13: the phone played locally, the desktop started casting,
+  // and the phone kept playing because the desktop never claimed the output.
+  it('counts starting a cast as "play here", but not opening the dialog while casting', () => {
+    (sessionMirror.notePlayIntent as jest.Mock).mockClear();
+    const { container } = render(<CastButton size="sm" />);
+    const shell = container.querySelector('.aurora-cast-button-shell')!;
+    fireEvent.pointerDown(shell);
+    expect(sessionMirror.notePlayIntent).toHaveBeenCalledTimes(1);
+
+    emitCastState('CONNECTED');
+    fireEvent.pointerDown(shell);
+    expect(sessionMirror.notePlayIntent).toHaveBeenCalledTimes(1);
   });
 });

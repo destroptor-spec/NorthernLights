@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Cast, Loader2 } from 'lucide-react';
 import { castManager, type CastHealthStatus } from '../../utils/CastManager';
+import { sessionMirror } from '../../utils/SessionMirror';
 
 type CastButtonSize = 'sm' | 'md' | 'lg';
 
@@ -99,6 +100,10 @@ export const CastButton: React.FC<CastButtonProps> = ({
       castManager.noteUserCastDialogOpened(`launcher-${size}`);
     } else if (!isBusy) {
       castManager.noteUserCastLaunchIntent(`launcher-${size}`);
+      // Starting to cast is "play here": with sync on, this device becomes
+      // the session's output once the Cast device plays, even after another
+      // device had taken over (prod 2026-10-13: the phone kept playing).
+      sessionMirror.notePlayIntent();
     }
   };
 
