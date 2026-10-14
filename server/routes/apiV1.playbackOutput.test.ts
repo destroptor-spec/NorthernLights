@@ -6,6 +6,7 @@ jest.mock('../services/playbackSession.service', () => ({
   claimPlaybackOutput: jest.fn(),
   getCurrentOutputGrant: jest.fn(),
   reportPlaybackOutput: jest.fn(),
+  issuePlaybackCommand: jest.fn(),
 }));
 jest.mock('../services/scopedToken.service', () => ({
   ...jest.requireActual('../services/scopedToken.service'),
@@ -21,6 +22,8 @@ import {
   PlaybackOutputGrantReplacedError,
   PlaybackOutputIdentityError,
   reportPlaybackOutput,
+  issuePlaybackCommand,
+  PlaybackOutputNotActiveError,
 } from '../services/playbackSession.service';
 import { generateEphemeralScopedToken, generateOutputCredential } from '../services/scopedToken.service';
 
@@ -133,3 +136,39 @@ describe('output reports', () => {
     expect(status).toBe(400);
   });
 });
+
+describe('remote commands', () => {
+  const body = (command: unknown, extra: Record<string, unknown> = {}) => ({
+    requestId: '22222222-2222-4222-8222-222222222222', outputId: 'desktop-5678', outputGeneration: 3, command, ...extra,
+  });
+
+  it('sends a command and answers 202', async () => {
+    (issuePlaybackCommand as jest.Mock).mockResolvedValue({ accepted: true });
+    const { status, body: response } = await call('post', '/playback-sessions/:id/commands', body({ type: 'seek', positionMs: 42_000 }), { id: 's-1' });
+    expect(status).toBe(202);
+    expect(response.data).toEqual({ accepted: true });
+    expect(issuePlaybackCommand).toHaveBeenCalledWith({
+      userId: 'user-1', clientId: 'laptop-5678', sessionId: 's-1',
+      request: body({ type: 'seek', positionMs: 42_000 }),
+    });
+  });
+
+  it('refuses a command it does not know, or one with stray fields', async () => {
+    for (const command of [{ type: 'shuffle' }, { type: 'pause', positionMs: 1 }, { type: 'jump', entryId: 'not-a-uuid' }]) {
+      const { status } = await call('post', '/playback-sessions/:id/commands', body(command), { id: 's-1' });
+      expect(status).toBe(400);
+    }
+    expect(issuePlaybackCommand).not.toHaveBeenCalled();
+  });
+
+  it('says when the output has changed or nothing plays', async () => {
+    (issuePlaybackCommand as jest.Mock).mockRejectedValueOnce(new PlaybackOutputGrantReplacedError(session(output)));
+    expect((await call('post', '/playback-sessions/:id/commands', body({ type: 'next' }), { id: 's-1' })).body.error)
+      .toMatchObject({ code: 'OUTPUT_GRANT_REPLACED' });
+    (issuePlaybackCommand as jest.Mock).mockRejectedValueOnce(new PlaybackOutputNotActiveError(session(null)));
+    const notActive = await call('post', '/playback-sessions/:id/commands', body({ type: 'next' }), { id: 's-1' });
+    expect(notActive.status).toBe(409);
+    expect(notActive.body.error).toMatchObject({ code: 'OUTPUT_NOT_ACTIVE' });
+  });
+});
+

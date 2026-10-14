@@ -384,6 +384,33 @@ export const playbackOutputClaimResultSchema = z.object({
   credential: playbackOutputCredentialSchema,
 }).meta({ id: 'PlaybackOutputClaimResult' });
 
+// Remote control: another of the user's devices asks the session's output to
+// act. The output carries the command out and its next report confirms it.
+export const playbackCommandSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('play') }).strict(),
+  z.object({ type: z.literal('pause') }).strict(),
+  z.object({ type: z.literal('next') }).strict(),
+  z.object({ type: z.literal('previous') }).strict(),
+  z.object({ type: z.literal('seek'), positionMs: z.number().int().nonnegative() }).strict(),
+  z.object({ type: z.literal('jump'), entryId: z.string().uuid().describe('Play this queue entry from its start.') }).strict(),
+  z.object({
+    type: z.literal('load'),
+    revision: z.number().int().positive().describe('The output first adopts the session queue at this revision or later.'),
+    entryId: z.string().uuid().describe('Then plays this entry from its start.'),
+  }).strict(),
+]).meta({ id: 'PlaybackCommand' });
+
+export const playbackCommandRequestSchema = z.object({
+  requestId: z.string().uuid().describe('A repeated requestId is accepted once.'),
+  outputId: z.string().min(1).max(128).describe("The output this command is for: the session's current output.id."),
+  outputGeneration: z.number().int().positive().describe("Its current output.generation; a newer claim makes the command stale."),
+  command: playbackCommandSchema,
+}).strict().meta({ id: 'PlaybackCommandRequest' });
+
+export const playbackCommandResultSchema = z.object({
+  accepted: z.boolean().describe('True when sent to the output; false for a repeated requestId.'),
+}).meta({ id: 'PlaybackCommandResult' });
+
 export const playbackSessionDeleteSchema = z.object({
   expectedRevision: z.number().int().positive(),
 }).strict().meta({ id: 'PlaybackSessionDelete' });
@@ -492,5 +519,7 @@ export type PlaybackOutput = z.infer<typeof playbackOutputSchema>;
 export type PlaybackOutputClaim = z.infer<typeof playbackOutputClaimSchema>;
 export type PlaybackOutputReport = z.infer<typeof playbackOutputReportSchema>;
 export type PlaybackOutputCredential = z.infer<typeof playbackOutputCredentialSchema>;
+export type PlaybackCommand = z.infer<typeof playbackCommandSchema>;
+export type PlaybackCommandRequest = z.infer<typeof playbackCommandRequestSchema>;
 export type ListenerPreferences = z.infer<typeof listenerPreferencesSchema>;
 export type NextRecommendationRequest = z.input<typeof nextRecommendationSchema>;

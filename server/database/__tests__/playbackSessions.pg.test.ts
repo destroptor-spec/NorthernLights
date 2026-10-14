@@ -362,6 +362,73 @@ describeDb('playback sessions', () => {
     });
   });
 
+  describe('remote commands', () => {
+    const uuidOf = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+    const playingOn = async (clientId: string) => {
+      const created = await create(trackIds(0, 3));
+      const session = await sessions.claimPlaybackOutput({ userId, clientId, sessionId: created.id, output: { kind: 'cast', name: 'NAD Forstærker' } });
+      await sessions.reportPlaybackOutput({
+        userId, grant: { sid: session.id, oid: clientId, gen: session.output!.generation }, sessionId: session.id,
+        report: { seq: 1, state: 'playing', queueEntryId: session.queue[0].queueEntryId, positionMs: 1_000 },
+      });
+      return session;
+    };
+    const send = (session: { id: string; output: { id: string; generation: number } | null }, requestId: string, command: import('../../../shared/api/v1').PlaybackCommand, generation = session.output!.generation) =>
+      sessions.issuePlaybackCommand({
+        userId, clientId: 'phone-1234', sessionId: session.id,
+        request: { requestId, outputId: session.output!.id, outputGeneration: generation, command },
+      });
+
+    it('sends a command to the output that plays the session, once per requestId', async () => {
+      const session = await playingOn('desktop-5678');
+      const events: Array<{ type: string; data: Record<string, unknown> }> = [];
+      const unsubscribe = subscribeApiV1Events(userId, (event) => events.push(event));
+      try {
+        expect(await send(session, uuidOf(1), { type: 'jump', entryId: session.queue[2].queueEntryId })).toEqual({ accepted: true });
+        expect(await send(session, uuidOf(1), { type: 'jump', entryId: session.queue[2].queueEntryId })).toEqual({ accepted: false });
+      } finally {
+        unsubscribe();
+      }
+      const commands = events.filter((event) => event.type === 'playbackSession.command');
+      expect(commands).toHaveLength(1);
+      expect(commands[0].data).toMatchObject({
+        sessionId: session.id, outputId: 'desktop-5678', generation: session.output!.generation,
+        requestId: uuidOf(1), issuedBy: 'phone-1234', command: { type: 'jump', entryId: session.queue[2].queueEntryId },
+      });
+    });
+
+    it('refuses a command meant for an output that has since been replaced', async () => {
+      const session = await playingOn('desktop-5678');
+      await sessions.claimPlaybackOutput({ userId, clientId: 'laptop-9999', sessionId: session.id, output: { kind: 'browser' } });
+      const refused = await rejection(send(session, uuidOf(2), { type: 'pause' }));
+      expect(refused).toBeInstanceOf(sessions.PlaybackOutputGrantReplacedError);
+      expect(refused.current.output.id).toBe('laptop-9999');
+    });
+
+    it('refuses a command when nothing plays the session', async () => {
+      const created = await create(trackIds(0, 2));
+      await expect(sessions.issuePlaybackCommand({
+        userId, clientId: 'phone-1234', sessionId: created.id,
+        request: { requestId: uuidOf(3), outputId: 'desktop-5678', outputGeneration: 1, command: { type: 'play' } },
+      })).rejects.toBeInstanceOf(sessions.PlaybackOutputNotActiveError);
+
+      const session = await playingOn('desktop-5678');
+      await sessions.reportPlaybackOutput({
+        userId, grant: { sid: session.id, oid: 'desktop-5678', gen: session.output!.generation }, sessionId: session.id,
+        report: { seq: 2, state: 'stopped', queueEntryId: null, positionMs: 0 },
+      });
+      await expect(send(session, uuidOf(4), { type: 'play' })).rejects.toBeInstanceOf(sessions.PlaybackOutputNotActiveError);
+    });
+
+    it("keeps one user's commands away from another user's devices", async () => {
+      const session = await playingOn('desktop-5678');
+      await expect(sessions.issuePlaybackCommand({
+        userId: otherUserId, clientId: 'intruder', sessionId: session.id,
+        request: { requestId: uuidOf(5), outputId: 'desktop-5678', outputGeneration: session.output!.generation, command: { type: 'pause' } },
+      })).rejects.toBeInstanceOf(sessions.PlaybackSessionNotFoundError);
+    });
+  });
+
   describe('output reports', () => {
     type Report = import('../../../shared/api/v1').PlaybackOutputReport;
     const playing = async (clientId = 'laptop-5678') => {

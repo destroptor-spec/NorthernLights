@@ -1200,6 +1200,18 @@
           "generation"
         ]
       },
+      "PlaybackCommandResult": {
+        "type": "object",
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "description": "True when sent to the output; false for a repeated requestId."
+          }
+        },
+        "required": [
+          "accepted"
+        ]
+      },
       "PlaybackOutputReportResult": {
         "type": "object",
         "properties": {
@@ -2005,6 +2017,169 @@
           "positionMs"
         ],
         "additionalProperties": false
+      },
+      "PlaybackCommandRequest": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A repeated requestId is accepted once."
+          },
+          "outputId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "The output this command is for: the session's current output.id."
+          },
+          "outputGeneration": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "Its current output.generation; a newer claim makes the command stale."
+          },
+          "command": {
+            "$ref": "#/components/schemas/PlaybackCommand"
+          }
+        },
+        "required": [
+          "requestId",
+          "outputId",
+          "outputGeneration",
+          "command"
+        ],
+        "additionalProperties": false
+      },
+      "PlaybackCommand": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "play"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "pause"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "next"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "previous"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "seek"
+                ]
+              },
+              "positionMs": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "type",
+              "positionMs"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "jump"
+                ]
+              },
+              "entryId": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Play this queue entry from its start."
+              }
+            },
+            "required": [
+              "type",
+              "entryId"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "load"
+                ]
+              },
+              "revision": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "description": "The output first adopts the session queue at this revision or later."
+              },
+              "entryId": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Then plays this entry from its start."
+              }
+            },
+            "required": [
+              "type",
+              "revision",
+              "entryId"
+            ],
+            "additionalProperties": false
+          }
+        ]
       },
       "PlaybackSessionDelete": {
         "type": "object",
@@ -8877,6 +9052,73 @@
         }
       }
     },
+    "/playback-sessions/{id}/commands": {
+      "post": {
+        "summary": "Remote control: ask the session's output to play, pause, skip, seek, jump or load",
+        "description": "Sent to the output as a live-only playbackSession.command event; its next report confirms the effect. For a new queue, PATCH the session first (replaceQueue), then send load with the resulting revision.",
+        "tags": [
+          "Sessions"
+        ],
+        "security": [
+          {
+            "listenerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybackCommandRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Sent to the output (accepted: false for a repeated requestId)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaybackCommandResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PLAYBACK_SYNC_DISABLED: playback sync across devices is turned off for this account (the server admin's choice, or the user's where the admin lets each user decide)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "OUTPUT_GRANT_REPLACED: another device plays the session now; or OUTPUT_NOT_ACTIVE: nothing plays it (current session in details.current)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/playback-sessions/{id}/handoff": {
       "post": {
         "summary": "Legacy alias: claim the output for the calling browser at an expected revision",
@@ -9019,7 +9261,7 @@
         "tags": [
           "Events"
         ],
-        "description": "Use a short-lived sse token in the query string because EventSource cannot set Authorization headers; a full session token is refused. Each event's data is JSON `{id, type, occurredAt, data}`. Types: playbackSession.created / updated / handedOff / deleted (fetch the session when its revision is newer), playbackSession.progress (every accepted output report: `{sessionId, revision, outputId, generation, report}`; live only, never replayed), playlist.changed, annotation.changed, library.revision, playbackSync.changed (`{enabled}`: whether the playback-session API works for this account now), and resync.required (the replay window was lost: re-fetch everything).",
+        "description": "Use a short-lived sse token in the query string because EventSource cannot set Authorization headers; a full session token is refused. Each event's data is JSON `{id, type, occurredAt, data}`. Types: playbackSession.created / updated / handedOff / deleted (fetch the session when its revision is newer), playbackSession.progress (every accepted output report: `{sessionId, revision, outputId, generation, report}`; live only, never replayed), playlist.changed, annotation.changed, playbackSession.command (to the output: `{sessionId, outputId, generation, requestId, issuedBy, command}`; live only), library.revision, playbackSync.changed (`{enabled}`: whether the playback-session API works for this account now), and resync.required (the replay window was lost: re-fetch everything).",
         "security": [
           {
             "listenerAuth": []
