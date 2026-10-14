@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import type { PoolClient } from 'pg';
 import { initDB } from '../database';
-import type { PlaybackOutputClaim, PlaybackSession, PlaybackSessionPatch, Track } from '../../shared/api/v1';
+import type { PlaybackOutput, PlaybackOutputClaim, PlaybackOutputReport, PlaybackSession, PlaybackSessionPatch, Track } from '../../shared/api/v1';
 import { getApiV1TracksByIds } from './apiV1Dto.service';
 import { publishApiV1Event } from './apiV1Events.service';
 
@@ -23,6 +23,12 @@ type SessionRow = {
   output_name: string | null;
   output_generation: string | number;
   output_claimed_at: Date | string | null;
+  output_seq: string | number | null;
+  output_state: PlaybackOutputReport['state'] | null;
+  output_reason: string | null;
+  output_entry_id: string | null;
+  output_position_ms: number | null;
+  output_reported_at: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
 };
@@ -35,8 +41,8 @@ type EntryRow = {
 };
 
 export class PlaybackSessionNotFoundError extends Error {}
-/** A device-level request from a device that does not hold the session's output grant. */
-export class PlaybackSessionOwnershipError extends Error {}
+/** A report's body named a different output or generation than its credential. */
+export class PlaybackOutputIdentityError extends Error {}
 /** A refresh named an output grant that has since been replaced by a newer claim. */
 export class PlaybackOutputGrantReplacedError extends Error {
   constructor(public readonly current: PlaybackSession) {
@@ -115,6 +121,41 @@ async function loadEntries(db: PoolClient | Awaited<ReturnType<typeof initDB>>, 
   return result.rows as EntryRow[];
 }
 
+// Reports come every ~10 s while playing and every ~30 s as a heartbeat while
+// paused or buffering, so a minute of silence is two missed heartbeats.
+export const OUTPUT_UNREACHABLE_AFTER_MS = 60_000;
+const TERMINAL_OUTPUT_STATES = new Set(['stopped', 'idle', 'error']);
+
+/**
+ * Silence only ever makes an output unreachable, never ended: a phone in a
+ * lift and a killed receiver look the same. It ends only when the output says
+ * so itself, and a new claim replaces it.
+ */
+function serializeOutput(row: SessionRow, now = Date.now()): PlaybackOutput | null {
+  if (!row.output_id || !row.output_kind || !row.output_claimed_at) return null;
+  const reported = row.output_reported_at && row.output_state ? {
+    seq: Number(row.output_seq),
+    state: row.output_state,
+    reason: row.output_reason,
+    queueEntryId: row.output_entry_id,
+    positionMs: Number(row.output_position_ms) || 0,
+    reportedAt: new Date(row.output_reported_at).toISOString(),
+  } : null;
+  const lastHeard = Date.parse(reported?.reportedAt ?? new Date(row.output_claimed_at).toISOString());
+  const status = reported && TERMINAL_OUTPUT_STATES.has(reported.state)
+    ? 'ended'
+    : now - lastHeard > OUTPUT_UNREACHABLE_AFTER_MS ? 'unreachable' : 'active';
+  return {
+    id: row.output_id,
+    kind: row.output_kind,
+    name: row.output_name,
+    generation: Number(row.output_generation),
+    claimedAt: new Date(row.output_claimed_at).toISOString(),
+    status,
+    report: reported,
+  };
+}
+
 async function serializeSession(db: PoolClient | Awaited<ReturnType<typeof initDB>>, row: SessionRow): Promise<PlaybackSession> {
   const entries = await loadEntries(db, row.id);
   const tracks = await getApiV1TracksByIds(row.user_id, entries.map((entry) => entry.track_id));
@@ -133,13 +174,7 @@ async function serializeSession(db: PoolClient | Awaited<ReturnType<typeof initD
     id: row.id,
     name: row.name,
     ownerClientId: row.owner_client_id,
-    output: row.output_id && row.output_kind && row.output_claimed_at ? {
-      id: row.output_id,
-      kind: row.output_kind,
-      name: row.output_name,
-      generation: Number(row.output_generation),
-      claimedAt: new Date(row.output_claimed_at).toISOString(),
-    } : null,
+    output: serializeOutput(row),
     currentEntryId,
     positionMs: Number(row.position_ms) || 0,
     playbackState: row.playback_state,
@@ -456,6 +491,8 @@ export async function claimPlaybackOutput(input: {
     UPDATE playback_sessions
     SET owner_client_id = $3, output_id = $3, output_kind = $4, output_name = $5,
         output_generation = output_generation + 1, output_claimed_at = NOW(),
+        output_seq = NULL, output_state = NULL, output_reason = NULL,
+        output_entry_id = NULL, output_position_ms = NULL, output_reported_at = NULL,
         revision = revision + 1, updated_at = NOW()
     WHERE id = $1 AND user_id = $2 AND ($6::bigint IS NULL OR revision = $6::bigint)
     RETURNING *
@@ -493,6 +530,97 @@ export async function getCurrentOutputGrant(input: {
     throw new PlaybackOutputGrantReplacedError(session);
   }
   return { sid: session.id, oid: session.output.id, gen: session.output.generation };
+}
+
+const SESSION_STATE_FOR_OUTPUT: Record<PlaybackOutputReport['state'], SessionRow['playback_state'] | null> = {
+  playing: 'playing',
+  paused: 'paused',
+  buffering: null, // between states; keep what the session says
+  stopped: 'stopped',
+  idle: 'stopped',
+  error: 'stopped',
+};
+
+/**
+ * Accepts a report from the session's output. Identity comes from the output
+ * credential (`grant`), never from the body: a body that names another output
+ * or generation is refused, and so is a grant that has been replaced. Reports
+ * at or below the last accepted `seq` are dropped, which also covers a delayed
+ * report from before a seek within the same track.
+ *
+ * A position report changes no revision, so controllers' edits don't conflict
+ * with playback every ten seconds. A track change (to an entry still in the
+ * queue) or a play/pause/stop change does bump it and publishes an update.
+ */
+export async function reportPlaybackOutput(input: {
+  userId: string;
+  grant: { sid: string; oid: string; gen: number };
+  sessionId: string;
+  report: PlaybackOutputReport;
+}): Promise<{ accepted: boolean; revision: number }> {
+  const { grant, report } = input;
+  if (grant.sid !== input.sessionId
+    || (report.outputId !== undefined && report.outputId !== grant.oid)
+    || (report.outputGeneration !== undefined && report.outputGeneration !== grant.gen)) {
+    throw new PlaybackOutputIdentityError();
+  }
+  const db = await initDB();
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      'SELECT * FROM playback_sessions WHERE id = $1 AND user_id = $2 FOR UPDATE',
+      [input.sessionId, input.userId],
+    );
+    const row = result.rows[0] as SessionRow | undefined;
+    if (!row) throw new PlaybackSessionNotFoundError();
+    if (row.output_id !== grant.oid || Number(row.output_generation) !== grant.gen) {
+      await client.query('ROLLBACK');
+      const current = await getPlaybackSession(input.userId, input.sessionId);
+      if (!current) throw new PlaybackSessionNotFoundError();
+      throw new PlaybackOutputGrantReplacedError(current);
+    }
+    if (row.output_seq !== null && report.seq <= Number(row.output_seq)) {
+      await client.query('ROLLBACK');
+      return { accepted: false, revision: Number(row.revision) };
+    }
+
+    let currentEntryId = row.current_entry_id;
+    if (report.queueEntryId && report.queueEntryId !== row.current_entry_id) {
+      const inQueue = await client.query(
+        'SELECT 1 FROM playback_session_entries WHERE session_id = $1 AND queue_entry_id = $2',
+        [input.sessionId, report.queueEntryId],
+      );
+      if (inQueue.rowCount) currentEntryId = report.queueEntryId;
+    }
+    const playbackState = SESSION_STATE_FOR_OUTPUT[report.state] ?? row.playback_state;
+    const changed = currentEntryId !== row.current_entry_id || playbackState !== row.playback_state;
+    const updated = await client.query(`
+      UPDATE playback_sessions
+      SET output_seq = $3, output_state = $4, output_reason = $5, output_entry_id = $6,
+          output_position_ms = $7, output_reported_at = NOW(),
+          current_entry_id = $8, playback_state = $9,
+          position_ms = CASE WHEN $8::uuid IS NOT DISTINCT FROM $6::uuid THEN $7 ELSE position_ms END,
+          revision = revision + $10::int,
+          updated_at = CASE WHEN $10::int = 1 THEN NOW() ELSE updated_at END
+      WHERE id = $1 AND user_id = $2
+      RETURNING revision
+    `, [
+      input.sessionId, input.userId, report.seq, report.state, report.reason ?? null, report.queueEntryId,
+      report.positionMs, currentEntryId, playbackState, changed ? 1 : 0,
+    ]);
+    await client.query('COMMIT');
+    const revision = Number(updated.rows[0].revision);
+    if (changed) publishApiV1Event(input.userId, 'playbackSession.updated', { sessionId: input.sessionId, revision });
+    return { accepted: true, revision };
+  } catch (error) {
+    if (!(error instanceof PlaybackOutputGrantReplacedError)) {
+      try { await client.query('ROLLBACK'); } catch { /* transaction already closed */ }
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /** Legacy alias for a browser claim by the caller, at an expected revision. */

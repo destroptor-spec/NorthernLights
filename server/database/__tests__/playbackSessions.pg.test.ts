@@ -317,6 +317,145 @@ describeDb('playback sessions', () => {
     });
   });
 
+  describe('output reports', () => {
+    type Report = import('../../../shared/api/v1').PlaybackOutputReport;
+    const playing = async (clientId = 'laptop-5678') => {
+      const created = await create(trackIds(0, 3));
+      const session = await sessions.claimPlaybackOutput({ userId, clientId, sessionId: created.id, output: { kind: 'browser' } });
+      return { session, grant: { sid: session.id, oid: clientId, gen: session.output!.generation } };
+    };
+    const reportAs = (grant: { sid: string; oid: string; gen: number }, report: Report) =>
+      sessions.reportPlaybackOutput({ userId, grant, sessionId: grant.sid, report });
+    const read = async (id: string) => (await sessions.getPlaybackSession(userId, id))!;
+    const age = (id: string, column: 'output_reported_at' | 'output_claimed_at', seconds: number) => pool.query(
+      `UPDATE playback_sessions SET ${column} = NOW() - make_interval(secs => $2) WHERE id = $1`, [id, seconds],
+    );
+
+    it('stores position without a revision bump, and bumps it for a track or play-state change', async () => {
+      const { session, grant } = await playing();
+      const [first, second] = session.queue.map((entry) => entry.queueEntryId);
+
+      expect(await reportAs(grant, { seq: 1, state: 'playing', queueEntryId: first, positionMs: 0 }))
+        .toEqual({ accepted: true, revision: session.revision + 1 });
+      expect(await reportAs(grant, { seq: 2, state: 'playing', queueEntryId: first, positionMs: 10_000 }))
+        .toEqual({ accepted: true, revision: session.revision + 1 });
+      let current = await read(session.id);
+      expect(current).toMatchObject({ playbackState: 'playing', currentEntryId: first, positionMs: 10_000 });
+      expect(current.output).toMatchObject({ status: 'active', report: { seq: 2, state: 'playing', queueEntryId: first, positionMs: 10_000 } });
+
+      // The output moved on to the next track by itself.
+      expect((await reportAs(grant, { seq: 3, state: 'playing', queueEntryId: second, positionMs: 1_000 })).revision).toBe(session.revision + 2);
+      expect((await reportAs(grant, { seq: 4, state: 'paused', queueEntryId: second, positionMs: 2_000 })).revision).toBe(session.revision + 3);
+      // Buffering is between states: the session keeps saying paused.
+      expect((await reportAs(grant, { seq: 5, state: 'buffering', queueEntryId: second, positionMs: 2_000 })).revision).toBe(session.revision + 3);
+      current = await read(session.id);
+      expect(current).toMatchObject({ currentEntryId: second, positionMs: 2_000, playbackState: 'paused' });
+    });
+
+    it('drops a report that is not newer than the last accepted one, such as one from before a seek', async () => {
+      const { session, grant } = await playing();
+      const entry = session.queue[0].queueEntryId;
+      await reportAs(grant, { seq: 7, state: 'playing', queueEntryId: entry, positionMs: 150_000 });
+      expect((await reportAs(grant, { seq: 6, state: 'playing', queueEntryId: entry, positionMs: 4_000 })).accepted).toBe(false);
+      expect((await reportAs(grant, { seq: 7, state: 'playing', queueEntryId: entry, positionMs: 4_000 })).accepted).toBe(false);
+      expect((await read(session.id)).output!.report).toMatchObject({ seq: 7, positionMs: 150_000 });
+    });
+
+    it('refuses reports from a replaced grant, and starts the new grant afresh', async () => {
+      const { session, grant: laptop } = await playing();
+      const entry = session.queue[0].queueEntryId;
+      await reportAs(laptop, { seq: 40, state: 'playing', queueEntryId: entry, positionMs: 90_000 });
+      const onPhone = await sessions.claimPlaybackOutput({ userId, clientId: 'phone-1234', sessionId: session.id, output: { kind: 'browser' } });
+      expect(onPhone.output!.report).toBeNull();
+
+      const late = await rejection(reportAs(laptop, { seq: 41, state: 'playing', queueEntryId: entry, positionMs: 95_000 }));
+      expect(late).toBeInstanceOf(sessions.PlaybackOutputGrantReplacedError);
+      expect(late.current.output.id).toBe('phone-1234');
+      // Same device, older generation: still replaced.
+      await expect(reportAs({ ...laptop, oid: 'phone-1234' }, { seq: 1, state: 'playing', queueEntryId: entry, positionMs: 0 }))
+        .rejects.toBeInstanceOf(sessions.PlaybackOutputGrantReplacedError);
+
+      const phone = { sid: session.id, oid: 'phone-1234', gen: onPhone.output!.generation };
+      expect((await reportAs(phone, { seq: 0, state: 'playing', queueEntryId: entry, positionMs: 90_500 })).accepted).toBe(true);
+      expect((await read(session.id)).output!.report).toMatchObject({ seq: 0, positionMs: 90_500 });
+    });
+
+    it('refuses a body that names another output or generation than the credential', async () => {
+      const { session, grant } = await playing();
+      const entry = session.queue[0].queueEntryId;
+      for (const extra of [{ outputId: 'phone-1234' }, { outputGeneration: grant.gen + 1 }]) {
+        await expect(reportAs(grant, { seq: 1, state: 'playing', queueEntryId: entry, positionMs: 0, ...extra }))
+          .rejects.toBeInstanceOf(sessions.PlaybackOutputIdentityError);
+      }
+      expect(await reportAs(grant, { seq: 1, state: 'playing', queueEntryId: entry, positionMs: 0, outputId: grant.oid, outputGeneration: grant.gen }))
+        .toMatchObject({ accepted: true });
+      await expect(sessions.reportPlaybackOutput({ userId, grant, sessionId: (await create(trackIds(0, 1))).id, report: { seq: 2, state: 'playing', queueEntryId: null, positionMs: 0 } }))
+        .rejects.toBeInstanceOf(sessions.PlaybackOutputIdentityError);
+    });
+
+    it('marks a silent output unreachable and never ends it for silence alone', async () => {
+      const { session, grant } = await playing();
+      const entry = session.queue[0].queueEntryId;
+      // Claimed but never heard from.
+      await age(session.id, 'output_claimed_at', 61);
+      expect((await read(session.id)).output!.status).toBe('unreachable');
+
+      await reportAs(grant, { seq: 1, state: 'paused', queueEntryId: entry, positionMs: 33_000 });
+      expect((await read(session.id)).output!.status).toBe('active');
+      await age(session.id, 'output_reported_at', 59);
+      expect((await read(session.id)).output!.status).toBe('active');
+      // A day of silence is still only unreachable, with the last state kept.
+      await age(session.id, 'output_reported_at', 86_400);
+      const silent = (await read(session.id)).output!;
+      expect(silent.status).toBe('unreachable');
+      expect(silent.report).toMatchObject({ state: 'paused', positionMs: 33_000 });
+
+      // Recovery is a report on the same grant.
+      await reportAs(grant, { seq: 2, state: 'paused', queueEntryId: entry, positionMs: 33_000 });
+      expect((await read(session.id)).output!.status).toBe('active');
+    });
+
+    it('ends the output only when it says so itself, and a later report revives it', async () => {
+      const { session, grant } = await playing();
+      const entry = session.queue[0].queueEntryId;
+      await reportAs(grant, { seq: 1, state: 'playing', queueEntryId: entry, positionMs: 5_000 });
+      await reportAs(grant, { seq: 2, state: 'stopped', reason: 'shutdown', queueEntryId: entry, positionMs: 6_000 });
+      let current = await read(session.id);
+      expect(current.output).toMatchObject({ status: 'ended', report: { state: 'stopped', reason: 'shutdown' } });
+      expect(current.playbackState).toBe('stopped');
+      await age(session.id, 'output_reported_at', 3_600);
+      expect((await read(session.id)).output!.status).toBe('ended');
+
+      await reportAs(grant, { seq: 3, state: 'playing', queueEntryId: entry, positionMs: 6_000 });
+      current = await read(session.id);
+      expect(current.output!.status).toBe('active');
+      expect(current.playbackState).toBe('playing');
+    });
+
+    it('keeps position bound to its entry when the output plays something no longer queued', async () => {
+      const { session, grant } = await playing();
+      const [first, second] = session.queue.map((entry) => entry.queueEntryId);
+      await reportAs(grant, { seq: 1, state: 'playing', queueEntryId: first, positionMs: 20_000 });
+      const afterRemoval = await patch(await read(session.id), [{ type: 'remove', queueEntryIds: [second] }], 'phone-1234');
+      // A controller removed the entry; the output reports it anyway, as it is still playing it.
+      await reportAs(grant, { seq: 2, state: 'playing', queueEntryId: second, positionMs: 3_000 });
+      const current = await read(session.id);
+      expect(current.currentEntryId).toBe(afterRemoval.currentEntryId);
+      expect(current.positionMs).toBe(20_000);
+      expect(current.output!.report).toMatchObject({ queueEntryId: second, positionMs: 3_000 });
+    });
+
+    it("doesn't make controllers' edits conflict with position reports", async () => {
+      const { session, grant } = await playing();
+      const entry = session.queue[0].queueEntryId;
+      await reportAs(grant, { seq: 1, state: 'playing', queueEntryId: entry, positionMs: 0 });
+      const before = await read(session.id);
+      for (let seq = 2; seq < 8; seq++) await reportAs(grant, { seq, state: 'playing', queueEntryId: entry, positionMs: seq * 10_000 });
+      // Built on the revision read before six position reports, and still accepted.
+      await expect(patch(before, [{ type: 'insert', afterEntryId: entry, trackIds: [trackId(50)] }], 'phone-1234')).resolves.toBeDefined();
+    });
+  });
+
   it("keeps one user's sessions invisible to another", async () => {
     const session = await create(trackIds(0, 1));
     expect(await sessions.getPlaybackSession(otherUserId, session.id)).toBeNull();

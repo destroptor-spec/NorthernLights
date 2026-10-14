@@ -29,6 +29,8 @@ import {
   playbackOutputClaimResultSchema,
   playbackOutputCredentialSchema,
   playbackOutputRefreshSchema,
+  playbackOutputReportSchema,
+  playbackOutputReportResultSchema,
   playlistSchema,
   trackSchema,
   userSchema,
@@ -58,6 +60,7 @@ const schemas = {
   PlaybackSession: registry.register('PlaybackSession', playbackSessionSchema),
   PlaybackOutputClaimResult: registry.register('PlaybackOutputClaimResult', playbackOutputClaimResultSchema),
   PlaybackOutputCredential: registry.register('PlaybackOutputCredential', playbackOutputCredentialSchema),
+  PlaybackOutputReportResult: registry.register('PlaybackOutputReportResult', playbackOutputReportResultSchema),
   Preferences: registry.register('ListenerPreferences', listenerPreferencesSchema),
   Lyrics: registry.register('TrackLyrics', lyricsSchema),
 };
@@ -189,6 +192,7 @@ const sessionPatchResponses = {
 path({ method: 'patch', path: '/playback-sessions/{id}', summary: 'Apply optimistic queue or transport changes', tags: ['Sessions'], security: authed, request: { params: idParams, body: { required: true, content: json(playbackSessionPatchSchema) } }, responses: sessionPatchResponses });
 path({ method: 'post', path: '/playback-sessions/{id}/output', summary: 'Play here: make the calling device the session output and get its output credential', tags: ['Sessions'], security: authed, request: { params: idParams, body: { required: true, content: json(playbackOutputClaimSchema) } }, responses: ok(schemas.PlaybackOutputClaimResult) });
 path({ method: 'post', path: '/playback-sessions/{id}/output/refresh', summary: "Mint a fresh output credential for the session's current output grant", tags: ['Sessions'], security: authed, request: { params: idParams, body: { required: true, content: json(playbackOutputRefreshSchema) } }, responses: { ...ok(schemas.PlaybackOutputCredential), 409: { description: 'OUTPUT_GRANT_REPLACED: another device has claimed the output since (current session in details.current)', content: json(schemas.ApiError) } } });
+path({ method: 'post', path: '/playback-sessions/{id}/reports', summary: 'Report what the output is playing (output credential only)', tags: ['Sessions'], security: authed, request: { params: idParams, body: { required: true, content: json(playbackOutputReportSchema) } }, responses: { ...ok(schemas.PlaybackOutputReportResult), 403: { description: 'OUTPUT_CREDENTIAL_REQUIRED, or SCOPED_TOKEN_NOT_ALLOWED for another session', content: json(schemas.ApiError) }, 409: { description: 'OUTPUT_GRANT_REPLACED: another device has claimed the output (current session in details.current)', content: json(schemas.ApiError) }, 422: { description: 'OUTPUT_IDENTITY_MISMATCH: the body names another output or generation than the credential', content: json(schemas.ApiError) } } });
 path({ method: 'post', path: '/playback-sessions/{id}/handoff', summary: 'Legacy alias: claim the output for the calling browser at an expected revision', tags: ['Sessions'], security: authed, request: { params: idParams, body: { required: true, content: json(z.object({ expectedRevision: z.number().int().positive() })) } }, responses: ok(schemas.PlaybackSession) });
 path({ method: 'delete', path: '/playback-sessions/{id}', summary: 'Delete a playback session at an expected revision', tags: ['Sessions'], security: authed, request: { params: idParams, body: { required: true, content: json(playbackSessionDeleteSchema) } }, responses: noContent() });
 path({

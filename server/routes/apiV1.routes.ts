@@ -78,6 +78,7 @@ import {
   playbackSessionPatchSchema,
   playbackOutputClaimSchema,
   playbackOutputRefreshSchema,
+  playbackOutputReportSchema,
   OPAQUE_ID,
 } from '../../shared/api/v1';
 import {
@@ -111,7 +112,8 @@ import {
   listPlaybackSessions,
   patchPlaybackSession,
   PlaybackSessionNotFoundError,
-  PlaybackSessionOwnershipError,
+  PlaybackOutputIdentityError,
+  reportPlaybackOutput,
   PlaybackSessionRevisionError,
   PlaybackSessionTrackError,
   PlaybackSessionAnchorError,
@@ -1058,6 +1060,21 @@ router.post('/playback-sessions/:id/output/refresh', async (req, res) => {
   }
 });
 
+// What the output is actually playing. Only an output credential for this
+// session gets here (the middleware checks the scope and the session), and the
+// output's identity comes from that credential, never from the body.
+router.post('/playback-sessions/:id/reports', async (req, res) => {
+  const grant = req.apiV1!.scope === 'output' ? req.apiV1!.outputGrant : undefined;
+  if (!grant) return sendApiV1Error(req, res, 403, 'OUTPUT_CREDENTIAL_REQUIRED', 'Only the device playing this session can report, with its output credential.');
+  const report = parseBody(playbackOutputReportSchema, req, res);
+  if (!report) return;
+  try {
+    dataResponse(req, res, await reportPlaybackOutput({ userId: req.apiV1!.userId, grant, sessionId: req.params.id, report }));
+  } catch (error) {
+    handleSessionError(req, res, error);
+  }
+});
+
 // Legacy alias for claiming the output as a browser, at an expected revision.
 router.post('/playback-sessions/:id/handoff', async (req, res) => {
   const input = parseBody(z.object({ expectedRevision: z.number().int().positive() }).strict(), req, res);
@@ -1088,7 +1105,7 @@ router.delete('/playback-sessions/:id', async (req, res) => {
 
 function handleSessionError(req: Request, res: Response, error: unknown) {
   if (error instanceof PlaybackSessionNotFoundError) return sendApiV1Error(req, res, 404, 'PLAYBACK_SESSION_NOT_FOUND', 'Playback session not found.');
-  if (error instanceof PlaybackSessionOwnershipError) return sendApiV1Error(req, res, 409, 'PLAYBACK_SESSION_NOT_OWNER', 'This device is not playing the session.');
+  if (error instanceof PlaybackOutputIdentityError) return sendApiV1Error(req, res, 422, 'OUTPUT_IDENTITY_MISMATCH', 'The report names a different output or generation than its credential.');
   if (error instanceof PlaybackOutputGrantReplacedError) return sendApiV1Error(req, res, 409, 'OUTPUT_GRANT_REPLACED', 'Another device has since started playing this session.', { current: error.current });
   if (error instanceof PlaybackSessionRevisionError) return sendApiV1Error(req, res, 409, 'REVISION_CONFLICT', 'The playback session changed on another client.', { current: error.current });
   if (error instanceof PlaybackSessionTrackError) return sendApiV1Error(req, res, 409, 'TRACKS_UNAVAILABLE', 'One or more queue tracks are unavailable.', { missingIds: error.missingIds });
