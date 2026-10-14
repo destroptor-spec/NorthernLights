@@ -77,12 +77,16 @@ const SCOPE_ALLOWED_ENDPOINTS: Record<string, (method: string, path: string) => 
     || (method === 'POST' && path === '/playback/reports')
     || (method === 'GET' && path === '/preferences')
   ),
+  // An output credential proves a session's output grant. Reports (Phase 1,
+  // PR 4) will be its only use; until then it authenticates nothing.
+  output: () => false,
 };
 
 const SCOPE_CLIENT_NAMES: Record<string, string> = {
   media: 'Aurora artwork',
   sse: 'Aurora event stream',
   receiver: 'Aurora Cast receiver',
+  output: 'Aurora playback output',
 };
 
 export async function requireApiV1Auth(req: Request, res: Response, next: NextFunction) {

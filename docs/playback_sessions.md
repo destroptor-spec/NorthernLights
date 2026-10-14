@@ -103,6 +103,8 @@ These must be resolved before a first-party client can rely on the session API:
    (`playbackSession.service.ts`: `owner_client_id !== clientId` → 409). That
    prevents a second device, or a listen-together guest, from adding a track
    without first taking over playback. See [Roles](#roles-controllers-and-the-output).
+   *Fixed in Phase 1, PR 3: the session belongs to its user; any of their devices
+   may change it, and the output role moves by claiming a grant.*
 3. **No live position.** `setTransport` stores a position, but nothing reports it
    periodically, and `nowPlaying.positionMs` is discarded.
 4. **Queue writes rewrite every row.** Queue changes delete and re-insert entries
@@ -153,7 +155,15 @@ supports several. It holds:
 
 ### Roles: controllers and the output
 
-The single "owner" splits into two roles:
+**Ownership belongs to the user, never to a device** (Andreas, 2026-10-13):
+"If I start casting, I will own that cast session end to end." A session never
+changes owner. It can change *device*: the phone dies, the PWA on the computer
+resumes it, and which device holds the queue is seamless and invisible to the
+listener, with no takeover prompt. Other people only take part as guests the
+owner lets in ([Listen together](#listen-together-later)); they may add tracks
+but not take playback or delete the session.
+
+The single device-level "owner" therefore splits into two roles:
 
 - **Controllers** are any authorised client: the user's devices, later invited
   members. They may change the queue and send transport *intents*
@@ -445,7 +455,8 @@ its credentials. Its token is therefore narrow, bound and finite:
   so in normal use the token is refreshed every time the phone wakes up. A
   refresh re-mints for the **same, still-current grant** (same `oid` and `gen`).
   It cannot revive a grant that has been replaced; for that, the sender must
-  claim a new grant, which is a visible handoff.
+  claim a new grant. That is a new generation on the server, but invisible to
+  the listener (see [Roles](#roles-controllers-and-the-output)).
 - **Expiry with no phone.** When the token expires and nobody has refreshed it,
   the receiver stops following the session. It plays out the items already in
   its CAF window; their media URLs carry their own tokens. Then it shows an idle
@@ -826,3 +837,23 @@ change; one new table):
   patch), replacement reuse, replay after a later change, key reuse, rejected
   patches leaving no key, per-session scope, expiry, the cap, and a rebase of an
   anchored insert after a concurrent change.
+
+**PR 3 — the owner is the user; output grants** (API change; additive columns):
+- No device-level owner check: any of the user's devices (web session or app
+  key) may `PATCH` or `DELETE` a session. `ownerClientId` stays, deprecated,
+  recording the client that last created or claimed it.
+- The output grant lives on `playback_sessions` (`output_id`, `output_kind`,
+  `output_name`, `output_generation`, `output_claimed_at`): one current grant
+  per session; the generation only goes up, so any older grant is stale.
+- `POST /playback-sessions/:id/output` (`kind: "browser"`; `cast` arrives with
+  PR 5's receiver token) makes the calling device the output at any time,
+  without a revision check, and returns `{ session, credential }`. The output
+  credential is a one-hour JWT with scope `output` and `sid`/`oid`/`gen`/`jti`
+  claims. It is refused by every endpoint until PR 4's reports, and the generic
+  `/auth/scoped-token` never mints it.
+- `POST /playback-sessions/:id/output/refresh` re-mints for the current grant
+  only; a replaced one answers `409 OUTPUT_GRANT_REPLACED`.
+- `handoff` is a legacy alias: a browser claim by the caller at an expected
+  revision.
+- Creating a session does not claim the output; a client starting playback
+  creates and claims in one step, so the listener never sees two.

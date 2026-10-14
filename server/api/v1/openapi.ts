@@ -25,6 +25,10 @@ import {
   playbackSessionDeleteSchema,
   playbackSessionPatchSchema,
   playbackSessionSchema,
+  playbackOutputClaimSchema,
+  playbackOutputClaimResultSchema,
+  playbackOutputCredentialSchema,
+  playbackOutputRefreshSchema,
   playlistSchema,
   trackSchema,
   userSchema,
@@ -52,6 +56,8 @@ const schemas = {
   Playlist: registry.register('Playlist', playlistSchema),
   PlaybackDescriptor: registry.register('PlaybackDescriptor', playbackDescriptorSchema),
   PlaybackSession: registry.register('PlaybackSession', playbackSessionSchema),
+  PlaybackOutputClaimResult: registry.register('PlaybackOutputClaimResult', playbackOutputClaimResultSchema),
+  PlaybackOutputCredential: registry.register('PlaybackOutputCredential', playbackOutputCredentialSchema),
   Preferences: registry.register('ListenerPreferences', listenerPreferencesSchema),
   Lyrics: registry.register('TrackLyrics', lyricsSchema),
 };
@@ -162,7 +168,7 @@ path({ method: 'patch', path: '/preferences', summary: 'Update listener preferen
 path({ method: 'post', path: '/tracks/{id}/playback', summary: 'Resolve playback sources and loudness', tags: ['Playback'], security: authed, request: { params: idParams, body: { required: true, content: json(playbackDescriptorRequestSchema) } }, responses: ok(schemas.PlaybackDescriptor) });
 
 path({ method: 'get', path: '/playback-sessions', summary: 'List durable playback sessions', tags: ['Sessions'], security: authed, responses: ok(z.array(schemas.PlaybackSession)) });
-path({ method: 'post', path: '/playback-sessions', summary: 'Create a playback session owned by this client', tags: ['Sessions'], security: authed, request: { body: { required: true, content: json(playbackSessionCreateSchema) } }, responses: created(schemas.PlaybackSession) });
+path({ method: 'post', path: '/playback-sessions', summary: 'Create a playback session for this user', tags: ['Sessions'], security: authed, request: { body: { required: true, content: json(playbackSessionCreateSchema) } }, responses: created(schemas.PlaybackSession) });
 path({ method: 'get', path: '/playback-sessions/{id}', summary: 'Get a playback session', tags: ['Sessions'], security: authed, request: { params: idParams }, responses: ok(schemas.PlaybackSession) });
 const sessionPatchResponses = {
   ...ok(schemas.PlaybackSession),
@@ -177,12 +183,14 @@ const sessionPatchResponses = {
       }),
     })),
   },
-  409: { description: 'REVISION_CONFLICT, ANCHOR_NOT_FOUND or ENTRY_ID_CONFLICT (each with the current session in details.current), PLAYBACK_SESSION_NOT_OWNER, or TRACKS_UNAVAILABLE', content: json(schemas.ApiError) },
+  409: { description: 'REVISION_CONFLICT, ANCHOR_NOT_FOUND or ENTRY_ID_CONFLICT (each with the current session in details.current), or TRACKS_UNAVAILABLE', content: json(schemas.ApiError) },
   422: { description: 'IDEMPOTENCY_KEY_REUSED: the requestId was used for a different body', content: json(schemas.ApiError) },
 };
 path({ method: 'patch', path: '/playback-sessions/{id}', summary: 'Apply optimistic queue or transport changes', tags: ['Sessions'], security: authed, request: { params: idParams, body: { required: true, content: json(playbackSessionPatchSchema) } }, responses: sessionPatchResponses });
-path({ method: 'post', path: '/playback-sessions/{id}/handoff', summary: 'Explicitly transfer session ownership', tags: ['Sessions'], security: authed, request: { params: idParams, body: { required: true, content: json(z.object({ expectedRevision: z.number().int().positive() })) } }, responses: ok(schemas.PlaybackSession) });
-path({ method: 'delete', path: '/playback-sessions/{id}', summary: 'Delete an owned playback session at an expected revision', tags: ['Sessions'], security: authed, request: { params: idParams, body: { required: true, content: json(playbackSessionDeleteSchema) } }, responses: noContent() });
+path({ method: 'post', path: '/playback-sessions/{id}/output', summary: 'Play here: make the calling device the session output and get its output credential', tags: ['Sessions'], security: authed, request: { params: idParams, body: { required: true, content: json(playbackOutputClaimSchema) } }, responses: ok(schemas.PlaybackOutputClaimResult) });
+path({ method: 'post', path: '/playback-sessions/{id}/output/refresh', summary: "Mint a fresh output credential for the session's current output grant", tags: ['Sessions'], security: authed, request: { params: idParams, body: { required: true, content: json(playbackOutputRefreshSchema) } }, responses: { ...ok(schemas.PlaybackOutputCredential), 409: { description: 'OUTPUT_GRANT_REPLACED: another device has claimed the output since (current session in details.current)', content: json(schemas.ApiError) } } });
+path({ method: 'post', path: '/playback-sessions/{id}/handoff', summary: 'Legacy alias: claim the output for the calling browser at an expected revision', tags: ['Sessions'], security: authed, request: { params: idParams, body: { required: true, content: json(z.object({ expectedRevision: z.number().int().positive() })) } }, responses: ok(schemas.PlaybackSession) });
+path({ method: 'delete', path: '/playback-sessions/{id}', summary: 'Delete a playback session at an expected revision', tags: ['Sessions'], security: authed, request: { params: idParams, body: { required: true, content: json(playbackSessionDeleteSchema) } }, responses: noContent() });
 path({
   method: 'get', path: '/events', summary: 'Subscribe to listener-scoped server events', tags: ['Events'],
   description: 'Use a short-lived sse token in the query string because EventSource cannot set Authorization headers.',

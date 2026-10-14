@@ -171,13 +171,21 @@ Playback sessions are server-backed queue snapshots with transport state:
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
 | `GET` | `/playback-sessions` | List this user's recent sessions. |
-| `POST` | `/playback-sessions` | Create a queue owned by the calling client. |
+| `POST` | `/playback-sessions` | Create a session for this user. |
 | `GET` | `/playback-sessions/:id` | Read a session and its path-free tracks. |
-| `PATCH` | `/playback-sessions/:id` | Apply queue/transport operations as the owner. |
-| `POST` | `/playback-sessions/:id/handoff` | Explicitly take ownership for this client. |
+| `PATCH` | `/playback-sessions/:id` | Apply queue/transport operations. |
+| `POST` | `/playback-sessions/:id/output` | Play here: make the calling device the output and get its output credential. |
+| `POST` | `/playback-sessions/:id/output/refresh` | Mint a fresh output credential for the current output grant. |
+| `POST` | `/playback-sessions/:id/handoff` | Legacy alias: claim the output as a browser at an expected revision. |
 | `DELETE` | `/playback-sessions/:id` | Delete a session with `{ "expectedRevision": n }`. |
 
-Every mutation includes `expectedRevision`. A stale revision returns `409 REVISION_CONFLICT` with the current session in `error.details.current`. A non-owner mutation returns `409 PLAYBACK_SESSION_NOT_OWNER`; the client must present a handoff action to the user and call the handoff endpoint rather than silently stealing playback.
+**Ownership.** A session belongs to its user, never to a device. Any of the user's devices (a web session or an app key) may read, change or delete it; there is no device-level owner check and no handoff step. `ownerClientId` is deprecated and only records the client that last created or claimed the session.
+
+**The output** is the one device playing the session (`output: { id, kind, name, generation, claimedAt } | null`). A new session has none. `POST /playback-sessions/:id/output` with `{ "kind": "browser", "name"?: string }` makes the calling device (its `X-Aurora-Client-Id`) the output at any time, with no revision check, so moving playback between devices is seamless. Each claim raises `output.generation` and publishes `playbackSession.handedOff` with `{ outputId, generation }`. The response is `{ session, credential }`, where `credential` is `{ token, expiresAt, outputId, generation }`: a one-hour **output credential** whose claims name the session, the output and the generation. Keep it in memory only. It authenticates nothing yet; position reports will require it. `POST /auth/scoped-token` never mints one.
+
+`POST /playback-sessions/:id/output/refresh` with `{ outputId, generation }` returns a fresh credential while that pair is still the current grant. Once another claim has replaced it, the answer is `409 OUTPUT_GRANT_REPLACED` with the current session in `error.details.current`; a replaced grant is never revived, so the device must claim again.
+
+Every queue mutation includes `expectedRevision`. A stale revision returns `409 REVISION_CONFLICT` with the current session in `error.details.current`.
 
 Supported patch operations are `replaceQueue`, `insert`, `remove`, `move`, and `setTransport`. Queue entries have stable UUIDs so duplicate track IDs remain independently addressable.
 

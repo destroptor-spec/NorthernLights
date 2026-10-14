@@ -900,6 +900,14 @@ export async function initDB(): Promise<Pool> {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         CREATE INDEX IF NOT EXISTS playback_sessions_user_updated_idx ON playback_sessions(user_id, updated_at DESC);
+        -- The output grant (docs/playback_sessions.md, Roles): which of the
+        -- owner's devices plays the session. The generation only ever goes up,
+        -- so a report from a replaced device is recognisably stale.
+        ALTER TABLE playback_sessions ADD COLUMN IF NOT EXISTS output_id TEXT;
+        ALTER TABLE playback_sessions ADD COLUMN IF NOT EXISTS output_kind TEXT;
+        ALTER TABLE playback_sessions ADD COLUMN IF NOT EXISTS output_name TEXT;
+        ALTER TABLE playback_sessions ADD COLUMN IF NOT EXISTS output_generation BIGINT NOT NULL DEFAULT 0;
+        ALTER TABLE playback_sessions ADD COLUMN IF NOT EXISTS output_claimed_at TIMESTAMPTZ;
 
         CREATE TABLE IF NOT EXISTS playback_session_entries (
           session_id UUID NOT NULL REFERENCES playback_sessions(id) ON DELETE CASCADE,

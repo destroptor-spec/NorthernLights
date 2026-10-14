@@ -136,6 +136,14 @@ describe('scoped token endpoint allowlist', () => {
       ['media', 'GET', '/events'],
       ['sse', 'GET', '/artwork/abc'],
       ['sse', 'POST', '/recommendations/next'],
+      // An output credential authenticates nothing until reports accept it.
+      ['output', 'POST', '/playback/reports'],
+      ['output', 'GET', '/playback-sessions/s-1'],
+      ['output', 'PATCH', '/playback-sessions/s-1'],
+      ['output', 'POST', '/playback-sessions/s-1/output'],
+      ['output', 'POST', '/playback-sessions/s-1/output/refresh'],
+      ['output', 'GET', '/events'],
+      ['output', 'POST', '/auth/scoped-token'],
       // An unrecognised scope claim is not a free pass.
       ['listener', 'POST', '/recommendations/next'],
       ['', 'POST', '/recommendations/next'],
