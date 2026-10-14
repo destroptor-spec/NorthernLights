@@ -10,6 +10,9 @@ jest.mock('../../store', () => ({ usePlayerStore: { getState: () => ({ authToken
  */
 type Harness = {
   startPlaybackForCurrentSession(reason: string): Promise<void>;
+  afterSessionEnded(snapshot: unknown): void;
+  handOffToLocalAfterSessionEnd: jest.Mock;
+  setCastingElsewhereCheck(check: ((name: string) => boolean) | null): void;
   hydrateSenderFromRemoteSession: jest.Mock;
   handleCastConnected: jest.Mock;
   logCast: jest.Mock;
@@ -19,12 +22,16 @@ type Harness = {
 
 function harness() {
   const session = { getSessionId: () => '1ecdcfad', sendMessage: jest.fn().mockResolvedValue(undefined) };
+  const endCurrentSession = jest.fn();
   let media: unknown = null;
   const manager = Object.create(CastManager.prototype) as Harness;
   Object.assign(manager, {
     autoCastInProgress: false,
     state: 'CONNECTED',
-    castContext: { getCastState: () => 'CONNECTED', getCurrentSession: () => session },
+    castContext: { getCastState: () => 'CONNECTED', getCurrentSession: () => session, endCurrentSession },
+    getCastDeviceName: () => 'NAD Forstærker',
+    handOffToLocalAfterSessionEnd: jest.fn(),
+    resetCastEndIntent: jest.fn(),
     notifyStateChange: jest.fn(),
     getHydratableMediaSession: () => media,
     hydrateSenderFromRemoteSession: jest.fn().mockResolvedValue(true),
@@ -36,7 +43,7 @@ function harness() {
     lastAuroraStatusAt: 0,
     watchdogMediaRequestId: 0,
   });
-  return { manager, session, setMedia: (next: unknown) => { media = next; } };
+  return { manager, session, endCurrentSession, setMedia: (next: unknown) => { media = next; } };
 }
 
 const nadMedia = { media: { contentId: 'slidin', customData: { queueEntryId: 'e10' } }, playerState: 'PAUSED' };
@@ -102,3 +109,40 @@ it('ignores a status left over from before this session', async () => {
   await started;
   expect(manager.handleCastConnected).toHaveBeenCalledTimes(1);
 });
+
+/**
+ * Prod 2026-10-13 21:47:36: the desktop joined the phone's Cast session as a
+ * second sender and heard nothing back, so it loaded its own queue and kept
+ * re-sending it. With sync telling us another device casts there, this
+ * device leaves the Cast session again and controls it remotely.
+ */
+describe('a Cast device another of my devices is casting to', () => {
+  it('leaves the Cast session without stopping the receiver, and loads nothing', async () => {
+    const { manager, endCurrentSession, setMedia } = harness();
+    setMedia(nadMedia);
+    const check = jest.fn(() => true);
+    manager.setCastingElsewhereCheck(check);
+    await manager.startPlaybackForCurrentSession('cast-connected-user-launch');
+    expect(check).toHaveBeenCalledWith('NAD Forstærker');
+    expect(endCurrentSession).toHaveBeenCalledWith(false);
+    expect(manager.hydrateSenderFromRemoteSession).not.toHaveBeenCalled();
+    expect(manager.handleCastConnected).not.toHaveBeenCalled();
+    expect(manager.logCast).toHaveBeenCalledWith('ok', 'cast-join-left', 'reason=cast-connected-user-launch device=NAD Forstærker');
+
+    // Its own SESSION_ENDED is not a stop to take over from.
+    manager.afterSessionEnded({ index: 1, positionSeconds: 12, wasPlaying: true });
+    expect(manager.handOffToLocalAfterSessionEnd).not.toHaveBeenCalled();
+    manager.afterSessionEnded({ index: 1, positionSeconds: 12, wasPlaying: true });
+    expect(manager.handOffToLocalAfterSessionEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it('casts as before when nobody else casts there', async () => {
+    const { manager, endCurrentSession, setMedia } = harness();
+    setMedia(nadMedia);
+    manager.setCastingElsewhereCheck(() => false);
+    await manager.startPlaybackForCurrentSession('cast-connected-user-launch');
+    expect(endCurrentSession).not.toHaveBeenCalled();
+    expect(manager.hydrateSenderFromRemoteSession).toHaveBeenCalled();
+  });
+});
+

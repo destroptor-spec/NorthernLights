@@ -72,6 +72,18 @@ sessionFollower.start(usePlayerStore, {
   },
   log: logPlaybackInfo,
 });
+// Picking, in the Cast dialog, a Cast device another of the user's devices is
+// casting to: this device leaves that Cast session again and controls it from
+// here instead ("Play where?" → that device), since a second sender is
+// unreliable (CastManager.setCastingElsewhereCheck).
+castManager.setCastingElsewhereCheck((castDeviceName) => {
+  if (!usePlayerStore.getState().syncPlaybackAcrossDevices) return false;
+  const other = sessionFollower.castingElsewhere(castDeviceName);
+  if (!other) return false;
+  usePlayerStore.setState({ remoteControlOutputId: other.outputId });
+  return true;
+});
+
 // The sync setting lives on the server (an admin's, or this user's from another
 // device). A device with sync off has no event stream to hear it turn on, so
 // every device re-reads it when it comes back to the foreground.

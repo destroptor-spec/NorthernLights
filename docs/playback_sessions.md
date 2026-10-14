@@ -1057,6 +1057,17 @@ with `clientId`), and the controller then forgets the choice; and the output
 reports right after each command, so a controller hearing nothing for 5 s
 says "<device> isn't responding".
 
+No second Cast sender (prod 2026-10-13 21:47:36, Andreas chose this): Chrome
+on the desktop joining a Cast session another device started gets a one-way
+connection (it sends, but hears no media status, receiver status or load
+acknowledgements), so it loaded its own queue and kept re-sending it. With
+sync on, when the session says another of the user's devices is casting to
+the picked Cast device (`SessionFollower.castingElsewhere`: output kind `cast`,
+active, same name), the device leaves the Cast session again
+(`endCurrentSession(false)`, `cast-join-left`, no handoff) and remembers that
+device as the remote target, so it controls the Cast device through the
+device casting to it.
+
 PRs: (1) `POST /playback-sessions/:id/commands` and the live-only
 `playbackSession.command` event (server only); (2) the output carries
 commands out (`src/utils/sessionCommands.ts`: SessionFollower passes on

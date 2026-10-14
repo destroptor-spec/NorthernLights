@@ -855,6 +855,47 @@ export class CastManager {
         this.castEndSnapshotAtStop = null;
     }
 
+    /**
+     * Tells whether another of the user's devices is casting to the named
+     * Cast device right now (from the playback session; main.tsx). A Cast
+     * dialog then joins that session as a second sender, and Chrome on the
+     * desktop gets a one-way connection there: it sends but hears nothing
+     * (prod 2026-10-13 21:47:36), so it reloaded its own queue over the
+     * other device's and kept re-sending it. Such a device leaves the Cast
+     * session again (the receiver plays on) and controls it remotely.
+     */
+    public setCastingElsewhereCheck(check: ((castDeviceName: string) => boolean) | null) {
+        this.castingElsewhereCheck = check;
+    }
+
+    private castingElsewhereCheck: ((castDeviceName: string) => boolean) | null = null;
+    /** This sender left a session another device casts, on purpose: no handoff. */
+    private leftJoinedSession = false;
+
+    private leaveIfCastingElsewhere(reason: string): boolean {
+        const name = this.getCastDeviceName();
+        if (!name || !this.castContext?.getCurrentSession?.() || !this.castingElsewhereCheck?.(name)) return false;
+        this.leftJoinedSession = true;
+        this.logCast('ok', 'cast-join-left', `reason=${reason} device=${name}`);
+        try {
+            // false: leave the session, do not stop the receiver.
+            this.castContext.endCurrentSession(false);
+        } catch (error) {
+            this.logCast('warn', 'cast-join-leave-failed', this.describeError(error));
+        }
+        return true;
+    }
+
+    private afterSessionEnded(snapshot: CastEndSnapshot | null) {
+        if (this.leftJoinedSession) {
+            this.leftJoinedSession = false;
+            this.resetCastEndIntent();
+            this.logCast('ok', 'cast-ended-handoff skipped', 'reason=left-joined-session');
+            return;
+        }
+        this.handOffToLocalAfterSessionEnd(snapshot);
+    }
+
     /** Hands playback back to this device after its Cast session ended for good. */
     private handOffToLocalAfterSessionEnd(snapshot: CastEndSnapshot | null) {
         const userStopRequested = this.userStopRequested;
@@ -1900,7 +1941,8 @@ export class CastManager {
 
                     // Fresh connection with no existing remote media: auto-cast local playback.
                     // Existing/resumed remote media must win over stale local sender state.
-                    if (prevState !== 'CONNECTED' && this.state === 'CONNECTED' && !this.autoCastInProgress) {
+                    if (prevState !== 'CONNECTED' && this.state === 'CONNECTED' && !this.autoCastInProgress
+                        && !this.leaveIfCastingElsewhere('cast-connected')) {
                         const mediaSession = this.getHydratableMediaSession(this.castContext.getCurrentSession?.()?.getMediaSession?.() || null);
                         if (this.hasActiveRemoteMediaSession(mediaSession)) {
                             this.userSessionRequestPending = false;
@@ -2084,7 +2126,7 @@ export class CastManager {
                             this.state = 'NOT_CONNECTED';
                             this.setHealthStatus('idle', '');
                             this.notifyStateChange();
-                            this.handOffToLocalAfterSessionEnd(endSnapshot);
+                            this.afterSessionEnded(endSnapshot);
                             break;
                         }
                     }
@@ -2762,6 +2804,7 @@ export class CastManager {
             this.notifyStateChange();
         }
         if (!this.castContext?.getCurrentSession?.()) return;
+        if (this.leaveIfCastingElsewhere(reason)) return;
 
         const mediaSession = this.getHydratableMediaSession();
         if (this.hasActiveRemoteMediaSession(mediaSession)) {
