@@ -110,6 +110,11 @@ export class SessionFollower {
   private refetch: string | null = null;
   private rendering = false;
 
+  /** The session's revision as this device last read it, for a remote queue change. */
+  sessionRevision(): number | null {
+    return this.session?.revision ?? null;
+  }
+
   start(store: FollowerStore, options: SessionFollowerOptions): void {
     this.stop();
     this.store = store;

@@ -1,5 +1,6 @@
 import { usePlayerStore } from '../store/index';
 import { useFollowedDeviceName } from '../hooks/useFollowedDeviceName';
+import { useDisplayedPlaying } from '../hooks/useDisplayedPlaying';
 import { hasNextTrack } from '../utils/queue';
 import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { X, Infinity as InfinityIcon, ListMusic, ListX, ChevronUp, FileText, Speaker } from 'lucide-react';
@@ -183,7 +184,7 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
     return () => { cancelled = true; };
   }, [castConnected]);
 
-  const isPlaying = playbackState === 'playing';
+  const isPlaying = useDisplayedPlaying();
 
   const handlePlayPause = () => {
     if (playlist.length === 0) return;
@@ -316,7 +317,17 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
               <span className="mobile-now-heading-device"> on {castDeviceName}</span>
             )}
             {!castConnected && followedDeviceName && (
-              <span className="mobile-now-heading-device"> on {followedDeviceName}</span>
+              <>
+                {' '}
+                <button
+                  type="button"
+                  className="mobile-now-heading-device mobile-now-heading-device-button"
+                  onClick={() => usePlayerStore.getState().openPlayWhere()}
+                  aria-label={`Music is on ${followedDeviceName}. Choose where to play`}
+                >
+                  on {followedDeviceName}
+                </button>
+              </>
             )}
             {!castConnected && !followedDeviceName && audioOutputActive && (
               <span className="mobile-now-heading-device"> on {audioOutputDeviceLabel || 'selected output'}</span>

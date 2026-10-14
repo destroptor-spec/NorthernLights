@@ -67,3 +67,26 @@ export function followedPositionMs(follow: FollowedOutput, now: number, duration
   const position = follow.positionMs + elapsed;
   return durationSeconds && durationSeconds > 0 ? Math.min(position, durationSeconds * 1000) : position;
 }
+
+/**
+ * The device this idle one controls (docs/playback_sessions.md, "Device
+ * choice and remote control"): the followed device, once chosen in "Play
+ * where?", while this one neither plays nor casts.
+ */
+export function selectRemoteTarget(state: {
+  sessionFollow: FollowedOutput | null;
+  remoteControlOutputId: string | null;
+  playbackState: string;
+  castConnected: boolean;
+}): FollowedOutput | null {
+  const follow = state.sessionFollow;
+  if (!follow || state.remoteControlOutputId !== follow.outputId) return null;
+  if (state.playbackState === 'playing' || state.castConnected) return null;
+  return follow;
+}
+
+/** What the Play/Pause button shows: the controlled device's state, else this one's. */
+export function selectDisplayedPlaying(state: Parameters<typeof selectRemoteTarget>[0]): boolean {
+  const remote = selectRemoteTarget(state);
+  return remote ? isFollowedOutputPlaying(remote) : state.playbackState === 'playing';
+}

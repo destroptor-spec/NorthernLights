@@ -1054,7 +1054,10 @@ commands out (`src/utils/sessionCommands.ts`: SessionFollower passes on
 commands for the grant this device holds, now; `load` adopts the session
 queue with its entry IDs via `playSessionQueue`; while casting, the player
 actions reach the Cast device and `session-command` goes to the Cast log); (3) the idle device's choice, remembered target, remote controls
-and device chip; (4) a casting device that is taken over stops casting and
+and device chip (store `routeToPlayingDevice`, `remoteControlOutputId`,
+`playWherePrompt`/`PlayWherePrompt`, `src/utils/sessionRemote.ts`,
+`selectDisplayedPlaying`; queue taps go through `playQueueEntry`, seeks
+through `seekTo`; Pause only reaches a chosen device and never asks); (4) a casting device that is taken over stops casting and
 follows.
 
 **PR 5 (who turns sync on, decided with Andreas 2026-10-13):** not a per-device

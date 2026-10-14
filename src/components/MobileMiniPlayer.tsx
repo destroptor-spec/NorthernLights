@@ -1,6 +1,7 @@
 import { memo, useEffect, useState } from 'react';
 import { usePlayerStore } from '../store/index';
-import { useFollowedDeviceName } from '../hooks/useFollowedDeviceName';
+import { useFollowedDeviceLabel } from '../hooks/useFollowedDeviceName';
+import { useDisplayedPlaying } from '../hooks/useDisplayedPlaying';
 import { hasNextTrack } from '../utils/queue';
 import { Play, Speaker } from 'lucide-react';
 import { useSwipe } from '../hooks/useSwipe';
@@ -22,7 +23,7 @@ const MobileMiniPlayer = () => {
   const prevTrack = usePlayerStore((s) => s.prevTrack);
   const castConnected = usePlayerStore((s) => s.castConnected);
   const castPlaybackStatus = usePlayerStore((s) => s.castPlaybackStatus);
-  const followedDeviceName = useFollowedDeviceName();
+  const followedDeviceLabel = useFollowedDeviceLabel();
   const audioOutputSupported = usePlayerStore((s) => s.audioOutputSupported);
   const audioOutputActive = usePlayerStore((s) => s.audioOutputActive);
   const audioOutputDeviceLabel = usePlayerStore((s) => s.audioOutputDeviceLabel);
@@ -30,7 +31,7 @@ const MobileMiniPlayer = () => {
   const selectAudioOutput = usePlayerStore((s) => s.selectAudioOutput);
 
   const currentTrack = currentIndex !== null ? playlist[currentIndex] : null;
-  const isPlaying = playbackState === 'playing';
+  const isPlaying = useDisplayedPlaying();
 
   const [expanded, setExpanded] = useState(false);
   const [sheetMounted, setSheetMounted] = useState(false);
@@ -115,7 +116,7 @@ const MobileMiniPlayer = () => {
   // Only a failed Cast start changes the device line; a start in progress
   // shows the play button's spinner and nothing else.
   const castDeviceLabel = castDeviceName || 'Cast device';
-  const secondaryLabel = followedDeviceName ? `Playing on ${followedDeviceName}`
+  const secondaryLabel = followedDeviceLabel ? followedDeviceLabel
     : !castConnected ? (currentTrack.artist || 'Unknown Artist')
     : castPlaybackStatus === 'unconfirmed' ? `Playback not confirmed on ${castDeviceLabel}`
     : castDeviceLabel;

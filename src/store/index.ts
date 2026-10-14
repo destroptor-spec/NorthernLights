@@ -23,7 +23,9 @@ import {
 import { clearExternalCache } from '../utils/externalImagery';
 import { readSessionAuth, writeSessionAuth, clearSessionAuth } from '../utils/sessionAuth';
 import { sessionMirror } from '../utils/SessionMirror';
-import { followedPositionMs, isFollowedOutputPlaying, type FollowedOutput } from '../utils/sessionFollow';
+import { followedPositionMs, type FollowedOutput } from '../utils/sessionFollow';
+import { sendRemoteAction, type RemoteAction } from '../utils/sessionRemote';
+import { sessionFollower } from '../utils/SessionFollower';
 import { isPlaybackSyncEnabled, parsePlaybackSyncMode, type PlaybackSyncMode } from '../../shared/playbackSync';
 import { computeLoudnessGainDb, type LoudnessData } from '../utils/loudness';
 import { getCachedLoudness, fetchLoudness, invalidateLoudness, type TrackLoudnessEntry } from '../utils/loudnessCache';
@@ -96,8 +98,11 @@ async function postSettings(authHeaders: Record<string, string>, settings: Recor
 }
 
 let pendingLocalStart: { index: number; positionSeconds: number } | null = null;
-// The listener said "Play here" to the take-over question: the next resume() goes ahead.
+// The listener chose "on this device" in "Play where?": the next routed
+// action runs here instead of asking again.
 let takeOverConfirmed = false;
+// What the listener did when "Play where?" opened, both ways it can go.
+let pendingPlayWhere: { remote: RemoteAction | null; local: () => Promise<void> } | null = null;
 
 // Compute + apply the loudness-normalization gain for a track becoming current.
 // Applies what's cached immediately (unity if disabled/unmeasured), then fetches
@@ -699,8 +704,13 @@ export interface PlayerState {
   refreshPlaybackSync: () => Promise<void>;
   /** Another device plays the user's session and this idle one follows it (SessionFollower). Not persisted. */
   sessionFollow: FollowedOutput | null;
-  /** Next/Previous pressed here while another device plays: ask before taking over. */
-  takeOverPrompt: { action: 'play' | 'next' | 'previous'; outputName: string } | null;
+  /**
+   * The device this idle one sends its actions to (its output ID), chosen in
+   * "Play where?". Remembered while that device plays; persisted.
+   */
+  remoteControlOutputId: string | null;
+  /** "Play where?" is open: an action here while another device plays. */
+  playWherePrompt: { outputName: string } | null;
   prebufferPolicy: PrebufferPolicy;
 
   // Current User State
@@ -867,7 +877,14 @@ export interface PlayerState {
   setSessionFollow: (follow: FollowedOutput | null) => void;
   /** Remote control "load": replace the queue with these tracks (entry IDs kept) and play `index`. */
   playSessionQueue: (tracks: TrackInfo[], index: number) => Promise<void>;
-  resolveTakeOverPrompt: (takeOver: boolean) => Promise<void>;
+  /** "Play where?": on the playing device (`remote`), on this one (`here`), or dismissed (null). */
+  resolvePlayWhere: (choice: 'remote' | 'here' | null) => Promise<void>;
+  /** The device chip by "Playing on …": choose again where actions go. */
+  openPlayWhere: () => void;
+  /** A queue row tapped here (routes to the playing device when chosen). */
+  playQueueEntry: (index: number) => Promise<void>;
+  /** A seek from the progress bar here (routes like playQueueEntry). */
+  seekTo: (seconds: number) => void;
   stop: () => void;
   nextTrack: (options?: NextTrackOptions) => Promise<void>;
   prevTrack: () => Promise<void>;
@@ -1133,16 +1150,45 @@ export const usePlayerStore = create<PlayerState>()(
         });
       }, 0);
 
-      // Next/Previous on an idle device while another device plays would move
-      // playback here without saying so: ask first (remote control is Phase 3).
-      // Play asks only when that device is casting: the listener most likely
-      // wants the music to stay on the Cast device, which this device cannot
-      // control until the receiver is its own output (Phase 5).
-      const askBeforeTakingOver = (action: 'play' | 'next' | 'previous') => {
-        const { sessionFollow, playbackState } = get();
-        if (playbackState === 'playing' || castManager.isConnected() || !isFollowedOutputPlaying(sessionFollow)) return false;
-        set({ takeOverPrompt: { action, outputName: sessionFollow!.name } });
+      // Sends an action to the device that plays the session.
+      const sendToPlayingDevice = async (action: RemoteAction, target: FollowedOutput) => {
+        const result = await sendRemoteAction(action, target, {
+          auth: get().getAuthHeader(),
+          sessionRevision: () => sessionFollower.sessionRevision(),
+        });
+        if (result === 'replaced') get().addToast(`${target.name} isn't playing any more.`, 'info');
+        else if (result === 'failed') get().addToast(`Couldn't reach ${target.name}.`, 'error');
+      };
+
+      // An action on an idle device while another device plays the session
+      // (docs/playback_sessions.md, "Device choice and remote control"). It
+      // goes to that device when the listener chose it, opens "Play where?"
+      // when nothing is chosen yet, and runs here once they chose this device.
+      // Returns true when the action was handled that way.
+      const routeToPlayingDevice = (remote: RemoteAction, local: () => Promise<void>, options: { ask?: boolean } = {}) => {
+        if (takeOverConfirmed) {
+          takeOverConfirmed = false;
+          return false;
+        }
+        const { sessionFollow, playbackState, remoteControlOutputId } = get();
+        if (!sessionFollow || playbackState === 'playing' || castManager.isConnected()) return false;
+        if (remoteControlOutputId === sessionFollow.outputId) {
+          void sendToPlayingDevice(remote, sessionFollow);
+          return true;
+        }
+        if (options.ask === false) return false;
+        pendingPlayWhere = { remote, local };
+        set({ playWherePrompt: { outputName: sessionFollow.name } });
         return true;
+      };
+
+      const runHere = async (local: () => Promise<void>) => {
+        takeOverConfirmed = true;
+        try {
+          await local();
+        } finally {
+          takeOverConfirmed = false;
+        }
       };
 
       // Loads and plays the track a Cast session ended on, from where it was.
@@ -1352,7 +1398,8 @@ export const usePlayerStore = create<PlayerState>()(
         playbackSyncUserEnabled: false as boolean,
         syncPlaybackAcrossDevices: false as boolean,
         sessionFollow: null as FollowedOutput | null,
-        takeOverPrompt: null as { action: 'play' | 'next' | 'previous'; outputName: string } | null,
+        remoteControlOutputId: null as string | null,
+        playWherePrompt: null as { outputName: string } | null,
         prebufferPolicy: 'conservative' as PrebufferPolicy,
         currentUser: null as { id: string; username: string; role: string } | null,
 
@@ -2627,6 +2674,10 @@ export const usePlayerStore = create<PlayerState>()(
         },
 
         setPlaylist: async (playlist: TrackInfo[], startIndex: number = 0, source: QueueSource | null = null) => {
+          if (playlist[startIndex] && routeToPlayingDevice(
+            { type: 'load', tracks: playlist, startIndex },
+            () => get().setPlaylist(playlist, startIndex, source),
+          )) return;
           sessionMirror.notePlayIntent();
           const queuePlaylist = playlist.map((track) => cloneTrackForQueue(track));
           set({ playlist: queuePlaylist, currentIndex: startIndex, queueSource: source });
@@ -2919,14 +2970,15 @@ export const usePlayerStore = create<PlayerState>()(
         },
 
         pause: () => {
+          // Pause only reaches another device that was chosen: an idle
+          // device has nothing to pause, so it never asks.
+          if (routeToPlayingDevice({ type: 'pause' }, async () => undefined, { ask: false })) return;
           playbackManager.pause();
           persistContinuitySnapshot(true);
         },
 
         resume: async () => {
-          const confirmed = takeOverConfirmed;
-          takeOverConfirmed = false;
-          if (!confirmed && get().sessionFollow?.kind === 'cast' && askBeforeTakingOver('play')) return;
+          if (routeToPlayingDevice({ type: 'play' }, () => get().resume())) return;
           sessionMirror.notePlayIntent();
           const follow = get().sessionFollow;
           const pendingTrack = pendingLocalStart ? get().playlist[pendingLocalStart.index] : undefined;
@@ -2971,7 +3023,15 @@ export const usePlayerStore = create<PlayerState>()(
 
         setSessionFollow: (follow: FollowedOutput | null) => {
           if (get().sessionFollow === follow) return;
-          set({ sessionFollow: follow, ...(follow ? {} : { takeOverPrompt: null }) });
+          // The remembered choice lasts while that device plays: another
+          // device taking over, or playback there ending, forgets it.
+          const keepTarget = !!follow && follow.outputId === get().remoteControlOutputId;
+          if (!follow) pendingPlayWhere = null;
+          set({
+            sessionFollow: follow,
+            ...(follow ? {} : { playWherePrompt: null }),
+            ...(keepTarget ? {} : { remoteControlOutputId: null }),
+          });
         },
 
         playSessionQueue: async (tracks: TrackInfo[], index: number) => {
@@ -2983,31 +3043,41 @@ export const usePlayerStore = create<PlayerState>()(
           await get().playAtIndex(index);
         },
 
-        resolveTakeOverPrompt: async (takeOver: boolean) => {
-          const prompt = get().takeOverPrompt;
+        resolvePlayWhere: async (choice: 'remote' | 'here' | null) => {
+          const pending = pendingPlayWhere;
+          pendingPlayWhere = null;
           const follow = get().sessionFollow;
-          set({ takeOverPrompt: null });
-          if (!prompt || !takeOver) return;
-          if (prompt.action === 'play') {
-            // resume() reads where the other device is from sessionFollow.
-            takeOverConfirmed = true;
+          set({ playWherePrompt: null });
+          if (!choice || !follow) return;
+          if (choice === 'remote') {
+            set({ remoteControlOutputId: follow.outputId });
+            if (pending?.remote) await sendToPlayingDevice(pending.remote, follow);
+            return;
+          }
+          set({ remoteControlOutputId: null });
+          await runHere(pending?.local ?? (() => get().resume()));
+        },
+
+        openPlayWhere: () => {
+          const follow = get().sessionFollow;
+          if (!follow) return;
+          pendingPlayWhere = { remote: null, local: () => get().resume() };
+          set({ playWherePrompt: { outputName: follow.name } });
+        },
+
+        playQueueEntry: async (index: number) => {
+          const track = get().playlist[index];
+          if (!track) return;
+          if (routeToPlayingDevice({ type: 'jump', track }, () => get().playQueueEntry(index))) return;
+          await get().playAtIndex(index);
+        },
+
+        seekTo: (seconds: number) => {
+          if (routeToPlayingDevice({ type: 'seek', seconds }, async () => {
             await get().resume();
-            return;
-          }
-          set({ sessionFollow: null });
-          sessionMirror.notePlayIntent();
-          if (prompt.action === 'next') {
-            await get().nextTrack();
-            return;
-          }
-          // Previous, as on a playing device: more than 3 s in restarts the track.
-          const { currentIndex, playlist } = get();
-          if (currentIndex !== null && playlist[currentIndex] && follow && followedPositionMs(follow, Date.now()) > 3000) {
-            await get().playAtIndex(currentIndex);
-            return;
-          }
-          setPlaybackCurrentTime(0);
-          await get().prevTrack();
+            playbackManager.seek(seconds);
+          })) return;
+          playbackManager.seek(seconds);
         },
 
         stop: () => {
@@ -3018,7 +3088,7 @@ export const usePlayerStore = create<PlayerState>()(
         },
 
         nextTrack: async (options?: NextTrackOptions) => {
-          if (askBeforeTakingOver('next')) return;
+          if (routeToPlayingDevice({ type: 'next' }, () => get().nextTrack(options))) return;
           const { playlist, currentIndex, shuffle } = get();
           if (playlist.length === 0) return;
           // Next on the last track: Infinity continues; without it (and without
@@ -3057,7 +3127,18 @@ export const usePlayerStore = create<PlayerState>()(
         },
 
         prevTrack: async () => {
-          if (askBeforeTakingOver('previous')) return;
+          if (routeToPlayingDevice({ type: 'previous' }, async () => {
+            // Taking over with Previous, as on a playing device: more than
+            // 3 s into the other device's track restarts it here.
+            const { currentIndex, playlist, sessionFollow } = get();
+            if (currentIndex !== null && playlist[currentIndex] && sessionFollow && followedPositionMs(sessionFollow, Date.now()) > 3000) {
+              await get().playAtIndex(currentIndex);
+              return;
+            }
+            setPlaybackCurrentTime(0);
+            takeOverConfirmed = true;
+            await get().prevTrack();
+          })) return;
           const { playlist, currentIndex } = get();
           const { currentTime } = getPlaybackTimeSnapshot();
           if (playlist.length === 0) return;
@@ -3298,6 +3379,8 @@ export const usePlayerStore = create<PlayerState>()(
         castDebugLogging: state.castDebugLogging,
         playbackSyncMode: state.playbackSyncMode,
         playbackSyncUserEnabled: state.playbackSyncUserEnabled,
+        // Survives a reload; the follower forgets it once that device stops.
+        remoteControlOutputId: state.remoteControlOutputId,
         prebufferPolicy: state.prebufferPolicy,
         // Persisted locally too (though server-synced) so normalization applies
         // instantly on reload, before loadSettings round-trips.

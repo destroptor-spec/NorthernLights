@@ -7,7 +7,7 @@ import MobileHeader from './components/MobileHeader';
 import DesktopTabBar from './components/DesktopTabBar';
 import MainContent, { InviteRegister } from './components/MainContent';
 import CastHealthToasts from './components/cast/CastHealthToasts';
-import { SessionTakeOverPrompt } from './components/SessionTakeOverPrompt';
+import { PlayWherePrompt } from './components/PlayWherePrompt';
 import KeyboardHint from './components/KeyboardHint';
 import { usePlayerStore } from './store/index';
 import { RefreshCw, WifiOff } from 'lucide-react';
@@ -637,7 +637,7 @@ const App: React.FC = () => {
           <MainContent />
 
           <CastHealthToasts />
-          <SessionTakeOverPrompt />
+          <PlayWherePrompt />
 
           {/* Desktop Playback Surface — floats or docks based on user preference */}
           {playlist.length > 0 && (

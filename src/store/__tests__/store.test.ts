@@ -1,4 +1,8 @@
 import { usePlayerStore } from '../index';
+import { selectDisplayedPlaying } from '../../utils/sessionFollow';
+import { sendRemoteAction } from '../../utils/sessionRemote';
+
+jest.mock('../../utils/sessionRemote', () => ({ sendRemoteAction: jest.fn(async () => 'sent') }));
 import { TrackInfo } from '../../utils/fileSystem';
 import { hasNextTrack } from '../../utils/queue';
 import { playbackManager } from '../../utils/PlaybackManager';
@@ -138,7 +142,8 @@ describe('Music Store Logic', () => {
     });
   });
 
-  // Sync playback across devices: an idle device follows the one that plays.
+  // Sync playback across devices: an idle device follows the one that plays,
+  // and asks "Play where?" before it acts (Andreas, 2026-10-13).
   describe('following another device', () => {
     const entry = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
     const queue = () => [
@@ -147,38 +152,49 @@ describe('Music Store Logic', () => {
       { id: 'c', path: '/c.mp3', title: 'c', duration: 180, queueEntryId: entry(3) },
     ];
     const follow = (extra: Record<string, unknown> = {}) => ({
-      sessionId: 's', outputId: 'phone', name: 'NAD Forstærker', kind: 'browser' as const, generation: 4,
+      sessionId: 's', outputId: 'desktop', name: 'NAD Forstærker', kind: 'cast' as const, generation: 4,
       state: 'playing' as const, entryId: entry(2), positionMs: 30_000, anchorMs: Date.now(), ...extra,
     });
     let seek: jest.SpyInstance;
     let playAtIndex: jest.Mock;
+    const sent = () => (sendRemoteAction as jest.Mock).mock.calls.map(([action]) => action);
+    const following = (extra: Record<string, unknown> = {}) => {
+      usePlayerStore.getState().adoptSessionQueue(queue(), 1, 30);
+      usePlayerStore.getState().setSessionFollow(follow(extra));
+    };
     beforeEach(() => {
       seek = jest.spyOn(playbackManager, 'seek').mockImplementation(() => {});
       jest.spyOn(playbackManager, 'resume').mockResolvedValue(undefined);
       jest.spyOn(playbackManager, 'pause').mockImplementation(() => {});
+      (sendRemoteAction as jest.Mock).mockClear();
       playAtIndex = jest.fn().mockResolvedValue(undefined);
       usePlayerStore.setState({
         playlist: [{ id: 'old', path: '/old.mp3', title: 'old', queueEntryId: entry(9) }],
-        currentIndex: 0, playbackState: 'paused', sessionFollow: null, takeOverPrompt: null, playAtIndex,
+        currentIndex: 0, playbackState: 'paused', castConnected: false,
+        sessionFollow: null, remoteControlOutputId: null, playWherePrompt: null, playAtIndex,
       } as never);
     });
     afterEach(() => {
       jest.restoreAllMocks();
       jest.useRealTimers();
-      usePlayerStore.setState({ sessionFollow: null, takeOverPrompt: null });
+      usePlayerStore.setState({ sessionFollow: null, remoteControlOutputId: null, playWherePrompt: null });
     });
 
-    it("takes over the session's queue paused, and Play continues from where the other device is now", async () => {
+    it("takes over the session's queue paused; on this device, Play continues from where the other device is now", async () => {
       jest.useFakeTimers({ now: 1_000_000 });
-      usePlayerStore.getState().adoptSessionQueue(queue(), 1, 30);
-      usePlayerStore.getState().setSessionFollow(follow({ anchorMs: 1_000_000 }));
+      following({ anchorMs: 1_000_000 });
       expect(usePlayerStore.getState()).toMatchObject({ currentIndex: 1, playbackState: 'paused', queueSource: null });
       expect(usePlayerStore.getState().playlist.map((t) => t.queueEntryId)).toEqual([entry(1), entry(2), entry(3)]);
 
-      jest.setSystemTime(1_007_000);
       await usePlayerStore.getState().resume();
+      expect(usePlayerStore.getState().playWherePrompt).toEqual({ outputName: 'NAD Forstærker' });
+      expect(playAtIndex).not.toHaveBeenCalled();
+
+      jest.setSystemTime(1_007_000);
+      await usePlayerStore.getState().resolvePlayWhere('here');
       expect(playAtIndex).toHaveBeenCalledWith(1);
       expect(seek).toHaveBeenCalledWith(37);
+      expect(sendRemoteAction).not.toHaveBeenCalled();
     });
 
     it('never touches a device that plays', () => {
@@ -187,72 +203,98 @@ describe('Music Store Logic', () => {
       expect(usePlayerStore.getState().playlist.map((t) => t.id)).toEqual(['old']);
     });
 
-    it('asks before Next takes playback over, and goes on only when told to', async () => {
-      usePlayerStore.getState().adoptSessionQueue(queue(), 1, 30);
-      usePlayerStore.getState().setSessionFollow(follow());
-
+    it('on the playing device: sends the action there, and remembers that for the next ones', async () => {
+      following();
       await usePlayerStore.getState().nextTrack();
-      expect(playAtIndex).not.toHaveBeenCalled();
-      expect(usePlayerStore.getState().takeOverPrompt).toEqual({ action: 'next', outputName: 'NAD Forstærker' });
+      await usePlayerStore.getState().resolvePlayWhere('remote');
+      expect(sent()).toEqual([{ type: 'next' }]);
+      expect(usePlayerStore.getState().remoteControlOutputId).toBe('desktop');
 
-      await usePlayerStore.getState().resolveTakeOverPrompt(false);
-      expect(usePlayerStore.getState().takeOverPrompt).toBeNull();
-      expect(playAtIndex).not.toHaveBeenCalled();
-
-      await usePlayerStore.getState().nextTrack();
-      await usePlayerStore.getState().resolveTakeOverPrompt(true);
-      expect(playAtIndex).toHaveBeenCalledWith(2);
-      expect(usePlayerStore.getState().sessionFollow).toBeNull();
-    });
-
-    it('Previous after taking over restarts the track when the other device was past 3 s', async () => {
-      usePlayerStore.getState().adoptSessionQueue(queue(), 1, 30);
-      usePlayerStore.getState().setSessionFollow(follow());
+      // Remembered: no more asking.
       await usePlayerStore.getState().prevTrack();
-      expect(usePlayerStore.getState().takeOverPrompt?.action).toBe('previous');
-      await usePlayerStore.getState().resolveTakeOverPrompt(true);
+      usePlayerStore.getState().pause();
+      await usePlayerStore.getState().playQueueEntry(2);
+      usePlayerStore.getState().seekTo(95);
+      const album = [{ id: 'x', path: '/x.mp3', title: 'x' }, { id: 'y', path: '/y.mp3', title: 'y' }];
+      await usePlayerStore.getState().setPlaylist(album, 1);
+      expect(usePlayerStore.getState().playWherePrompt).toBeNull();
+      expect(sent().slice(1)).toEqual([
+        { type: 'previous' },
+        { type: 'pause' },
+        { type: 'jump', track: expect.objectContaining({ queueEntryId: entry(3) }) },
+        { type: 'seek', seconds: 95 },
+        { type: 'load', tracks: album, startIndex: 1 },
+      ]);
+      expect(playAtIndex).not.toHaveBeenCalled();
+      expect(usePlayerStore.getState().playlist.map((t) => t.id)).toEqual(['a', 'b', 'c']);
+    });
+
+    it('on this device: does it here (Next plays the next track here)', async () => {
+      following();
+      await usePlayerStore.getState().nextTrack();
+      await usePlayerStore.getState().resolvePlayWhere('here');
+      expect(playAtIndex).toHaveBeenCalledWith(2);
+      expect(sendRemoteAction).not.toHaveBeenCalled();
+    });
+
+    it('Previous here restarts the track when the other device was past 3 s', async () => {
+      following();
+      await usePlayerStore.getState().prevTrack();
+      await usePlayerStore.getState().resolvePlayWhere('here');
       expect(playAtIndex).toHaveBeenCalledWith(1);
     });
 
-    it('asks before Play takes over from a device that is casting, and keeps the music there on No', async () => {
-      jest.useFakeTimers({ now: 1_000_000 });
-      usePlayerStore.getState().adoptSessionQueue(queue(), 1, 30);
-      usePlayerStore.getState().setSessionFollow(follow({ kind: 'cast', anchorMs: 1_000_000 }));
-
-      await usePlayerStore.getState().resume();
+    it('closing "Play where?" does nothing', async () => {
+      following();
+      await usePlayerStore.getState().playQueueEntry(0);
+      await usePlayerStore.getState().resolvePlayWhere(null);
       expect(playAtIndex).not.toHaveBeenCalled();
-      expect(usePlayerStore.getState().takeOverPrompt).toEqual({ action: 'play', outputName: 'NAD Forstærker' });
-      await usePlayerStore.getState().resolveTakeOverPrompt(false);
-      expect(playAtIndex).not.toHaveBeenCalled();
-
-      await usePlayerStore.getState().resume();
-      jest.setSystemTime(1_005_000);
-      await usePlayerStore.getState().resolveTakeOverPrompt(true);
-      // From where the Cast device is when the listener says yes.
-      expect(playAtIndex).toHaveBeenCalledWith(1);
-      expect(seek).toHaveBeenCalledWith(35);
+      expect(sendRemoteAction).not.toHaveBeenCalled();
+      expect(usePlayerStore.getState().remoteControlOutputId).toBeNull();
     });
 
-    it('does not ask before Play when the other device plays by itself', async () => {
-      usePlayerStore.getState().adoptSessionQueue(queue(), 1, 30);
-      usePlayerStore.getState().setSessionFollow(follow());
-      await usePlayerStore.getState().resume();
-      expect(usePlayerStore.getState().takeOverPrompt).toBeNull();
-      expect(playAtIndex).toHaveBeenCalledWith(1);
+    it('Pause never asks: with nothing chosen it stays a local pause', () => {
+      following();
+      usePlayerStore.getState().pause();
+      expect(usePlayerStore.getState().playWherePrompt).toBeNull();
+      expect(sendRemoteAction).not.toHaveBeenCalled();
+    });
+
+    it('forgets the choice when another device takes over or playback there ends', () => {
+      following();
+      usePlayerStore.setState({ remoteControlOutputId: 'desktop' });
+      usePlayerStore.getState().setSessionFollow(follow({ positionMs: 40_000 }));
+      expect(usePlayerStore.getState().remoteControlOutputId).toBe('desktop');
+      usePlayerStore.getState().setSessionFollow(follow({ outputId: 'phone', name: 'Chrome on Android' }));
+      expect(usePlayerStore.getState().remoteControlOutputId).toBeNull();
+
+      usePlayerStore.setState({ remoteControlOutputId: 'phone' });
+      usePlayerStore.getState().setSessionFollow(null);
+      expect(usePlayerStore.getState().remoteControlOutputId).toBeNull();
+    });
+
+    it("shows the controlled device's play state on the Play/Pause button", () => {
+      following();
+      expect(selectDisplayedPlaying(usePlayerStore.getState())).toBe(false);
+      usePlayerStore.setState({ remoteControlOutputId: 'desktop' });
+      expect(selectDisplayedPlaying(usePlayerStore.getState())).toBe(true);
+      usePlayerStore.getState().setSessionFollow(follow({ state: 'paused' }));
+      expect(selectDisplayedPlaying(usePlayerStore.getState())).toBe(false);
+    });
+
+    it('the device chip changes the choice without doing anything else', async () => {
+      following();
+      usePlayerStore.getState().openPlayWhere();
+      await usePlayerStore.getState().resolvePlayWhere('remote');
+      expect(usePlayerStore.getState().remoteControlOutputId).toBe('desktop');
+      expect(sendRemoteAction).not.toHaveBeenCalled();
+      expect(playAtIndex).not.toHaveBeenCalled();
     });
 
     it('a remote load keeps the session entry IDs and plays the chosen entry', async () => {
       await usePlayerStore.getState().playSessionQueue(queue(), 2);
       expect(usePlayerStore.getState().playlist.map((t) => t.queueEntryId)).toEqual([entry(1), entry(2), entry(3)]);
       expect(usePlayerStore.getState()).toMatchObject({ currentIndex: 2, queueSource: null });
-      expect(playAtIndex).toHaveBeenCalledWith(2);
-    });
-
-    it('does not ask when the other device is paused', async () => {
-      usePlayerStore.getState().adoptSessionQueue(queue(), 1, 30);
-      usePlayerStore.getState().setSessionFollow(follow({ state: 'paused' }));
-      await usePlayerStore.getState().nextTrack();
-      expect(usePlayerStore.getState().takeOverPrompt).toBeNull();
       expect(playAtIndex).toHaveBeenCalledWith(2);
     });
   });

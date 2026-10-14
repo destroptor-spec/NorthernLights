@@ -70,7 +70,8 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
 ) {
   const playlist = usePlayerStore(state => state.playlist);
   const currentIndex = usePlayerStore(state => state.currentIndex);
-  const playAtIndex = usePlayerStore(state => state.playAtIndex);
+  // A tap goes to the device that plays, when this one controls it.
+  const playAtIndex = usePlayerStore(state => state.playQueueEntry);
   const moveInPlaylist = usePlayerStore(state => state.moveInPlaylist);
   const removeFromPlaylist = usePlayerStore(state => state.removeFromPlaylist);
   const restoreQueueSnapshot = usePlayerStore(state => state.restoreQueueSnapshot);
