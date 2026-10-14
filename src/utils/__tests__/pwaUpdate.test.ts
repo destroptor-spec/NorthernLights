@@ -42,6 +42,24 @@ afterEach(() => {
 });
 
 describe('PWA activation', () => {
+  it.each(['pageshow', 'visibilitychange', 'timeout'])('reconciles already-completed activation on %s without waiting for queued worker events', async (trigger) => {
+    const s = setup();
+    const result = s.apply();
+    // Simulate a suspended page: state changed, but events have not arrived.
+    s.registration.waiting = null;
+    s.registration.active = s.worker;
+    s.serviceWorker.controller = s.worker;
+    s.worker.state = 'activated';
+    if (trigger === 'pageshow') window.dispatchEvent(new Event('pageshow'));
+    else if (trigger === 'visibilitychange') document.dispatchEvent(new Event('visibilitychange'));
+    else jest.advanceTimersByTime(15_000);
+    await result;
+    s.control();
+    s.worker.transition('activated');
+    expect(s.reload).toHaveBeenCalledTimes(1);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
   it.each(['control-first', 'activation-first'])('reloads once only after activation AND control: %s', async (order) => {
     const s = setup();
     const result = s.apply();

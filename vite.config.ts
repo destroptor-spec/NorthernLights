@@ -6,6 +6,7 @@ import {
   adaptivePlaylistFallbackPlugin,
   isAdaptiveHlsPlaylistRequest,
   isAdaptiveHlsSegmentRequest,
+  isPublicImageRequest,
 } from './src/utils/pwaRuntimeCaching';
 
 export default defineConfig({
@@ -168,7 +169,7 @@ export default defineConfig({
           },
           {
             // Public deterministic third-party imagery proxied through Aurora.
-            // Must stay above the generic /api/ NetworkOnly rule.
+            // Explicit opt-in; other API requests bypass the service worker.
             urlPattern: /\/api\/providers\/external\/proxy-image(\?.*)?$/i,
             handler: 'CacheFirst',
             options: {
@@ -177,13 +178,11 @@ export default defineConfig({
               cacheableResponse: { statuses: [0, 200] }
             }
           },
+          // Unmatched API requests go directly to the browser network. Even
+          // NetworkOnly calls respondWith(), so SSE/direct audio can pin the
+          // old worker and prevent skipWaiting from activating an update.
           {
-            // Keep authenticated/user-specific API data out of Cache Storage.
-            urlPattern: /\/api\//,
-            handler: 'NetworkOnly'
-          },
-          {
-            urlPattern: /\.(?:png|jpg|jpeg|gif|webp|avif)$/,
+            urlPattern: isPublicImageRequest,
             handler: 'CacheFirst',
             options: {
               cacheName: 'image-cache',

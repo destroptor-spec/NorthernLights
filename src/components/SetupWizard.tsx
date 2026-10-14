@@ -13,6 +13,7 @@ import {
     ShieldCheck,
 } from 'lucide-react';
 import { type SetupStep, usePlayerStore } from '../store';
+import { ServerEventStream } from '../utils/serverEvents';
 
 interface SetupWizardProps {
     onComplete: () => void;
@@ -116,7 +117,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
         const token = state.sseAccessToken || state.authToken;
         if (!token) return;
 
-        const events = new EventSource(`/api/settings/models/progress?token=${encodeURIComponent(token)}`);
+        const events = new ServerEventStream(`/api/settings/models/progress?token=${encodeURIComponent(token)}`);
         events.onmessage = event => {
             try {
                 const data = JSON.parse(event.data);
