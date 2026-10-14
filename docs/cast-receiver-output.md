@@ -1,7 +1,8 @@
 # Cast receiver as its own output (Phase 5 spec)
 
-Status: **draft for review** (2026-10-13). No receiver code is written until
-this is agreed. Background and the full design: [playback_sessions.md](playback_sessions.md)
+Status: **in progress** (updated 2026-10-14). PR A shipped (#113–#115, with
+#118 and #122); PRs B–E are next. No receiver code is written until the probe
+below has run on the device matrix. Background and the full design: [playback_sessions.md](playback_sessions.md)
 (Cast receiver as an output, Receiver authentication, Phase 5). Care rules:
 [cast-design-checklist.md](cast-design-checklist.md) and the receiver
 regression caution (one issue per PR, sender-side first, receiver only when
@@ -13,7 +14,10 @@ Prod, 2026-10-13: the phone cast to the NAD, and Play on the idle desktop
 started local playback there while the phone paused the NAD. Andreas expected
 the music to stay on the NAD with the desktop in control. Today only the
 device that started casting can drive the receiver, and only while it is
-awake. #106 asks "Play here" / "Keep on NAD" as a stopgap.
+awake. Since #113–#128 an idle device can control the NAD through the phone
+("Play where?" → the NAD), but only while the phone is awake: locked, it
+relays late or not at all, Infinity stops topping up, and nothing can stop
+the NAD from another device (prod 2026-10-14).
 
 **Goal:** the NAD is the session's output. Any of the user's devices controls
 it through the server, the phone may sleep or leave, and the receiver keeps
@@ -23,10 +27,10 @@ playing and reporting on its own.
 
 - Phone casts to the NAD. The desktop shows "Playing on NAD Forstærker" with
   live progress (works today).
-- On the desktop, Play / Pause / Next / Previous / tapping a queue row control
-  the NAD. Nothing asks; nothing moves playback to the desktop.
-- "Play here" (an explicit choice in the device menu, not the Play button)
-  moves playback to the desktop, and the NAD pauses.
+- On the desktop, "Play where?" → the NAD makes it a remote for the NAD, as
+  today, but the commands go to the receiver itself, not through the phone.
+- "On this device" moves playback to the desktop, and the NAD stops (as #128
+  does for a casting phone today).
 - A queue edit on any device (Play next, remove, reorder) reaches the NAD
   within a second or two.
 - The phone can be locked or closed for an hour; the NAD plays on.
@@ -38,7 +42,14 @@ playing and reporting on its own.
 Each ships alone and leaves today's behaviour intact. Only PR D touches
 `public/receiver.html`.
 
-### A. Remote commands for browser outputs (no receiver)
+### A. Remote commands for browser outputs (no receiver) — **shipped**
+
+Built as #113 (server), #114 (the output carries commands out) and #115
+("Play where?"), with #118 (commands reach only an output whose event stream
+is open: `409 OUTPUT_UNREACHABLE`; a stream names its device with `clientId`)
+and #122. The receiver in PR D must therefore keep an `/events` stream open,
+naming its own output ID, or commands for it are refused. What follows is the
+original plan, kept for reference.
 
 The command path is the same for a browser output and a receiver, so build and
 prove it where it is safe first. This is also Phase 3's "remote control".
@@ -62,7 +73,7 @@ prove it where it is safe first. This is also Phase 3's "remote control".
 Verify on prod with two browsers: pause, next and seek on one control the
 other.
 
-### B. Receiver credentials (server only)
+### B. Receiver credentials (server only) — next
 
 Phase 1's leftover "session-bound receiver tokens".
 
@@ -92,6 +103,9 @@ Phase 1's leftover "session-bound receiver tokens".
 - While connected, it pushes a fresh token over `aurora.status`
   (`aurora.auth.refresh`, acked) on every wake.
 - A receiver without the capability gets exactly today's LOAD.
+- The second-sender rules (#119/#123: a device joining a Cast session another
+  device casts leaves it again) must also recognise a `receiver` output: its
+  `castSessionId` is the Cast session the receiver runs in.
 - **Kill switch:** an admin server setting, `castReceiverSessionFollow`
   (default off), decides whether senders hand over credentials at all.
   Switching it off reverts every new Cast session to today's path without
@@ -178,17 +192,17 @@ re-run, because PR D changes the receiver.
 
 ## Decisions for Andreas
 
+Settled since the draft: the order (A first: shipped), and what Play means
+("Play where?" asks, and remembers the answer while that device plays).
+
+Still open:
 1. **Probe and receiver-next app.** Register a second, unpublished Cast app ID
    in the Google Cast console, pointing at `receiver-next.html` and limited to
    your registered test devices. The probe and PR D are tried there first, and
    041FEA05 only moves once the device matrix passes. *Recommended.* The
    alternative is a query-string flag in the one receiver, which puts the new
    code on the app everyone uses.
-2. **Order:** PR A (browser remote control) first. It is useful on its own
-   and de-risks the receiver work. *Recommended.*
-3. **"Play here"** moves from the Play button into an explicit device choice,
-   and the Play button always means "play, wherever the music is". OK?
-4. **Receiver self-renewal** (open question 5): keep the default, no. Expiry
-   after 12 h without any device waking ends in the idle state.
-5. **Kill switch** as an admin server setting, next to "Sync playback across
-   devices"?
+2. **Receiver self-renewal** (open question 5 in the design): keep the default,
+   no. Expiry after 12 h without any device waking ends in the idle state.
+3. **Kill switch** `castReceiverSessionFollow` as an admin server setting, next
+   to "Sync playback across devices" (Settings → System → Service).
