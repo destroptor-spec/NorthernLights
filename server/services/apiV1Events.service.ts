@@ -8,6 +8,7 @@ export type ApiV1EventType =
   | 'playbackSession.updated'
   | 'playbackSession.handedOff'
   | 'playbackSession.deleted'
+  | 'playbackSession.progress'
   | 'playlist.changed'
   | 'annotation.changed'
   | 'library.revision';
@@ -24,17 +25,30 @@ emitter.setMaxListeners(250);
 const history = new Map<string, ApiV1Event[]>();
 const HISTORY_LIMIT = 200;
 
-export function publishApiV1Event(userId: string, type: ApiV1EventType, data: Record<string, unknown>) {
+/**
+ * A `transient` event goes to connected clients only and is never replayed:
+ * position heartbeats every ten seconds would otherwise push the events a
+ * reconnecting client needs out of the replay window. The next heartbeat
+ * replaces a missed one anyway.
+ */
+export function publishApiV1Event(
+  userId: string,
+  type: ApiV1EventType,
+  data: Record<string, unknown>,
+  options: { transient?: boolean } = {},
+) {
   const event: ApiV1Event = {
     id: crypto.randomUUID(),
     type,
     occurredAt: new Date().toISOString(),
     data,
   };
-  const events = history.get(userId) || [];
-  events.push(event);
-  if (events.length > HISTORY_LIMIT) events.splice(0, events.length - HISTORY_LIMIT);
-  history.set(userId, events);
+  if (!options.transient) {
+    const events = history.get(userId) || [];
+    events.push(event);
+    if (events.length > HISTORY_LIMIT) events.splice(0, events.length - HISTORY_LIMIT);
+    history.set(userId, events);
+  }
   emitter.emit(userId, event);
   return event;
 }

@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { usePlayerStore } from '../store/index';
+import { useFollowedDeviceName } from '../hooks/useFollowedDeviceName';
 import { hasNextTrack } from '../utils/queue';
 import { usePlaybackTimeStore } from '../store/playbackTime';
 import { useVolumeSync } from '../hooks/useVolumeSync';
@@ -391,6 +392,7 @@ export const PlayerControls: React.FC = () => {
 
   const [showLyrics, setShowLyrics] = useState(false);
   const [castDeviceName, setCastDeviceName] = useState(castManager.getCastDeviceName());
+  const followedDeviceName = useFollowedDeviceName();
 
   useEffect(() => {
     const unsub = castManager.addStateChangeListener((state) => {
@@ -462,7 +464,11 @@ export const PlayerControls: React.FC = () => {
                   {currentTrack.artist || 'Unknown Artist'}
                 </span>
               )}
-              {(sourceFormat || castConnected || audioOutputActive) && (
+              {followedDeviceName ? (
+                <span className="player-follow" title={`Playing on ${followedDeviceName}`}>
+                  Playing on {followedDeviceName}
+                </span>
+              ) : (sourceFormat || castConnected || audioOutputActive) && (
                 <SignalChain
                   sourceFormat={sourceFormat}
                   sourceBitrate={sourceBitrate}

@@ -197,7 +197,10 @@ path({ method: 'post', path: '/playback-sessions/{id}/handoff', summary: 'Legacy
 path({ method: 'delete', path: '/playback-sessions/{id}', summary: 'Delete a playback session at an expected revision', tags: ['Sessions'], security: authed, request: { params: idParams, body: { required: true, content: json(playbackSessionDeleteSchema) } }, responses: noContent() });
 path({
   method: 'get', path: '/events', summary: 'Subscribe to listener-scoped server events', tags: ['Events'],
-  description: 'Use a short-lived sse token in the query string because EventSource cannot set Authorization headers.',
+  description: 'Use a short-lived sse token in the query string because EventSource cannot set Authorization headers; a full session token is refused. '
+    + 'Each event\'s data is JSON `{id, type, occurredAt, data}`. Types: playbackSession.created / updated / handedOff / deleted (fetch the session when its revision is newer), '
+    + 'playbackSession.progress (every accepted output report: `{sessionId, revision, outputId, generation, report}`; live only, never replayed), '
+    + 'playlist.changed, annotation.changed, library.revision, and resync.required (the replay window was lost: re-fetch everything).',
   request: { query: z.object({ token: z.string().optional() }), headers: z.object({ 'last-event-id': z.string().optional() }) }, security: authed,
   responses: { 200: { description: 'Server-Sent Events stream', content: { 'text/event-stream': { schema: z.string() } } }, 401: { description: 'Authentication failed', content: json(schemas.ApiError) } },
 });

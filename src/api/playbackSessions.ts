@@ -22,6 +22,10 @@ export function listPlaybackSessions(auth: AuthHeaders): Promise<PlaybackSession
   return auroraApiRequest<PlaybackSession[]>('/playback-sessions', auth);
 }
 
+export function getPlaybackSession(auth: AuthHeaders, sessionId: string): Promise<PlaybackSession> {
+  return auroraApiRequest<PlaybackSession>(`/playback-sessions/${encodeURIComponent(sessionId)}`, auth);
+}
+
 export function createPlaybackSession(auth: AuthHeaders, name: string): Promise<PlaybackSession> {
   return auroraApiRequest<PlaybackSession>('/playback-sessions', auth, json('POST', { name, trackIds: [] }));
 }

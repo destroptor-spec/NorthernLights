@@ -23,6 +23,7 @@ import {
 import { clearExternalCache } from '../utils/externalImagery';
 import { readSessionAuth, writeSessionAuth, clearSessionAuth } from '../utils/sessionAuth';
 import { sessionMirror } from '../utils/SessionMirror';
+import { followedPositionMs, isFollowedOutputPlaying, type FollowedOutput } from '../utils/sessionFollow';
 import { computeLoudnessGainDb, type LoudnessData } from '../utils/loudness';
 import { getCachedLoudness, fetchLoudness, invalidateLoudness, type TrackLoudnessEntry } from '../utils/loudnessCache';
 import type { ToastType } from '../components/Toast';
@@ -657,6 +658,10 @@ export interface PlayerState {
   castDebugLogging: boolean;
   /** Per device: mirror this device's playback into the user's playback session (docs/playback_sessions.md). */
   syncPlaybackAcrossDevices: boolean;
+  /** Another device plays the user's session and this idle one follows it (SessionFollower). Not persisted. */
+  sessionFollow: FollowedOutput | null;
+  /** Next/Previous pressed here while another device plays: ask before taking over. */
+  takeOverPrompt: { action: 'next' | 'previous'; outputName: string } | null;
   prebufferPolicy: PrebufferPolicy;
 
   // Current User State
@@ -814,6 +819,14 @@ export interface PlayerState {
   resume: () => Promise<void>;
   /** Cast session ended: show the Cast device's track and position here, and play it if `play`. */
   continueLocallyAfterCast: (index: number, positionSeconds: number, play: boolean) => Promise<void>;
+  /**
+   * Following another device: take over the session's queue (`tracks`, or
+   * null when it already matches) and current track, paused, so Play here
+   * continues from `positionSeconds`.
+   */
+  adoptSessionQueue: (tracks: TrackInfo[] | null, index: number, positionSeconds: number) => void;
+  setSessionFollow: (follow: FollowedOutput | null) => void;
+  resolveTakeOverPrompt: (takeOver: boolean) => Promise<void>;
   stop: () => void;
   nextTrack: (options?: NextTrackOptions) => Promise<void>;
   prevTrack: () => Promise<void>;
@@ -1079,6 +1092,15 @@ export const usePlayerStore = create<PlayerState>()(
         });
       }, 0);
 
+      // Next/Previous on an idle device while another device plays would move
+      // playback here without saying so: ask first (remote control is Phase 3).
+      const askBeforeTakingOver = (action: 'next' | 'previous') => {
+        const { sessionFollow, playbackState } = get();
+        if (playbackState === 'playing' || castManager.isConnected() || !isFollowedOutputPlaying(sessionFollow)) return false;
+        set({ takeOverPrompt: { action, outputName: sessionFollow!.name } });
+        return true;
+      };
+
       // Loads and plays the track a Cast session ended on, from where it was.
       const startPendingLocal = async () => {
         const pending = pendingLocalStart;
@@ -1283,6 +1305,8 @@ export const usePlayerStore = create<PlayerState>()(
         playbackDebugLogging: false as boolean,
         castDebugLogging: false as boolean,
         syncPlaybackAcrossDevices: false as boolean,
+        sessionFollow: null as FollowedOutput | null,
+        takeOverPrompt: null as { action: 'next' | 'previous'; outputName: string } | null,
         prebufferPolicy: 'conservative' as PrebufferPolicy,
         currentUser: null as { id: string; username: string; role: string } | null,
 
@@ -2684,6 +2708,9 @@ export const usePlayerStore = create<PlayerState>()(
         // Playback Actions
         playAtIndex: async (index: number) => {
           pendingLocalStart = null;
+          // Playing a track here makes this device the output again, even
+          // after another device took over.
+          sessionMirror.notePlayIntent();
           const { volume, repeat } = get();
           const normalized = ensureQueueEntryIds(get().playlist);
           const playlist = normalized.tracks;
@@ -2815,6 +2842,12 @@ export const usePlayerStore = create<PlayerState>()(
 
         resume: async () => {
           sessionMirror.notePlayIntent();
+          const follow = get().sessionFollow;
+          const pendingTrack = pendingLocalStart ? get().playlist[pendingLocalStart.index] : undefined;
+          if (pendingLocalStart && follow && pendingTrack?.queueEntryId === follow.entryId) {
+            // Following another device: continue from where it is now.
+            pendingLocalStart = { ...pendingLocalStart, positionSeconds: followedPositionMs(follow, Date.now(), pendingTrack.duration) / 1000 };
+          }
           if (pendingLocalStart && !castManager.isConnected()) {
             await startPendingLocal();
             return;
@@ -2834,6 +2867,48 @@ export const usePlayerStore = create<PlayerState>()(
           if (play) await startPendingLocal();
         },
 
+        adoptSessionQueue: (tracks: TrackInfo[] | null, index: number, positionSeconds: number) => {
+          const state = get();
+          if (state.playbackState === 'playing' || castManager.isConnected()) return;
+          const playlist = tracks ?? state.playlist;
+          if (!playlist[index]) return;
+          pendingLocalStart = { index, positionSeconds };
+          if (!tracks && state.currentIndex === index && state.playbackState === 'paused') return;
+          set({
+            ...(tracks ? { playlist: tracks, queueSource: null } : {}),
+            currentIndex: index,
+            playbackState: 'paused',
+            isBuffering: false,
+          });
+          persistContinuitySnapshot(true);
+        },
+
+        setSessionFollow: (follow: FollowedOutput | null) => {
+          if (get().sessionFollow === follow) return;
+          set({ sessionFollow: follow, ...(follow ? {} : { takeOverPrompt: null }) });
+        },
+
+        resolveTakeOverPrompt: async (takeOver: boolean) => {
+          const prompt = get().takeOverPrompt;
+          const follow = get().sessionFollow;
+          set({ takeOverPrompt: null });
+          if (!prompt || !takeOver) return;
+          set({ sessionFollow: null });
+          sessionMirror.notePlayIntent();
+          if (prompt.action === 'next') {
+            await get().nextTrack();
+            return;
+          }
+          // Previous, as on a playing device: more than 3 s in restarts the track.
+          const { currentIndex, playlist } = get();
+          if (currentIndex !== null && playlist[currentIndex] && follow && followedPositionMs(follow, Date.now()) > 3000) {
+            await get().playAtIndex(currentIndex);
+            return;
+          }
+          setPlaybackCurrentTime(0);
+          await get().prevTrack();
+        },
+
         stop: () => {
           playbackManager.stop();
           setPlaybackTimeState({ currentTime: 0, duration: 0 });
@@ -2842,6 +2917,7 @@ export const usePlayerStore = create<PlayerState>()(
         },
 
         nextTrack: async (options?: NextTrackOptions) => {
+          if (askBeforeTakingOver('next')) return;
           const { playlist, currentIndex, shuffle } = get();
           if (playlist.length === 0) return;
           // Next on the last track: Infinity continues; without it (and without
@@ -2880,6 +2956,7 @@ export const usePlayerStore = create<PlayerState>()(
         },
 
         prevTrack: async () => {
+          if (askBeforeTakingOver('previous')) return;
           const { playlist, currentIndex } = get();
           const { currentTime } = getPlaybackTimeSnapshot();
           if (playlist.length === 0) return;

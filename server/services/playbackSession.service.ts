@@ -604,7 +604,7 @@ export async function reportPlaybackOutput(input: {
           revision = revision + $10::int,
           updated_at = CASE WHEN $10::int = 1 THEN NOW() ELSE updated_at END
       WHERE id = $1 AND user_id = $2
-      RETURNING revision
+      RETURNING revision, output_reported_at
     `, [
       input.sessionId, input.userId, report.seq, report.state, report.reason ?? null, report.queueEntryId,
       report.positionMs, currentEntryId, playbackState, changed ? 1 : 0,
@@ -612,6 +612,22 @@ export async function reportPlaybackOutput(input: {
     await client.query('COMMIT');
     const revision = Number(updated.rows[0].revision);
     if (changed) publishApiV1Event(input.userId, 'playbackSession.updated', { sessionId: input.sessionId, revision });
+    // Every accepted report, so other devices can show live progress without
+    // fetching the session. Not kept for replay; the next report replaces it.
+    publishApiV1Event(input.userId, 'playbackSession.progress', {
+      sessionId: input.sessionId,
+      revision,
+      outputId: grant.oid,
+      generation: grant.gen,
+      report: {
+        seq: report.seq,
+        state: report.state,
+        reason: report.reason ?? null,
+        queueEntryId: report.queueEntryId,
+        positionMs: report.positionMs,
+        reportedAt: new Date(updated.rows[0].output_reported_at).toISOString(),
+      },
+    }, { transient: true });
     return { accepted: true, revision };
   } catch (error) {
     if (!(error instanceof PlaybackOutputGrantReplacedError)) {

@@ -137,4 +137,90 @@ describe('Music Store Logic', () => {
       expect(resume).toHaveBeenCalledTimes(1);
     });
   });
+
+  // Sync playback across devices: an idle device follows the one that plays.
+  describe('following another device', () => {
+    const entry = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+    const queue = () => [
+      { id: 'a', path: '/a.mp3', title: 'a', duration: 200, queueEntryId: entry(1) },
+      { id: 'b', path: '/b.mp3', title: 'b', duration: 170, queueEntryId: entry(2) },
+      { id: 'c', path: '/c.mp3', title: 'c', duration: 180, queueEntryId: entry(3) },
+    ];
+    const follow = (extra: Record<string, unknown> = {}) => ({
+      sessionId: 's', outputId: 'phone', name: 'NAD Forstærker', generation: 4,
+      state: 'playing' as const, entryId: entry(2), positionMs: 30_000, anchorMs: Date.now(), ...extra,
+    });
+    let seek: jest.SpyInstance;
+    let playAtIndex: jest.Mock;
+    beforeEach(() => {
+      seek = jest.spyOn(playbackManager, 'seek').mockImplementation(() => {});
+      jest.spyOn(playbackManager, 'resume').mockResolvedValue(undefined);
+      jest.spyOn(playbackManager, 'pause').mockImplementation(() => {});
+      playAtIndex = jest.fn().mockResolvedValue(undefined);
+      usePlayerStore.setState({
+        playlist: [{ id: 'old', path: '/old.mp3', title: 'old', queueEntryId: entry(9) }],
+        currentIndex: 0, playbackState: 'paused', sessionFollow: null, takeOverPrompt: null, playAtIndex,
+      } as never);
+    });
+    afterEach(() => {
+      jest.restoreAllMocks();
+      jest.useRealTimers();
+      usePlayerStore.setState({ sessionFollow: null, takeOverPrompt: null });
+    });
+
+    it("takes over the session's queue paused, and Play continues from where the other device is now", async () => {
+      jest.useFakeTimers({ now: 1_000_000 });
+      usePlayerStore.getState().adoptSessionQueue(queue(), 1, 30);
+      usePlayerStore.getState().setSessionFollow(follow({ anchorMs: 1_000_000 }));
+      expect(usePlayerStore.getState()).toMatchObject({ currentIndex: 1, playbackState: 'paused', queueSource: null });
+      expect(usePlayerStore.getState().playlist.map((t) => t.queueEntryId)).toEqual([entry(1), entry(2), entry(3)]);
+
+      jest.setSystemTime(1_007_000);
+      await usePlayerStore.getState().resume();
+      expect(playAtIndex).toHaveBeenCalledWith(1);
+      expect(seek).toHaveBeenCalledWith(37);
+    });
+
+    it('never touches a device that plays', () => {
+      usePlayerStore.setState({ playbackState: 'playing' });
+      usePlayerStore.getState().adoptSessionQueue(queue(), 1, 30);
+      expect(usePlayerStore.getState().playlist.map((t) => t.id)).toEqual(['old']);
+    });
+
+    it('asks before Next takes playback over, and goes on only when told to', async () => {
+      usePlayerStore.getState().adoptSessionQueue(queue(), 1, 30);
+      usePlayerStore.getState().setSessionFollow(follow());
+
+      await usePlayerStore.getState().nextTrack();
+      expect(playAtIndex).not.toHaveBeenCalled();
+      expect(usePlayerStore.getState().takeOverPrompt).toEqual({ action: 'next', outputName: 'NAD Forstærker' });
+
+      await usePlayerStore.getState().resolveTakeOverPrompt(false);
+      expect(usePlayerStore.getState().takeOverPrompt).toBeNull();
+      expect(playAtIndex).not.toHaveBeenCalled();
+
+      await usePlayerStore.getState().nextTrack();
+      await usePlayerStore.getState().resolveTakeOverPrompt(true);
+      expect(playAtIndex).toHaveBeenCalledWith(2);
+      expect(usePlayerStore.getState().sessionFollow).toBeNull();
+    });
+
+    it('Previous after taking over restarts the track when the other device was past 3 s', async () => {
+      usePlayerStore.getState().adoptSessionQueue(queue(), 1, 30);
+      usePlayerStore.getState().setSessionFollow(follow());
+      await usePlayerStore.getState().prevTrack();
+      expect(usePlayerStore.getState().takeOverPrompt?.action).toBe('previous');
+      await usePlayerStore.getState().resolveTakeOverPrompt(true);
+      expect(playAtIndex).toHaveBeenCalledWith(1);
+    });
+
+    it('does not ask when the other device is paused', async () => {
+      usePlayerStore.getState().adoptSessionQueue(queue(), 1, 30);
+      usePlayerStore.getState().setSessionFollow(follow({ state: 'paused' }));
+      await usePlayerStore.getState().nextTrack();
+      expect(usePlayerStore.getState().takeOverPrompt).toBeNull();
+      expect(playAtIndex).toHaveBeenCalledWith(2);
+    });
+  });
 });
+

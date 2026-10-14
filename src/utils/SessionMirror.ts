@@ -12,7 +12,8 @@ import { createUuid, isUuid } from './uuid';
 // reports what it plays. Its local queue is authoritative, so a conflict is
 // answered by planning again from the session the server sent back.
 //
-// Following another device (adopting its queue, "Playing on …") is the next PR.
+// Following another device (adopting its queue, "Playing on …") is
+// SessionFollower's job.
 
 export interface MirroredPlayerState {
   syncPlaybackAcrossDevices: boolean;
@@ -39,6 +40,8 @@ export interface SessionMirrorOptions {
   /** Name shown for this output: the Cast device while casting, else this browser. */
   getOutputName: () => string;
   log?: (message: string, detail?: unknown) => void;
+  /** Another device plays the session now: stop playing here (one device at a time). */
+  onDisplaced?: () => void;
 }
 
 const SESSION_NAME = 'Listening';
@@ -103,6 +106,29 @@ export class SessionMirror {
     if (state && this.enabled(state) && !this.grant && state.playbackState === 'playing') void this.claim();
   }
 
+  /** This device is the session's output (playing or paused). */
+  holdsOutput(): boolean {
+    return !!this.grant;
+  }
+
+  /**
+   * Another device claimed a session's output (`playbackSession.handedOff`).
+   * A claim this device made later wins; anything else means the other
+   * device plays now, so this one stops, even when its own claim never got
+   * through.
+   */
+  async noteReplaced(sessionId: string, generation: number): Promise<void> {
+    if (this.claiming) await this.claiming.catch(() => undefined);
+    const state = this.store?.getState();
+    if (!state || !this.enabled(state)) return;
+    if (this.grant) {
+      if (this.grant.sessionId === sessionId && this.grant.credential.generation >= generation) return;
+      this.onDisplaced();
+      return;
+    }
+    if (state.playbackState === 'playing') this.onDisplaced();
+  }
+
   private get api() { return this.options?.api ?? sessionApi; }
   private log(message: string, detail?: unknown) { this.options?.log?.(`[SessionMirror] ${message}`, detail); }
   private enabled(state: MirroredPlayerState) { return state.syncPlaybackAcrossDevices && !!state.currentUser; }
@@ -149,6 +175,9 @@ export class SessionMirror {
     this.log('another device is playing this session now');
     this.release();
     this.displaced = true;
+    if (this.claimRetryTimer) clearTimeout(this.claimRetryTimer);
+    this.claimRetryTimer = null;
+    this.options?.onDisplaced?.();
   }
 
   private claim(): Promise<void> {

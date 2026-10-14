@@ -190,6 +190,7 @@ Playback sessions are server-backed queue snapshots with transport state:
 - The output's identity comes from the credential. `outputId`/`outputGeneration` in the body are optional and must match it (`422 OUTPUT_IDENTITY_MISMATCH`). A web session or app key is refused (`403 OUTPUT_CREDENTIAL_REQUIRED`), however much it knows about the grant. A credential for another session is refused (`403 SCOPED_TOKEN_NOT_ALLOWED`), and a replaced grant gets `409 OUTPUT_GRANT_REPLACED`.
 - `seq` increases with every report within one grant and starts afresh with each claim. A report at or below the last accepted `seq` is dropped and answered `{ accepted: false }`, which also covers a delayed report from before a seek.
 - A report that only moves the position changes no revision, so edits from other devices don't conflict with playback. A change of track (to an entry still in the queue) or of play state updates `currentEntryId`/`playbackState`, bumps the revision and publishes `playbackSession.updated`. The session's `positionMs` follows the report only while the report's entry is the current one.
+- Every accepted report is also published as `playbackSession.progress` with `{ sessionId, revision, outputId, generation, report: { seq, state, reason, queueEntryId, positionMs, reportedAt } }`, so other devices can show live progress without fetching the session. Progress events go to connected clients only and are never replayed.
 - `output.report` holds the latest accepted report, with the server time it arrived (`reportedAt`); interpolate from it while playing. `output.status` is `active`, `unreachable` after a minute without reports (the last state is kept), or `ended` once the output itself reported `stopped`, `idle` or `error`. Silence never ends an output: only its own report or a new claim does, and any later report on the grant makes it `active` again.
 
 Every queue mutation includes `expectedRevision`. A stale revision returns `409 REVISION_CONFLICT` with the current session in `error.details.current`.
@@ -211,7 +212,9 @@ Keys are scoped to the session, kept for 24 hours and capped at the newest 1,000
 
 `GET /api/v1/events` is a user-scoped Server-Sent Events stream for playback-session, playlist, annotation, and library-revision changes. Browser `EventSource` callers first mint a short-lived `sse` token using `POST /api/v1/auth/scoped-token`, then pass it in the `token` query parameter. Native clients may use a normal bearer header. Scanner/auto-walk changes and mutations made through Aurora web or OpenSubsonic publish the same invalidations, so a dedicated client does not stay stale when another surface changes state.
 
-Reconnect with `Last-Event-ID`. If the in-memory replay window no longer includes that ID, Aurora emits `resync.required`; refetch affected resources and sessions. SSE is a cache-invalidation signal, not a complete event-sourced history.
+The query parameter accepts only an `sse` token; a full session token is refused there. Session events are `playbackSession.created`, `updated`, `handedOff` and `deleted` (fetch the session when the revision is newer than yours), plus `playbackSession.progress` (see Reports).
+
+Reconnect with `Last-Event-ID`. If the in-memory replay window no longer includes that ID, Aurora emits `resync.required`; refetch affected resources and sessions. SSE is a cache-invalidation signal, not a complete event-sourced history. Progress events are not part of the replay window, so a client whose last seen event was one of them gets `resync.required`.
 
 ### Offline contract reserved for a later release
 

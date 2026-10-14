@@ -27,6 +27,7 @@ describeDb('playback sessions', () => {
   let admin: Pool;
   let pool: Pool;
   let sessions: typeof import('../../services/playbackSession.service');
+  let subscribeApiV1Events: typeof import('../../services/apiV1Events.service').subscribeApiV1Events;
   let userId: string;
   let otherUserId: string;
 
@@ -37,6 +38,7 @@ describeDb('playback sessions', () => {
     const db = await import('../index');
     pool = await db.initDB();
     sessions = await import('../../services/playbackSession.service');
+    ({ subscribeApiV1Events } = await import('../../services/apiV1Events.service'));
     userId = (await db.createUser('listener', 'x', 'user')).id;
     otherUserId = (await db.createUser('other', 'x', 'user')).id;
     await pool.query(`
@@ -378,6 +380,29 @@ describeDb('playback sessions', () => {
       expect((await reportAs(grant, { seq: 5, state: 'buffering', queueEntryId: second, positionMs: 2_000 })).revision).toBe(session.revision + 3);
       current = await read(session.id);
       expect(current).toMatchObject({ currentEntryId: second, positionMs: 2_000, playbackState: 'paused' });
+    });
+
+    it('publishes every accepted report as a progress event for the other devices', async () => {
+      const { session, grant } = await playing();
+      const entry = session.queue[0].queueEntryId;
+      const events: Array<{ type: string; data: Record<string, unknown> }> = [];
+      const unsubscribe = subscribeApiV1Events(userId, (event) => events.push(event));
+      try {
+        await reportAs(grant, { seq: 1, state: 'playing', queueEntryId: entry, positionMs: 12_000 });
+        await reportAs(grant, { seq: 1, state: 'playing', queueEntryId: entry, positionMs: 13_000 });
+      } finally {
+        unsubscribe();
+      }
+      const progress = events.filter((event) => event.type === 'playbackSession.progress');
+      // The second report was stale (same seq), so only one went out.
+      expect(progress).toHaveLength(1);
+      expect(progress[0].data).toMatchObject({
+        sessionId: session.id,
+        outputId: grant.oid,
+        generation: grant.gen,
+        report: { seq: 1, state: 'playing', queueEntryId: entry, positionMs: 12_000 },
+      });
+      expect(Date.parse((progress[0].data.report as { reportedAt: string }).reportedAt)).not.toBeNaN();
     });
 
     it('drops a report that is not newer than the last accepted one, such as one from before a seek', async () => {
