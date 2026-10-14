@@ -3,6 +3,7 @@ import { usePlayerStore } from '../../store/index';
 import { useToast } from '../../hooks/useToast';
 import { DatabaseControl } from '../DatabaseControl';
 import { DatabaseBackups } from './DatabaseBackups';
+import { ServerEventStream } from '../../utils/serverEvents';
 import { ConfirmModal } from '../ConfirmModal';
 import { DependencyBadge, DependencyGroup, DependencyInfoBox } from '../DependencyBadge';
 import { BarChart2, Wrench, Globe, HardDriveDownload, AlertCircle, Clock, Database, Check, ArrowRight, Trash2, X, Sparkles } from 'lucide-react';
@@ -59,7 +60,7 @@ export const DatabaseTab: React.FC = () => {
         if (dbTab === 'mbdb' && authToken) {
             fetchMbdbUpdateInfo();
             const token = sseAccessToken || authToken;
-            const es = new EventSource('/api/admin/mbdb/status?token=' + encodeURIComponent(token));
+            const es = new ServerEventStream('/api/admin/mbdb/status?token=' + encodeURIComponent(token));
             es.onmessage = (e) => {
                 try {
                     const data = JSON.parse(e.data);

@@ -1,4 +1,5 @@
 import {
+    isPublicImageRequest,
     isAdaptiveHlsPlaylistRequest,
     isAdaptiveHlsSegmentRequest,
     reuseCachedAdaptiveAudioChunk,
@@ -73,5 +74,15 @@ describe('adaptive HLS runtime caching', () => {
         } as Request;
 
         await expect(reuseCachedAdaptiveAudioChunk({ request, error: networkError })).rejects.toBe(networkError);
+    });
+});
+
+
+describe('public image caching boundary', () => {
+    it.each(['/api/status', '/api/private.jpg', '/rest/getCoverArt.png', '/api/library/scan/status'])('does not capture authenticated/API requests: %s', (pathname) => {
+        expect(isPublicImageRequest({ url: new URL(pathname, 'https://aurora.test') })).toBe(false);
+    });
+    it('retains public image caching', () => {
+        expect(isPublicImageRequest({ url: new URL('https://example.test/cover.jpg') })).toBe(true);
     });
 });

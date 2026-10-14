@@ -82,3 +82,70 @@ Existing clients execute the old updater until they have loaded this fix once.
 Lifecycle references:
 [Service worker updatefound](https://developer.mozilla.org/en-US/docs/Web/API/ServiceWorkerRegistration/updatefound_event),
 [registration and updateViaCache](https://developer.mozilla.org/en-US/docs/Web/API/ServiceWorkerContainer/register).
+
+## Follow-up: Chromium status streams block activation (2026-10-14)
+
+The original fixture only exercised Firefox. A Chromium 149 probe with the
+production-generated worker reproduces the continued failure without playing
+music: the scanner EventSource is handled by the generic `/api/` NetworkOnly
+route. Despite its name, NetworkOnly still intercepts the request. The open
+response stream keeps the old worker busy, so `SKIP_WAITING` leaves the new
+worker installed/waiting until the fifteen-second updater timeout.
+
+Changes:
+
+- Remove the generic API runtime route. Unmatched API requests now use the
+  browser network directly; explicit media/art caches retain their policies.
+  The public image matcher excludes API/rest paths to avoid caching private
+  image-looking endpoints after removing the NetworkOnly rule.
+- All four EventSource consumers use `ServerEventStream`. Applying an update
+  closes this page's streams before sending SKIP_WAITING and keeps newly mounted
+  status views suspended. A failed update reconnects still-mounted views and
+  releases the retry lock; success leaves streams closed until unload.
+- Recheck worker state on pageshow/visibility changes and immediately before a
+  timeout. A resumed page must not reject a completed activation merely because
+  its worker events have not yet been delivered.
+
+Targeted validation: 44 tests passed (PWA activation/discovery, stream lifecycle,
+cache boundaries, static assets, and setup navigation), plus TypeScript and the
+production Vite build. The optional browser runner uses real production workers
+and updater utilities with an isolated status-page fixture, not the entire app
+or a live library. Results:
+
+| Scenario | Result |
+| --- | --- |
+| Original worker/updater, idle open SSE | Reproduced timeout at 15.3 seconds; worker still waiting |
+| New updater, legacy worker, local SSE | One reload, ready in 1.2 seconds |
+| Fixed worker, two desktop tabs with SSE | One reload in requesting tab; other tab stays open |
+| Fixed worker, Pixel 7 emulation, two streams with delayed headers | One reload; both tabs remain functional |
+
+These timings describe the localhost fixture, not expected production latency.
+Android emulation is not physical-device or installed-PWA proof. Playback was not
+required to reproduce the fault, and no audio/Cast controls are changed.
+
+### Repeat the browser regression
+
+Install Playwright/Chromium separately if needed; they are not app dependencies.
+Build the baseline from commit `d1e0d02` in an isolated checkout, preserve its
+`dist/` and `src/utils/pwaUpdate.ts`, then build the fix into a separate directory:
+
+```sh
+npx vite build --outDir /tmp/aurora-pwa-fixed
+node scripts/verify-pwa-update-streams.cjs /path/to/baseline/dist /tmp/aurora-pwa-fixed /path/to/baseline/src/utils/pwaUpdate.ts
+```
+
+`AURORA_PLAYWRIGHT_MODULE` can point to a separately installed Playwright package;
+`PLAYWRIGHT_BROWSERS_PATH` can point to its browser download directory. The runner
+creates a temporary localhost server and fresh browser contexts. It does not use
+production accounts, storage, or processes. Current local artifacts live under
+`/tmp/aurora-pwa-20261014/`.
+
+### First deployment of this follow-up
+
+An already-open old client still has its old update handler and cannot close its
+streams using code it has not loaded. If that first update sticks, close every
+Aurora tab/installed window on that device and reopen once after deployment.
+This lets the pending worker replace the old one. Cache clearing and sign-out
+are not required. After the fix is loaded, API streams no longer hold later
+updates open. A different still-open legacy tab can also hold the shared old
+worker, even if the updating tab has loaded the new stream manager.

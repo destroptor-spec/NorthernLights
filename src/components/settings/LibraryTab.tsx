@@ -5,6 +5,7 @@ import { Activity, AlertCircle, BarChart3, BrainCircuit, CheckCircle2, Download,
 import { PromptModal } from '../PromptModal';
 import { ConfirmModal } from '../ConfirmModal';
 import type { LibraryDirectoryStats } from '../../../shared/libraryStats';
+import { ServerEventStream } from '../../utils/serverEvents';
 
 interface SimulatedFeatureTrack {
     id: string;
@@ -54,7 +55,7 @@ export const LibraryTab: React.FC = () => {
     const [modelStatus, setModelStatus] = useState<ModelFileStatus[]>([]);
     const [modelDownloadProgress, setModelDownloadProgress] = useState<Record<string, { bytes: number; total: number; status: string }>>({});
     const [isModelDownloading, setIsModelDownloading] = useState(false);
-    const modelSseRef = useRef<EventSource | null>(null);
+    const modelSseRef = useRef<ServerEventStream | null>(null);
 
     const [promptDialog, setPromptDialog] = useState<{ title: string; label?: string; placeholder?: string; onSubmit: (value: string) => void } | null>(null);
     const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; confirmLabel?: string; onConfirm: () => void } | null>(null);
@@ -127,7 +128,7 @@ export const LibraryTab: React.FC = () => {
             if (modelSseRef.current) modelSseRef.current.close();
             const token = sseAccessToken || authToken;
             if (!token) return;
-            const sse = new EventSource('/api/settings/models/progress?token=' + encodeURIComponent(token));
+            const sse = new ServerEventStream('/api/settings/models/progress?token=' + encodeURIComponent(token));
             modelSseRef.current = sse;
             sse.onmessage = (e) => {
                 try {
