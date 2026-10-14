@@ -4,6 +4,7 @@ import * as sessionApi from '../api/playbackSessions';
 import { currentSessionFromError } from '../api/playbackSessions';
 import type { TrackInfo } from './fileSystem';
 import { planSessionPatch, MAX_SESSION_QUEUE, type QueueEntryRef } from './sessionQueueDiff';
+import type { ReceiverHandover } from './receiverSessionFollow';
 import { createUuid, isUuid } from './uuid';
 
 // The playing side of "Sync playback across devices" (docs/playback_sessions.md,
@@ -14,6 +15,11 @@ import { createUuid, isUuid } from './uuid';
 //
 // Following another device (adopting its queue, "Playing on …") is
 // SessionFollower's job.
+//
+// Casting to a receiver that plays the session on its own (Phase 5,
+// docs/cast-receiver-output.md), this device claims the output for the
+// receiver and hands it the credential; the receiver reports from then on,
+// and this device only mirrors queue edits and renews the credential.
 
 export interface MirroredPlayerState {
   syncPlaybackAcrossDevices: boolean;
@@ -54,6 +60,10 @@ export interface SessionMirrorOptions {
   onDisplaced?: (replacement: ReplacingOutput | null) => void;
   /** The server refused with PLAYBACK_SYNC_DISABLED: sync is off for this account. */
   onSyncDisabled?: () => void;
+  /** While casting: the receiver plays the session on its own when given one. */
+  receiverCanFollow?: () => boolean;
+  /** Gives the receiver the session and its credential; true once it took them. */
+  handOverToReceiver?: (handover: ReceiverHandover, reason: 'claim' | 'refresh') => Promise<boolean>;
 }
 
 const SESSION_NAME = 'Listening';
@@ -65,9 +75,13 @@ const RETRY_DELAY_MS = 5_000;
 const CLAIM_RETRY_DELAY_MS = 30_000;
 const REFRESH_BEFORE_EXPIRY_MS = 5 * 60_000;
 const MAX_CONFLICT_RETRIES = 3;
+/** A wake renews a receiver's credential (and so its 24-hour cap) at most this often. */
+const WAKE_REFRESH_MIN_INTERVAL_MS = 60_000;
 const CONFLICT_CODES = new Set(['REVISION_CONFLICT', 'ANCHOR_NOT_FOUND', 'ENTRY_ID_CONFLICT']);
 
-interface Grant { sessionId: string; credential: PlaybackOutputCredential; seq: number }
+type OutputKind = 'browser' | 'cast' | 'receiver';
+
+interface Grant { sessionId: string; credential: PlaybackOutputCredential; seq: number; kind: OutputKind }
 
 /** The output that replaced this device: what kind of device, and its name. */
 export interface ReplacingOutput { kind: string; name: string | null }
@@ -82,7 +96,7 @@ const entriesOf = (playlist: TrackInfo[]): QueueEntryRef[] =>
  * Matched by the Cast device's name, which is what the claim carries.
  */
 export function isSameCastDevice(replacement: ReplacingOutput | null, castConnected: boolean, castDeviceName: string | null | undefined): boolean {
-  return !!replacement && castConnected && replacement.kind === 'cast'
+  return !!replacement && castConnected && (replacement.kind === 'cast' || replacement.kind === 'receiver')
     && !!replacement.name && !!castDeviceName && replacement.name === castDeviceName;
 }
 
@@ -129,6 +143,9 @@ export class SessionMirror {
   private reportTimer: ReturnType<typeof setTimeout> | null = null;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private claimRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The Cast session whose receiver did not take the session: claim as `cast` there. */
+  private receiverRefusedCastSession: string | null = null;
+  private wakeRefreshAt = 0;
 
   start(store: MirroredStore, options: SessionMirrorOptions): void {
     this.stop();
@@ -195,7 +212,27 @@ export class SessionMirror {
     if (this.grant && this.store?.getState().castConnected) void this.claim();
   }
 
-  /** This device is the session's output (playing or paused). */
+  /**
+   * The receiver of this device's Cast session can follow the session on its
+   * own: hand the output over to it.
+   */
+  noteReceiverCanFollow(): void {
+    const state = this.store?.getState();
+    if (this.grant?.kind !== 'cast' || !state?.castConnected || !this.enabled(state)) return;
+    if (this.claimsForReceiver(this.options?.getCastSessionId?.() || undefined)) void this.claim();
+  }
+
+  /**
+   * The page came back to the foreground. A receiver playing the session
+   * gets a fresh credential, which also renews its 24-hour cap.
+   */
+  noteWake(): void {
+    if (this.grant?.kind !== 'receiver' || Date.now() - this.wakeRefreshAt < WAKE_REFRESH_MIN_INTERVAL_MS) return;
+    this.wakeRefreshAt = Date.now();
+    void this.refresh();
+  }
+
+  /** This device is the session's output (playing or paused), or casts to the receiver that is. */
   holdsOutput(): boolean {
     return !!this.grant;
   }
@@ -244,6 +281,15 @@ export class SessionMirror {
       return;
     }
     if (state.castConnected !== previous.castConnected) {
+      if (this.grant.kind === 'receiver' && !state.castConnected) {
+        // The receiver plays on by itself (this device left), or stopped with
+        // its Cast session. Either way it is not this device's to report:
+        // only playing here makes this device the output again.
+        this.options?.diagnostic?.('ok', 'sync-receiver-left', `state=${state.playbackState}`);
+        this.release();
+        if (state.playbackState === 'playing') void this.claim();
+        return;
+      }
       // The output moved between this browser and a Cast device: claim again
       // under the new name.
       void this.claim();
@@ -309,8 +355,9 @@ export class SessionMirror {
           sessionId = latest?.id ?? (await this.api.createPlaybackSession(auth, SESSION_NAME)).id;
         }
         const castSessionId = state.castConnected ? this.options!.getCastSessionId?.() || undefined : undefined;
+        const kind: OutputKind = !state.castConnected ? 'browser' : this.claimsForReceiver(castSessionId) ? 'receiver' : 'cast';
         const { session, credential } = await this.api.claimPlaybackOutput(auth, sessionId, {
-          kind: state.castConnected ? 'cast' : 'browser',
+          kind,
           name: this.options!.getOutputName().slice(0, 120) || undefined,
           ...(castSessionId ? { castSessionId } : {}),
         });
@@ -318,12 +365,15 @@ export class SessionMirror {
         if (!this.enabled(this.store!.getState())) return;
         this.release();
         this.options?.diagnostic?.('ok', 'sync-claimed',
-          `kind=${state.castConnected ? 'cast' : 'browser'} generation=${credential.generation} castSession=${castSessionId || 'none'} state=${this.store!.getState().playbackState}`);
+          `kind=${kind} generation=${credential.generation} castSession=${castSessionId || 'none'} state=${this.store!.getState().playbackState}`);
         this.sessionId = sessionId;
-        this.grant = { sessionId, credential, seq: 0 };
+        this.grant = { sessionId, credential, seq: 0, kind };
         this.session = session;
         this.displaced = false;
         this.scheduleRefresh();
+        // Not awaited: the receiver's answer may take seconds, and a failed
+        // handover claims again, which must wait for this claim to end.
+        if (kind === 'receiver') void this.handOver('claim', castSessionId!);
         await this.flush();
         await this.report();
       } catch (error) {
@@ -335,6 +385,35 @@ export class SessionMirror {
       }
     })().finally(() => { this.claiming = null; });
     return this.claiming;
+  }
+
+  private claimsForReceiver(castSessionId: string | undefined): boolean {
+    return !!castSessionId && !!this.options?.handOverToReceiver && !!this.options.receiverCanFollow?.()
+      && castSessionId !== this.receiverRefusedCastSession;
+  }
+
+  /**
+   * Gives the receiver the session and its current credential. A receiver
+   * that does not take it right after the claim is left as it is today: this
+   * device claims again as a `cast` output, and keeps reporting for it.
+   */
+  private async handOver(reason: 'claim' | 'refresh', castSessionId?: string): Promise<void> {
+    if (this.claiming) await this.claiming.catch(() => undefined);
+    const grant = this.grant;
+    if (!grant || grant.kind !== 'receiver' || !this.options?.handOverToReceiver) return;
+    const { credential } = grant;
+    const taken = await this.options.handOverToReceiver({
+      sessionId: grant.sessionId,
+      outputId: credential.outputId,
+      generation: credential.generation,
+      token: credential.token,
+      expiresAt: credential.expiresAt,
+      ...(credential.renewableUntil ? { renewableUntil: credential.renewableUntil } : {}),
+    }, reason).catch(() => false);
+    if (taken || this.grant !== grant || reason !== 'claim') return;
+    this.options.diagnostic?.('warn', 'sync-receiver-handover-failed', `generation=${credential.generation}`);
+    this.receiverRefusedCastSession = castSessionId ?? null;
+    if (this.store?.getState().castConnected) void this.claim();
   }
 
   // Still playing here after a failed claim (offline for a moment): try again.
@@ -439,7 +518,7 @@ export class SessionMirror {
   }
 
   private reportSoon() {
-    if (!this.grant) return;
+    if (!this.grant || this.grant.kind === 'receiver') return;
     if (this.reportTimer) clearTimeout(this.reportTimer);
     this.reportTimer = setTimeout(() => void this.report(), REPORT_SOON_MS);
   }
@@ -449,7 +528,8 @@ export class SessionMirror {
     if (this.reportTimer) clearTimeout(this.reportTimer);
     this.reportTimer = null;
     const grant = this.grant;
-    if (!grant || !this.store) return;
+    // A receiver output reports for itself.
+    if (!grant || grant.kind === 'receiver' || !this.store) return;
     const state = this.store.getState();
     const entryId = state.currentIndex !== null ? state.playlist[state.currentIndex]?.queueEntryId : undefined;
     const report: PlaybackOutputReport = {
@@ -495,6 +575,7 @@ export class SessionMirror {
       if (this.grant !== grant) return;
       grant.credential = credential;
       this.scheduleRefresh();
+      if (grant.kind === 'receiver') void this.handOver('refresh');
     } catch (error) {
       if (this.grant !== grant) return;
       if (error instanceof AuroraApiError && error.code === 'OUTPUT_GRANT_REPLACED') {

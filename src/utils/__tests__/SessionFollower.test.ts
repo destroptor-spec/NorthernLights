@@ -246,6 +246,15 @@ describe('following another device', () => {
     expect(store.getState().sessionFollow).toMatchObject({ silent: false, state: 'playing' });
   });
 
+  it('keeps following a silent receiver that plays the session itself, marked so', async () => {
+    const quiet = sessionOf([1, 2, 3]);
+    quiet.output = { ...quiet.output!, id: 'receiver:cast-77', kind: 'receiver', status: 'unreachable' };
+    const { store, follower, connect } = setup({}, quiet);
+    await connect();
+    expect(store.getState().sessionFollow).toMatchObject({ outputId: 'receiver:cast-77', kind: 'receiver', silent: true });
+    expect(follower.anotherDevicePlaying()).toBe(true);
+  });
+
   it('reads the session again when heartbeats stop', async () => {
     const { api, connect } = setup();
     await connect();
@@ -402,3 +411,21 @@ it('is ready once it has read the session, and knows whether another device play
   await expect(off.follower.ready(10_000)).resolves.toBeUndefined();
 });
 
+
+it('treats a receiver playing the session itself like a casting device in the Cast dialog', async () => {
+  const following = sessionOf([1, 2, 3]);
+  following.output = { ...following.output!, id: 'receiver:2bc27ebd', kind: 'receiver', castSessionId: '2bc27ebd' };
+  const { follower, connect } = setup({}, following);
+  await connect();
+  expect(follower.castingElsewhere('NAD Forstærker', '2bc27ebd')).toEqual({ outputId: 'receiver:2bc27ebd' });
+  expect(follower.castingElsewhere('NAD Forstærker', '3da7d650')).toBeNull();
+});
+
+it("does not take its own receiver output for another device's (rejoining its own Cast session)", async () => {
+  const mine = sessionOf([1, 2, 3]);
+  mine.output = { ...mine.output!, id: 'receiver:2bc27ebd', kind: 'receiver', castSessionId: '2bc27ebd' };
+  mine.ownerClientId = 'laptop';
+  const { follower, connect } = setup({}, mine);
+  await connect();
+  expect(follower.castingElsewhere('NAD Forstærker', '2bc27ebd')).toBeNull();
+});

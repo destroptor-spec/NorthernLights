@@ -2,7 +2,7 @@ import type { PlaybackCommand, PlaybackSession } from '../../shared/api/v1';
 import { AuroraApiError } from '../api/auroraApi';
 import * as sessionApi from '../api/playbackSessions';
 import type { TrackInfo } from './fileSystem';
-import { FOLLOW_STALE_MS, followFromSession, followedPositionMs, isFollowedOutputPlaying, type FollowedOutput } from './sessionFollow';
+import { FOLLOW_STALE_MS, followFromSession, followedPositionMs, isCastOutput, isFollowedOutputPlaying, type FollowedOutput } from './sessionFollow';
 
 // The following side of "Sync playback across devices" (docs/playback_sessions.md,
 // Phase 2). While another device plays the user's session, an idle device
@@ -124,7 +124,10 @@ export class SessionFollower {
   castingElsewhere(castDeviceName: string, castSessionId: string | null): { outputId: string } | null {
     const output = this.session?.output;
     if (!output || !this.options || output.id === this.options.clientId()) return null;
-    if (output.kind !== 'cast' || output.status !== 'active' || output.name !== castDeviceName) return null;
+    // A receiver output this device claimed is its own Cast session (a
+    // reload or recovery rejoining it), not another device's.
+    if (output.kind === 'receiver' && this.session!.ownerClientId === this.options.clientId()) return null;
+    if (!isCastOutput(output) || output.status !== 'active' || output.name !== castDeviceName) return null;
     // Only the very Cast session it sends to: picking the device may also
     // start a new session, which ends the other device's (prod 2026-10-13
     // 22:16:20: the phone left a session it had just started).
@@ -145,7 +148,7 @@ export class SessionFollower {
   anotherDevicePlaying(): boolean {
     const output = this.session?.output;
     if (!output || !this.options || output.id === this.options.clientId()) return false;
-    return output.status === 'active' || (output.status === 'unreachable' && output.kind === 'cast');
+    return output.status === 'active' || (output.status === 'unreachable' && isCastOutput(output));
   }
 
   /** When this device last heard a report from `outputId` (local clock), or 0. */

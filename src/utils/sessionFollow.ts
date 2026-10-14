@@ -8,7 +8,7 @@ export interface FollowedOutput {
   outputId: string;
   /** The playing device's name ("NAD Forstærker", "Chrome on Android"). */
   name: string;
-  /** `cast`: that device plays through a Cast device, which `name` names. */
+  /** `cast`: that device plays through a Cast device, which `name` names. `receiver`: the Cast device plays the session itself. */
   kind: PlaybackOutput['kind'];
   generation: number;
   state: 'playing' | 'paused' | 'buffering' | 'stopped' | 'idle' | 'error';
@@ -34,6 +34,11 @@ const MAX_REPORT_AGE_MS = 60_000;
  */
 export const FOLLOW_STALE_MS = 65_000;
 
+/** A Cast device plays there: silence may mean only that nobody relays for it. */
+export function isCastOutput(output: Pick<PlaybackOutput, 'kind'>): boolean {
+  return output.kind === 'cast' || output.kind === 'receiver';
+}
+
 /**
  * Anchors a server `reportedAt` on the local clock. Clocks differ between
  * devices, so the age is clamped; the next heartbeat (within ten seconds)
@@ -53,7 +58,7 @@ export function followFromSession(session: PlaybackSession, myClientId: string, 
   // stopped with it; a Cast device most likely plays on with nobody relaying
   // (prod 2026-10-14: the locked phone went quiet, the desktop played
   // alongside the NAD), so it stays followed, marked silent.
-  const silent = output.status === 'unreachable' && output.kind === 'cast';
+  const silent = output.status === 'unreachable' && isCastOutput(output);
   if (output.status !== 'active' && !silent) return null;
   const report = output.report;
   return {

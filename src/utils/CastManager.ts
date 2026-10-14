@@ -34,6 +34,7 @@ import { createQueueEntryId, ensureQueueEntryIds } from './queue';
 import type { TrackInfo } from './fileSystem';
 import { castEndSnapshot, shouldContinuePlayingAfterCast, type CastEndSnapshot } from './castEndHandoff';
 import { getPlaybackTimeSnapshot } from '../store/playbackTime';
+import { handOverToReceiver, ReceiverFollowAcks, RECEIVER_SESSION_FOLLOW_CAP, type ReceiverFollowAck, type ReceiverHandover } from './receiverSessionFollow';
 declare const chrome: any;
 declare const cast: any;
 
@@ -219,6 +220,10 @@ export class CastManager {
     private lastDurationCorrectionLogAt = 0;
     private auroraControlRequestId = 0;
     private auroraControlCapLoggedSid: string | null = null;
+    /** The Cast session whose receiver said it follows a playback session itself. */
+    private sessionFollowCapSid = '';
+    private readonly receiverFollowListeners = new Set<() => void>();
+    private readonly receiverFollowAcks = new ReceiverFollowAcks();
     private lastRemotePlayerEventAt = 0;
     private lastRemotePositionAt = 0;
     private lastRemotePositionEntryId: string | null = null;
@@ -879,6 +884,43 @@ export class CastManager {
         return this.getCurrentSessionId();
     }
 
+    /**
+     * The receiver in this Cast session plays a playback session on its own
+     * when given one (Phase 5; it says so in aurora.status caps).
+     */
+    public receiverCanFollowSession(): boolean {
+        const sid = this.getCurrentSessionId();
+        return !!sid && this.isConnected() && this.sessionFollowCapSid === sid;
+    }
+
+    /** Called once per Cast session, when its receiver first says it can follow a session. */
+    public addReceiverCanFollowListener(listener: () => void): () => void {
+        this.receiverFollowListeners.add(listener);
+        return () => this.receiverFollowListeners.delete(listener);
+    }
+
+    /**
+     * Gives the receiver the playback session and its receiver credential
+     * (aurora.session.follow, acknowledged). True once the receiver took it.
+     * The token is never logged.
+     */
+    public async handOverSessionToReceiver(handover: ReceiverHandover, reason: string): Promise<boolean> {
+        const session = this.castContext?.getCurrentSession?.() || null;
+        const sid = this.getCurrentSessionId();
+        const detail = `sid=${sid || 'none'} reason=${reason} generation=${handover.generation}`;
+        if (!session || typeof session.sendMessage !== 'function' || !this.receiverCanFollowSession()) {
+            this.logCast('warn', 'receiver-session-handover', `${detail} result=not-connected`);
+            return false;
+        }
+        const result = await handOverToReceiver(handover, {
+            send: (message) => session.sendMessage(getAuroraStatusNamespace(session), message),
+            acks: this.receiverFollowAcks,
+            nextRequestId: () => ++this.auroraControlRequestId,
+        });
+        this.logCast(result.ok ? 'ok' : 'warn', 'receiver-session-handover', `${detail} result=${result.outcome} attempts=${result.attempts}`);
+        return result.ok;
+    }
+
     public setCastingElsewhereCheck(check: ((castDeviceName: string) => boolean) | null) {
         this.castingElsewhereCheck = check;
     }
@@ -1312,6 +1354,11 @@ export class CastManager {
                         this.auroraControlCapLoggedSid = sessionId;
                         this.logCast('ok', 'Receiver accepts aurora-control', `sid=${sessionId || 'unknown'} caps=${status.caps.join(',')}`);
                     }
+                    if (sessionId && status.caps?.includes(RECEIVER_SESSION_FOLLOW_CAP) && this.sessionFollowCapSid !== sessionId) {
+                        this.sessionFollowCapSid = sessionId;
+                        this.logCast('ok', 'receiver-can-follow', `sid=${sessionId}`);
+                        this.receiverFollowListeners.forEach((listener) => listener());
+                    }
                     this.applyAuroraStatus(status);
                     this.syncReceiverDiagnostics();
                 } else if (status && status.type === 'aurora.diagnostics.ack') {
@@ -1326,6 +1373,9 @@ export class CastManager {
                         'Cast queue insert acknowledged by receiver',
                         `ok=${Boolean(ack.ok)} inserted=${ack.inserted ?? 0} requestId=${ack.requestId ?? 'none'}${ack.detail ? ` ${ack.detail}` : ''}`,
                     );
+                } else if (status && (status as { type?: string }).type === 'aurora.session.follow.ack') {
+                    if (session !== this.castContext?.getCurrentSession?.()) return;
+                    this.receiverFollowAcks.acknowledge(status as unknown as ReceiverFollowAck);
                 } else if (status && (status as { type?: string }).type === 'aurora.control.ack') {
                     const ack = status as unknown as { action?: string; ok?: boolean; detail?: string; requestId?: number };
                     this.logCast(

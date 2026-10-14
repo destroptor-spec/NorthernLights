@@ -100,17 +100,38 @@ Phase 1's leftover "session-bound receiver tokens".
   refused, a refresh cannot revive one, no access to other sessions or
   playlists.
 
-### C. Sender hands the receiver its credential (sender only)
+### C. Sender hands the receiver its credential (sender only) — built (feat/receiver-handover)
 
 - When sync is on and the receiver advertises `session-follow` (PR D), the
-  sender claims the output for the receiver and puts `{ sessionId,
-  receiverToken }` in the LOAD `customData`.
-- While connected, it pushes a fresh token over `aurora.status`
-  (`aurora.auth.refresh`, acked) on every wake.
-- A receiver without the capability gets exactly today's LOAD.
+  sender claims the output for the receiver (`kind: "receiver"`, with the
+  Cast session ID) and hands it `{ sessionId, outputId, generation, token,
+  expiresAt, renewableUntil }` in an acknowledged `aurora.session.follow`
+  message on the Aurora channel (`aurora.session.follow.ack` with the
+  `requestId` and `ok`). Three tries, five seconds each.
+- **Not in the LOAD** (changed while building): the receiver names its caps
+  only in `aurora.status`, which it first sends once something is loaded, so
+  the sender cannot know at the first LOAD. The sender therefore casts exactly
+  as today, as a `cast` output, and switches the claim to the receiver when
+  its caps arrive. The same message serves a joined or rejoined session.
+- If the receiver does not take it, the sender claims back as `cast` and
+  reports as today, and does not try that Cast session again.
+- While the receiver holds the output, the sender mirrors queue edits but no
+  longer reports (the receiver does). Each renewed credential is handed over
+  again with the same message (no separate `aurora.auth.refresh`), and the
+  sender refreshes on every wake (at most once a minute), which also renews
+  the 24-hour cap.
+- When the sender leaves the Cast session, it lets go of the output and the
+  receiver plays on; it claims again only when it plays itself.
+- A receiver without the capability gets exactly today's LOAD and messages.
 - The second-sender rules (#119/#123: a device joining a Cast session another
-  device casts leaves it again) must also recognise a `receiver` output: its
-  `castSessionId` is the Cast session the receiver runs in.
+  device casts leaves it again) also recognise a `receiver` output: its
+  `castSessionId` is the Cast session the receiver runs in. The device that
+  claimed it (the session's `ownerClientId`) rejoining that Cast session is
+  not a second sender. A take-over by a
+  `receiver` output on the same Cast device leaves the music alone, and a
+  silent `receiver` output stays followed, like a `cast` one.
+- Log markers: `receiver-can-follow`, `receiver-session-handover`,
+  `sync-receiver-handover-failed`, `sync-receiver-left`; checklist row 20.
 - No kill switch (decided): a rollback of the receiver is the way back.
 
 ### D. Receiver follows the session (`receiver.html`)
@@ -136,7 +157,16 @@ them the receiver runs today's code path, unchanged.
   queue jump.
 - **Reports** every 10 s and on every change, with its credential, exactly like
   a browser output; also `played`/`skipped`.
-- **Expiry** (401/`OUTPUT_GRANT_REPLACED` on its own calls): stop following,
+- **Handover:** accept `aurora.session.follow` from any connected sender,
+  adopt the newest generation's credential, and answer
+  `aurora.session.follow.ack`. Advertise `session-follow` only when it can
+  actually follow (EventSource or fetch available).
+- **Replaced** (`playbackSession.handedOff` to another output, or
+  `OUTPUT_GRANT_REPLACED` on its own calls, e.g. "On this device" elsewhere):
+  stop, since no sender may be connected to stop it. A take-over by a sender
+  in its own Cast session (a `cast` or `receiver` claim naming its Cast
+  session) is not a reason to stop.
+- **Expiry** (401 on its own calls, past `renewableUntil`): stop following,
   play out the window, then the idle state *Open Aurora to keep playing*.
   Never stop mid-track, never fall back to another credential.
 - New log markers: `receiver-session-follow`, `receiver-window-reconciled`,
