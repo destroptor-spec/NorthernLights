@@ -2665,6 +2665,17 @@ export class CastManager {
         mediaSession = this.getHydratableMediaSession(mediaSession);
         if (!mediaSession || !this.hasActiveRemoteMediaSession(mediaSession)) return false;
 
+        // With no Cast session there is nothing to hydrate from: the remote
+        // player still describes the session that just ended for a moment
+        // (IS_MEDIA_LOADED_CHANGED ~10 ms after SESSION_ENDED, or a hydration
+        // that began before the end). Going on would pause the local player
+        // the end-of-session handoff has just started (prod 2026-10-13
+        // 18:27:59, sid=none). A new or resumed session hydrates with its own.
+        if (!this.castContext?.getCurrentSession?.()) {
+            this.logCast('ok', 'hydrate-skipped-no-session', `reason=${reason}`);
+            return false;
+        }
+
         // Stop any stale local playback before hydrating sender state from Cast.
         try {
             playbackManager.getLocalAudioElement().pause();
