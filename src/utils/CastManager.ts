@@ -888,12 +888,30 @@ export class CastManager {
     private leftJoinedSession = false;
     /** When it left, so the disconnect that follows is not reported as a failure. */
     private leftJoinedSessionAt = 0;
+    /** The Cast session it left: never recovered or rejoined as "stale". */
+    private leftJoinedSessionId = '';
 
     private leaveIfCastingElsewhere(reason: string): boolean {
+        // Already leaving (the connect and the session-start paths both ask).
+        if (this.leftJoinedSession) return true;
         const name = this.getCastDeviceName();
-        if (!name || !this.castContext?.getCurrentSession?.() || !this.castingElsewhereCheck?.(name)) return false;
+        if (!name || !this.castContext?.getCurrentSession?.() || !this.castingElsewhereCheck?.(name)) {
+            // Staying connected, possibly to a session left earlier (the other
+            // device has stopped casting there since): recover it as usual.
+            if (this.isLeftJoinedSession(this.getCurrentSessionId())) this.leftJoinedSessionId = '';
+            return false;
+        }
         this.leftJoinedSession = true;
         this.leftJoinedSessionAt = Date.now();
+        this.leftJoinedSessionId = this.getCurrentSessionId();
+        // The launcher tap's follow-up checks would find the closed connection
+        // and "recover" it, rejoining the session just left (prod 2026-10-13
+        // 22:45:59: the phone left, then SESSION_RESUMED 0.3 s later).
+        this.userSessionRequestPending = false;
+        this.clearUserSessionIntentTimer();
+        this.freshSessionStartedAt = 0;
+        this.preserveSessionOnNextEnd = false;
+        localStorage.removeItem(SESSION_STORAGE_KEY);
         this.logCast('ok', 'cast-join-left', `reason=${reason} device=${name}`);
         try {
             // false: leave the session, do not stop the receiver.
@@ -1041,6 +1059,10 @@ export class CastManager {
      * After a failed recovery the watchdog would otherwise restart it every 5s
      * against the same dead session, flashing an error toast each round.
      */
+    private isLeftJoinedSession(sessionId: string): boolean {
+        return !!sessionId && sessionId === this.leftJoinedSessionId;
+    }
+
     private recoverStaleTransportAutomatically(reason: string, error: unknown) {
         if (this.isKnownDeadTransport()) {
             if (!this.deadTransportSkipLogged) {
@@ -1054,6 +1076,12 @@ export class CastManager {
 
     private async recoverStaleTransport(reason: string, error?: unknown): Promise<boolean> {
         if (this.staleTransportRecoveryPromise) return this.staleTransportRecoveryPromise;
+
+        const leaving = this.getCurrentSessionId() || localStorage.getItem(SESSION_STORAGE_KEY) || '';
+        if (this.leftJoinedSession || this.isLeftJoinedSession(leaving)) {
+            this.logCast('ok', `Skipped Cast transport recovery: ${reason}`, 'reason=left-joined-session');
+            return false;
+        }
 
         this.staleTransportRecoveryPromise = (async () => {
             const sessionId = this.getCurrentSessionId() || localStorage.getItem(SESSION_STORAGE_KEY) || '';

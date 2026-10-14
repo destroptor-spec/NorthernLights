@@ -11,6 +11,9 @@ jest.mock('../../store', () => ({ usePlayerStore: { getState: () => ({ authToken
 type Harness = {
   startPlaybackForCurrentSession(reason: string): Promise<void>;
   afterSessionEnded(snapshot: unknown): void;
+  recoverStaleTransport(reason: string): Promise<boolean>;
+  userSessionRequestPending: boolean;
+  clearUserSessionIntentTimer: jest.Mock;
   handOffToLocalAfterSessionEnd: jest.Mock;
   setCastingElsewhereCheck(check: ((name: string) => boolean) | null): void;
   hydrateSenderFromRemoteSession: jest.Mock;
@@ -32,6 +35,9 @@ function harness() {
     getCastDeviceName: () => 'NAD Forstærker',
     handOffToLocalAfterSessionEnd: jest.fn(),
     resetCastEndIntent: jest.fn(),
+    clearUserSessionIntentTimer: jest.fn(),
+    staleTransportRecoveryPromise: null,
+    userSessionRequestPending: true,
     notifyStateChange: jest.fn(),
     getHydratableMediaSession: () => media,
     hydrateSenderFromRemoteSession: jest.fn().mockResolvedValue(true),
@@ -146,3 +152,43 @@ describe('a Cast device another of my devices is casting to', () => {
   });
 });
 
+/**
+ * Prod 2026-10-13 22:45:58: the phone joined the desktop's Cast session and
+ * left it, then the launcher tap's follow-up check found the closed
+ * connection, took it for a stale one and rejoined (SESSION_RESUMED 0.3 s
+ * later). The phone ended up a second sender after all.
+ */
+it('after leaving, neither leaves twice nor lets anything rejoin the session it left', async () => {
+  const { manager, endCurrentSession, setMedia } = harness();
+  setMedia(nadMedia);
+  manager.setCastingElsewhereCheck(() => true);
+  localStorage.setItem('cast_session_id', '1ecdcfad');
+  await manager.startPlaybackForCurrentSession('cast-connected');
+  await manager.startPlaybackForCurrentSession('session-started');
+  expect(endCurrentSession).toHaveBeenCalledTimes(1);
+  expect(manager.userSessionRequestPending).toBe(false);
+  expect(manager.clearUserSessionIntentTimer).toHaveBeenCalled();
+
+  expect(await manager.recoverStaleTransport('media-status:reconcile:user-launch-intent+2000ms')).toBe(false);
+  expect(endCurrentSession).toHaveBeenCalledTimes(1);
+  expect(manager.logCast).toHaveBeenCalledWith('ok', 'Skipped Cast transport recovery: media-status:reconcile:user-launch-intent+2000ms', 'reason=left-joined-session');
+
+  // Still refused once its own SESSION_ENDED has been handled.
+  manager.afterSessionEnded(null);
+  expect(await manager.recoverStaleTransport('visibility')).toBe(false);
+});
+
+it('recovers a session it left once it connects to it again to stay', async () => {
+  const { manager, setMedia } = harness();
+  setMedia(nadMedia);
+  let elsewhere = true;
+  manager.setCastingElsewhereCheck(() => elsewhere);
+  await manager.startPlaybackForCurrentSession('cast-connected');
+  manager.afterSessionEnded(null);
+  const internals = manager as unknown as { leftJoinedSessionId: string };
+  expect(internals.leftJoinedSessionId).toBe('1ecdcfad');
+  // The other device has stopped casting there; this one connects to stay.
+  elsewhere = false;
+  await manager.startPlaybackForCurrentSession('cast-connected');
+  expect(internals.leftJoinedSessionId).toBe('');
+});
