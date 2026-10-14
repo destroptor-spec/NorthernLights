@@ -361,11 +361,11 @@ export const LibraryHome: React.FC<{ section?: 'artists' | 'albums' | 'genres' }
         );
     }, [genreEntityByName]);
 
-    // The views render from the entity lists (artists/albums/genres), which load
-    // first; the full track array arrives in the background. Gate the
-    // skeleton/empty states on entity presence, not on `library` (tracks) —
-    // otherwise the views stay blank for the whole background-load window.
-    const hasEntities = artistEntities.length > 0 || albumEntities.length > 0 || genreEntities.length > 0;
+    // Lists arrive independently. Keep this section's skeleton until its own
+    // data arrives; another section's first page does not make this one ready.
+    const hasEntities = showArtists ? artistEntities.length > 0
+        : showAlbums ? albumEntities.length > 0
+        : genreEntities.length > 0 || albumEntities.length > 0;
 
     if (isLibraryLoading && !hasEntities) {
         return (

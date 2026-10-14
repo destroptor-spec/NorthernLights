@@ -56,6 +56,16 @@ beforeEach(() => {
 
 const renderHub = () => render(<MemoryRouter><Hub /></MemoryRouter>);
 
+it('loads and plays hub collections before any library entity page arrives', async () => {
+  usePlayerStore.setState({ library: [], albums: [], artists: [], isLibraryLoading: true });
+  renderHub();
+  const card = await screen.findByLabelText('play Late Night Jazz');
+  fireEvent.click(within(card).getByLabelText('play'));
+  expect(setPlaylist).toHaveBeenCalled();
+  expect(calls()).toEqual(expect.arrayContaining(['GET /api/v1/hub', 'GET /api/v1/hub/smart']));
+  expect(screen.queryByText('scan music into your library first')).toBeNull();
+});
+
 it('loads both hub feeds from v1 and nothing from the legacy routes', async () => {
   renderHub();
   await screen.findByLabelText('play Late Night Jazz');

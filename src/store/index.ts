@@ -1675,8 +1675,11 @@ export const usePlayerStore = create<PlayerState>()(
         },
 
         clearAuthToken: () => {
+          abortInFlightLibraryFetches();
           clearSessionAuth();
           set({
+            isLibraryLoading: false,
+            isPlaylistsLoading: false,
             authToken: null,
             mediaAccessToken: null,
             sseAccessToken: null,
@@ -2236,6 +2239,7 @@ export const usePlayerStore = create<PlayerState>()(
               }
 
               const { mediaAccessToken, authToken, streamingQuality } = get();
+              if (ac.signal.aborted) return;
               const token = mediaAccessToken || authToken || '';
               const quality = streamingQuality;
 
@@ -2259,37 +2263,46 @@ export const usePlayerStore = create<PlayerState>()(
             } catch (e) {
               if (isAbortError(e) || ac.signal.aborted) return;
               console.error('Failed to reconcile queue', e);
-            } finally {
-              inFlightTracksFetch = null;
             }
-            })();
+            })().finally(() => {
+              if (inFlightTracksFetch === p) inFlightTracksFetch = null;
+            });
             inFlightTracksFetch = p;
             return p;
           };
 
+          const queueReconciled = reconcileQueue();
           const run = (async () => {
           try {
             const authHeaders = get().getAuthHeader();
-            // Entity-first: these lightweight lists make the library views
-            // interactive immediately, instead of waiting on the full track set.
-            const [artists, albums, genres, dirsRes] = await Promise.all([
-              auroraApiAllPages<ApiV1Artist>('/artists', authHeaders, ac.signal),
-              auroraApiAllPages<ApiV1Album>('/albums', authHeaders, ac.signal),
-              auroraApiAllPages<ApiV1Genre>('/genres', authHeaders, ac.signal),
-              fetch('/api/library/directories', { headers: authHeaders, signal: ac.signal }),
+            // Cold loads publish each page. Refreshes retain the complete old
+            // list until its replacement is ready, avoiding shrinking filters.
+            const loadEntities = async <T, U>(
+              path: string, map: (value: T) => U, hasExisting: boolean,
+              publish: (values: U[]) => void,
+            ) => {
+              const values: U[] = [];
+              await auroraApiAllPages<T>(path, authHeaders, ac.signal, (items, complete) => {
+                values.push(...items.map(map));
+                if (!hasExisting || complete) publish([...values]);
+              });
+            };
+            // A slow or failed list must not hold back the other lists. Keep
+            // the deduplication lock until every chain settles, even on error.
+            const results = await Promise.allSettled([
+              loadEntities('/artists', mapApiV1Artist, get().artists.length > 0, artists => set({ artists })),
+              loadEntities('/albums', mapApiV1Album, get().albums.length > 0, albums => set({ albums })),
+              loadEntities('/genres', mapApiV1Genre, get().genres.length > 0, genres => set({ genres })),
+              (async () => {
+                const res = await fetch('/api/library/directories', { headers: authHeaders, signal: ac.signal });
+                const data = res.ok ? await res.json() : { directories: [] };
+                if (!ac.signal.aborted) set({ libraryFolders: data.directories || [] });
+              })(),
             ]);
-            const dirsData = dirsRes.ok ? await dirsRes.json() : { directories: [] };
-            set({
-              artists: artists.map(mapApiV1Artist),
-              albums: albums.map(mapApiV1Album),
-              genres: genres.map(mapApiV1Genre),
-              libraryFolders: dirsData.directories || [],
-              isLibraryLoading: false,
-            });
-            // Reconcile the restored play queue against the server (prune
-            // deleted tracks, refresh stream URLs). Lightweight — no full
-            // track list is loaded.
-            void reconcileQueue();
+            if (ac.signal.aborted) return;
+            const failure = results.find(result => result.status === 'rejected');
+            if (failure?.status === 'rejected') throw failure.reason;
+            set({ isLibraryLoading: false });
           } catch (e) {
             // Aborted on logout — drop silently; don't surface an error or clear loading.
             if (isAbortError(e) || ac.signal.aborted) return;
@@ -2298,8 +2311,11 @@ export const usePlayerStore = create<PlayerState>()(
             set({ isLibraryLoading: false, libraryError: msg });
             get().addToast(msg, 'error', { actionLabel: 'Retry', onAction: () => { void get().fetchLibraryFromServer(); } });
           } finally {
-            if (libraryFetchAbort === ac) libraryFetchAbort = null;
-            inFlightLibraryFetch = null;
+            await queueReconciled;
+            if (libraryFetchAbort === ac) {
+              libraryFetchAbort = null;
+              inFlightLibraryFetch = null;
+            }
           }
           })();
           inFlightLibraryFetch = run;

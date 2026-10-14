@@ -104,18 +104,22 @@ export async function auroraApiAllPages<T>(
   path: string,
   authHeaders: Record<string, string>,
   signal?: AbortSignal,
+  onPage?: (items: readonly T[], complete: boolean) => void,
 ): Promise<T[]> {
   const values: T[] = [];
   let cursor: string | null = null;
   do {
+    signal?.throwIfAborted();
     const separator = path.includes('?') ? '&' : '?';
     const pageResult: PageEnvelope<T[]> = await auroraApiPage<T[]>(
       `${path}${separator}limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
       authHeaders,
       signal,
     );
+    signal?.throwIfAborted();
     values.push(...pageResult.data);
     cursor = pageResult.page.nextCursor;
+    onPage?.(pageResult.data, !cursor);
   } while (cursor);
   return values;
 }
