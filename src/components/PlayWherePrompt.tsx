@@ -12,6 +12,18 @@ export const PlayWherePrompt: React.FC = () => {
   const prompt = usePlayerStore((s) => s.playWherePrompt);
   const resolve = usePlayerStore((s) => s.resolvePlayWhere);
   if (!prompt) return null;
+  if (prompt.silent) {
+    return (
+      <ConfirmModal
+        title="Play here instead?"
+        message={`${prompt.outputName} isn't responding. The device casting to it may be asleep, so playing here won't stop it.`}
+        confirmLabel="Play here"
+        confirmTone="primary"
+        onConfirm={() => void resolve('here')}
+        onCancel={() => void resolve(null)}
+      />
+    );
+  }
   return (
     <ConfirmModal
       title="Play where?"

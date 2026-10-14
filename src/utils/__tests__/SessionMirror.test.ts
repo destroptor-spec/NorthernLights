@@ -405,7 +405,7 @@ it('reports right after a remote command, even when nothing visible changed', as
   await play(store);
   api.reportPlaybackOutput.mockClear();
   mirror.reportNow();
-  await jest.advanceTimersByTimeAsync(300);
+  // At once: a background tab's timers may be stretched far beyond 300 ms.
   expect(api.reportPlaybackOutput).toHaveBeenCalledTimes(1);
 });
 

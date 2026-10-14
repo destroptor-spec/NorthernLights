@@ -321,6 +321,33 @@ describe('Music Store Logic', () => {
       expect(usePlayerStore.getState().toasts).toHaveLength(0);
     });
 
+    // Prod 2026-10-14: the phone casting to the NAD was locked and went
+    // quiet; the desktop dropped it and started a second playback unasked.
+    it('asks before playing alongside a Cast device that is not responding, and sends nothing to it', async () => {
+      following({ silent: true });
+      usePlayerStore.setState({ remoteControlOutputId: 'desktop' });
+      await usePlayerStore.getState().nextTrack();
+      expect(usePlayerStore.getState().playWherePrompt).toEqual({ outputName: 'NAD Forstærker', silent: true });
+      expect(sendRemoteAction).not.toHaveBeenCalled();
+      await usePlayerStore.getState().resolvePlayWhere('remote');
+      expect(sendRemoteAction).not.toHaveBeenCalled();
+      expect(playAtIndex).not.toHaveBeenCalled();
+
+      await usePlayerStore.getState().nextTrack();
+      await usePlayerStore.getState().resolvePlayWhere('here');
+      expect(playAtIndex).toHaveBeenCalledWith(2);
+    });
+
+    it('does not top up Infinity on a copy of another device\'s queue', async () => {
+      following();
+      const fetchNext = jest.fn().mockResolvedValue(undefined);
+      usePlayerStore.setState({ isInfinityMode: false, fetchNextInfinityTrack: fetchNext } as never);
+      usePlayerStore.getState().toggleInfinityMode();
+      await usePlayerStore.getState().ensureInfinityQueue();
+      expect(usePlayerStore.getState().isInfinityMode).toBe(true);
+      expect(fetchNext).not.toHaveBeenCalled();
+    });
+
     it('a remote load keeps the session entry IDs and plays the chosen entry', async () => {
       await usePlayerStore.getState().playSessionQueue(queue(), 2);
       expect(usePlayerStore.getState().playlist.map((t) => t.queueEntryId)).toEqual([entry(1), entry(2), entry(3)]);

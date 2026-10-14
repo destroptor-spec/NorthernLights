@@ -16,6 +16,13 @@ export interface FollowedOutput {
   positionMs: number;
   /** Local clock time at which `positionMs` was true. */
   anchorMs: number;
+  /**
+   * A Cast output that has not reported for over a minute (the server calls
+   * it unreachable): the device casting to it is probably asleep, while the
+   * Cast device itself likely plays on. Nothing can be sent to it, but this
+   * device still asks before playing alongside it.
+   */
+  silent?: boolean;
 }
 
 /** A report fetched with the session is at most this old when it is anchored. */
@@ -41,8 +48,13 @@ export function anchorReportedAt(reportedAt: string, now: number): number {
 /** The device another device should follow, or null when this one plays or nobody does. */
 export function followFromSession(session: PlaybackSession, myClientId: string, now: number): FollowedOutput | null {
   const output = session.output;
-  // Ended, or silent for over a minute: nothing is known to play there.
-  if (!output || output.id === myClientId || output.status !== 'active') return null;
+  if (!output || output.id === myClientId) return null;
+  // Ended: nothing plays there. Silent for over a minute: a browser has
+  // stopped with it; a Cast device most likely plays on with nobody relaying
+  // (prod 2026-10-14: the locked phone went quiet, the desktop played
+  // alongside the NAD), so it stays followed, marked silent.
+  const silent = output.status === 'unreachable' && output.kind === 'cast';
+  if (output.status !== 'active' && !silent) return null;
   const report = output.report;
   return {
     sessionId: session.id,
@@ -54,11 +66,12 @@ export function followFromSession(session: PlaybackSession, myClientId: string, 
     entryId: report?.queueEntryId ?? session.currentEntryId,
     positionMs: report?.positionMs ?? session.positionMs,
     anchorMs: report ? anchorReportedAt(report.reportedAt, now) : now,
+    ...(silent ? { silent: true } : {}),
   };
 }
 
 export function isFollowedOutputPlaying(follow: FollowedOutput | null): boolean {
-  return !!follow && (follow.state === 'playing' || follow.state === 'buffering');
+  return !!follow && !follow.silent && (follow.state === 'playing' || follow.state === 'buffering');
 }
 
 /** Where the followed device is now, carried forward while it plays. */

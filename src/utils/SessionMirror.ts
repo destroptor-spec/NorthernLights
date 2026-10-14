@@ -148,9 +148,13 @@ export class SessionMirror {
     }, { keepalive: true }).catch(() => undefined);
   };
 
-  /** Report soon, e.g. after carrying out a remote command, so the sender sees it took. */
+  /**
+   * Report at once, after carrying out a remote command, so the sender sees
+   * it took. Not via a timer: Android stretches timers in a background tab
+   * (prod 2026-10-14: the skip happened, the desktop said "isn't responding").
+   */
   reportNow(): void {
-    this.reportSoon();
+    void this.report();
   }
 
   /** This device is the session's output (playing or paused). */

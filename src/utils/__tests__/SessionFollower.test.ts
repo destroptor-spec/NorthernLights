@@ -3,7 +3,7 @@ import type { PlaybackSession } from '../../../shared/api/v1';
 import { AuroraApiError } from '../../api/auroraApi';
 import { SessionFollower, type EventSourceLike, type FollowerPlayerState } from '../SessionFollower';
 import type { TrackInfo } from '../fileSystem';
-import type { FollowedOutput } from '../sessionFollow';
+import { isFollowedOutputPlaying, type FollowedOutput } from '../sessionFollow';
 
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const NOW = Date.parse('2026-10-13T20:00:00.000Z');
@@ -226,6 +226,22 @@ describe('following another device', () => {
     expect(store.getState().sessionFollow).toBeNull();
     // The queue is still the session's.
     expect(store.getState().playlist.map((t) => t.queueEntryId)).toEqual([uuid(1), uuid(2), uuid(3)]);
+  });
+
+  it('keeps following a silent Cast device, marked so, since it likely plays on', async () => {
+    const quiet = sessionOf([1, 2, 3]);
+    quiet.output = { ...quiet.output!, kind: 'cast', status: 'unreachable' };
+    const { store, source, connect } = setup({}, quiet);
+    await connect();
+    expect(store.getState().sessionFollow).toMatchObject({ name: 'NAD Forstærker', silent: true });
+    expect(isFollowedOutputPlaying(store.getState().sessionFollow)).toBe(false);
+
+    // It is heard from again.
+    source().emit('playbackSession.progress', {
+      sessionId: 'session-1', revision: 12, outputId: 'phone', generation: 4,
+      report: { state: 'playing', queueEntryId: uuid(2), positionMs: 90_000 },
+    });
+    expect(store.getState().sessionFollow).toMatchObject({ silent: false, state: 'playing' });
   });
 
   it('reads the session again when heartbeats stop', async () => {

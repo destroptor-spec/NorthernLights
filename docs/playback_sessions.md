@@ -1068,6 +1068,15 @@ active, same name), the device leaves the Cast session again
 device as the remote target, so it controls the Cast device through the
 device casting to it.
 
+Relay limits (prod 2026-10-14, phone casting and locked, desktop as remote):
+Android stretches a background tab's timers, so the playing device reports at
+once after a command, not on a timer. A Cast output silent for over a minute
+(server: unreachable) stays followed, marked `silent`: nothing is sent to it,
+and an action here asks "Play here instead?" rather than starting a second
+playback alongside the Cast device, which most likely plays on. Infinity does
+not top up the queue on a following device (it is a copy). Infinity
+continuing with the phone asleep needs Phase 4/5.
+
 PRs: (1) `POST /playback-sessions/:id/commands` and the live-only
 `playbackSession.command` event (server only); (2) the output carries
 commands out (`src/utils/sessionCommands.ts`: SessionFollower passes on

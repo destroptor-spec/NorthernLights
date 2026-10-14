@@ -12,7 +12,10 @@ export function useFollowedDeviceName(): string | null {
 
 /** "Playing on NAD Forstærker" or "Paused on NAD Forstærker", or null. */
 export function useFollowedDeviceLabel(): string | null {
-  return usePlayerStore((s) => (s.sessionFollow
-    ? `${isFollowedOutputPlaying(s.sessionFollow) ? 'Playing' : 'Paused'} on ${s.sessionFollow.name}`
-    : null));
+  return usePlayerStore((s) => {
+    const follow = s.sessionFollow;
+    if (!follow) return null;
+    if (follow.silent) return `${follow.name} isn't responding`;
+    return `${isFollowedOutputPlaying(follow) ? 'Playing' : 'Paused'} on ${follow.name}`;
+  });
 }
