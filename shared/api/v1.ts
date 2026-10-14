@@ -257,16 +257,36 @@ export const playbackSessionCreateSchema = z.object({
   source: z.object({ kind: z.string().max(40), id: z.string().max(512).nullable() }).nullable().optional(),
 }).strict().meta({ id: 'PlaybackSessionCreate' });
 
+// Client-proposed entry IDs: one UUID per track, so an optimistic local entry
+// and the confirmed server entry share an ID from the start. Omitted, the
+// server generates them.
+const proposedEntryIds = (max: number) => z.array(z.string().uuid()).max(max).optional()
+  .describe('Client-proposed queue entry IDs, one unique UUID per track. Omitted, the server generates them.');
+const entryIdsMatchTracks = (operation: { trackIds: string[]; entryIds?: string[] }) =>
+  !operation.entryIds || (operation.entryIds.length === operation.trackIds.length && new Set(operation.entryIds).size === operation.entryIds.length);
+const ENTRY_IDS_MESSAGE = 'entryIds must be unique and give one ID per track.';
+// Exactly one of an index or an anchor. `afterEntryId: null` means the head of
+// the queue. An anchor still means the same thing after other edits, so
+// first-party clients use only the anchored form; the index form stays for
+// existing API v1 clients.
+const oneTarget = (indexKey: 'index' | 'toIndex') => (operation: Record<string, unknown>) =>
+  (operation[indexKey] === undefined) !== (operation.afterEntryId === undefined);
+
 const queueReplaceOperation = z.object({
   type: z.literal('replaceQueue'),
   trackIds: z.array(OPAQUE_ID).max(2000),
+  entryIds: proposedEntryIds(2000),
   currentIndex: z.number().int().nonnegative().optional(),
-});
+}).refine(entryIdsMatchTracks, { message: ENTRY_IDS_MESSAGE, path: ['entryIds'] });
 const queueInsertOperation = z.object({
   type: z.literal('insert'),
-  index: z.number().int().nonnegative(),
+  index: z.number().int().nonnegative().optional().describe('Legacy position form. Give exactly one of index or afterEntryId.'),
+  afterEntryId: z.string().uuid().nullable().optional().describe('Insert after this entry; null inserts at the head. Give exactly one of index or afterEntryId.'),
   trackIds: z.array(OPAQUE_ID).min(1).max(200),
-});
+  entryIds: proposedEntryIds(200),
+})
+  .refine(oneTarget('index'), { message: 'Give exactly one of index or afterEntryId.' })
+  .refine(entryIdsMatchTracks, { message: ENTRY_IDS_MESSAGE, path: ['entryIds'] });
 const queueRemoveOperation = z.object({
   type: z.literal('remove'),
   queueEntryIds: z.array(z.string().uuid()).min(1).max(200),
@@ -274,8 +294,9 @@ const queueRemoveOperation = z.object({
 const queueMoveOperation = z.object({
   type: z.literal('move'),
   queueEntryId: z.string().uuid(),
-  toIndex: z.number().int().nonnegative(),
-});
+  toIndex: z.number().int().nonnegative().optional().describe('Legacy position form. Give exactly one of toIndex or afterEntryId.'),
+  afterEntryId: z.string().uuid().nullable().optional().describe('Move after this entry; null moves to the head. Give exactly one of toIndex or afterEntryId.'),
+}).refine(oneTarget('toIndex'), { message: 'Give exactly one of toIndex or afterEntryId.' });
 const transportOperation = z.object({
   type: z.literal('setTransport'),
   currentEntryId: z.string().uuid().nullable().optional(),
@@ -287,6 +308,9 @@ const transportOperation = z.object({
 
 export const playbackSessionPatchSchema = z.object({
   expectedRevision: z.number().int().positive(),
+  // Idempotency key for the whole patch. A retry with the same key and body
+  // returns the original success instead of a conflict with itself.
+  requestId: z.string().uuid().optional().describe('Idempotency key for the whole patch; kept 24 hours.'),
   operations: z.array(z.discriminatedUnion('type', [
     queueReplaceOperation,
     queueInsertOperation,

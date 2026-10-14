@@ -112,6 +112,9 @@ import {
   PlaybackSessionOwnershipError,
   PlaybackSessionRevisionError,
   PlaybackSessionTrackError,
+  PlaybackSessionAnchorError,
+  PlaybackSessionEntryIdError,
+  PlaybackSessionRequestReusedError,
 } from '../services/playbackSession.service';
 import { publishApiV1Event, replayApiV1Events, subscribeApiV1Events } from '../services/apiV1Events.service';
 import { generateEphemeralScopedToken, verifyScopedToken } from '../services/scopedToken.service';
@@ -165,8 +168,8 @@ function routeParam(req: Request, name: string): string {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function dataResponse(req: Request, res: Response, data: unknown, status = 200) {
-  return res.status(status).json({ data, meta: { requestId: req.requestId } });
+function dataResponse(req: Request, res: Response, data: unknown, status = 200, meta: Record<string, unknown> = {}) {
+  return res.status(status).json({ data, meta: { requestId: req.requestId, ...meta } });
 }
 
 type EntityCursor = { sort: string; id: string };
@@ -996,12 +999,15 @@ router.patch('/playback-sessions/:id', async (req, res) => {
   const patch = parseBody(playbackSessionPatchSchema, req, res);
   if (!patch) return;
   try {
-    dataResponse(req, res, await patchPlaybackSession({
+    const result = await patchPlaybackSession({
       userId: req.apiV1!.userId,
       clientId: req.apiV1!.clientId,
       sessionId: req.params.id,
       patch,
-    }));
+    });
+    // A replayed requestId answers with the current session plus the revision
+    // the original attempt produced.
+    dataResponse(req, res, result.session, 200, { appliedRevision: result.appliedRevision, replayed: result.replayed });
   } catch (error) {
     handleSessionError(req, res, error);
   }
@@ -1038,6 +1044,9 @@ function handleSessionError(req: Request, res: Response, error: unknown) {
   if (error instanceof PlaybackSessionOwnershipError) return sendApiV1Error(req, res, 409, 'PLAYBACK_SESSION_NOT_OWNER', 'Take over this playback session before changing it.');
   if (error instanceof PlaybackSessionRevisionError) return sendApiV1Error(req, res, 409, 'REVISION_CONFLICT', 'The playback session changed on another client.', { current: error.current });
   if (error instanceof PlaybackSessionTrackError) return sendApiV1Error(req, res, 409, 'TRACKS_UNAVAILABLE', 'One or more queue tracks are unavailable.', { missingIds: error.missingIds });
+  if (error instanceof PlaybackSessionAnchorError) return sendApiV1Error(req, res, 409, 'ANCHOR_NOT_FOUND', 'The entry to insert or move after is no longer in the queue.', { anchorEntryId: error.anchorEntryId, current: error.current });
+  if (error instanceof PlaybackSessionEntryIdError) return sendApiV1Error(req, res, 409, 'ENTRY_ID_CONFLICT', 'A proposed queue entry ID is already in use.', { entryIds: error.entryIds, current: error.current });
+  if (error instanceof PlaybackSessionRequestReusedError) return sendApiV1Error(req, res, 422, 'IDEMPOTENCY_KEY_REUSED', 'This requestId was already used for a different change.');
   console.error('[API v1] playback session error:', error);
   return sendApiV1Error(req, res, 500, 'PLAYBACK_SESSION_FAILED', 'The playback session could not be updated.');
 }

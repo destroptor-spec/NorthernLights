@@ -181,6 +181,17 @@ Every mutation includes `expectedRevision`. A stale revision returns `409 REVISI
 
 Supported patch operations are `replaceQueue`, `insert`, `remove`, `move`, and `setTransport`. Queue entries have stable UUIDs so duplicate track IDs remain independently addressable.
 
+**Anchors.** `insert` and `move` take either a numeric position (`index` / `toIndex`) or `afterEntryId`, never both. `afterEntryId: null` means the head of the queue. An anchor means the same thing after other clients' edits, so a client can rebase a rejected patch by resending it; positions cannot. If the anchor has been removed, the server answers `409 ANCHOR_NOT_FOUND` with `details.anchorEntryId` and the current session in `details.current`. Moving an entry that no longer exists is a no-op, and moving an entry after itself leaves it in place. First-party clients use only anchors; the position forms remain for existing clients.
+
+**Proposed entry IDs.** `insert` and `replaceQueue` accept `entryIds`, one unique UUID per track, so an optimistic local entry and the confirmed server entry share an ID from the start. On `insert`, an ID that is already in the queue rejects the whole patch with `409 ENTRY_ID_CONFLICT` (`details.entryIds`, `details.current`). On `replaceQueue`, an ID that names an existing entry for the same track keeps that entry; for a different track it is a conflict. Without `entryIds` the server generates IDs.
+
+**Retries.** A patch may carry `requestId`, a client-generated UUID covering the whole patch. It is checked before the revision:
+- same key, same body: nothing is applied again; the response is `200` with the current session and `meta: { appliedRevision, replayed: true }`, where `appliedRevision` is the revision the original attempt produced;
+- same key, different body: `422 IDEMPOTENCY_KEY_REUSED`, nothing applied;
+- a rejected patch records no key, so after rebasing send a new `requestId`.
+
+Keys are scoped to the session, kept for 24 hours and capped at the newest 1,000 per session. A successful patch answers `meta: { appliedRevision, replayed: false }`.
+
 ### Events
 
 `GET /api/v1/events` is a user-scoped Server-Sent Events stream for playback-session, playlist, annotation, and library-revision changes. Browser `EventSource` callers first mint a short-lived `sse` token using `POST /api/v1/auth/scoped-token`, then pass it in the `token` query parameter. Native clients may use a normal bearer header. Scanner/auto-walk changes and mutations made through Aurora web or OpenSubsonic publish the same invalidations, so a dedicated client does not stay stale when another surface changes state.

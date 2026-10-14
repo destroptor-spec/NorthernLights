@@ -1535,6 +1535,11 @@
             "type": "integer",
             "exclusiveMinimum": 0
           },
+          "requestId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Idempotency key for the whole patch; kept 24 hours."
+          },
           "operations": {
             "type": "array",
             "items": {
@@ -1557,6 +1562,15 @@
                       },
                       "maxItems": 2000
                     },
+                    "entryIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "maxItems": 2000,
+                      "description": "Client-proposed queue entry IDs, one unique UUID per track. Omitted, the server generates them."
+                    },
                     "currentIndex": {
                       "type": "integer",
                       "minimum": 0
@@ -1578,7 +1592,16 @@
                     },
                     "index": {
                       "type": "integer",
-                      "minimum": 0
+                      "minimum": 0,
+                      "description": "Legacy position form. Give exactly one of index or afterEntryId."
+                    },
+                    "afterEntryId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "uuid",
+                      "description": "Insert after this entry; null inserts at the head. Give exactly one of index or afterEntryId."
                     },
                     "trackIds": {
                       "type": "array",
@@ -1589,11 +1612,19 @@
                       },
                       "minItems": 1,
                       "maxItems": 200
+                    },
+                    "entryIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "maxItems": 200,
+                      "description": "Client-proposed queue entry IDs, one unique UUID per track. Omitted, the server generates them."
                     }
                   },
                   "required": [
                     "type",
-                    "index",
                     "trackIds"
                   ]
                 },
@@ -1636,13 +1667,21 @@
                     },
                     "toIndex": {
                       "type": "integer",
-                      "minimum": 0
+                      "minimum": 0,
+                      "description": "Legacy position form. Give exactly one of toIndex or afterEntryId."
+                    },
+                    "afterEntryId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "uuid",
+                      "description": "Move after this entry; null moves to the head. Give exactly one of toIndex or afterEntryId."
                     }
                   },
                   "required": [
                     "type",
-                    "queueEntryId",
-                    "toIndex"
+                    "queueEntryId"
                   ]
                 },
                 {
@@ -7970,7 +8009,7 @@
         },
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "The session after the patch. For a retried requestId, the current session and the revision the original attempt produced.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7985,10 +8024,21 @@
                         "requestId": {
                           "type": "string",
                           "description": "Request ID echoed in the X-Request-Id response header."
+                        },
+                        "appliedRevision": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "description": "Revision this patch produced."
+                        },
+                        "replayed": {
+                          "type": "boolean",
+                          "description": "True when the requestId was already applied; nothing was applied again."
                         }
                       },
                       "required": [
-                        "requestId"
+                        "requestId",
+                        "appliedRevision",
+                        "replayed"
                       ]
                     }
                   },
@@ -8041,7 +8091,17 @@
             }
           },
           "409": {
-            "description": "Revision or state conflict",
+            "description": "REVISION_CONFLICT, ANCHOR_NOT_FOUND or ENTRY_ID_CONFLICT (each with the current session in details.current), PLAYBACK_SESSION_NOT_OWNER, or TRACKS_UNAVAILABLE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "IDEMPOTENCY_KEY_REUSED: the requestId was used for a different body",
             "content": {
               "application/json": {
                 "schema": {

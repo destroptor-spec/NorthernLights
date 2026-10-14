@@ -912,6 +912,19 @@ export async function initDB(): Promise<Pool> {
         );
         CREATE INDEX IF NOT EXISTS playback_session_entries_track_idx ON playback_session_entries(track_id);
 
+        -- Idempotency keys for session patches (docs/playback_sessions.md, Sync
+        -- protocol). Recorded in the transaction that applies the patch, so a
+        -- rejected patch leaves no key; kept 24 h and capped per session.
+        CREATE TABLE IF NOT EXISTS playback_session_requests (
+          session_id UUID NOT NULL REFERENCES playback_sessions(id) ON DELETE CASCADE,
+          request_id UUID NOT NULL,
+          request_hash TEXT NOT NULL,
+          revision BIGINT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (session_id, request_id)
+        );
+        CREATE INDEX IF NOT EXISTS playback_session_requests_age_idx ON playback_session_requests(session_id, created_at DESC);
+
         CREATE TABLE IF NOT EXISTS api_playback_events (
           event_id UUID PRIMARY KEY,
           user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
