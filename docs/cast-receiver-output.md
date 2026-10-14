@@ -106,10 +106,7 @@ Phase 1's leftover "session-bound receiver tokens".
 - The second-sender rules (#119/#123: a device joining a Cast session another
   device casts leaves it again) must also recognise a `receiver` output: its
   `castSessionId` is the Cast session the receiver runs in.
-- **Kill switch:** an admin server setting, `castReceiverSessionFollow`
-  (default off), decides whether senders hand over credentials at all.
-  Switching it off reverts every new Cast session to today's path without
-  redeploying the receiver.
+- No kill switch (decided): a rollback of the receiver is the way back.
 
 ### D. Receiver follows the session (`receiver.html`)
 
@@ -183,8 +180,8 @@ re-run, because PR D changes the receiver.
 
 ## Rollback
 
-- **PR C kill switch:** turning `castReceiverSessionFollow` off reverts new
-  sessions to today's path at once.
+- **PR C:** a sender rollback stops handing over credentials, so new sessions
+  use today's path.
 - **PR D:** redeploying the previous `receiver.html` (`deploy-prod.sh
   --rollback`). The receiver page is fetched on each Cast launch, so a
   rollback reaches the next session.
@@ -195,14 +192,13 @@ re-run, because PR D changes the receiver.
 Settled since the draft: the order (A first: shipped), and what Play means
 ("Play where?" asks, and remembers the answer while that device plays).
 
-Still open:
-1. **Probe and receiver-next app.** Register a second, unpublished Cast app ID
-   in the Google Cast console, pointing at `receiver-next.html` and limited to
-   your registered test devices. The probe and PR D are tried there first, and
-   041FEA05 only moves once the device matrix passes. *Recommended.* The
-   alternative is a query-string flag in the one receiver, which puts the new
-   code on the app everyone uses.
-2. **Receiver self-renewal** (open question 5 in the design): keep the default,
-   no. Expiry after 12 h without any device waking ends in the idle state.
-3. **Kill switch** `castReceiverSessionFollow` as an admin server setting, next
-   to "Sync playback across devices" (Settings → System → Service).
+Decided 2026-10-14 (Andreas):
+1. **No second Cast app ID.** The current app (041FEA05) is tied to this
+   server and Andreas is its only user for now, so the probe and PR D are built
+   there. The new receiver code still only runs when a sender asks for it (LOAD
+   `customData`), and `deploy-prod.sh --rollback` is the way back.
+2. **Self-renewal up to 24 h.** While it is the session's active output, the
+   receiver may renew its own credential. Each renewal lasts at most 12 h and
+   never beyond 24 h after a controller last gave it a credential (the `cap`
+   claim). With no device waking for 24 h it plays out its window and idles.
+3. **No kill switch.**
