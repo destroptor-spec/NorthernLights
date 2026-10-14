@@ -928,6 +928,15 @@ export class CastManager {
     }
 
     private afterSessionEnded(snapshot: CastEndSnapshot | null) {
+        if (this.stoppedBecauseReplaced) {
+            this.stoppedBecauseReplaced = false;
+            this.resetCastEndIntent();
+            this.logCast('ok', 'cast-ended-handoff skipped', 'reason=replaced');
+            if (usePlayerStore.getState().playbackState === 'playing') {
+                usePlayerStore.setState({ playbackState: 'paused', isBuffering: false });
+            }
+            return;
+        }
         if (this.leftJoinedSession) {
             this.leftJoinedSession = false;
             this.resetCastEndIntent();
@@ -4319,6 +4328,31 @@ export class CastManager {
      * Disconnect from the cast device.
      * Stops cast playback and resumes local playback from the current position.
      */
+    /**
+     * Another of the user's devices took over the playback session while this
+     * one casts to a different device (or plays itself): stop casting, so the
+     * Cast device goes quiet and this device can follow the new one. Unlike
+     * disconnect(), nothing is handed back to this device.
+     */
+    public stopCastingBecauseReplaced(by: string): boolean {
+        if (!this.castContext || !this.isConnected()) return false;
+        this.stoppedBecauseReplaced = true;
+        this.logCast('ok', 'cast-stopped-replaced', `by=${by}`);
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+        try {
+            this.suppressRemoteEndedDuringDisconnect = true;
+            this.stop();
+            this.castContext.endCurrentSession(true);
+            return true;
+        } catch (error) {
+            this.stoppedBecauseReplaced = false;
+            this.logCast('warn', 'cast-stop-replaced-failed', this.describeError(error));
+            return false;
+        }
+    }
+
+    private stoppedBecauseReplaced = false;
+
     public async disconnect() {
         if (!this.castContext) return;
 

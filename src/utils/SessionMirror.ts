@@ -86,6 +86,28 @@ export function isSameCastDevice(replacement: ReplacingOutput | null, castConnec
     && !!replacement.name && !!castDeviceName && replacement.name === castDeviceName;
 }
 
+/**
+ * What this device does when another device takes the session over:
+ * - `none`: the other device casts to the same Cast device (the music never
+ *   moved), or nothing plays here;
+ * - `stop-casting`: this device casts elsewhere; it stops casting and then
+ *   follows the new device (a casting device never follows, so pausing alone
+ *   left it showing its old queue; prod 2026-10-13, Andreas chose this);
+ * - `pause`: it plays itself.
+ * With the replacing output unknown, a casting device only pauses: stopping
+ * the receiver could stop music another device still casts there.
+ */
+export function actionWhenReplaced(input: {
+  replacement: ReplacingOutput | null;
+  castConnected: boolean;
+  castDeviceName: string | null | undefined;
+  playing: boolean;
+}): 'none' | 'pause' | 'stop-casting' {
+  if (isSameCastDevice(input.replacement, input.castConnected, input.castDeviceName)) return 'none';
+  if (input.castConnected && input.replacement) return 'stop-casting';
+  return input.playing ? 'pause' : 'none';
+}
+
 export class SessionMirror {
   private store: MirroredStore | null = null;
   private options: SessionMirrorOptions | null = null;

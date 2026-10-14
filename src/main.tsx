@@ -8,7 +8,7 @@ import './utils/pwaInstall';
 import { usePlayerStore } from './store';
 import { createPwaUpdateHandler, reloadAppOnce, setPwaUpdateHandler, startPwaUpdateChecks, watchPwaUpdates } from './utils/pwaUpdate';
 import { OriginAccessGate } from './components/OriginAccessGate';
-import { isSameCastDevice, sessionMirror } from './utils/SessionMirror';
+import { actionWhenReplaced, sessionMirror } from './utils/SessionMirror';
 import { sessionFollower } from './utils/SessionFollower';
 import { getAuroraClientId } from './api/auroraApi';
 import { toPlayableTracks } from './utils/playableTracks';
@@ -37,8 +37,14 @@ sessionMirror.start(usePlayerStore, {
   // One device plays at a time: another device took over, so stop here.
   onDisplaced: (replacement) => {
     const state = usePlayerStore.getState();
-    if (isSameCastDevice(replacement, state.castConnected, castManager.getCastDeviceName())) return;
-    if (state.playbackState === 'playing') state.pause();
+    const action = actionWhenReplaced({
+      replacement,
+      castConnected: state.castConnected,
+      castDeviceName: castManager.getCastDeviceName(),
+      playing: state.playbackState === 'playing',
+    });
+    if (action === 'stop-casting' && castManager.stopCastingBecauseReplaced(`${replacement!.kind}:${replacement!.name ?? 'unnamed'}`)) return;
+    if (action !== 'none' && state.playbackState === 'playing') state.pause();
   },
 });
 sessionFollower.start(usePlayerStore, {

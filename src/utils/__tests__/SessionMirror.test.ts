@@ -2,7 +2,7 @@ import { createStore } from 'zustand/vanilla';
 import type { PlaybackSession, PlaybackSessionPatch } from '../../../shared/api/v1';
 import { AuroraApiError } from '../../api/auroraApi';
 import type * as sessionApi from '../../api/playbackSessions';
-import { isSameCastDevice, SessionMirror, REPORT_INTERVAL_PAUSED_MS, REPORT_INTERVAL_PLAYING_MS, type MirroredPlayerState } from '../SessionMirror';
+import { actionWhenReplaced, isSameCastDevice, SessionMirror, REPORT_INTERVAL_PAUSED_MS, REPORT_INTERVAL_PLAYING_MS, type MirroredPlayerState } from '../SessionMirror';
 import type { TrackInfo } from '../fileSystem';
 
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -439,5 +439,30 @@ it('does not claim while this device is leaving another device\'s Cast session',
   await play(store);
   expect(api.claimPlaybackOutput).not.toHaveBeenCalled();
   expect(diagnostic).toHaveBeenCalledWith('ok', 'sync-claim-skipped', 'reason=leaving-joined-cast-session');
+});
+
+/**
+ * Prod 2026-10-13: the desktop cast to the NAD, the phone took over and played
+ * itself. The desktop paused the NAD but stayed connected, so it never
+ * followed and kept showing its old queue. Andreas: stop casting, then follow.
+ */
+describe('actionWhenReplaced', () => {
+  const nad = { kind: 'cast', name: 'NAD Forstærker' };
+  const phone = { kind: 'browser', name: 'Chrome on Android' };
+  it('leaves the music alone when the other device casts to the same Cast device', () => {
+    expect(actionWhenReplaced({ replacement: nad, castConnected: true, castDeviceName: 'NAD Forstærker', playing: true })).toBe('none');
+  });
+  it('stops casting when the other device plays elsewhere, playing or paused', () => {
+    expect(actionWhenReplaced({ replacement: phone, castConnected: true, castDeviceName: 'NAD Forstærker', playing: true })).toBe('stop-casting');
+    expect(actionWhenReplaced({ replacement: phone, castConnected: true, castDeviceName: 'NAD Forstærker', playing: false })).toBe('stop-casting');
+    expect(actionWhenReplaced({ replacement: { kind: 'cast', name: 'Stue TV' }, castConnected: true, castDeviceName: 'NAD Forstærker', playing: true })).toBe('stop-casting');
+  });
+  it('only pauses while casting when it does not know who took over', () => {
+    expect(actionWhenReplaced({ replacement: null, castConnected: true, castDeviceName: 'NAD Forstærker', playing: true })).toBe('pause');
+  });
+  it('pauses local playback, and does nothing when nothing plays', () => {
+    expect(actionWhenReplaced({ replacement: phone, castConnected: false, castDeviceName: '', playing: true })).toBe('pause');
+    expect(actionWhenReplaced({ replacement: phone, castConnected: false, castDeviceName: '', playing: false })).toBe('none');
+  });
 });
 
