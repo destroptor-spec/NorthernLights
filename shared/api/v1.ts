@@ -233,6 +233,9 @@ export const queueEntrySchema = z.object({
   addedAt: ISO_DATE_TIME,
 }).meta({ id: 'PlaybackQueueEntry' });
 
+export const PLAYBACK_OUTPUT_KINDS = ['browser', 'cast'] as const;
+const PLAYBACK_OUTPUT_KIND_DESCRIPTION = 'browser: the device plays the session itself. cast: the device sends it to a Cast device it controls; `name` is the Cast device\'s.';
+
 export const PLAYBACK_OUTPUT_STATES = ['playing', 'paused', 'buffering', 'stopped', 'idle', 'error'] as const;
 
 export const playbackOutputReportStateSchema = z.object({
@@ -246,7 +249,7 @@ export const playbackOutputReportStateSchema = z.object({
 
 export const playbackOutputSchema = z.object({
   id: z.string().describe('The device that plays the session (its client ID).'),
-  kind: z.enum(['browser']),
+  kind: z.enum(PLAYBACK_OUTPUT_KINDS).describe(PLAYBACK_OUTPUT_KIND_DESCRIPTION),
   name: z.string().nullable(),
   generation: z.number().int().positive().describe('Grant generation; goes up on every claim.'),
   claimedAt: ISO_DATE_TIME,
@@ -345,7 +348,7 @@ export const playbackSessionPatchSchema = z.object({
 }).strict().meta({ id: 'PlaybackSessionPatch' });
 
 export const playbackOutputClaimSchema = z.object({
-  kind: z.enum(['browser']),
+  kind: z.enum(PLAYBACK_OUTPUT_KINDS).describe(PLAYBACK_OUTPUT_KIND_DESCRIPTION),
   name: z.string().trim().min(1).max(120).optional(),
 }).strict().meta({ id: 'PlaybackOutputClaim' });
 

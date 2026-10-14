@@ -69,7 +69,7 @@ it('claims the output for the calling device and returns its grant credential', 
 });
 
 it('refuses an unknown output kind', async () => {
-  const { status } = await call('post', '/playback-sessions/:id/output', { kind: 'cast' }, { id: 's-1' });
+  const { status } = await call('post', '/playback-sessions/:id/output', { kind: 'speaker' }, { id: 's-1' });
   expect(status).toBe(400);
   expect(claimPlaybackOutput).not.toHaveBeenCalled();
 });

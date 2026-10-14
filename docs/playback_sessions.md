@@ -1009,3 +1009,18 @@ columns):
     next report's `OUTPUT_GRANT_REPLACED` does the same within 10 s.
   - A casting device never adopts a queue: a Cast receiver's queue is never
     replaced from here.
+
+**Cast handover (decided with Andreas 2026-10-13, after the PR 3 test):** with
+the phone casting to the NAD, Play on the idle desktop started local playback
+there and the phone paused the NAD. Andreas expected the music to stay on the
+NAD, controlled from the desktop. The decision is the receiver as its own
+output (Phase 5): the NAD reports to the server and takes commands from any
+of the user's devices, so the phone may sleep or leave. Joining the Cast
+session from the desktop's Cast SDK, and relaying commands through the phone,
+were rejected (Chrome-only and new multi-sender ground; fails whenever the
+phone sleeps).
+
+Until then (PR 4): a casting device claims with output `kind: 'cast'`. Play on
+an idle device following a `cast` output that is playing asks "Play here
+instead?" with "Play here" / "Keep on <Cast device>"; Play still never asks
+when the other device plays by itself.

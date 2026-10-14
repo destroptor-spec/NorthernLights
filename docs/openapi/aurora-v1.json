@@ -950,8 +950,10 @@
               "kind": {
                 "type": "string",
                 "enum": [
-                  "browser"
-                ]
+                  "browser",
+                  "cast"
+                ],
+                "description": "browser: the device plays the session itself. cast: the device sends it to a Cast device it controls; `name` is the Cast device's."
               },
               "name": {
                 "type": [
@@ -1913,8 +1915,10 @@
           "kind": {
             "type": "string",
             "enum": [
-              "browser"
-            ]
+              "browser",
+              "cast"
+            ],
+            "description": "browser: the device plays the session itself. cast: the device sends it to a Cast device it controls; `name` is the Cast device's."
           },
           "name": {
             "type": "string",

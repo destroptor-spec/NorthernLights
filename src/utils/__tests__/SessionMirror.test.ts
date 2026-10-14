@@ -96,6 +96,12 @@ it('on play, creates the session, claims the output, mirrors the queue and repor
   expect(api.reportPlaybackOutput).toHaveBeenCalledWith(credential, 'session-1', { seq: 1, state: 'playing', queueEntryId: uuid(1), positionMs: 41000 });
 });
 
+it('claims as a Cast output while casting, under the Cast device name', async () => {
+  const { api, store } = setup({ castConnected: true });
+  await play(store);
+  expect(api.claimPlaybackOutput).toHaveBeenCalledWith(expect.anything(), 'session-1', { kind: 'cast', name: 'Chrome on Android' });
+});
+
 it("reuses the user's latest session instead of creating one", async () => {
   const { api, store } = setup({}, [sessionOf([], 7, { id: 'latest' })]);
   await play(store);

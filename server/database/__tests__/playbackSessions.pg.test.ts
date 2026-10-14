@@ -280,6 +280,15 @@ describeDb('playback sessions', () => {
       expect(await grantOf(claimed)).toEqual({ sid: claimed.id, oid: 'phone-1234', gen: 1 });
     });
 
+    it('records a device that plays through a Cast device as a cast output under that name', async () => {
+      const created = await create(trackIds(0, 2));
+      const claimed = await sessions.claimPlaybackOutput({
+        userId, clientId: 'phone-1234', sessionId: created.id, output: { kind: 'cast', name: 'NAD Forstærker' },
+      });
+      expect(claimed.output).toMatchObject({ id: 'phone-1234', kind: 'cast', name: 'NAD Forstærker' });
+      expect((await sessions.getPlaybackSession(userId, created.id))!.output!.kind).toBe('cast');
+    });
+
     it('moves playback to another device at any time, without a revision, and retires the old grant', async () => {
       let session = await create(trackIds(0, 2));
       const onPhone = await claim(session, 'phone-1234');

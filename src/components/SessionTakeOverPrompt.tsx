@@ -3,9 +3,10 @@ import { usePlayerStore } from '../store/index';
 import { ConfirmModal } from './ConfirmModal';
 
 /**
- * Next or Previous pressed on an idle device while another device plays the
- * session: moving playback here is a big change, so ask first. Play is not
- * asked about; it always continues here.
+ * An idle device is about to take playback over from the device that plays
+ * the session. Next and Previous always ask; Play asks only when that device
+ * is casting, since the listener most likely wants the music to stay on the
+ * Cast device, which this device cannot control yet.
  */
 export const SessionTakeOverPrompt: React.FC = () => {
   const prompt = usePlayerStore((s) => s.takeOverPrompt);
@@ -16,6 +17,7 @@ export const SessionTakeOverPrompt: React.FC = () => {
       title="Play here instead?"
       message={`Music is playing on ${prompt.outputName}. Playing here stops it there.`}
       confirmLabel="Play here"
+      cancelLabel={prompt.action === 'play' ? `Keep on ${prompt.outputName}` : 'Cancel'}
       confirmTone="primary"
       onConfirm={() => void resolve(true)}
       onCancel={() => void resolve(false)}
