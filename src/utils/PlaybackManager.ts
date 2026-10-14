@@ -545,13 +545,20 @@ class PlaybackManager {
         });
     }
 
-    public async restoreFromContinuitySnapshot(): Promise<void> {
+    /**
+     * `mayResume` is asked last, and may take a moment: with sync on, another
+     * device may have taken over since this one closed (prod 2026-10-14
+     * 20:01:13: the reopened phone resumed and took playback from the desktop).
+     */
+    public async restoreFromContinuitySnapshot(options: { mayResume?: () => Promise<boolean> } = {}): Promise<void> {
         const snapshot = readPlaybackContinuitySnapshot();
         if (!isRecentContinuitySnapshot(snapshot) || !snapshot.wasPlaying) return;
         if (castManager.isConnected() || castManager.hasStoredSession()) return;
 
+        if (!usePlayerStore.getState().authToken || usePlayerStore.getState().playbackState === 'playing') return;
+        if (options.mayResume && !(await options.mayResume())) return;
         const state = usePlayerStore.getState();
-        if (!state.authToken || state.playbackState === 'playing') return;
+        if (!state.authToken || state.playbackState === 'playing' || castManager.isConnected()) return;
 
         const playlist = state.playlist.length > 0 ? state.playlist : snapshot.playlist;
         const index = snapshot.currentIndex;

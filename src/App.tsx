@@ -10,6 +10,9 @@ import CastHealthToasts from './components/cast/CastHealthToasts';
 import { PlayWherePrompt } from './components/PlayWherePrompt';
 import KeyboardHint from './components/KeyboardHint';
 import { usePlayerStore } from './store/index';
+import { castManager } from './utils/CastManager';
+import { sessionFollower } from './utils/SessionFollower';
+import { shouldResumeOnStart } from './utils/resumeOnStart';
 import { RefreshCw, WifiOff } from 'lucide-react';
 import { ToastContainer } from './components/ToastContainer';
 import { fetchCurrentUser } from './utils/currentUser';
@@ -103,6 +106,15 @@ const installAuthExpirationFetchInterceptor = () => {
   };
 };
 
+
+/** Startup resume with sync on: not while another device plays (resumeOnStart.ts). */
+const mayResumeOnStart = () => shouldResumeOnStart({
+  syncOn: usePlayerStore.getState().syncPlaybackAcrossDevices,
+  sessionRead: () => sessionFollower.ready(3_000),
+  anotherDevicePlaying: () => sessionFollower.anotherDevicePlaying(),
+  log: (resume) => castManager.logSyncEvent('ok', 'sync-resume-on-start', `resume=${resume}`),
+});
+
 const App: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [dbConnected, _setDbConnected] = React.useState<boolean | null>(null);
@@ -160,7 +172,7 @@ const App: React.FC = () => {
     if (continuityRestoreAttemptedRef.current || needsSetup !== false || !authToken || dbConnected !== true) return;
     continuityRestoreAttemptedRef.current = true;
     window.setTimeout(() => {
-      void playbackManager.restoreFromContinuitySnapshot();
+      void playbackManager.restoreFromContinuitySnapshot({ mayResume: mayResumeOnStart });
     }, 500);
   }, [authToken, dbConnected, needsSetup]);
 
