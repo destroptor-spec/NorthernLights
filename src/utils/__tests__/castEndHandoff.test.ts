@@ -10,21 +10,23 @@ describe('shouldContinuePlayingAfterCast', () => {
   const now = 1_000_000;
 
   it('continues after the Stop casting button', () => {
-    expect(shouldContinuePlayingAfterCast({ userStopRequested: true, dialogOpenedAt: 0, now, wasPlaying: true })).toBe(true);
+    expect(shouldContinuePlayingAfterCast({ userStopRequested: true, dialogOpenedAt: 0, now, wasPlaying: true, visible: true })).toBe(true);
   });
 
   it('continues after a stop from the Cast dialog opened on this device', () => {
-    expect(shouldContinuePlayingAfterCast({ userStopRequested: false, dialogOpenedAt: now - 6_000, now, wasPlaying: true })).toBe(true);
-    expect(shouldContinuePlayingAfterCast({ userStopRequested: false, dialogOpenedAt: now - USER_STOP_WINDOW_MS, now, wasPlaying: true })).toBe(true);
+    expect(shouldContinuePlayingAfterCast({ userStopRequested: false, dialogOpenedAt: now - 6_000, now, wasPlaying: true, visible: true })).toBe(true);
+    // 19:51:40.9 → 19:51:42.0 on prod: the dialog used to stop it.
+    expect(shouldContinuePlayingAfterCast({ userStopRequested: false, dialogOpenedAt: now - 1_100, now, wasPlaying: true, visible: true })).toBe(true);
+    expect(shouldContinuePlayingAfterCast({ userStopRequested: false, dialogOpenedAt: now - USER_STOP_WINDOW_MS, now, wasPlaying: true, visible: true })).toBe(true);
   });
 
   it('stays paused when the session ended anywhere else', () => {
-    expect(shouldContinuePlayingAfterCast({ userStopRequested: false, dialogOpenedAt: 0, now, wasPlaying: true })).toBe(false);
-    expect(shouldContinuePlayingAfterCast({ userStopRequested: false, dialogOpenedAt: now - USER_STOP_WINDOW_MS - 1, now, wasPlaying: true })).toBe(false);
+    expect(shouldContinuePlayingAfterCast({ userStopRequested: false, dialogOpenedAt: 0, now, wasPlaying: true, visible: true })).toBe(false);
+    expect(shouldContinuePlayingAfterCast({ userStopRequested: false, dialogOpenedAt: now - USER_STOP_WINDOW_MS - 1, now, wasPlaying: true, visible: true })).toBe(false);
   });
 
   it('never starts sound when the Cast device was paused', () => {
-    expect(shouldContinuePlayingAfterCast({ userStopRequested: true, dialogOpenedAt: now, now, wasPlaying: false })).toBe(false);
+    expect(shouldContinuePlayingAfterCast({ userStopRequested: true, dialogOpenedAt: now, now, wasPlaying: false, visible: true })).toBe(false);
   });
 });
 
@@ -65,3 +67,27 @@ describe('castEndSnapshot', () => {
     })?.positionSeconds).toBe(169);
   });
 });
+
+/**
+ * Prod 2026-10-13 19:51:42: the phone and the desktop were both attached to
+ * the NAD's Cast session and both had opened their Cast dialog within two
+ * minutes, so both took over locally when it ended. Only the device the
+ * session was stopped from should.
+ */
+describe('several devices on one Cast session', () => {
+  const now = 1_000_000;
+  it('leaves a device whose dialog was opened a while ago paused', () => {
+    // The other device last opened its dialog at 19:50:43.9, 58 s earlier.
+    expect(shouldContinuePlayingAfterCast({ userStopRequested: false, dialogOpenedAt: now - 58_000, now, wasPlaying: true, visible: true })).toBe(false);
+    expect(shouldContinuePlayingAfterCast({ userStopRequested: false, dialogOpenedAt: now - 20_001, now, wasPlaying: true, visible: true })).toBe(false);
+  });
+
+  it('leaves a device that is not on screen paused, however recent its dialog', () => {
+    expect(shouldContinuePlayingAfterCast({ userStopRequested: false, dialogOpenedAt: now - 2_000, now, wasPlaying: true, visible: false })).toBe(false);
+  });
+
+  it("still continues after this device's own Stop casting button", () => {
+    expect(shouldContinuePlayingAfterCast({ userStopRequested: true, dialogOpenedAt: 0, now, wasPlaying: true, visible: false })).toBe(true);
+  });
+});
+
