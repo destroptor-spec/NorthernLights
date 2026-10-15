@@ -222,6 +222,8 @@ export class CastManager {
     private auroraControlCapLoggedSid: string | null = null;
     /** The Cast session whose receiver said it follows a playback session itself. */
     private sessionFollowCapSid = '';
+    /** The Cast session whose receiver took the playback session (PR E): its queue is the receiver's. */
+    private receiverFollowingSid = '';
     private readonly receiverFollowListeners = new Set<() => void>();
     private readonly receiverFollowAcks = new ReceiverFollowAcks();
     private lastRemotePlayerEventAt = 0;
@@ -921,6 +923,37 @@ export class CastManager {
     }
 
     private readonly probeAcks = new Map<number, (accepted: boolean) => void>();
+
+    /**
+     * The receiver in this Cast session plays the playback session itself
+     * (it took the handover). Its queue is then its own, kept in line with the
+     * session: this sender loads, inserts, removes, moves and refills nothing
+     * there, and starts tracks with session commands (docs/cast-receiver-output.md, PR E).
+     */
+    public receiverFollowsSession(): boolean {
+        const sid = this.getCurrentSessionId();
+        return !!sid && this.isConnected() && this.receiverFollowingSid === sid;
+    }
+
+    /** SessionMirror: the receiver took the session (or this device no longer holds it for the receiver). */
+    public setReceiverFollowsSession(following: boolean): void {
+        const sid = following ? this.getCurrentSessionId() : '';
+        if (sid === this.receiverFollowingSid) return;
+        this.receiverFollowingSid = sid;
+        this.logCast('ok', 'cast-receiver-follows', `following=${following} sid=${sid || this.getCurrentSessionId() || 'none'}`);
+        if (following && this.queueWindow) {
+            // What this sender loaded no longer describes the receiver's queue.
+            this.queueWindow = null;
+            this.logCast('ok', 'queue-window-released', 'reason=receiver-follows');
+        }
+    }
+
+    /** A queue operation this sender leaves to a receiver that follows the session. */
+    private leftToReceiver(op: string): boolean {
+        if (!this.receiverFollowsSession()) return false;
+        this.logCast('ok', 'cast-queue-left-to-receiver', `op=${op}`);
+        return true;
+    }
 
     /** Called once per Cast session, when its receiver first says it can follow a session. */
     public addReceiverCanFollowListener(listener: () => void): () => void {
@@ -3089,6 +3122,7 @@ export class CastManager {
      * a burst becomes a few jumps rather than a LOAD per press.
      */
     public ensureQueuePlayback(tracks: CastQueueTrack[], startIndex = 0, repeat: CastRepeat = 'none'): Promise<void> {
+        if (this.leftToReceiver('play')) return Promise.resolve();
         this.pendingSkip = { tracks, startIndex, repeat };
         this.skipRequestSeq++;
         if (this.skipRunner) return this.skipRunner;
@@ -3436,6 +3470,7 @@ export class CastManager {
      * @param repeat 'none' | 'one' | 'all' — repeat mode
      */
     public async castQueue(tracks: CastQueueTrack[], startIndex = 0, repeat: CastRepeat = 'none', startTime = 0, confirmationRetry = false) {
+        if (this.leftToReceiver('load')) return;
         if (!this.isConnected() || tracks.length === 0) return;
         let session = this.castContext.getCurrentSession();
         if (!session) return;
@@ -3577,6 +3612,7 @@ export class CastManager {
      * cannot be mirrored.
      */
     private async reconcileQueueWindow(edited = false): Promise<void> {
+        if (this.receiverFollowsSession()) return;
         if (edited) this.queueWindowEditSeq++;
         // Store queue actions call us inside their updater; read after it commits.
         await Promise.resolve();
@@ -3995,6 +4031,7 @@ export class CastManager {
 
     /** Queue edits that bypass the store's per-edit hooks (Undo) reconcile here. */
     public reconcileQueueEdits(): void {
+        if (this.leftToReceiver('reconcile')) return;
         if (this.queueWindow?.session === this.castContext?.getCurrentSession?.()) void this.reconcileQueueWindow(true);
     }
 
@@ -4011,6 +4048,7 @@ export class CastManager {
      * Appends a new track to the end of the active Cast queue without interrupting playback.
      */
     public async appendToQueue(track: { queueEntryId?: string; url?: string; rawUrl?: string; title?: string; artist?: string; artUrl?: string; album?: string; format?: string; duration?: number }) {
+        if (this.leftToReceiver('append')) return;
         if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
             this.queueWindowEditSeq++; // reconciled once the load has landed
             return;
@@ -4063,6 +4101,7 @@ export class CastManager {
     }
 
     public async insertNextInQueue(track: { queueEntryId?: string; url?: string; rawUrl?: string; title?: string; artist?: string; artUrl?: string; album?: string; format?: string; duration?: number }) {
+        if (this.leftToReceiver('insert-next')) return;
         if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
             this.queueWindowEditSeq++; // reconciled once the load has landed
             return;
@@ -4112,6 +4151,7 @@ export class CastManager {
     }
 
     public async removeFromQueue(queueEntryId: string) {
+        if (this.leftToReceiver('remove')) return;
         if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
             this.queueWindowEditSeq++; // reconciled once the load has landed
             return;
@@ -4140,6 +4180,7 @@ export class CastManager {
     }
 
     public async moveQueueItem(queueEntryId: string, newIndex: number) {
+        if (this.leftToReceiver('move')) return;
         if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
             this.queueWindowEditSeq++; // reconciled once the load has landed
             return;
@@ -4168,6 +4209,7 @@ export class CastManager {
     }
 
     public async setRepeatMode(repeat: 'none' | 'one' | 'all') {
+        if (this.leftToReceiver('repeat')) return;
         if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
             this.queueWindowEditSeq++; // reconciled once the load has landed
             return;

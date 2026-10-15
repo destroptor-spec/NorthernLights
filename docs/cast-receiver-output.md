@@ -40,8 +40,9 @@ playing and reporting on its own.
 
 ## Plan: five PRs, receiver last
 
-Each ships alone and leaves today's behaviour intact. Only PR D touches
-`public/receiver.html`.
+Each ships alone and leaves today's behaviour intact. Only PR D (and the
+probe's message handler) touch `public/receiver.html`. Built order: A, B, C,
+the probe, E, then D.
 
 ### A. Remote commands for browser outputs (no receiver) — **shipped**
 
@@ -174,14 +175,47 @@ them the receiver runs today's code path, unchanged.
   `receiver-command-applied`, `receiver-report-failed`,
   `receiver-follow-stopped`.
 
-### E. Sender becomes a pure controller (sender only)
+### E. Sender becomes a pure controller (sender only) — built before D (feat/receiver-controller)
 
-For sessions whose receiver follows the session:
-- the sender stops full-reloading queues and mirroring edits with SDK calls;
-- it edits through the session API and sends commands like any other device;
-- it keeps `aurora.control` only as a low-latency path while connected.
+**Order changed (2026-10-15, Andreas agreed): E ships before D, dormant.**
+D cannot go live without it. Once the receiver keeps its own queue in line
+with the session, the casting device's model of the Cast queue (entries,
+order and the CAF item IDs it predicts by counting) is wrong. Its mirror
+also treated its local queue as authoritative, so it would undo every other
+device's edit. E switches all of that off while, and only while, a receiver
+follows the session: the handover of PR C was acknowledged for this device's
+current grant. Until a receiver advertises `session-follow`, nothing changes.
 
-Older receivers keep today's sender behaviour.
+While the receiver follows the session, the casting device:
+- **loads, inserts, removes, moves, repeats and refills nothing on the
+  receiver**. Every Cast queue path returns early (`castQueue`,
+  `ensureQueuePlayback`, append, insert-next, remove, move, repeat, the
+  window reconcile), logged as `cast-queue-left-to-receiver op=…`. It lets go
+  of its window (`queue-window-released reason=receiver-follows`), so no item
+  ID is predicted any more.
+- **starts tracks with a session command**: `playAtIndex` (and with it Next,
+  Previous, a tap in the queue, a new album) first sends its pending queue
+  edits, then `load { revision, entryId }`. Play, pause and seek keep the
+  existing Cast path (media channel, `aurora.control`) as the low-latency path.
+- **sends its own queue edits to the session** through the mirror as before
+  (anchored patches, which the receiver picks up), but no longer reports.
+- **takes the session's queue as the one that counts**: a newer session
+  (another device's edit, a remote load) is shown here
+  (`sync-receiver-queue-adopted`), and an edit of its own that lost to a
+  newer change is dropped rather than replanned over it (`sync-edit-dropped`).
+
+Markers: `sync-receiver-follows`, `cast-receiver-follows`,
+`queue-window-released`, `cast-queue-left-to-receiver`,
+`sync-receiver-queue-adopted`, `sync-edit-dropped`.
+
+**Still open for D:**
+- An idle device's queue edits (Play next, remove, reorder on the desktop
+  while the phone casts) do not reach the session yet; remote control covers
+  transport only. The "done when" list needs them.
+- If another sender takes the receiver over inside the same Cast session
+  while this device stays connected, this device manages the queue again
+  without a window, and its next skip loads in full. The second-sender rules
+  make that rare.
 
 ## Live checks before PR D (probe, no product change) — built (feat/receiver-probe)
 
@@ -219,11 +253,9 @@ unconfirmed"). An item inserted next could also be played. So the probe only
 lists which queue APIs exist; real `removeItems`/reorder behaviour is
 verified with PR D.
 
-**Consequence for PR D (and E):** once the receiver edits its own queue,
-the sender's item-ID prediction is wrong too. Before PR D ships, either the
-receiver reports its next item ID in `aurora.status` (and the sender
-corrects or drops its predictions), or the sender stops managing the
-window for a session whose receiver follows it (PR E's direction).
+**Consequence for PR D:** once the receiver edits its own queue, the
+sender's item-ID prediction is wrong too. PR E (built first) handles it:
+the sender stops managing the window while the receiver follows.
 
 Devices: NAD Forstærker, Stue TV, Beoplay A9, and one speaker group.
 

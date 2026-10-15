@@ -1,9 +1,11 @@
 import { restorePersistedPlayerState, usePlayerStore } from '../index';
 import { selectDisplayedPlaying } from '../../utils/sessionFollow';
-import { sendRemoteAction } from '../../utils/sessionRemote';
+import { sendRemoteAction, startOnFollowingReceiver } from '../../utils/sessionRemote';
+import { castManager } from '../../utils/CastManager';
+import { sessionMirror } from '../../utils/SessionMirror';
 import { sessionFollower } from '../../utils/SessionFollower';
 
-jest.mock('../../utils/sessionRemote', () => ({ sendRemoteAction: jest.fn(async () => 'sent') }));
+jest.mock('../../utils/sessionRemote', () => ({ sendRemoteAction: jest.fn(async () => 'sent'), startOnFollowingReceiver: jest.fn(async () => 'sent') }));
 import { TrackInfo } from '../../utils/fileSystem';
 import { hasNextTrack } from '../../utils/queue';
 import { playbackManager } from '../../utils/PlaybackManager';
@@ -407,3 +409,55 @@ describe('Music Store Logic', () => {
   });
 });
 
+
+describe('casting to a receiver that plays the session itself (Phase 5, PR E)', () => {
+  const entry = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+  const tracks = (...ns: number[]): TrackInfo[] => ns.map((n) => ({ id: `t${n}`, path: `/t${n}.mp3`, title: `T${n}`, queueEntryId: entry(n) }));
+  let follows = true;
+  beforeEach(() => {
+    follows = true;
+    jest.spyOn(castManager, 'receiverFollowsSession').mockImplementation(() => follows);
+    jest.spyOn(castManager, 'getCastDeviceName').mockReturnValue('NAD Forstærker');
+    jest.spyOn(sessionMirror, 'currentGrant').mockReturnValue({ sessionId: 'session-1', outputId: 'receiver:cast-77', generation: 4 });
+    (startOnFollowingReceiver as jest.Mock).mockClear().mockResolvedValue('sent');
+    // Earlier tests stub playAtIndex; these need the real one.
+    const { playAtIndex, adoptFollowedCastQueue } = usePlayerStore.getInitialState();
+    usePlayerStore.setState({ playAtIndex, adoptFollowedCastQueue, playlist: tracks(1, 2, 3), currentIndex: 0, playbackState: 'playing', isBuffering: false, addToast: jest.fn() } as never);
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it('starts a track with a load command to the receiver, never a Cast load', async () => {
+    const ensure = jest.spyOn(castManager, 'ensureQueuePlayback');
+    await usePlayerStore.getState().playAtIndex(2);
+    expect(startOnFollowingReceiver).toHaveBeenCalledWith(entry(3), expect.objectContaining({
+      grant: { sessionId: 'session-1', outputId: 'receiver:cast-77', generation: 4 },
+    }));
+    expect(ensure).not.toHaveBeenCalled();
+    expect(usePlayerStore.getState()).toMatchObject({ currentIndex: 2, isBuffering: false });
+    expect(usePlayerStore.getState().addToast).not.toHaveBeenCalled();
+  });
+
+  it('says so when the receiver cannot be reached', async () => {
+    (startOnFollowingReceiver as jest.Mock).mockResolvedValueOnce('unreachable');
+    await usePlayerStore.getState().playAtIndex(1);
+    expect(usePlayerStore.getState().addToast).toHaveBeenCalledWith("NAD Forstærker isn't reachable.", 'error');
+  });
+
+  it("shows the session's queue, keeping the entry that plays", () => {
+    usePlayerStore.getState().adoptFollowedCastQueue(tracks(9, 1, 2, 3), entry(9));
+    expect(usePlayerStore.getState().playlist.map((t) => t.id)).toEqual(['t9', 't1', 't2', 't3']);
+    expect(usePlayerStore.getState().currentIndex).toBe(1);
+    expect(usePlayerStore.getState().playbackState).toBe('playing');
+  });
+
+  it("falls back to the session's current entry when the playing one is gone", () => {
+    usePlayerStore.getState().adoptFollowedCastQueue(tracks(7, 8), entry(8));
+    expect(usePlayerStore.getState().currentIndex).toBe(1);
+  });
+
+  it('takes nothing when the receiver does not follow the session', () => {
+    follows = false;
+    usePlayerStore.getState().adoptFollowedCastQueue(tracks(7, 8), entry(8));
+    expect(usePlayerStore.getState().playlist.map((t) => t.id)).toEqual(['t1', 't2', 't3']);
+  });
+});

@@ -64,6 +64,14 @@ export interface SessionMirrorOptions {
   receiverCanFollow?: () => boolean;
   /** Gives the receiver the session and its credential; true once it took them. */
   handOverToReceiver?: (handover: ReceiverHandover, reason: 'claim' | 'refresh') => Promise<boolean>;
+  /** The receiver took the session, or this device no longer holds it for the receiver. */
+  onReceiverFollowsChanged?: (following: boolean) => void;
+  /**
+   * While the receiver follows the session, the session's queue is the one
+   * that counts: an edit of this device's that lost to a newer change is
+   * dropped, and the session's queue is taken instead.
+   */
+  adoptSession?: (session: PlaybackSession) => void;
 }
 
 const SESSION_NAME = 'Listening';
@@ -145,6 +153,8 @@ export class SessionMirror {
   private claimRetryTimer: ReturnType<typeof setTimeout> | null = null;
   /** The Cast session whose receiver did not take the session: claim as `cast` there. */
   private receiverRefusedCastSession: string | null = null;
+  /** The receiver took the session for this device's current grant. */
+  private receiverFollowing = false;
   private wakeRefreshAt = 0;
 
   start(store: MirroredStore, options: SessionMirrorOptions): void {
@@ -232,6 +242,41 @@ export class SessionMirror {
     void this.refresh();
   }
 
+  /**
+   * The receiver this device casts to plays the session itself: this device
+   * is only a controller of it (docs/cast-receiver-output.md, PR E).
+   */
+  receiverFollows(): boolean {
+    return this.receiverFollowing;
+  }
+
+  /**
+   * SessionFollower read a newer session while the receiver follows it. True
+   * when this device should take its queue: nothing of its own is on the way
+   * (an edit in flight answers with the newer session anyway).
+   */
+  noteSessionChanged(session: PlaybackSession): boolean {
+    if (!this.receiverFollowing || !this.grant || session.id !== this.grant.sessionId) return false;
+    if (this.session && session.revision <= this.session.revision) return false;
+    if (this.patching || this.dirty || this.flushTimer) return false;
+    this.session = session;
+    return true;
+  }
+
+  /**
+   * Sends this device's pending queue edits now, and answers the session as
+   * the server confirmed it (for a `load` command), or null.
+   */
+  async flushNow(): Promise<PlaybackSession | null> {
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = null;
+    for (let attempt = 0; attempt < 3 && this.patching; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    await this.flush();
+    return this.session;
+  }
+
   /** This device is the session's output (playing or paused), or casts to the receiver that is. */
   holdsOutput(): boolean {
     return !!this.grant;
@@ -306,6 +351,7 @@ export class SessionMirror {
   private release() {
     for (const timer of [this.flushTimer, this.reportTimer, this.refreshTimer]) if (timer) clearTimeout(timer);
     this.flushTimer = this.reportTimer = this.refreshTimer = null;
+    this.setReceiverFollowing(false);
     this.grant = null;
     this.session = null;
     this.dirty = false;
@@ -387,6 +433,13 @@ export class SessionMirror {
     return this.claiming;
   }
 
+  private setReceiverFollowing(following: boolean) {
+    if (this.receiverFollowing === following) return;
+    this.receiverFollowing = following;
+    this.options?.diagnostic?.('ok', 'sync-receiver-follows', `following=${following}`);
+    this.options?.onReceiverFollowsChanged?.(following);
+  }
+
   private claimsForReceiver(castSessionId: string | undefined): boolean {
     return !!castSessionId && !!this.options?.handOverToReceiver && !!this.options.receiverCanFollow?.()
       && castSessionId !== this.receiverRefusedCastSession;
@@ -410,6 +463,7 @@ export class SessionMirror {
       expiresAt: credential.expiresAt,
       ...(credential.renewableUntil ? { renewableUntil: credential.renewableUntil } : {}),
     }, reason).catch(() => false);
+    if (taken && this.grant === grant) this.setReceiverFollowing(true);
     if (taken || this.grant !== grant || reason !== 'claim') return;
     this.options.diagnostic?.('warn', 'sync-receiver-handover-failed', `generation=${credential.generation}`);
     this.receiverRefusedCastSession = castSessionId ?? null;
@@ -491,6 +545,16 @@ export class SessionMirror {
     this.failedPatch = null;
     if (this.syncDisabled(error)) return;
     const current = currentSessionFromError(error);
+    if (CONFLICT_CODES.has(error.code) && current && this.receiverFollowing) {
+      // The session counts while the receiver follows it: a newer change
+      // (another device's, or a remote load) wins over this device's edit.
+      this.log('a newer session change won over this edit; taking the session', error.code);
+      this.options?.diagnostic?.('warn', 'sync-edit-dropped', `code=${error.code} revision=${current.revision}`);
+      this.session = current;
+      this.dirty = false;
+      this.options?.adoptSession?.(current);
+      return;
+    }
     if (CONFLICT_CODES.has(error.code) && current) {
       this.session = current;
       this.conflicts += 1;

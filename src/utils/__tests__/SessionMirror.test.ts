@@ -581,3 +581,76 @@ describe('a receiver that plays the session on its own (Phase 5)', () => {
     expect(api.claimPlaybackOutput).toHaveBeenLastCalledWith(expect.anything(), 'session-1', { kind: 'browser', name: 'Chrome on Android' });
   });
 });
+
+describe('while the receiver follows the session (Phase 5, PR E)', () => {
+  const followingSetup = () => {
+    const onReceiverFollowsChanged = jest.fn();
+    const adoptSession = jest.fn();
+    const handOverToReceiver = jest.fn(async () => true);
+    const harness = setup({ castConnected: true }, [], {
+      getCastSessionId: () => 'cast-77', receiverCanFollow: () => true, handOverToReceiver, onReceiverFollowsChanged, adoptSession,
+    });
+    harness.api.claimPlaybackOutput.mockImplementation(async () => ({
+      session: sessionOf(harness.store.getState().playlist, 5),
+      credential: { token: 'receiver-token', expiresAt: credential.expiresAt, outputId: 'receiver:cast-77', generation: 1 },
+    }));
+    return { ...harness, onReceiverFollowsChanged, adoptSession };
+  };
+
+  it('knows once the receiver took the session, and forgets when the grant goes', async () => {
+    const { store, mirror, onReceiverFollowsChanged } = followingSetup();
+    await play(store);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(mirror.receiverFollows()).toBe(true);
+    expect(onReceiverFollowsChanged).toHaveBeenLastCalledWith(true);
+    store.setState({ castConnected: false, playbackState: 'paused' });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(mirror.receiverFollows()).toBe(false);
+    expect(onReceiverFollowsChanged).toHaveBeenLastCalledWith(false);
+  });
+
+  it("takes the session's queue when its own edit lost to a newer change, instead of overwriting it", async () => {
+    const { api, store, mirror, adoptSession } = followingSetup();
+    await play(store);
+    await jest.advanceTimersByTimeAsync(0);
+    const newer = sessionOf([track(1), track(9)], 9);
+    api.patchPlaybackSession.mockRejectedValueOnce(new AuroraApiError('conflict', 409, 'REVISION_CONFLICT', undefined, { current: newer }));
+    store.setState({ playlist: [track(1), track(2)] });
+    await jest.advanceTimersByTimeAsync(300);
+    expect(adoptSession).toHaveBeenCalledWith(newer);
+    // Not planned again from this device's queue.
+    const patches = api.patchPlaybackSession.mock.calls.length;
+    await jest.advanceTimersByTimeAsync(10_000);
+    expect(api.patchPlaybackSession).toHaveBeenCalledTimes(patches);
+    expect(mirror.noteSessionChanged(sessionOf([track(1)], 9))).toBe(false); // not newer
+  });
+
+  it('takes a newer session only when no edit of its own is on the way', async () => {
+    const { store, mirror } = followingSetup();
+    await play(store);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(mirror.noteSessionChanged(sessionOf([track(4)], 20))).toBe(true);
+    store.setState({ playlist: [track(4), track(5)] }); // an edit waiting to be sent
+    expect(mirror.noteSessionChanged(sessionOf([track(6)], 21))).toBe(false);
+    expect(mirror.noteSessionChanged({ ...sessionOf([track(6)], 22), id: 'other' })).toBe(false);
+  });
+
+  it('flushes pending edits at once and answers the session that has them', async () => {
+    const { api, store, mirror } = followingSetup();
+    await play(store);
+    await jest.advanceTimersByTimeAsync(0);
+    store.setState({ playlist: [...store.getState().playlist, track(8)] });
+    const session = await mirror.flushNow();
+    expect(api.patchPlaybackSession).toHaveBeenLastCalledWith(expect.anything(), 'session-1', expect.objectContaining({
+      operations: [expect.objectContaining({ type: 'insert', entryIds: [uuid(8)] })],
+    }));
+    expect(session?.queue.map((entry) => entry.queueEntryId)).toContain(uuid(8));
+  });
+
+  it('is not set for a cast or browser output', async () => {
+    const { store, mirror } = setup();
+    await play(store);
+    expect(mirror.receiverFollows()).toBe(false);
+    expect(mirror.noteSessionChanged(sessionOf([track(1)], 50))).toBe(false);
+  });
+});

@@ -38,6 +38,9 @@ sessionMirror.start(usePlayerStore, {
   // Phase 5: a receiver that plays the session on its own gets it handed over.
   receiverCanFollow: () => castManager.receiverCanFollowSession(),
   handOverToReceiver: (handover, reason) => castManager.handOverSessionToReceiver(handover, reason),
+  // PR E: while the receiver follows, the session's queue is the receiver's.
+  onReceiverFollowsChanged: (following) => castManager.setReceiverFollowsSession(following),
+  adoptSession: (session) => usePlayerStore.getState().adoptFollowedCastQueue(sessionQueueTracks(session), session.currentEntryId),
   // One device plays at a time: another device took over, so stop here.
   onDisplaced: (replacement) => {
     const state = usePlayerStore.getState();
@@ -55,6 +58,7 @@ sessionFollower.start(usePlayerStore, {
   clientId: getAuroraClientId,
   mirror: sessionMirror,
   toTracks: sessionQueueTracks,
+  adoptCastQueue: (session) => usePlayerStore.getState().adoptFollowedCastQueue(sessionQueueTracks(session), session.currentEntryId),
   setPlaybackTime: (currentTime, duration) => setPlaybackTimeState({ currentTime, duration }),
   onPlaybackSyncChanged: () => void usePlayerStore.getState().refreshPlaybackSync(),
   diagnostic: (level, marker, detail) => castManager.logSyncEvent(level, marker, detail),

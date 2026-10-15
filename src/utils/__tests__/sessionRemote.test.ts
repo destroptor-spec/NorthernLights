@@ -1,6 +1,6 @@
 import { AuroraApiError } from '../../api/auroraApi';
 import type * as sessionApi from '../../api/playbackSessions';
-import { sendRemoteAction } from '../sessionRemote';
+import { sendRemoteAction, startOnFollowingReceiver } from '../sessionRemote';
 import type { FollowedOutput } from '../sessionFollow';
 
 const target: FollowedOutput = {
@@ -64,4 +64,44 @@ it('says when that device no longer plays, or could not be reached', async () =>
   expect(await sendRemoteAction({ type: 'next' }, target, d)).toBe('failed');
   // Without a session read yet there is nothing to replace.
   expect(await sendRemoteAction({ type: 'load', tracks: [{ id: 'x', path: 'x' }], startIndex: 0 }, target, deps(null).deps)).toBe('failed');
+});
+
+describe('starting a track on a receiver that follows the session (PR E)', () => {
+  const entry = '00000000-0000-4000-8000-000000000003';
+  const grant = { sessionId: 'session-1', outputId: 'receiver:cast-77', generation: 4 };
+  const session = (revision: number, entries: string[] = [entry]) => ({
+    id: 'session-1', revision, queue: entries.map((queueEntryId) => ({ queueEntryId })),
+  }) as unknown as import('../../../shared/api/v1').PlaybackSession;
+  const setup = () => {
+    const issuePlaybackCommand = jest.fn(async () => ({ accepted: true }));
+    return { issuePlaybackCommand, api: { issuePlaybackCommand } as unknown as Pick<typeof sessionApi, 'issuePlaybackCommand'> };
+  };
+
+  it('sends its edits first, then a load at the revision that has them', async () => {
+    const { api, issuePlaybackCommand } = setup();
+    const flush = jest.fn(async () => session(31));
+    await expect(startOnFollowingReceiver(entry, { api, auth: {}, grant, flush })).resolves.toBe('sent');
+    expect(flush).toHaveBeenCalledTimes(1);
+    expect(issuePlaybackCommand).toHaveBeenCalledWith({}, 'session-1', {
+      requestId: expect.any(String), outputId: 'receiver:cast-77', outputGeneration: 4,
+      command: { type: 'load', revision: 31, entryId: entry },
+    });
+  });
+
+  it('sends nothing when the session does not have the entry, or there is no grant', async () => {
+    const { api, issuePlaybackCommand } = setup();
+    await expect(startOnFollowingReceiver(entry, { api, auth: {}, grant, flush: async () => session(31, []) })).resolves.toBe('failed');
+    await expect(startOnFollowingReceiver(entry, { api, auth: {}, grant, flush: async () => null })).resolves.toBe('failed');
+    await expect(startOnFollowingReceiver(entry, { api, auth: {}, grant: null, flush: async () => session(31) })).resolves.toBe('replaced');
+    expect(issuePlaybackCommand).not.toHaveBeenCalled();
+  });
+
+  it('tells a replaced or unreachable receiver apart', async () => {
+    const { api, issuePlaybackCommand } = setup();
+    const flush = async () => session(31);
+    issuePlaybackCommand.mockRejectedValueOnce(new AuroraApiError('x', 409, 'OUTPUT_UNREACHABLE'));
+    await expect(startOnFollowingReceiver(entry, { api, auth: {}, grant, flush })).resolves.toBe('unreachable');
+    issuePlaybackCommand.mockRejectedValueOnce(new AuroraApiError('x', 409, 'OUTPUT_GRANT_REPLACED'));
+    await expect(startOnFollowingReceiver(entry, { api, auth: {}, grant, flush })).resolves.toBe('replaced');
+  });
 });

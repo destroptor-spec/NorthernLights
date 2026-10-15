@@ -65,7 +65,9 @@ function setup(initial: Partial<FollowerPlayerState> = {}, latest: PlaybackSessi
     holdsOutput: jest.fn(() => false),
     currentGrant: jest.fn((): { sessionId: string; outputId: string; generation: number } | null => null),
     noteReplaced: jest.fn(async () => undefined),
+    noteSessionChanged: jest.fn((_session: PlaybackSession) => false),
   };
+  const adoptCastQueue = jest.fn();
   const setPlaybackTime = jest.fn();
   const store = createStore<FollowerPlayerState>((set, get) => ({
     syncPlaybackAcrossDevices: true,
@@ -100,6 +102,7 @@ function setup(initial: Partial<FollowerPlayerState> = {}, latest: PlaybackSessi
     },
     clientId: () => 'laptop',
     mirror,
+    adoptCastQueue,
     toTracks: (session) => session.queue.map((entry) => ({ id: entry.track.id, path: entry.track.id, duration: 200, queueEntryId: entry.queueEntryId })),
     setPlaybackTime,
   });
@@ -108,7 +111,7 @@ function setup(initial: Partial<FollowerPlayerState> = {}, latest: PlaybackSessi
     source().open();
     await jest.advanceTimersByTimeAsync(0);
   };
-  return { api, mirror, store, follower, sources, source, connect, setPlaybackTime, onPlaybackSyncChanged, onCommand, diagnostic };
+  return { api, mirror, store, follower, sources, source, connect, setPlaybackTime, onPlaybackSyncChanged, onCommand, diagnostic, adoptCastQueue };
 }
 
 beforeEach(() => {
@@ -428,4 +431,19 @@ it("does not take its own receiver output for another device's (rejoining its ow
   const { follower, connect } = setup({}, mine);
   await connect();
   expect(follower.castingElsewhere('NAD Forstærker', '2bc27ebd')).toBeNull();
+});
+
+it("hands a casting controller the session's newer queue while its receiver follows it (PR E)", async () => {
+  const { mirror, connect, adoptCastQueue, source, api } = setup({ castConnected: true, playbackState: 'playing' });
+  await connect();
+  expect(adoptCastQueue).not.toHaveBeenCalled(); // the mirror said no
+
+  const newer = sessionOf([1, 2, 3, 4]);
+  newer.revision = 30;
+  api.getPlaybackSession.mockResolvedValueOnce(newer);
+  mirror.noteSessionChanged.mockImplementation((session: PlaybackSession) => session.revision === 30);
+  source().emit('playbackSession.updated', { sessionId: 'session-1', revision: 30 });
+  await jest.advanceTimersByTimeAsync(0);
+  expect(mirror.noteSessionChanged).toHaveBeenLastCalledWith(newer);
+  expect(adoptCastQueue).toHaveBeenCalledWith(newer);
 });

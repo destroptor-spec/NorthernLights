@@ -131,3 +131,56 @@ describe('the receiver probe', () => {
         expect(session.sendMessage).not.toHaveBeenCalled();
     });
 });
+
+describe('once the receiver follows the session (PR E)', () => {
+    type Following = Internals & {
+        setReceiverFollowsSession(following: boolean): void;
+        receiverFollowsSession(): boolean;
+        castQueue(...args: unknown[]): Promise<void>;
+        ensureQueuePlayback(...args: unknown[]): Promise<void>;
+        appendToQueue(track: unknown): Promise<void>;
+        insertNextInQueue(track: unknown): Promise<void>;
+        removeFromQueue(id: string): Promise<void>;
+        moveQueueItem(id: string, index: number): Promise<void>;
+        setRepeatMode(mode: string): Promise<void>;
+        reconcileQueueEdits(): void;
+        queueWindow: unknown;
+    };
+
+    it('loads, edits and refills nothing on the receiver, and lets go of its window', async () => {
+        const { manager, session } = harness();
+        const following = manager as unknown as Following;
+        following.queueWindow = { session, ids: ['a'] };
+        following.setReceiverFollowsSession(true);
+        expect(following.receiverFollowsSession()).toBe(true);
+        expect(following.queueWindow).toBeNull();
+        await following.castQueue([{ queueEntryId: 'a', url: 'u' }], 0);
+        await following.ensureQueuePlayback([{ queueEntryId: 'a', url: 'u' }], 0);
+        await following.appendToQueue({ queueEntryId: 'b' });
+        await following.insertNextInQueue({ queueEntryId: 'c' });
+        await following.removeFromQueue('a');
+        await following.moveQueueItem('a', 1);
+        await following.setRepeatMode('all');
+        following.reconcileQueueEdits();
+        expect(session.sendMessage).not.toHaveBeenCalled();
+        const ops = manager.logCast.mock.calls.filter(([, marker]) => marker === 'cast-queue-left-to-receiver').map(([, , detail]) => detail);
+        expect(ops).toEqual(['op=load', 'op=play', 'op=append', 'op=insert-next', 'op=remove', 'op=move', 'op=repeat', 'op=reconcile']);
+        expect(manager.logCast).toHaveBeenCalledWith('ok', 'cast-receiver-follows', 'following=true sid=cast-77');
+    });
+
+    it('only for the Cast session the receiver took it in', () => {
+        const { manager, disconnect } = harness();
+        const following = manager as unknown as Following;
+        following.setReceiverFollowsSession(true);
+        disconnect();
+        expect(following.receiverFollowsSession()).toBe(false);
+    });
+
+    it('manages the queue again when the receiver no longer holds it for this device', () => {
+        const { manager } = harness();
+        const following = manager as unknown as Following;
+        following.setReceiverFollowsSession(true);
+        following.setReceiverFollowsSession(false);
+        expect(following.receiverFollowsSession()).toBe(false);
+    });
+});

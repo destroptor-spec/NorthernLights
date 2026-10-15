@@ -24,7 +24,7 @@ import { clearExternalCache } from '../utils/externalImagery';
 import { readSessionAuth, writeSessionAuth, clearSessionAuth } from '../utils/sessionAuth';
 import { sessionMirror } from '../utils/SessionMirror';
 import { followedPositionMs, type FollowedOutput } from '../utils/sessionFollow';
-import { sendRemoteAction, type RemoteAction } from '../utils/sessionRemote';
+import { sendRemoteAction, startOnFollowingReceiver, type RemoteAction } from '../utils/sessionRemote';
 import { sessionFollower } from '../utils/SessionFollower';
 import { isPlaybackSyncEnabled, parsePlaybackSyncMode, type PlaybackSyncMode } from '../../shared/playbackSync';
 import { computeLoudnessGainDb, type LoudnessData } from '../utils/loudness';
@@ -907,6 +907,8 @@ export interface PlayerState {
    * continues from `positionSeconds`.
    */
   adoptSessionQueue: (tracks: TrackInfo[] | null, index: number, positionSeconds: number) => void;
+  /** Casting to a receiver that plays the session itself: show the session's queue here. */
+  adoptFollowedCastQueue: (tracks: TrackInfo[], currentEntryId: string | null) => void;
   setSessionFollow: (follow: FollowedOutput | null) => void;
   /** Remote control "load": replace the queue with these tracks (entry IDs kept) and play `index`. */
   playSessionQueue: (tracks: TrackInfo[], index: number) => Promise<void>;
@@ -1238,6 +1240,24 @@ export const usePlayerStore = create<PlayerState>()(
         pendingPlayWhere = { remote, local };
         set({ playWherePrompt: { outputName: sessionFollow.name } });
         return true;
+      };
+
+      // Casting to a receiver that plays the session itself (PR E): it starts
+      // the track; this device only says which.
+      const playOnFollowingReceiver = async (index: number) => {
+        const track = get().playlist[index];
+        if (!track?.queueEntryId) return;
+        const device = castManager.getCastDeviceName() || 'the Cast device';
+        set({ currentIndex: index, isBuffering: true });
+        const result = await startOnFollowingReceiver(track.queueEntryId, {
+          auth: get().getAuthHeader(),
+          grant: sessionMirror.currentGrant(),
+          flush: () => sessionMirror.flushNow(),
+        });
+        castManager.logSyncEvent(result === 'sent' ? 'ok' : 'warn', 'sync-command-sent', `type=load to=receiver:${device} result=${result}`);
+        set({ isBuffering: false });
+        if (result === 'unreachable') get().addToast(`${device} isn't reachable.`, 'error');
+        else if (result !== 'sent') get().addToast(`Couldn't start this on ${device}.`, 'error');
       };
 
       const runHere = async (local: () => Promise<void>) => {
@@ -2930,6 +2950,10 @@ export const usePlayerStore = create<PlayerState>()(
           }
           const track = playlist[index];
           if (!track) return;
+          if (castManager.receiverFollowsSession()) {
+            await playOnFollowingReceiver(index);
+            return;
+          }
 
           // Rebuild stream/raw/art URLs from the CURRENT media token rather than
           // trusting the persisted URL: the token may have rotated since the track
@@ -3095,6 +3119,20 @@ export const usePlayerStore = create<PlayerState>()(
             playbackState: 'paused',
             isBuffering: false,
           });
+          persistContinuitySnapshot(true);
+        },
+
+        adoptFollowedCastQueue: (tracks: TrackInfo[], currentEntryId: string | null) => {
+          if (!castManager.receiverFollowsSession()) return;
+          const state = get();
+          const same = state.playlist.length === tracks.length
+            && state.playlist.every((track, index) => track.queueEntryId === tracks[index].queueEntryId);
+          if (same) return;
+          // Keep what plays (the receiver's status moves it on); else the session's current entry.
+          const playingId = state.currentIndex !== null ? state.playlist[state.currentIndex]?.queueEntryId : undefined;
+          let index = tracks.findIndex((track) => track.queueEntryId === playingId);
+          if (index < 0) index = tracks.findIndex((track) => track.queueEntryId === currentEntryId);
+          set({ playlist: tracks, currentIndex: index >= 0 ? index : (tracks.length ? 0 : null), queueSource: null });
           persistContinuitySnapshot(true);
         },
 
