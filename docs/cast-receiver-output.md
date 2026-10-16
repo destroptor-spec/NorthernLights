@@ -208,10 +208,17 @@ Markers: `sync-receiver-follows`, `cast-receiver-follows`,
 `queue-window-released`, `cast-queue-left-to-receiver`,
 `sync-receiver-queue-adopted`, `sync-edit-dropped`.
 
+**Idle devices' queue edits** (built on feat/idle-queue-edits): while an
+idle device follows a receiver that plays the session itself, its queue
+edits (Play next, remove, reorder) go to the session as anchored patches,
+planned against the session it last read and sent once more at a newer
+revision if one won meanwhile (`sync-queue-edit-sent`); an edit that cannot
+apply any more leaves the session's queue shown (`sync-queue-edit-refused`).
+Clearing the queue there does not stop the receiver. Following a browser or
+plain Cast output, edits stay on that device as before: those outputs treat
+their own queue as the one that counts, which is Phase 3 work.
+
 **Still open for D:**
-- An idle device's queue edits (Play next, remove, reorder on the desktop
-  while the phone casts) do not reach the session yet; remote control covers
-  transport only. The "done when" list needs them.
 - If another sender takes the receiver over inside the same Cast session
   while this device stays connected, this device manages the queue again
   without a window, and its next skip loads in full. The second-sender rules

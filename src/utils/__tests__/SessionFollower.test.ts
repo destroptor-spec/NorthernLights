@@ -60,6 +60,7 @@ function setup(initial: Partial<FollowerPlayerState> = {}, latest: PlaybackSessi
   const api = {
     listPlaybackSessions: jest.fn(async () => (latest ? [latest] : [])),
     getPlaybackSession: jest.fn(async (_auth: unknown, _id: string) => latest!),
+    patchPlaybackSession: jest.fn(async (_auth: unknown, _id: string, _patch: unknown) => ({ ...latest!, revision: latest!.revision + 1 }) as PlaybackSession),
   };
   const mirror = {
     holdsOutput: jest.fn(() => false),
@@ -446,4 +447,76 @@ it("hands a casting controller the session's newer queue while its receiver foll
   await jest.advanceTimersByTimeAsync(0);
   expect(mirror.noteSessionChanged).toHaveBeenLastCalledWith(newer);
   expect(adoptCastQueue).toHaveBeenCalledWith(newer);
+});
+
+describe('queue edits on an idle device following a receiver (Phase 5)', () => {
+  const receiverSession = () => {
+    const session = sessionOf([1, 2, 3]);
+    session.output = { ...session.output!, id: 'receiver:cast-77', kind: 'receiver', castSessionId: 'cast-77' };
+    return session;
+  };
+  const track = (n: number): TrackInfo => ({ id: `track-${n}`, path: `track-${n}`, duration: 200, queueEntryId: uuid(n) });
+
+  it('sends Play next, remove and reorder to the session as anchored edits', async () => {
+    const { api, store, connect } = setup({}, receiverSession());
+    await connect();
+    expect(store.getState().playlist.map((t) => t.queueEntryId)).toEqual([uuid(1), uuid(2), uuid(3)]);
+    expect(api.patchPlaybackSession).not.toHaveBeenCalled(); // taking the session's queue is not an edit
+
+    store.setState({ playlist: [track(1), track(2), track(9), track(3)] }); // Play next
+    await jest.advanceTimersByTimeAsync(250);
+    expect(api.patchPlaybackSession).toHaveBeenCalledWith(expect.anything(), 'session-1', {
+      expectedRevision: 12, requestId: expect.any(String),
+      operations: [{ type: 'insert', afterEntryId: uuid(2), trackIds: ['track-9'], entryIds: [uuid(9)] }],
+    });
+  });
+
+  it('sends a quick run of edits as one patch', async () => {
+    const { api, store, connect } = setup({}, receiverSession());
+    await connect();
+    store.setState({ playlist: [track(1), track(3)] });
+    await jest.advanceTimersByTimeAsync(100);
+    store.setState({ playlist: [track(3), track(1)] });
+    await jest.advanceTimersByTimeAsync(250);
+    expect(api.patchPlaybackSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends the same edit again once when a newer change won, and shows the session when it cannot apply', async () => {
+    const { api, store, connect } = setup({}, receiverSession());
+    await connect();
+    const newer = { ...receiverSession(), revision: 15 };
+    api.patchPlaybackSession.mockRejectedValueOnce(new AuroraApiError('conflict', 409, 'REVISION_CONFLICT', undefined, { current: newer }));
+    store.setState({ playlist: [track(1), track(3)] });
+    await jest.advanceTimersByTimeAsync(250);
+    expect(api.patchPlaybackSession).toHaveBeenCalledTimes(2);
+    expect(api.patchPlaybackSession.mock.calls[1][2]).toMatchObject({ expectedRevision: 15, operations: [{ type: 'remove', queueEntryIds: [uuid(2)] }] });
+
+    const gone = { ...receiverSession(), revision: 20, queue: receiverSession().queue.slice(0, 1) };
+    api.patchPlaybackSession.mockRejectedValueOnce(new AuroraApiError('anchor', 409, 'ANCHOR_NOT_FOUND', undefined, { current: gone }));
+    store.setState({ playlist: [track(1), track(7)] });
+    await jest.advanceTimersByTimeAsync(250);
+    expect(store.getState().playlist.map((t) => t.queueEntryId)).toEqual([uuid(1)]);
+  });
+
+  it('keeps edits on this device when it follows a browser or Cast output, or casts itself', async () => {
+    const browser = setup();
+    await browser.connect();
+    browser.store.setState({ playlist: [track(1), track(3)] });
+    await jest.advanceTimersByTimeAsync(250);
+    expect(browser.api.patchPlaybackSession).not.toHaveBeenCalled();
+
+    const casting = setup({ castConnected: true }, receiverSession());
+    await casting.connect();
+    casting.store.setState({ playlist: [track(1), track(3)] });
+    await jest.advanceTimersByTimeAsync(250);
+    expect(casting.api.patchPlaybackSession).not.toHaveBeenCalled();
+  });
+
+  it('does not stop the receiver by clearing the queue here', async () => {
+    const { api, store, connect } = setup({}, receiverSession());
+    await connect();
+    store.setState({ playlist: [] });
+    await jest.advanceTimersByTimeAsync(250);
+    expect(api.patchPlaybackSession).not.toHaveBeenCalled();
+  });
 });
