@@ -246,9 +246,16 @@ export class CastManager {
     // tracks only the event stream: that stream can die while the receiver
     // plays on perfectly well, and status refreshes keep succeeding.
     private lastRemoteEvidenceAt = 0;
-    // Session we have already attached the MEDIA_SESSION listener to, so
-    // repeated SESSION_STARTED/RESUMED/reconcile passes don't stack handlers.
-    private mediaSessionListenerSessionId = '';
+    /**
+     * The session object the MEDIA_SESSION and aurora-status listeners are
+     * on, so repeated SESSION_STARTED/RESUMED/reconcile passes don't stack
+     * handlers. An object, not an ID: a stale-transport recovery rejoins the
+     * same Cast session ID through a new session object, whose listeners must
+     * be added again (prod 2026-10-16 08:43, Beoplay A9: the sender heard
+     * nothing for seven minutes, and reloaded the queue twice for a song
+     * already playing).
+     */
+    private mediaSessionListenerSession: unknown = null;
     // Latest status the receiver pushed on its own namespace. This is the
     // authoritative view: the receiver reported an exact index, queue length,
     // position and queueEntryId across 327 broadcasts with zero errors, while
@@ -1115,7 +1122,7 @@ export class CastManager {
     private resetSessionAttemptState(reason: string, options: { clearStoredSession?: boolean; healthPhase?: CastHealthPhase; healthMessage?: string } = {}) {
         this.playbackConfirmation.cancel();
         this.playbackRetry = null;
-        this.mediaSessionListenerSessionId = '';
+        this.mediaSessionListenerSession = null;
         this.userSessionRequestPending = false;
         this.rejoinSessionPending = false;
         this.freshSessionStartedAt = 0;
@@ -1367,12 +1374,16 @@ export class CastManager {
      */
     private attachMediaSessionListener(session: any | null = this.castContext?.getCurrentSession?.()) {
         if (!session || typeof session.addEventListener !== 'function') return;
+        // Never twice on one object: its handlers would run twice.
+        if (session === this.mediaSessionListenerSession) return;
         const sessionId = session.getSessionId?.() || '';
-        if (sessionId && sessionId === this.mediaSessionListenerSessionId) return;
-        this.mediaSessionListenerSessionId = sessionId;
+        const previousId = (this.mediaSessionListenerSession as { getSessionId?: () => string } | null)?.getSessionId?.() || '';
+        this.mediaSessionListenerSession = session;
 
         try {
             session.addEventListener(cast.framework.SessionEventType.MEDIA_SESSION, (event: any) => {
+                // A replaced session object (after a recovery) may still fire.
+                if (session !== this.castContext?.getCurrentSession?.()) return;
                 // The event carries the new Media on CAF; fall back to reading
                 // it off the session in case a build does not populate it.
                 const mediaSession = event?.mediaSession || this.getMediaSession();
@@ -1385,10 +1396,10 @@ export class CastManager {
                 this.noteSdkMedia(this.queueWindow, mediaSession);
                 void this.hydrateSenderFromRemoteSession(mediaSession, 'media-session-event');
             });
-            this.logCast('ok', 'Attached MEDIA_SESSION listener', `sid=${sessionId || 'unknown'}`);
+            this.logCast('ok', 'Attached MEDIA_SESSION listener', `sid=${sessionId || 'unknown'}${sessionId && sessionId === previousId ? ' rebound=true' : ''}`);
             this.attachAuroraStatusListener(session, sessionId);
         } catch (error) {
-            this.mediaSessionListenerSessionId = '';
+            this.mediaSessionListenerSession = null;
             this.logCast('warn', 'Failed to attach MEDIA_SESSION listener', this.describeError(error));
         }
     }

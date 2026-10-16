@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { ServerEventStream } from '../utils/serverEvents';
 
 interface UseSSEOptions {
   onMessage: (data: unknown) => void;
@@ -17,7 +18,7 @@ function applyJitter(delay: number): number {
 }
 
 export function useSSE(url: string | null, { onMessage, onError, throttleMs = 0 }: UseSSEOptions) {
-  const esRef = useRef<EventSource | null>(null);
+  const esRef = useRef<ServerEventStream | null>(null);
   const retryDelayRef = useRef(BASE_DELAY);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectedAtRef = useRef<number | null>(null);
@@ -32,7 +33,7 @@ export function useSSE(url: string | null, { onMessage, onError, throttleMs = 0 
   const connect = () => {
     if (!url) return;
 
-    const es = new EventSource(url);
+    const es = new ServerEventStream(url);
     esRef.current = es;
     connectedAtRef.current = Date.now();
 

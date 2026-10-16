@@ -85,6 +85,12 @@ const REFRESH_BEFORE_EXPIRY_MS = 5 * 60_000;
 const MAX_CONFLICT_RETRIES = 3;
 /** A wake renews a receiver's credential (and so its 24-hour cap) at most this often. */
 const WAKE_REFRESH_MIN_INTERVAL_MS = 60_000;
+/**
+ * Casting starting or stopping changes the output's kind, but a recovered Cast
+ * connection blinks off and on within a second (prod 2026-10-16 08:43:01,
+ * Beoplay A9). The kind is claimed once that has settled.
+ */
+export const CAST_KIND_SETTLE_MS = 1_000;
 const CONFLICT_CODES = new Set(['REVISION_CONFLICT', 'ANCHOR_NOT_FOUND', 'ENTRY_ID_CONFLICT']);
 
 type OutputKind = 'browser' | 'cast' | 'receiver';
@@ -156,6 +162,7 @@ export class SessionMirror {
   /** The receiver took the session for this device's current grant. */
   private receiverFollowing = false;
   private wakeRefreshAt = 0;
+  private kindTimer: ReturnType<typeof setTimeout> | null = null;
 
   start(store: MirroredStore, options: SessionMirrorOptions): void {
     this.stop();
@@ -333,18 +340,10 @@ export class SessionMirror {
       return;
     }
     if (state.castConnected !== previous.castConnected) {
-      if (this.grant.kind === 'receiver' && !state.castConnected) {
-        // The receiver plays on by itself (this device left), or stopped with
-        // its Cast session. Either way it is not this device's to report:
-        // only playing here makes this device the output again.
-        this.options?.diagnostic?.('ok', 'sync-receiver-left', `state=${state.playbackState}`);
-        this.release();
-        if (state.playbackState === 'playing') void this.claim();
-        return;
-      }
       // The output moved between this browser and a Cast device: claim again
-      // under the new name.
-      void this.claim();
+      // under the new kind and name (or let a receiver go), once casting has
+      // settled.
+      this.scheduleKindCheck();
       return;
     }
     if (state.playlist !== previous.playlist || state.repeat !== previous.repeat || state.shuffle !== previous.shuffle) {
@@ -356,8 +355,8 @@ export class SessionMirror {
   }
 
   private release() {
-    for (const timer of [this.flushTimer, this.reportTimer, this.refreshTimer]) if (timer) clearTimeout(timer);
-    this.flushTimer = this.reportTimer = this.refreshTimer = null;
+    for (const timer of [this.flushTimer, this.reportTimer, this.refreshTimer, this.kindTimer]) if (timer) clearTimeout(timer);
+    this.flushTimer = this.reportTimer = this.refreshTimer = this.kindTimer = null;
     this.setReceiverFollowing(false);
     this.grant = null;
     this.session = null;
@@ -421,6 +420,8 @@ export class SessionMirror {
           `kind=${kind} generation=${credential.generation} castSession=${castSessionId || 'none'} state=${this.store!.getState().playbackState}`);
         this.sessionId = sessionId;
         this.grant = { sessionId, credential, seq: 0, kind };
+        // Casting started or stopped while the claim was on its way.
+        if (!this.kindMatchesCasting(kind)) this.scheduleKindCheck();
         this.session = session;
         this.displaced = false;
         this.scheduleRefresh();
@@ -475,6 +476,34 @@ export class SessionMirror {
     this.options.diagnostic?.('warn', 'sync-receiver-handover-failed', `generation=${credential.generation}`);
     this.receiverRefusedCastSession = castSessionId ?? null;
     if (this.store?.getState().castConnected) void this.claim();
+  }
+
+  /** A `cast` or `receiver` output while casting, a `browser` one otherwise. */
+  private kindMatchesCasting(kind: OutputKind): boolean {
+    return this.store?.getState().castConnected ? kind !== 'browser' : kind === 'browser';
+  }
+
+  /**
+   * Once casting has settled, claims again if the grant names the wrong kind
+   * by then; a receiver output this device stopped casting to is let go.
+   */
+  private scheduleKindCheck() {
+    if (this.kindTimer) clearTimeout(this.kindTimer);
+    this.kindTimer = setTimeout(() => {
+      this.kindTimer = null;
+      const state = this.store?.getState();
+      if (!state || !this.enabled(state) || !this.grant || this.kindMatchesCasting(this.grant.kind)) return;
+      if (this.grant.kind === 'receiver') {
+        // The receiver plays on by itself (this device left), or stopped with
+        // its Cast session. Either way it is not this device's to report:
+        // only playing here makes this device the output again.
+        this.options?.diagnostic?.('ok', 'sync-receiver-left', `state=${state.playbackState}`);
+        this.release();
+        if (state.playbackState === 'playing') void this.claim();
+        return;
+      }
+      void this.claim();
+    }, CAST_KIND_SETTLE_MS);
   }
 
   // Still playing here after a failed claim (offline for a moment): try again.

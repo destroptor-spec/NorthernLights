@@ -7,6 +7,13 @@ type RuntimeCacheErrorContext = {
     error: Error;
 };
 
+// API image-looking URLs must not fall into the public image cache when the
+// generic API NetworkOnly route is removed. Dedicated artwork routes opt in.
+export function isPublicImageRequest({ url }: RuntimeCacheMatchContext): boolean {
+    return !/^\/(?:api|rest)(?:\/|$)/.test(url.pathname)
+        && /\.(?:png|jpg|jpeg|gif|webp|avif)$/.test(url.href);
+}
+
 /**
  * Adaptive HLS uses the same pathname for every rendition and differentiates
  * them with query parameters. Keep this route ahead of the generic segment

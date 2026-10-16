@@ -1,3 +1,5 @@
+import { suspendServerEvents } from './serverEvents';
+
 let applyUpdateHandler: (() => Promise<void>) | null = null;
 let pendingUpdate: Promise<void> | null = null;
 let reloadStarted = false;
@@ -29,12 +31,17 @@ export function createPwaUpdateHandler(
       return;
     }
 
+    let settled = false;
     const cleanup = () => {
+      settled = true;
       window.clearTimeout(timeout);
       serviceWorker.removeEventListener('controllerchange', checkActivation);
       worker.removeEventListener('statechange', checkActivation);
+      window.removeEventListener('pageshow', checkActivation);
+      document.removeEventListener('visibilitychange', checkActivation);
     };
     const checkActivation = () => {
+      if (settled) return;
       if (worker.state === 'redundant') {
         cleanup();
         reject(new Error('The update was replaced. Please try again.'));
@@ -45,12 +52,18 @@ export function createPwaUpdateHandler(
       }
     };
     const timeout = window.setTimeout(() => {
+      // A resumed mobile page can observe the timeout before queued lifecycle
+      // events. Inspect the current state before declaring a ready update lost.
+      checkActivation();
+      if (settled) return;
       cleanup();
       reject(new Error('The update is taking longer than expected. Please try again.'));
     }, 15000);
 
     serviceWorker.addEventListener('controllerchange', checkActivation);
     worker.addEventListener('statechange', checkActivation);
+    window.addEventListener('pageshow', checkActivation);
+    document.addEventListener('visibilitychange', checkActivation);
     try {
       if (registration.waiting === worker) worker.postMessage({ type: 'SKIP_WAITING' });
       // Another tab may already have activated this update.
@@ -120,7 +133,13 @@ export function applyPendingPwaUpdate(): Promise<void> {
   if (!applyUpdateHandler) {
     return Promise.reject(new Error('Updates are not ready yet. Please try again shortly.'));
   }
-  pendingUpdate = Promise.resolve().then(applyUpdateHandler).catch((error: unknown) => {
+  const handler = applyUpdateHandler;
+  let resumeStreams: (() => void) | undefined;
+  pendingUpdate = Promise.resolve().then(() => {
+    resumeStreams = suspendServerEvents();
+    return handler();
+  }).catch((error: unknown) => {
+    resumeStreams?.();
     pendingUpdate = null;
     throw error;
   });
