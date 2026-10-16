@@ -114,11 +114,14 @@ test('neither advertises following nor takes a handover before the first LOAD', 
   expect(r.caps()).toContain('session-follow');
 });
 
-test('lets a sender that loads a queue itself take charge again', () => {
+test("keeps following when CAF loads the next queue item itself", () => {
+  // Prod 2026-10-16 19:42:02 and 19:47:18: CAF moving to the next item runs
+  // through the LOAD interceptor; taking that for a sender's LOAD ended
+  // following at every track change.
   const r = startReceiver(true);
   r.receive({ senderId: 'sender', data: handover });
-  r.load({ media: { contentId: 'https://music.example.test/api/stream/other/playlist.m3u8', customData: { token: 'media-token' }, metadata: { title: 'Other' } } });
-  expect(r.loggedLines().some((line) => line.message.includes('receiver-follow-stopped') && line.detail.includes('reason=sender-load'))).toBe(true);
+  r.load({ media: { contentId: 'https://music.example.test/api/stream/next/playlist.m3u8', customData: { token: 'media-token', queueEntryId: 'e2' }, metadata: { title: 'Next' } } });
+  expect(r.loggedLines().some((line) => line.message.includes('receiver-follow-stopped'))).toBe(false);
 });
 
 test('refuses a handover, and does not advertise following, without the module', () => {

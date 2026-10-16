@@ -32,6 +32,14 @@
   var RENEW_BEFORE_EXPIRY_MS = 10 * 60 * 1000;
   var RENEW_RETRY_MS = 60 * 1000;
   var RECONCILE_RETRY_MS = 1500;
+  /** Status changes come in bursts (a track change sends several). */
+  var RECONCILE_SETTLE_MS = 400;
+  /**
+   * removeItems/insertItems land a moment later: the same plan within this
+   * long is the one already sent, not a new one (prod 2026-10-16 19:46:56:
+   * the same 8 items removed three times in a second).
+   */
+  var SAME_PLAN_MS = 3000;
   /** Upcoming items kept on the receiver after the one that plays. */
   var UPCOMING = 9;
   var FORCED_CODEC = 'aac';
@@ -118,6 +126,8 @@
     var renewTimer = null;
     var idleTimer = null;
     var reconcileTimer = null;
+    var settleTimer = null;
+    var lastPlan = { key: '', at: 0 };
     var idleSettled = false;
     var seq = 0;
     var loading = false;
@@ -240,6 +250,7 @@
       renewTimer = clearTimer(renewTimer);
       idleTimer = clearTimer(idleTimer);
       reconcileTimer = clearTimer(reconcileTimer);
+      settleTimer = clearTimer(settleTimer);
       state = null;
       session = null;
       // Another device plays now: no sender may be connected to stop this one.
@@ -247,11 +258,6 @@
         try { env.playerManager.stop(); } catch (e) { /* already stopped */ }
       }
       try { env.onStopped(reason); } catch (e) { /* UI only */ }
-    }
-
-    /** A sender LOADed something itself: it is in charge of this queue now. */
-    function noteForeignLoad() {
-      if (state) stop('sender-load');
     }
 
     // ── Events ──────────────────────────────────────────────────────────
@@ -429,6 +435,14 @@
       }, RECONCILE_RETRY_MS);
     }
 
+    function settleReconcile(reason) {
+      settleTimer = clearTimer(settleTimer);
+      settleTimer = env.setTimeout(function () {
+        settleTimer = null;
+        reconcile(reason);
+      }, RECONCILE_SETTLE_MS);
+    }
+
     /** Brings the receiver's window in line with the session, in one batch. */
     function reconcile(reason) {
       if (!state || !session) return;
@@ -462,6 +476,9 @@
       var desired = desiredUpcoming(session.queue, playing, session.repeatMode, UPCOMING) || [];
       var plan = planWindow(items, currentIndex, desired);
       if (!plan.removeItemIds.length && !plan.insert.length) return;
+      var key = plan.removeItemIds.join(',') + '|' + plan.insert.map(function (entry) { return entry.queueEntryId; }).join(',');
+      if (key === lastPlan.key && env.now() - lastPlan.at < SAME_PLAN_MS) return;
+      lastPlan = { key: key, at: env.now() };
       try {
         if (plan.removeItemIds.length) env.queueManager.removeItems(plan.removeItemIds);
         if (plan.insert.length) env.queueManager.insertItems(plan.insert.map(buildItem));
@@ -629,7 +646,7 @@
       var entry = currentEntry();
       if (entry !== lastReportedEntry || reportState(now, idleSettled) !== lastReportedState) {
         reportSoon();
-        if (entry !== lastReportedEntry) reconcile('advanced');
+        if (entry !== lastReportedEntry) settleReconcile('advanced');
       }
     }
 
@@ -711,8 +728,7 @@
       start: start,
       stop: stop,
       following: following,
-      notePlayerChanged: notePlayerChanged,
-      noteForeignLoad: noteForeignLoad
+      notePlayerChanged: notePlayerChanged
     };
   }
 

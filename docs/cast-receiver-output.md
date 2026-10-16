@@ -143,9 +143,12 @@ ES2017 and to Chrome 62's APIs by `npm run verify:receiver`), loaded by
 `receiver.html` and served `no-cache` with it. `receiver.html` itself only
 creates the follower (when the module loaded and EventSource and fetch
 exist), advertises `session-follow`, answers `aurora.session.follow`, tells
-the follower about media status changes, stops following when a sender LOADs
-a queue itself, and shows *Open Aurora to keep playing.* when the
-credential has run out. Details that differ from the plan below:
+the follower about media status changes, and shows *Open Aurora to keep
+playing.* when the credential has run out. It does not stop following on a
+LOAD: CAF moving to the next queue item runs through the same LOAD
+interceptor, and treating that as a sender's LOAD ended following at every
+track change (prod 2026-10-16 19:42 and 19:47). Senders that follow the
+session never LOAD (PR E), and a second sender leaves (#119/#123). Details that differ from the plan below:
 - Items are built like the sender's (stream URL with the Cast quality from the
   handover, `codec=aac`, the media token the receiver already holds; artwork
   with the same token), not through `POST /tracks/:id/playback`, whose

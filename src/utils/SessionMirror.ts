@@ -227,6 +227,13 @@ export class SessionMirror {
    * own: hand the output over to it.
    */
   noteReceiverCanFollow(): void {
+    // Its status can come while this device's own first claim is still on
+    // its way (mirroring the queue, the first report): look again after it
+    // (prod 2026-10-16 19:44:43, phone: the handover never happened).
+    if (this.claiming) {
+      void this.claiming.catch(() => undefined).then(() => this.noteReceiverCanFollow());
+      return;
+    }
     const state = this.store?.getState();
     if (this.grant?.kind !== 'cast' || !state?.castConnected || !this.enabled(state)) return;
     if (this.claimsForReceiver(this.options?.getCastSessionId?.() || undefined)) void this.claim();

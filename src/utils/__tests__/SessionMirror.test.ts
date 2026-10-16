@@ -523,6 +523,25 @@ describe('a receiver that plays the session on its own (Phase 5)', () => {
     expect(handOverToReceiver).toHaveBeenCalledTimes(1);
   });
 
+  it('hands over after its own first claim when the receiver says it can follow during it', async () => {
+    // Prod 2026-10-16 19:44:43, phone: the claim was still mirroring the
+    // queue when the receiver's status came, and the handover never happened.
+    const { api, store, mirror, handOverToReceiver, setCanFollow } = castSetup({ canFollow: false });
+    let finishPatch: () => void = () => undefined;
+    api.patchPlaybackSession.mockImplementationOnce(() => new Promise((resolve) => {
+      finishPatch = () => resolve(sessionOf(store.getState().playlist, 3));
+    }) as never);
+    store.setState({ playbackState: 'playing' });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(api.claimPlaybackOutput).toHaveBeenLastCalledWith(expect.anything(), 'session-1', expect.objectContaining({ kind: 'cast' }));
+    setCanFollow(true);
+    mirror.noteReceiverCanFollow(); // while the first claim is still mirroring
+    finishPatch();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(api.claimPlaybackOutput).toHaveBeenLastCalledWith(expect.anything(), 'session-1', expect.objectContaining({ kind: 'receiver' }));
+    expect(handOverToReceiver).toHaveBeenCalledTimes(1);
+  });
+
   it('casts as today when the receiver does not take the session', async () => {
     const { api, store, mirror, handOverToReceiver, diagnostic } = castSetup({ takes: false });
     await play(store);

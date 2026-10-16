@@ -359,12 +359,23 @@ describe('when the session moves on', () => {
     expect(off.onStopped).toHaveBeenCalledWith('sync-off');
   });
 
-  it('lets a sender that loads a queue itself take charge again', async () => {
-    const h = harness();
+  it('lines up the window once per burst of status changes, and not again for the same plan', async () => {
+    // Prod 2026-10-16 19:46:56: a track change sent several statuses, and the
+    // same 8 items were removed three times (removeItems lands a moment later).
+    const h = harness({ caf: [1, 2, 3, 4] });
+    h.setSession(sessionOf([1, 2, 3, 4]));
     h.follower.start(h.handover);
-    h.follower.noteForeignLoad();
-    expect(h.onStopped).toHaveBeenCalledWith('sender-load');
-    expect(h.player.stop).not.toHaveBeenCalled();
+    await h.settle();
+    h.queue.removeItems.mockImplementation(() => undefined); // not applied yet
+    h.queue.insertItems.mockClear();
+    h.setSession(sessionOf([2, 3]));
+    h.queue.current = 1; // advanced to 2; 1 left the session meanwhile
+    h.stream().emit('playbackSession.updated', { sessionId: 'session-1', revision: 11 });
+    await h.settle();
+    const removals = h.queue.removeItems.mock.calls.length;
+    for (let i = 0; i < 3; i += 1) h.follower.notePlayerChanged();
+    await jest.advanceTimersByTimeAsync(400);
+    expect(h.queue.removeItems.mock.calls.length).toBe(removals);
   });
 
   it('polls the session every 5 s once its event stream has failed twice', async () => {

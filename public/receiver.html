@@ -1878,12 +1878,6 @@
             }
           }
 
-          // A sender loading a queue itself is in charge of it again: stop
-          // following (what the follower loads is marked auroraFollow).
-          if (sessionFollower && sessionFollower.following()) {
-            var ownLoad = loadRequestData.media && loadRequestData.media.customData && loadRequestData.media.customData.auroraFollow;
-            if (!ownLoad) sessionFollower.noteForeignLoad();
-          }
           // Something plays again: the "Open Aurora" idle hint no longer applies.
           followEndedTip = '';
           if (loadRequestData.media) {
