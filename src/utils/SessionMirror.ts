@@ -65,9 +65,17 @@ const RETRY_DELAY_MS = 5_000;
 const CLAIM_RETRY_DELAY_MS = 30_000;
 const REFRESH_BEFORE_EXPIRY_MS = 5 * 60_000;
 const MAX_CONFLICT_RETRIES = 3;
+/**
+ * Casting starting or stopping changes the output's kind, but a recovered Cast
+ * connection blinks off and on within a second (prod 2026-10-16 08:43:01,
+ * Beoplay A9). The kind is claimed once that has settled.
+ */
+export const CAST_KIND_SETTLE_MS = 1_000;
 const CONFLICT_CODES = new Set(['REVISION_CONFLICT', 'ANCHOR_NOT_FOUND', 'ENTRY_ID_CONFLICT']);
 
-interface Grant { sessionId: string; credential: PlaybackOutputCredential; seq: number }
+type OutputKind = 'browser' | 'cast';
+
+interface Grant { sessionId: string; credential: PlaybackOutputCredential; seq: number; kind: OutputKind }
 
 /** The output that replaced this device: what kind of device, and its name. */
 export interface ReplacingOutput { kind: string; name: string | null }
@@ -129,6 +137,7 @@ export class SessionMirror {
   private reportTimer: ReturnType<typeof setTimeout> | null = null;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private claimRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private kindTimer: ReturnType<typeof setTimeout> | null = null;
 
   start(store: MirroredStore, options: SessionMirrorOptions): void {
     this.stop();
@@ -245,8 +254,8 @@ export class SessionMirror {
     }
     if (state.castConnected !== previous.castConnected) {
       // The output moved between this browser and a Cast device: claim again
-      // under the new name.
-      void this.claim();
+      // under the new kind and name, once casting has settled.
+      this.scheduleKindCheck();
       return;
     }
     if (state.playlist !== previous.playlist || state.repeat !== previous.repeat || state.shuffle !== previous.shuffle) {
@@ -258,8 +267,8 @@ export class SessionMirror {
   }
 
   private release() {
-    for (const timer of [this.flushTimer, this.reportTimer, this.refreshTimer]) if (timer) clearTimeout(timer);
-    this.flushTimer = this.reportTimer = this.refreshTimer = null;
+    for (const timer of [this.flushTimer, this.reportTimer, this.refreshTimer, this.kindTimer]) if (timer) clearTimeout(timer);
+    this.flushTimer = this.reportTimer = this.refreshTimer = this.kindTimer = null;
     this.grant = null;
     this.session = null;
     this.dirty = false;
@@ -309,8 +318,9 @@ export class SessionMirror {
           sessionId = latest?.id ?? (await this.api.createPlaybackSession(auth, SESSION_NAME)).id;
         }
         const castSessionId = state.castConnected ? this.options!.getCastSessionId?.() || undefined : undefined;
+        const kind: OutputKind = state.castConnected ? 'cast' : 'browser';
         const { session, credential } = await this.api.claimPlaybackOutput(auth, sessionId, {
-          kind: state.castConnected ? 'cast' : 'browser',
+          kind,
           name: this.options!.getOutputName().slice(0, 120) || undefined,
           ...(castSessionId ? { castSessionId } : {}),
         });
@@ -318,9 +328,11 @@ export class SessionMirror {
         if (!this.enabled(this.store!.getState())) return;
         this.release();
         this.options?.diagnostic?.('ok', 'sync-claimed',
-          `kind=${state.castConnected ? 'cast' : 'browser'} generation=${credential.generation} castSession=${castSessionId || 'none'} state=${this.store!.getState().playbackState}`);
+          `kind=${kind} generation=${credential.generation} castSession=${castSessionId || 'none'} state=${this.store!.getState().playbackState}`);
         this.sessionId = sessionId;
-        this.grant = { sessionId, credential, seq: 0 };
+        this.grant = { sessionId, credential, seq: 0, kind };
+        // Casting started or stopped while the claim was on its way.
+        if (this.wantedKind() !== kind) this.scheduleKindCheck();
         this.session = session;
         this.displaced = false;
         this.scheduleRefresh();
@@ -335,6 +347,21 @@ export class SessionMirror {
       }
     })().finally(() => { this.claiming = null; });
     return this.claiming;
+  }
+
+  private wantedKind(): OutputKind {
+    return this.store?.getState().castConnected ? 'cast' : 'browser';
+  }
+
+  /** Claims again once casting has settled, if the grant names the wrong kind by then. */
+  private scheduleKindCheck() {
+    if (this.kindTimer) clearTimeout(this.kindTimer);
+    this.kindTimer = setTimeout(() => {
+      this.kindTimer = null;
+      const state = this.store?.getState();
+      if (!state || !this.enabled(state) || !this.grant) return;
+      if (this.grant.kind !== this.wantedKind()) void this.claim();
+    }, CAST_KIND_SETTLE_MS);
   }
 
   // Still playing here after a failed claim (offline for a moment): try again.
