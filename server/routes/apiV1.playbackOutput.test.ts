@@ -12,6 +12,9 @@ jest.mock('../services/scopedToken.service', () => ({
   ...jest.requireActual('../services/scopedToken.service'),
   generateOutputCredential: jest.fn(async () => ({ token: 'output-token', expiresAt: '2026-10-13T12:00:00.000Z' })),
   generateEphemeralScopedToken: jest.fn(async () => 'scoped-token'),
+  generateReceiverCredential: jest.fn(async () => ({
+    token: 'receiver-token', expiresAt: '2026-10-14T00:00:00.000Z', cap: '2026-10-14T12:00:00.000Z',
+  })),
 }));
 import type { Request, Response } from 'express';
 import router from './apiV1.routes';
@@ -26,7 +29,8 @@ import {
   PlaybackOutputNotActiveError,
   PlaybackOutputUnreachableError,
 } from '../services/playbackSession.service';
-import { generateEphemeralScopedToken, generateOutputCredential } from '../services/scopedToken.service';
+import { generateEphemeralScopedToken, generateOutputCredential, generateReceiverCredential } from '../services/scopedToken.service';
+import { isClientListening, publishApiV1Event } from '../services/apiV1Events.service';
 
 const principal = { userId: 'user-1', username: 'andreas', role: 'admin', authKind: 'jwt', clientId: 'laptop-5678', clientName: 'Aurora Web' };
 
@@ -176,3 +180,121 @@ describe('remote commands', () => {
   });
 });
 
+
+describe('a Cast receiver as the output', () => {
+  const receiverOutput = {
+    id: 'receiver:cast-77', kind: 'receiver' as const, name: 'NAD Forstærker', castSessionId: 'cast-77',
+    generation: 3, claimedAt: '2026-10-14T11:00:00.000Z', status: 'active' as const, report: null,
+  };
+  const receiverPrincipal = {
+    userId: 'user-1', username: 'andreas', role: 'admin', authKind: 'scoped', scope: 'receiver',
+    clientId: 'receiver:cast-77', clientName: 'Aurora Cast receiver',
+    outputGrant: { sid: 's-1', oid: 'receiver:cast-77', gen: 3 }, receiverCap: 1_900_000_000,
+  };
+
+  it('is claimed by a controller, which gets the receiver credential to hand over', async () => {
+    (claimPlaybackOutput as jest.Mock).mockResolvedValue(session(receiverOutput));
+    const claim = { kind: 'receiver', name: 'NAD Forstærker', castSessionId: 'cast-77' };
+    const { status, body } = await call('post', '/playback-sessions/:id/output', claim, { id: 's-1' });
+    expect(status).toBe(200);
+    expect(claimPlaybackOutput).toHaveBeenCalledWith({ userId: 'user-1', clientId: 'laptop-5678', sessionId: 's-1', output: claim });
+    expect(generateReceiverCredential).toHaveBeenCalledWith(principal, {
+      sid: '11111111-1111-4111-8111-111111111111', oid: 'receiver:cast-77', gen: 3,
+    });
+    expect(generateOutputCredential).not.toHaveBeenCalled();
+    expect(playbackOutputClaimResultSchema.safeParse(body.data).success).toBe(true);
+    expect(body.data.credential).toEqual({
+      token: 'receiver-token', expiresAt: '2026-10-14T00:00:00.000Z', renewableUntil: '2026-10-14T12:00:00.000Z',
+      outputId: 'receiver:cast-77', generation: 3,
+    });
+  });
+
+  it('must name the Cast session the receiver runs in', async () => {
+    const { status } = await call('post', '/playback-sessions/:id/output', { kind: 'receiver', name: 'NAD' }, { id: 's-1' });
+    expect(status).toBe(400);
+    expect(claimPlaybackOutput).not.toHaveBeenCalled();
+  });
+
+  it("gets a fresh credential, with a new cap, when a controller refreshes the receiver's grant", async () => {
+    (getCurrentOutputGrant as jest.Mock).mockResolvedValueOnce({ sid: 's-1', oid: 'receiver:cast-77', gen: 3, kind: 'receiver' });
+    const { status, body } = await call('post', '/playback-sessions/:id/output/refresh', { outputId: 'receiver:cast-77', generation: 3 }, { id: 's-1' });
+    expect(status).toBe(200);
+    expect(generateReceiverCredential).toHaveBeenCalledWith(principal, { sid: 's-1', oid: 'receiver:cast-77', gen: 3 });
+    expect(playbackOutputCredentialSchema.safeParse(body.data).success).toBe(true);
+    expect(body.data).toMatchObject({ token: 'receiver-token', renewableUntil: '2026-10-14T12:00:00.000Z' });
+  });
+
+  it('renews its own credential for its current grant, keeping the cap', async () => {
+    (getCurrentOutputGrant as jest.Mock).mockResolvedValueOnce({ sid: 's-1', oid: 'receiver:cast-77', gen: 3, kind: 'receiver' });
+    const { status, body } = await call('post', '/playback-sessions/:id/output/renew', {}, { id: 's-1' }, receiverPrincipal);
+    expect(status).toBe(200);
+    expect(getCurrentOutputGrant).toHaveBeenCalledWith({ userId: 'user-1', sessionId: 's-1', outputId: 'receiver:cast-77', generation: 3 });
+    expect(generateReceiverCredential).toHaveBeenCalledWith(receiverPrincipal, { sid: 's-1', oid: 'receiver:cast-77', gen: 3 }, 1_900_000_000);
+    expect(playbackOutputCredentialSchema.safeParse(body.data).success).toBe(true);
+  });
+
+  it('cannot renew a replaced grant, or past its cap', async () => {
+    (getCurrentOutputGrant as jest.Mock).mockRejectedValueOnce(new PlaybackOutputGrantReplacedError(session(output)));
+    const replaced = await call('post', '/playback-sessions/:id/output/renew', {}, { id: 's-1' }, receiverPrincipal);
+    expect([replaced.status, replaced.body.error.code]).toEqual([409, 'OUTPUT_GRANT_REPLACED']);
+    expect(generateReceiverCredential).not.toHaveBeenCalled();
+
+    (getCurrentOutputGrant as jest.Mock).mockResolvedValueOnce({ sid: 's-1', oid: 'receiver:cast-77', gen: 3, kind: 'receiver' });
+    (generateReceiverCredential as jest.Mock).mockResolvedValueOnce(null);
+    const capped = await call('post', '/playback-sessions/:id/output/renew', {}, { id: 's-1' }, receiverPrincipal);
+    expect([capped.status, capped.body.error.code]).toEqual([401, 'RECEIVER_RENEWAL_EXPIRED']);
+  });
+
+  it('renews only with a receiver credential', async () => {
+    const outputPrincipal = { ...receiverPrincipal, scope: 'output', receiverCap: undefined };
+    for (const caller of [principal, outputPrincipal]) {
+      const { status, body } = await call('post', '/playback-sessions/:id/output/renew', {}, { id: 's-1' }, caller);
+      expect([status, body.error.code]).toEqual([403, 'RECEIVER_CREDENTIAL_REQUIRED']);
+    }
+    expect(getCurrentOutputGrant).not.toHaveBeenCalled();
+  });
+
+  it('reports with its credential, as its own output', async () => {
+    (reportPlaybackOutput as jest.Mock).mockResolvedValue({ accepted: true, revision: 5 });
+    const report = { seq: 1, state: 'playing', queueEntryId: null, positionMs: 0 };
+    const { status } = await call('post', '/playback-sessions/:id/reports', report, { id: 's-1' }, receiverPrincipal);
+    expect(status).toBe(200);
+    expect(reportPlaybackOutput).toHaveBeenCalledWith({
+      userId: 'user-1', grant: { sid: 's-1', oid: 'receiver:cast-77', gen: 3 }, sessionId: 's-1', report,
+    });
+  });
+
+  it('is never minted by the generic scoped-token endpoint', async () => {
+    const { status } = await call('post', '/auth/scoped-token', { scope: 'receiver', expiresIn: '12h' });
+    expect(status).toBe(400);
+    expect(generateEphemeralScopedToken).not.toHaveBeenCalled();
+  });
+
+  it("hears only its own session's events, and its stream lets commands reach it", async () => {
+    const layer = router.stack.find((l) => l.route?.path === '/events')!;
+    const written: string[] = [];
+    let close = () => undefined as void;
+    const req = {
+      apiV1: { ...receiverPrincipal, userId: 'user-events' }, requestId: 'r1', headers: {}, query: {},
+      on: (event: string, handler: () => void) => { if (event === 'close') close = handler; },
+    } as unknown as Request;
+    const res = {
+      status: jest.fn().mockReturnThis(), setHeader: jest.fn(), flushHeaders: jest.fn(),
+      write: jest.fn((chunk: string) => { written.push(chunk); return true; }),
+    };
+    await layer.route!.stack[0].handle(req, res as unknown as Response, jest.fn());
+    try {
+      expect(isClientListening('user-events', 'receiver:cast-77')).toBe(true);
+      publishApiV1Event('user-events', 'playbackSession.updated', { sessionId: 's-1', revision: 6 });
+      publishApiV1Event('user-events', 'playbackSession.updated', { sessionId: 's-2', revision: 9 });
+      publishApiV1Event('user-events', 'playlist.changed', { playlistId: 'p-1' });
+      publishApiV1Event('user-events', 'playbackSync.changed', { enabled: true });
+      const events = written.filter((chunk) => chunk.startsWith('event: ')).map((chunk) => chunk.trim());
+      expect(events).toEqual(['event: playbackSession.updated', 'event: playbackSync.changed']);
+      expect(written.join('')).not.toContain('s-2');
+    } finally {
+      close();
+    }
+    expect(isClientListening('user-events', 'receiver:cast-77')).toBe(false);
+  });
+});

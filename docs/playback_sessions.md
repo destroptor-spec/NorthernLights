@@ -563,7 +563,8 @@ Phase 0(c)'s sender refill chooses *and* delivers until Phase 4; from Phase 4
 the server chooses and the sender still delivers; from Phase 5 the receiver
 fetches for itself.
 
-Phase 5 deserves its own short receiver spec before code. It must cover the
+Phase 5 deserves its own short receiver spec before code
+([cast-receiver-output.md](cast-receiver-output.md)). It must cover the
 token handling, SSE versus polling on each device, the live checks for
 `removeItems` and reorder on a sender-loaded queue, and the Castlite question
 in [Open questions](#open-questions).

@@ -390,6 +390,9 @@ describe('a take-over on the same Cast device', () => {
     expect(isSameCastDevice({ kind: 'browser', name: 'NAD Forstærker' }, true, 'NAD Forstærker')).toBe(false);
     expect(isSameCastDevice(null, true, 'NAD Forstærker')).toBe(false);
     expect(isSameCastDevice({ kind: 'cast', name: null }, true, '')).toBe(false);
+    // A receiver playing the session itself is the same Cast device too.
+    expect(isSameCastDevice({ kind: 'receiver', name: 'NAD Forstærker' }, true, 'NAD Forstærker')).toBe(true);
+    expect(isSameCastDevice({ kind: 'receiver', name: 'Stue TV' }, true, 'NAD Forstærker')).toBe(false);
   });
 
   it('passes the replacing output on from the event and from a refused report', async () => {
@@ -498,3 +501,218 @@ describe('actionWhenReplaced', () => {
   });
 });
 
+
+describe('a receiver that plays the session on its own (Phase 5)', () => {
+  const receiverCredential = {
+    token: 'receiver-token', expiresAt: new Date(Date.now() + 12 * 3_600_000).toISOString(),
+    renewableUntil: new Date(Date.now() + 24 * 3_600_000).toISOString(), outputId: 'receiver:cast-77', generation: 2,
+  };
+  const castSetup = (options: { canFollow?: boolean; takes?: boolean } = {}) => {
+    let canFollow = options.canFollow ?? true;
+    const handOverToReceiver = jest.fn(async () => options.takes ?? true);
+    const diagnostic = jest.fn();
+    const harness = setup({ castConnected: true }, [], {
+      getCastSessionId: () => 'cast-77',
+      receiverCanFollow: () => canFollow,
+      handOverToReceiver,
+      diagnostic,
+    });
+    let generation = 0;
+    harness.api.claimPlaybackOutput.mockImplementation(async (...args: unknown[]) => {
+      const claim = args[2] as { kind: string };
+      generation += 1;
+      return {
+        session: sessionOf([], generation + 1),
+        credential: claim.kind === 'receiver' ? { ...receiverCredential, generation } : { ...credential, generation },
+      };
+    });
+    return { ...harness, handOverToReceiver, diagnostic, setCanFollow: (value: boolean) => { canFollow = value; } };
+  };
+
+  it('claims the output for the receiver, hands it over, and leaves the reporting to it', async () => {
+    const { api, store, handOverToReceiver } = castSetup();
+    await play(store);
+    expect(api.claimPlaybackOutput).toHaveBeenCalledWith(expect.anything(), 'session-1', { kind: 'receiver', name: 'Chrome on Android', castSessionId: 'cast-77' });
+    expect(handOverToReceiver).toHaveBeenCalledWith({
+      sessionId: 'session-1', outputId: 'receiver:cast-77', generation: 1, token: 'receiver-token',
+      expiresAt: receiverCredential.expiresAt, renewableUntil: receiverCredential.renewableUntil,
+    }, 'claim');
+    // Queue edits still go to the session; reports come from the receiver.
+    expect(api.patchPlaybackSession).toHaveBeenCalled();
+    store.setState({ playbackState: 'paused', currentIndex: 1 });
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(api.reportPlaybackOutput).not.toHaveBeenCalled();
+  });
+
+  it('hands over to a receiver that says it can follow once casting has started', async () => {
+    const { api, store, mirror, handOverToReceiver, setCanFollow } = castSetup({ canFollow: false });
+    await play(store);
+    expect(api.claimPlaybackOutput).toHaveBeenLastCalledWith(expect.anything(), 'session-1', expect.objectContaining({ kind: 'cast' }));
+    setCanFollow(true);
+    mirror.noteReceiverCanFollow();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(api.claimPlaybackOutput).toHaveBeenLastCalledWith(expect.anything(), 'session-1', expect.objectContaining({ kind: 'receiver', castSessionId: 'cast-77' }));
+    expect(handOverToReceiver).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands over after its own first claim when the receiver says it can follow during it', async () => {
+    // Prod 2026-10-16 19:44:43, phone: the claim was still mirroring the
+    // queue when the receiver's status came, and the handover never happened.
+    const { api, store, mirror, handOverToReceiver, setCanFollow } = castSetup({ canFollow: false });
+    let finishPatch: () => void = () => undefined;
+    api.patchPlaybackSession.mockImplementationOnce(() => new Promise((resolve) => {
+      finishPatch = () => resolve(sessionOf(store.getState().playlist, 3));
+    }) as never);
+    store.setState({ playbackState: 'playing' });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(api.claimPlaybackOutput).toHaveBeenLastCalledWith(expect.anything(), 'session-1', expect.objectContaining({ kind: 'cast' }));
+    setCanFollow(true);
+    mirror.noteReceiverCanFollow(); // while the first claim is still mirroring
+    finishPatch();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(api.claimPlaybackOutput).toHaveBeenLastCalledWith(expect.anything(), 'session-1', expect.objectContaining({ kind: 'receiver' }));
+    expect(handOverToReceiver).toHaveBeenCalledTimes(1);
+  });
+
+  it('casts as today when the receiver does not take the session', async () => {
+    const { api, store, mirror, handOverToReceiver, diagnostic } = castSetup({ takes: false });
+    await play(store);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(handOverToReceiver).toHaveBeenCalledTimes(1);
+    expect(diagnostic).toHaveBeenCalledWith('warn', 'sync-receiver-handover-failed', 'generation=1');
+    expect(api.claimPlaybackOutput).toHaveBeenLastCalledWith(expect.anything(), 'session-1', expect.objectContaining({ kind: 'cast' }));
+    expect(api.reportPlaybackOutput).toHaveBeenCalled();
+    // Not again for this Cast session.
+    mirror.noteReceiverCanFollow();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(api.claimPlaybackOutput).toHaveBeenCalledTimes(2);
+    expect(handOverToReceiver).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands every renewed credential to the receiver, and renews on waking', async () => {
+    const { api, store, mirror, handOverToReceiver } = castSetup();
+    await play(store);
+    api.refreshOutputCredential.mockResolvedValue({ ...receiverCredential, token: 'renewed', generation: 1 });
+    mirror.noteWake();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(api.refreshOutputCredential).toHaveBeenCalledWith(expect.anything(), 'session-1', { outputId: 'receiver:cast-77', generation: 1 });
+    expect(handOverToReceiver).toHaveBeenLastCalledWith(expect.objectContaining({ token: 'renewed' }), 'refresh');
+    // At most once a minute.
+    mirror.noteWake();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(api.refreshOutputCredential).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not renew on waking while it holds a cast or browser output', async () => {
+    const { api, store, mirror } = setup();
+    await play(store);
+    mirror.noteWake();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(api.refreshOutputCredential).not.toHaveBeenCalled();
+  });
+
+  it('lets the receiver play on when this device leaves, and claims only when it plays itself', async () => {
+    const { api, store, mirror } = castSetup();
+    await play(store);
+    store.setState({ castConnected: false, playbackState: 'paused' });
+    await jest.advanceTimersByTimeAsync(CAST_KIND_SETTLE_MS);
+    expect(mirror.holdsOutput()).toBe(false);
+    expect(api.claimPlaybackOutput).toHaveBeenCalledTimes(1);
+
+    store.setState({ playbackState: 'playing' });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(api.claimPlaybackOutput).toHaveBeenLastCalledWith(expect.anything(), 'session-1', { kind: 'browser', name: 'Chrome on Android' });
+  });
+
+  it('takes the music back here when casting ends into local playback', async () => {
+    const { api, store } = castSetup();
+    await play(store);
+    store.setState({ castConnected: false, playbackState: 'playing' });
+    await jest.advanceTimersByTimeAsync(CAST_KIND_SETTLE_MS);
+    expect(api.claimPlaybackOutput).toHaveBeenLastCalledWith(expect.anything(), 'session-1', { kind: 'browser', name: 'Chrome on Android' });
+  });
+
+  it('keeps the receiver through a Cast connection that blinks off and on', async () => {
+    const { api, store, mirror } = castSetup();
+    await play(store);
+    store.setState({ castConnected: false });
+    await jest.advanceTimersByTimeAsync(400);
+    store.setState({ castConnected: true });
+    await jest.advanceTimersByTimeAsync(CAST_KIND_SETTLE_MS * 2);
+    expect(mirror.holdsOutput()).toBe(true);
+    expect(api.claimPlaybackOutput).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('while the receiver follows the session (Phase 5, PR E)', () => {
+  const followingSetup = () => {
+    const onReceiverFollowsChanged = jest.fn();
+    const adoptSession = jest.fn();
+    const handOverToReceiver = jest.fn(async () => true);
+    const harness = setup({ castConnected: true }, [], {
+      getCastSessionId: () => 'cast-77', receiverCanFollow: () => true, handOverToReceiver, onReceiverFollowsChanged, adoptSession,
+    });
+    harness.api.claimPlaybackOutput.mockImplementation(async () => ({
+      session: sessionOf(harness.store.getState().playlist, 5),
+      credential: { token: 'receiver-token', expiresAt: credential.expiresAt, outputId: 'receiver:cast-77', generation: 1 },
+    }));
+    return { ...harness, onReceiverFollowsChanged, adoptSession };
+  };
+
+  it('knows once the receiver took the session, and forgets when the grant goes', async () => {
+    const { store, mirror, onReceiverFollowsChanged } = followingSetup();
+    await play(store);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(mirror.receiverFollows()).toBe(true);
+    expect(onReceiverFollowsChanged).toHaveBeenLastCalledWith(true);
+    store.setState({ castConnected: false, playbackState: 'paused' });
+    await jest.advanceTimersByTimeAsync(CAST_KIND_SETTLE_MS);
+    expect(mirror.receiverFollows()).toBe(false);
+    expect(onReceiverFollowsChanged).toHaveBeenLastCalledWith(false);
+  });
+
+  it("takes the session's queue when its own edit lost to a newer change, instead of overwriting it", async () => {
+    const { api, store, mirror, adoptSession } = followingSetup();
+    await play(store);
+    await jest.advanceTimersByTimeAsync(0);
+    const newer = sessionOf([track(1), track(9)], 9);
+    api.patchPlaybackSession.mockRejectedValueOnce(new AuroraApiError('conflict', 409, 'REVISION_CONFLICT', undefined, { current: newer }));
+    store.setState({ playlist: [track(1), track(2)] });
+    await jest.advanceTimersByTimeAsync(300);
+    expect(adoptSession).toHaveBeenCalledWith(newer);
+    // Not planned again from this device's queue.
+    const patches = api.patchPlaybackSession.mock.calls.length;
+    await jest.advanceTimersByTimeAsync(10_000);
+    expect(api.patchPlaybackSession).toHaveBeenCalledTimes(patches);
+    expect(mirror.noteSessionChanged(sessionOf([track(1)], 9))).toBe(false); // not newer
+  });
+
+  it('takes a newer session only when no edit of its own is on the way', async () => {
+    const { store, mirror } = followingSetup();
+    await play(store);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(mirror.noteSessionChanged(sessionOf([track(4)], 20))).toBe(true);
+    store.setState({ playlist: [track(4), track(5)] }); // an edit waiting to be sent
+    expect(mirror.noteSessionChanged(sessionOf([track(6)], 21))).toBe(false);
+    expect(mirror.noteSessionChanged({ ...sessionOf([track(6)], 22), id: 'other' })).toBe(false);
+  });
+
+  it('flushes pending edits at once and answers the session that has them', async () => {
+    const { api, store, mirror } = followingSetup();
+    await play(store);
+    await jest.advanceTimersByTimeAsync(0);
+    store.setState({ playlist: [...store.getState().playlist, track(8)] });
+    const session = await mirror.flushNow();
+    expect(api.patchPlaybackSession).toHaveBeenLastCalledWith(expect.anything(), 'session-1', expect.objectContaining({
+      operations: [expect.objectContaining({ type: 'insert', entryIds: [uuid(8)] })],
+    }));
+    expect(session?.queue.map((entry) => entry.queueEntryId)).toContain(uuid(8));
+  });
+
+  it('is not set for a cast or browser output', async () => {
+    const { store, mirror } = setup();
+    await play(store);
+    expect(mirror.receiverFollows()).toBe(false);
+    expect(mirror.noteSessionChanged(sessionOf([track(1)], 50))).toBe(false);
+  });
+});

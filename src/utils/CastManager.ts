@@ -29,11 +29,12 @@ import {
     transportStateFromPlayerState,
 } from './castWatchdogPolicy';
 import { CAST_MEDIA_NAMESPACE, ReconcileBurst, probeCastTransport } from './castTransportRecovery';
-import { applyCastStreamingQualityToHlsUrl, applyStreamingQualityToHlsUrl } from './streaming';
+import { applyCastStreamingQualityToHlsUrl, applyStreamingQualityToHlsUrl, resolveCastStreamingQuality } from './streaming';
 import { createQueueEntryId, ensureQueueEntryIds } from './queue';
 import type { TrackInfo } from './fileSystem';
 import { castEndSnapshot, shouldContinuePlayingAfterCast, type CastEndSnapshot } from './castEndHandoff';
 import { getPlaybackTimeSnapshot } from '../store/playbackTime';
+import { handOverToReceiver, ReceiverFollowAcks, RECEIVER_SESSION_FOLLOW_CAP, type ReceiverFollowAck, type ReceiverHandover } from './receiverSessionFollow';
 declare const chrome: any;
 declare const cast: any;
 
@@ -219,6 +220,12 @@ export class CastManager {
     private lastDurationCorrectionLogAt = 0;
     private auroraControlRequestId = 0;
     private auroraControlCapLoggedSid: string | null = null;
+    /** The Cast session whose receiver said it follows a playback session itself. */
+    private sessionFollowCapSid = '';
+    /** The Cast session whose receiver took the playback session (PR E): its queue is the receiver's. */
+    private receiverFollowingSid = '';
+    private readonly receiverFollowListeners = new Set<() => void>();
+    private readonly receiverFollowAcks = new ReceiverFollowAcks();
     private lastRemotePlayerEventAt = 0;
     private lastRemotePositionAt = 0;
     private lastRemotePositionEntryId: string | null = null;
@@ -886,6 +893,106 @@ export class CastManager {
         return this.getCurrentSessionId();
     }
 
+    /**
+     * The receiver in this Cast session plays a playback session on its own
+     * when given one (Phase 5; it says so in aurora.status caps).
+     */
+    public receiverCanFollowSession(): boolean {
+        const sid = this.getCurrentSessionId();
+        return !!sid && this.isConnected() && this.sessionFollowCapSid === sid;
+    }
+
+    /**
+     * Phase 5 probe (docs/cast-receiver-output.md): asks the receiver to try
+     * an event stream and fetch with a 15-minute `sse` token, and to list the
+     * queue APIs it has, and to log the results as `receiver-probe` markers.
+     * It never edits the live queue: every inserted item uses up a CAF item
+     * ID, and this sender predicts those IDs (castQueueWindow.ts). Started by
+     * hand from the Cast diagnostics setting; an older receiver ignores it.
+     */
+    public async runReceiverProbe(sseToken: string): Promise<'started' | 'busy' | 'unanswered' | 'not-connected'> {
+        const session = this.castContext?.getCurrentSession?.() || null;
+        if (!session || typeof session.sendMessage !== 'function' || !this.isConnected()) return 'not-connected';
+        const requestId = ++this.auroraControlRequestId;
+        const answer = new Promise<boolean | null>((resolve) => {
+            const timer = setTimeout(() => { this.probeAcks.delete(requestId); resolve(null); }, 5_000);
+            this.probeAcks.set(requestId, (accepted) => { clearTimeout(timer); this.probeAcks.delete(requestId); resolve(accepted); });
+        });
+        try {
+            await session.sendMessage(getAuroraStatusNamespace(session), { type: 'aurora.probe', requestId, sseToken });
+        } catch (error) {
+            this.logCast('warn', 'receiver-probe-sent', `sid=${this.getCurrentSessionId() || 'none'} result=send-failed ${this.describeError(error)}`);
+        }
+        const accepted = await answer;
+        const result = accepted === null ? 'unanswered' : accepted ? 'started' : 'busy';
+        this.logCast(accepted ? 'ok' : 'warn', 'receiver-probe-sent', `sid=${this.getCurrentSessionId() || 'none'} result=${result}`);
+        return result;
+    }
+
+    private readonly probeAcks = new Map<number, (accepted: boolean) => void>();
+
+    /**
+     * The receiver in this Cast session plays the playback session itself
+     * (it took the handover). Its queue is then its own, kept in line with the
+     * session: this sender loads, inserts, removes, moves and refills nothing
+     * there, and starts tracks with session commands (docs/cast-receiver-output.md, PR E).
+     */
+    public receiverFollowsSession(): boolean {
+        const sid = this.getCurrentSessionId();
+        return !!sid && this.isConnected() && this.receiverFollowingSid === sid;
+    }
+
+    /** SessionMirror: the receiver took the session (or this device no longer holds it for the receiver). */
+    public setReceiverFollowsSession(following: boolean): void {
+        const sid = following ? this.getCurrentSessionId() : '';
+        if (sid === this.receiverFollowingSid) return;
+        this.receiverFollowingSid = sid;
+        this.logCast('ok', 'cast-receiver-follows', `following=${following} sid=${sid || this.getCurrentSessionId() || 'none'}`);
+        if (following && this.queueWindow) {
+            // What this sender loaded no longer describes the receiver's queue.
+            this.queueWindow = null;
+            this.logCast('ok', 'queue-window-released', 'reason=receiver-follows');
+        }
+    }
+
+    /** A queue operation this sender leaves to a receiver that follows the session. */
+    private leftToReceiver(op: string): boolean {
+        if (!this.receiverFollowsSession()) return false;
+        this.logCast('ok', 'cast-queue-left-to-receiver', `op=${op}`);
+        return true;
+    }
+
+    /** Called once per Cast session, when its receiver first says it can follow a session. */
+    public addReceiverCanFollowListener(listener: () => void): () => void {
+        this.receiverFollowListeners.add(listener);
+        return () => this.receiverFollowListeners.delete(listener);
+    }
+
+    /**
+     * Gives the receiver the playback session and its receiver credential
+     * (aurora.session.follow, acknowledged). True once the receiver took it.
+     * The token is never logged.
+     */
+    public async handOverSessionToReceiver(handover: ReceiverHandover, reason: string): Promise<boolean> {
+        const session = this.castContext?.getCurrentSession?.() || null;
+        const sid = this.getCurrentSessionId();
+        const detail = `sid=${sid || 'none'} reason=${reason} generation=${handover.generation}`;
+        if (!session || typeof session.sendMessage !== 'function' || !this.receiverCanFollowSession()) {
+            this.logCast('warn', 'receiver-session-handover', `${detail} result=not-connected`);
+            return false;
+        }
+        const result = await handOverToReceiver({
+            ...handover,
+            quality: resolveCastStreamingQuality(usePlayerStore.getState().streamingQuality),
+        }, {
+            send: (message) => session.sendMessage(getAuroraStatusNamespace(session), message),
+            acks: this.receiverFollowAcks,
+            nextRequestId: () => ++this.auroraControlRequestId,
+        });
+        this.logCast(result.ok ? 'ok' : 'warn', 'receiver-session-handover', `${detail} result=${result.outcome} attempts=${result.attempts}`);
+        return result.ok;
+    }
+
     public setCastingElsewhereCheck(check: ((castDeviceName: string) => boolean) | null) {
         this.castingElsewhereCheck = check;
     }
@@ -1323,6 +1430,13 @@ export class CastManager {
                         this.auroraControlCapLoggedSid = sessionId;
                         this.logCast('ok', 'Receiver accepts aurora-control', `sid=${sessionId || 'unknown'} caps=${status.caps.join(',')}`);
                     }
+                    // Only once something is loaded there: handing over before the
+                    // first LOAD blocks that LOAD (prod 2026-10-16 19:27).
+                    if (sessionId && status.queueEntryId && status.caps?.includes(RECEIVER_SESSION_FOLLOW_CAP) && this.sessionFollowCapSid !== sessionId) {
+                        this.sessionFollowCapSid = sessionId;
+                        this.logCast('ok', 'receiver-can-follow', `sid=${sessionId}`);
+                        this.receiverFollowListeners.forEach((listener) => listener());
+                    }
                     this.applyAuroraStatus(status);
                     this.syncReceiverDiagnostics();
                 } else if (status && status.type === 'aurora.diagnostics.ack') {
@@ -1337,6 +1451,12 @@ export class CastManager {
                         'Cast queue insert acknowledged by receiver',
                         `ok=${Boolean(ack.ok)} inserted=${ack.inserted ?? 0} requestId=${ack.requestId ?? 'none'}${ack.detail ? ` ${ack.detail}` : ''}`,
                     );
+                } else if (status && (status as { type?: string }).type === 'aurora.probe.ack') {
+                    const ack = status as unknown as { requestId?: unknown; accepted?: unknown };
+                    this.probeAcks.get(Number(ack.requestId))?.(ack.accepted === true);
+                } else if (status && (status as { type?: string }).type === 'aurora.session.follow.ack') {
+                    if (session !== this.castContext?.getCurrentSession?.()) return;
+                    this.receiverFollowAcks.acknowledge(status as unknown as ReceiverFollowAck);
                 } else if (status && (status as { type?: string }).type === 'aurora.control.ack') {
                     const ack = status as unknown as { action?: string; ok?: boolean; detail?: string; requestId?: number };
                     this.logCast(
@@ -3018,6 +3138,7 @@ export class CastManager {
      * a burst becomes a few jumps rather than a LOAD per press.
      */
     public ensureQueuePlayback(tracks: CastQueueTrack[], startIndex = 0, repeat: CastRepeat = 'none'): Promise<void> {
+        if (this.leftToReceiver('play')) return Promise.resolve();
         this.pendingSkip = { tracks, startIndex, repeat };
         this.skipRequestSeq++;
         if (this.skipRunner) return this.skipRunner;
@@ -3365,6 +3486,7 @@ export class CastManager {
      * @param repeat 'none' | 'one' | 'all' — repeat mode
      */
     public async castQueue(tracks: CastQueueTrack[], startIndex = 0, repeat: CastRepeat = 'none', startTime = 0, confirmationRetry = false) {
+        if (this.leftToReceiver('load')) return;
         if (!this.isConnected() || tracks.length === 0) return;
         let session = this.castContext.getCurrentSession();
         if (!session) return;
@@ -3506,6 +3628,7 @@ export class CastManager {
      * cannot be mirrored.
      */
     private async reconcileQueueWindow(edited = false): Promise<void> {
+        if (this.receiverFollowsSession()) return;
         if (edited) this.queueWindowEditSeq++;
         // Store queue actions call us inside their updater; read after it commits.
         await Promise.resolve();
@@ -3924,6 +4047,7 @@ export class CastManager {
 
     /** Queue edits that bypass the store's per-edit hooks (Undo) reconcile here. */
     public reconcileQueueEdits(): void {
+        if (this.leftToReceiver('reconcile')) return;
         if (this.queueWindow?.session === this.castContext?.getCurrentSession?.()) void this.reconcileQueueWindow(true);
     }
 
@@ -3940,6 +4064,7 @@ export class CastManager {
      * Appends a new track to the end of the active Cast queue without interrupting playback.
      */
     public async appendToQueue(track: { queueEntryId?: string; url?: string; rawUrl?: string; title?: string; artist?: string; artUrl?: string; album?: string; format?: string; duration?: number }) {
+        if (this.leftToReceiver('append')) return;
         if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
             this.queueWindowEditSeq++; // reconciled once the load has landed
             return;
@@ -3992,6 +4117,7 @@ export class CastManager {
     }
 
     public async insertNextInQueue(track: { queueEntryId?: string; url?: string; rawUrl?: string; title?: string; artist?: string; artUrl?: string; album?: string; format?: string; duration?: number }) {
+        if (this.leftToReceiver('insert-next')) return;
         if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
             this.queueWindowEditSeq++; // reconciled once the load has landed
             return;
@@ -4041,6 +4167,7 @@ export class CastManager {
     }
 
     public async removeFromQueue(queueEntryId: string) {
+        if (this.leftToReceiver('remove')) return;
         if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
             this.queueWindowEditSeq++; // reconciled once the load has landed
             return;
@@ -4069,6 +4196,7 @@ export class CastManager {
     }
 
     public async moveQueueItem(queueEntryId: string, newIndex: number) {
+        if (this.leftToReceiver('move')) return;
         if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
             this.queueWindowEditSeq++; // reconciled once the load has landed
             return;
@@ -4097,6 +4225,7 @@ export class CastManager {
     }
 
     public async setRepeatMode(repeat: 'none' | 'one' | 'all') {
+        if (this.leftToReceiver('repeat')) return;
         if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
             this.queueWindowEditSeq++; // reconciled once the load has landed
             return;

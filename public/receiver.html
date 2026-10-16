@@ -693,6 +693,10 @@
     }
   </style>
   <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+  <!-- Phase 5: following the playback session. Only runs after a sender hands
+       over a session (aurora.session.follow); without it this receiver works
+       exactly as before. -->
+  <script src="receiver-follow.js"></script>
 </head>
 <body>
   <audio id="aurora-cast-media" preload="auto" aria-hidden="true"></audio>
@@ -840,6 +844,9 @@
       var currentTipIndex = 0;
       var pendingMediaInfo = null;
       var receiverStopReason = '';
+      // Set when following the session ended because its credential ran out:
+      // the idle screen then asks for Aurora instead of rotating tips.
+      var followEndedTip = '';
       var lastPlaybackActivityAt = Date.now();
       var dimmedLogged = false;
       var lastRender = {
@@ -1083,7 +1090,13 @@
           // Lets the sender tell this receiver from one cached before
           // aurora.control existed: both accept messages on the namespace,
           // but only this one acts on them.
-          caps: ['control', 'queue-insert', 'diagnostics'],
+          // session-follow only once a LOAD has given this receiver a media
+          // token: before that it can neither play the session nor log, and a
+          // sender handing over then would block its own first LOAD (prod
+          // 2026-10-16 19:27: nothing ever played).
+          caps: sessionFollower && currentAuthToken
+            ? ['control', 'queue-insert', 'diagnostics', 'session-follow']
+            : ['control', 'queue-insert', 'diagnostics'],
           diagnosticsVerbose: receiverDiagnosticsVerbose,
           ts: Date.now()
         };
@@ -1264,6 +1277,206 @@
         }
       }
 
+      // ── Phase 5 probe (docs/cast-receiver-output.md) ─────────────────────
+      // Runs only when a sender asks (aurora.probe, from Settings → Playback →
+      // Cast diagnostics → Run probe) and changes nothing that plays. It learns
+      // whether this device can hold an event stream and stream a fetch to the
+      // server, and which queue APIs it has, and logs receiver-probe markers.
+      // It never edits the queue: every inserted item uses up a CAF item ID,
+      // and the sender predicts those IDs.
+      var PROBE_STREAM_MS = 10 * 60 * 1000;
+      var PROBE_FETCH_TIMEOUT_MS = 25000;
+      var PROBE_CLIENT_ID = 'receiver-probe';
+      var probeRunning = false;
+      var probeStream = null;
+      var probeStreamTimer = null;
+
+      function probeMarker(step, detail) {
+        postDiagnosticMarker('receiver-probe', step + (detail ? ' ' + detail : ''));
+      }
+
+      function probeEventsUrl(token) {
+        return '/api/v1/events?token=' + encodeURIComponent(token) + '&clientId=' + PROBE_CLIENT_ID;
+      }
+
+      function probeEnvironment() {
+        var queueApis = [];
+        ['getItems', 'getCurrentItem', 'getCurrentItemIndex', 'insertItems', 'removeItems', 'updateItems', 'reorderItems', 'setQueueStatusLimit'].forEach(function(name) {
+          if (queueManager && typeof queueManager[name] === 'function') queueApis.push(name);
+        });
+        var reorderMessage = false;
+        try {
+          reorderMessage = !!(cast.framework.messages.MessageType && cast.framework.messages.MessageType.QUEUE_REORDER);
+        } catch (e) {}
+        probeMarker('env',
+          'eventSource=' + (typeof EventSource === 'function') +
+          ' fetch=' + (typeof fetch === 'function') +
+          ' readableStream=' + (typeof ReadableStream === 'function') +
+          ' abortController=' + (typeof AbortController === 'function') +
+          ' queueApis=' + (queueApis.join(',') || 'none') +
+          ' queueReorderMessage=' + reorderMessage +
+          ' ua=' + safeLogValue(navigator.userAgent || 'unknown').slice(0, 180));
+      }
+
+      // A fetch of the event stream: do headers and a first chunk arrive?
+      // (The server writes a keepalive every 20 s, so a quiet account's first
+      // chunk can take that long.)
+      function probeFetch(token, done) {
+        if (typeof fetch !== 'function') {
+          probeMarker('fetch', 'result=unavailable');
+          done();
+          return;
+        }
+        var started = Date.now();
+        var controller = typeof AbortController === 'function' ? new AbortController() : null;
+        var headersMs = -1;
+        var finished = false;
+        var timer = null;
+        function finish(detail) {
+          if (finished) return;
+          finished = true;
+          if (timer) clearTimeout(timer);
+          try { if (controller) controller.abort(); } catch (abortError) {}
+          probeMarker('fetch', detail + ' headersMs=' + headersMs + ' ms=' + (Date.now() - started));
+          done();
+        }
+        timer = setTimeout(function() { finish('result=no-first-chunk'); }, PROBE_FETCH_TIMEOUT_MS);
+        try {
+          fetch(probeEventsUrl(token), controller ? { signal: controller.signal } : {})
+            .then(function(response) {
+              headersMs = Date.now() - started;
+              var reader = response.body && typeof response.body.getReader === 'function' ? response.body.getReader() : null;
+              if (!response.ok) return finish('result=http-' + response.status);
+              if (!reader) return finish('result=no-stream-reader status=' + response.status);
+              return reader.read().then(function(chunk) {
+                finish('result=ok status=' + response.status + ' firstChunkBytes=' + (chunk && chunk.value ? chunk.value.length : 0));
+              });
+            })
+            .catch(function(fetchError) {
+              finish('result=error error=' + safeLogValue((fetchError && fetchError.name) || fetchError));
+            });
+        } catch (fetchError) {
+          finish('result=threw error=' + safeLogValue((fetchError && fetchError.name) || fetchError));
+        }
+      }
+
+      function closeProbeStream(reason, detail) {
+        if (probeStreamTimer) clearTimeout(probeStreamTimer);
+        probeStreamTimer = null;
+        if (!probeStream) return;
+        try { probeStream.close(); } catch (closeError) {}
+        probeStream = null;
+        probeMarker('eventsource', 'result=closed reason=' + reason + (detail ? ' ' + detail : ''));
+      }
+
+      // An EventSource held open for ten minutes: does it connect, and does it
+      // survive idle? Errors are logged as they come (EventSource reconnects
+      // by itself; the 15-minute token outlives the probe).
+      function probeEventSource(token) {
+        closeProbeStream('replaced');
+        if (typeof EventSource !== 'function') {
+          probeMarker('eventsource', 'result=unavailable');
+          return;
+        }
+        var started = Date.now();
+        var opens = 0;
+        var errors = 0;
+        var events = 0;
+        var source;
+        try {
+          source = new EventSource(probeEventsUrl(token));
+        } catch (sourceError) {
+          probeMarker('eventsource', 'result=threw error=' + safeLogValue((sourceError && sourceError.name) || sourceError));
+          return;
+        }
+        probeStream = source;
+        function counts() {
+          return 'heldMs=' + (Date.now() - started) + ' opens=' + opens + ' errors=' + errors + ' events=' + events;
+        }
+        source.onopen = function() {
+          opens++;
+          probeMarker('eventsource', (opens === 1 ? 'result=open' : 'result=reopened') + ' ' + counts());
+        };
+        source.onerror = function() {
+          errors++;
+          probeMarker('eventsource', 'result=error readyState=' + source.readyState + ' ' + counts());
+          if (source.readyState === 2 || errors >= 5) closeProbeStream('gave-up', counts());
+        };
+        ['playbackSession.progress', 'playbackSession.updated', 'playbackSession.handedOff', 'resync.required'].forEach(function(type) {
+          source.addEventListener(type, function() { events++; });
+        });
+        probeStreamTimer = setTimeout(function() { closeProbeStream('done', counts()); }, PROBE_STREAM_MS);
+      }
+
+      function handleAuroraProbe(event, data) {
+        var token = typeof data.sseToken === 'string' ? data.sseToken : '';
+        var accepted = !probeRunning && !!token;
+        try {
+          context.sendCustomMessage(AURORA_STATUS_NS, event.senderId, {
+            type: 'aurora.probe.ack', requestId: data.requestId || null, accepted: accepted
+          });
+        } catch (ackError) { /* the sender times out and says so */ }
+        if (!accepted) return;
+        probeRunning = true;
+        try {
+          probeMarker('start', 'requestId=' + (data.requestId || 'none'));
+          probeEnvironment();
+          probeFetch(token, function() {
+            probeRunning = false;
+            probeEventSource(token);
+          });
+        } catch (probeError) {
+          probeRunning = false;
+          probeMarker('failed', 'error=' + safeStringify(probeError));
+        }
+      }
+
+      // ── Phase 5: follow the playback session (receiver-follow.js) ────────
+      // Created only when the module loaded and this device can hold an event
+      // stream; only then is `session-follow` advertised. Nothing follows until
+      // a sender hands over a session.
+      var sessionFollower = null;
+      try {
+        if (window.AuroraSessionFollow && typeof EventSource === 'function' && typeof fetch === 'function') {
+          sessionFollower = window.AuroraSessionFollow.createFollower({
+            playerManager: playerManager,
+            queueManager: queueManager,
+            messages: cast.framework.messages,
+            fetch: function(url, init) { return fetch(url, init); },
+            EventSource: EventSource,
+            setTimeout: function(fn, ms) { return setTimeout(fn, ms); },
+            clearTimeout: function(timer) { clearTimeout(timer); },
+            now: function() { return Date.now(); },
+            mediaToken: function() { return currentAuthToken; },
+            origin: window.location.origin,
+            marker: function(name, detail) { postDiagnosticMarker(name, detail); },
+            onStopped: function(reason) {
+              if (reason === 'expired') followEndedTip = 'Open Aurora to keep playing.';
+              syncUi(true);
+            }
+          });
+        }
+      } catch (followerError) {
+        sessionFollower = null;
+        postServerLog('warn', '[' + LOG_TAG + '] receiver-session-follow unavailable', safeStringify(followerError));
+      }
+
+      function handleSessionFollow(event, data) {
+        var ok = false;
+        try {
+          // Without a media token nothing it builds would play: let the sender cast as before.
+          ok = !!(sessionFollower && currentAuthToken && sessionFollower.start(data));
+        } catch (startError) {
+          postServerLog('warn', '[' + LOG_TAG + '] receiver-session-follow failed', safeStringify(startError));
+        }
+        if (ok) followEndedTip = '';
+        try {
+          context.sendCustomMessage(AURORA_STATUS_NS, event.senderId, {
+            type: 'aurora.session.follow.ack', requestId: data.requestId || null, ok: ok
+          });
+        } catch (ackError) { /* the sender retries, then casts as before */ }
+      }
+
       function handleAuroraMessage(event) {
         var data = event && event.data;
         if (typeof data === 'string') {
@@ -1284,6 +1497,10 @@
           handleAuroraControl(event, data);
         } else if (data.type === 'aurora.queue.insert') {
           handleAuroraQueueInsert(event, data);
+        } else if (data.type === 'aurora.probe') {
+          handleAuroraProbe(event, data);
+        } else if (data.type === 'aurora.session.follow') {
+          handleSessionFollow(event, data);
         }
       }
 
@@ -1526,9 +1743,10 @@
           ui.stateBanner.classList.toggle('is-visible', Boolean(bannerCopy));
           lastRender.bannerCopy = bannerCopy;
         }
-        if (force || lastRender.idleTip !== IDLE_TIPS[currentTipIndex]) {
-          ui.idleTip.textContent = IDLE_TIPS[currentTipIndex];
-          lastRender.idleTip = IDLE_TIPS[currentTipIndex];
+        var idleTip = followEndedTip || IDLE_TIPS[currentTipIndex];
+        if (force || lastRender.idleTip !== idleTip) {
+          ui.idleTip.textContent = idleTip;
+          lastRender.idleTip = idleTip;
         }
 
         setArtwork(imageUrl, title);
@@ -1660,6 +1878,8 @@
             }
           }
 
+          // Something plays again: the "Open Aurora" idle hint no longer applies.
+          followEndedTip = '';
           if (loadRequestData.media) {
             normalizeMedia(loadRequestData.media);
             pendingMediaInfo = loadRequestData.media;
@@ -1757,6 +1977,7 @@
             suppressDefaultCastUi();
             postReceiverHeartbeat('media-status');
             syncUi(true);
+            if (sessionFollower) sessionFollower.notePlayerChanged();
           }
         }
       );

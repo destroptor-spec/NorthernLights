@@ -132,8 +132,8 @@ const TERMINAL_OUTPUT_STATES = new Set(['stopped', 'idle', 'error']);
  * so itself, and a new claim replaces it.
  */
 /**
- * The Cast session each `cast` output sends to, by playback session, for the
- * grant that named it. Only a hint, so it is not stored: after a restart it
+ * The Cast session each `cast` output sends to (or each `receiver` output runs
+ * in), by playback session, for the grant that named it. Only a hint, so it is not stored: after a restart it
  * is unknown, and clients then act as if no other device casts there.
  */
 const castSessionIds = new Map<string, { generation: number; castSessionId: string }>();
@@ -158,7 +158,7 @@ function serializeOutput(row: SessionRow, now = Date.now()): PlaybackOutput | nu
     id: row.output_id,
     kind: row.output_kind,
     name: row.output_name,
-    ...(row.output_kind === 'cast' ? { castSessionId } : {}),
+    ...(row.output_kind === 'cast' || row.output_kind === 'receiver' ? { castSessionId } : {}),
     generation: Number(row.output_generation),
     claimedAt: new Date(row.output_claimed_at).toISOString(),
     status,
@@ -484,10 +484,19 @@ export async function patchPlaybackSession(input: {
 }
 
 /**
- * Makes the calling device the session's output ("play here"). Any of the
- * owner's devices may claim at any time, without a revision check, so moving
- * playback between devices is seamless. Each claim raises the generation;
- * reports from an earlier grant are stale from that moment.
+ * The output a claim makes: the calling device, or for a receiver claim the
+ * Cast receiver in the named Cast session (docs/cast-receiver-output.md, PR B).
+ */
+export function claimedOutputId(clientId: string, output: PlaybackOutputClaim): string {
+  return output.kind === 'receiver' ? `receiver:${output.castSessionId}` : clientId;
+}
+
+/**
+ * Makes the calling device the session's output ("play here"), or, for kind
+ * `receiver`, the Cast receiver that device casts to. Any of the owner's
+ * devices may claim at any time, without a revision check, so moving playback
+ * between devices is seamless. Each claim raises the generation; reports from
+ * an earlier grant are stale from that moment.
  */
 export async function claimPlaybackOutput(input: {
   userId: string;
@@ -497,23 +506,24 @@ export async function claimPlaybackOutput(input: {
   expectedRevision?: number;
 }): Promise<PlaybackSession> {
   const db = await initDB();
+  const outputId = claimedOutputId(input.clientId, input.output);
   const result = await db.query(`
     UPDATE playback_sessions
-    SET owner_client_id = $3, output_id = $3, output_kind = $4, output_name = $5,
+    SET owner_client_id = $3, output_id = $7, output_kind = $4, output_name = $5,
         output_generation = output_generation + 1, output_claimed_at = NOW(),
         output_seq = NULL, output_state = NULL, output_reason = NULL,
         output_entry_id = NULL, output_position_ms = NULL, output_reported_at = NULL,
         revision = revision + 1, updated_at = NOW()
     WHERE id = $1 AND user_id = $2 AND ($6::bigint IS NULL OR revision = $6::bigint)
     RETURNING *
-  `, [input.sessionId, input.userId, input.clientId, input.output.kind, input.output.name ?? null, input.expectedRevision ?? null]);
+  `, [input.sessionId, input.userId, input.clientId, input.output.kind, input.output.name ?? null, input.expectedRevision ?? null, outputId]);
   if (!result.rows[0]) {
     const current = await getPlaybackSession(input.userId, input.sessionId);
     if (!current) throw new PlaybackSessionNotFoundError();
     throw new PlaybackSessionRevisionError(current);
   }
   const generation = Number((result.rows[0] as SessionRow).output_generation);
-  if (input.output.kind === 'cast' && input.output.castSessionId) {
+  if ((input.output.kind === 'cast' || input.output.kind === 'receiver') && input.output.castSessionId) {
     castSessionIds.set(input.sessionId, { generation, castSessionId: input.output.castSessionId });
   } else {
     castSessionIds.delete(input.sessionId);
@@ -522,7 +532,7 @@ export async function claimPlaybackOutput(input: {
   publishApiV1Event(input.userId, 'playbackSession.handedOff', {
     sessionId: session.id,
     ownerClientId: input.clientId,
-    outputId: input.clientId,
+    outputId,
     outputKind: session.output!.kind,
     outputName: session.output!.name,
     castSessionId: session.output!.castSessionId ?? null,
@@ -604,13 +614,13 @@ export async function getCurrentOutputGrant(input: {
   sessionId: string;
   outputId: string;
   generation: number;
-}): Promise<{ sid: string; oid: string; gen: number }> {
+}): Promise<{ sid: string; oid: string; gen: number; kind: PlaybackOutput['kind'] }> {
   const session = await getPlaybackSession(input.userId, input.sessionId);
   if (!session) throw new PlaybackSessionNotFoundError();
   if (session.output?.id !== input.outputId || session.output.generation !== input.generation) {
     throw new PlaybackOutputGrantReplacedError(session);
   }
-  return { sid: session.id, oid: session.output.id, gen: session.output.generation };
+  return { sid: session.id, oid: session.output.id, gen: session.output.generation, kind: session.output.kind };
 }
 
 const SESSION_STATE_FOR_OUTPUT: Record<PlaybackOutputReport['state'], SessionRow['playback_state'] | null> = {

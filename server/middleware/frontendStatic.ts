@@ -10,7 +10,9 @@ export function createFrontendStaticRouter(distPath: string) {
       if (filePath === receiverPath) res.removeHeader('Content-Security-Policy');
       // HTML and worker scripts must be revalidated on deployment. Hashed
       // assets remain eligible for normal browser and service-worker caching.
+      // receiver-follow.js belongs to receiver.html: never one without the other.
       if (filePath.endsWith('.html') || filePath === path.join(distPath, 'sw.js')
+        || filePath === path.join(distPath, 'receiver-follow.js')
         || /^workbox-.*\.js$/.test(path.basename(filePath))) {
         res.setHeader('Cache-Control', 'no-cache');
       }

@@ -129,7 +129,13 @@ import {
 } from '../services/playbackSession.service';
 import { isPlaybackSyncEnabledFor } from '../services/playbackSync.service';
 import { publishApiV1Event, replayApiV1Events, subscribeApiV1Events, noteClientListening } from '../services/apiV1Events.service';
-import { generateEphemeralScopedToken, generateOutputCredential, verifyScopedToken } from '../services/scopedToken.service';
+import {
+  generateEphemeralScopedToken,
+  generateOutputCredential,
+  generateReceiverCredential,
+  verifyScopedToken,
+  type OutputGrantClaims,
+} from '../services/scopedToken.service';
 import { generateAuroraApiDocument } from '../api/v1/openapi';
 import { artCachePath, DEFAULT_ART_SIZE, isValidArtSize } from '../services/artCache';
 
@@ -458,7 +464,9 @@ router.delete('/pairing/requests/:code', requireApiV1WebSession, async (req, res
 });
 
 router.post('/auth/scoped-token', async (req, res) => {
-  const schema = z.object({ scope: z.enum(['media', 'sse', 'receiver']), expiresIn: z.enum(['5m', '15m', '1h', '12h']).default('15m') }).strict();
+  // No 'receiver': a receiver credential is bound to a session's output grant
+  // and comes only from claiming the output for a receiver.
+  const schema = z.object({ scope: z.enum(['media', 'sse']), expiresIn: z.enum(['5m', '15m', '1h', '12h']).default('15m') }).strict();
   const input = parseBody(schema, req, res);
   if (!input) return;
   const token = await generateEphemeralScopedToken(input.scope, {
@@ -1038,9 +1046,22 @@ router.patch('/playback-sessions/:id', async (req, res) => {
   }
 });
 
+/**
+ * The credential for a grant: an output credential, or for a receiver output
+ * a receiver credential with a new 24-hour renewal cap.
+ */
+async function credentialForGrant(req: Request, kind: string, grant: OutputGrantClaims) {
+  if (kind !== 'receiver') return generateOutputCredential(req.apiV1!, grant);
+  const credential = await generateReceiverCredential(req.apiV1!, grant);
+  if (!credential) throw new Error('A new receiver credential has no time left.');
+  return { token: credential.token, expiresAt: credential.expiresAt, renewableUntil: credential.cap };
+}
+
 // "Play here": the calling device becomes the session's output and receives
 // the output credential for its grant. Any of the owner's devices may claim at
-// any time, so moving playback between them needs no confirmation.
+// any time, so moving playback between them needs no confirmation. With kind
+// `receiver` it makes the Cast receiver it casts to the output instead, and
+// receives the receiver's credential to hand over.
 router.post('/playback-sessions/:id/output', async (req, res) => {
   const output = parseBody(playbackOutputClaimSchema, req, res);
   if (!output) return;
@@ -1051,7 +1072,7 @@ router.post('/playback-sessions/:id/output', async (req, res) => {
       sessionId: req.params.id,
       output,
     });
-    const credential = await generateOutputCredential(req.apiV1!, {
+    const credential = await credentialForGrant(req, output.kind, {
       sid: session.id, oid: session.output!.id, gen: session.output!.generation,
     });
     dataResponse(req, res, {
@@ -1064,25 +1085,55 @@ router.post('/playback-sessions/:id/output', async (req, res) => {
 });
 
 // A fresh credential for the session's current grant. Any of the owner's
-// devices may ask (a phone renews its Cast receiver's credential this way), but
-// a replaced grant is never revived.
+// devices may ask (a phone renews its Cast receiver's credential this way, which
+// also sets a new 24-hour renewal cap), but a replaced grant is never revived.
 router.post('/playback-sessions/:id/output/refresh', async (req, res) => {
   const input = parseBody(playbackOutputRefreshSchema, req, res);
   if (!input) return;
   try {
-    const grant = await getCurrentOutputGrant({ userId: req.apiV1!.userId, sessionId: req.params.id, ...input });
-    const credential = await generateOutputCredential(req.apiV1!, grant);
+    const { kind, ...grant } = await getCurrentOutputGrant({ userId: req.apiV1!.userId, sessionId: req.params.id, ...input });
+    const credential = await credentialForGrant(req, kind, grant);
     dataResponse(req, res, { ...credential, outputId: grant.oid, generation: grant.gen });
   } catch (error) {
     handleSessionError(req, res, error);
   }
 });
 
-// What the output is actually playing. Only an output credential for this
-// session gets here (the middleware checks the scope and the session), and the
-// output's identity comes from that credential, never from the body.
+// A receiver renews its own credential while its grant is current, up to the
+// cap a controller last set; past that, only a controller's refresh helps.
+// Only a receiver credential for this session gets here (the middleware).
+router.post('/playback-sessions/:id/output/renew', async (req, res) => {
+  const principal = req.apiV1!;
+  const own = principal.scope === 'receiver' ? principal.outputGrant : undefined;
+  if (!own || principal.receiverCap === undefined) {
+    return sendApiV1Error(req, res, 403, 'RECEIVER_CREDENTIAL_REQUIRED', 'Only the receiver playing this session renews its credential, with that credential.');
+  }
+  if (!parseBody(z.object({}).strict(), req, res)) return;
+  try {
+    const { kind: _kind, ...grant } = await getCurrentOutputGrant({
+      userId: principal.userId, sessionId: own.sid, outputId: own.oid, generation: own.gen,
+    });
+    const credential = await generateReceiverCredential(principal, grant, principal.receiverCap);
+    if (!credential) return sendApiV1Error(req, res, 401, 'RECEIVER_RENEWAL_EXPIRED', 'This receiver credential can no longer be renewed; a controller must refresh it.');
+    dataResponse(req, res, {
+      token: credential.token,
+      expiresAt: credential.expiresAt,
+      renewableUntil: credential.cap,
+      outputId: grant.oid,
+      generation: grant.gen,
+    });
+  } catch (error) {
+    handleSessionError(req, res, error);
+  }
+});
+
+// What the output is actually playing. Only an output or receiver credential
+// for this session gets here (the middleware checks the scope and the
+// session), and the output's identity comes from that credential, never from
+// the body.
 router.post('/playback-sessions/:id/reports', async (req, res) => {
-  const grant = req.apiV1!.scope === 'output' ? req.apiV1!.outputGrant : undefined;
+  const scope = req.apiV1!.scope;
+  const grant = scope === 'output' || scope === 'receiver' ? req.apiV1!.outputGrant : undefined;
   if (!grant) return sendApiV1Error(req, res, 403, 'OUTPUT_CREDENTIAL_REQUIRED', 'Only the device playing this session can report, with its output credential.');
   const report = parseBody(playbackOutputReportSchema, req, res);
   if (!report) return;
@@ -1152,6 +1203,12 @@ function handleSessionError(req: Request, res: Response, error: unknown) {
   return sendApiV1Error(req, res, 500, 'PLAYBACK_SESSION_FAILED', 'The playback session could not be updated.');
 }
 
+function isReceiverSessionEvent(event: { type: string; data: unknown }, sessionId: string): boolean {
+  if (event.type === 'playbackSync.changed') return true;
+  const data = event.data as { sessionId?: unknown } | null;
+  return event.type.startsWith('playbackSession.') && data?.sessionId === sessionId;
+}
+
 router.get('/events', async (req, res) => {
   res.status(200);
   res.setHeader('Content-Type', 'text/event-stream');
@@ -1166,13 +1223,19 @@ router.get('/events', async (req, res) => {
   const lastEventId = typeof req.headers['last-event-id'] === 'string'
     ? req.headers['last-event-id']
     : typeof req.query.lastEventId === 'string' ? req.query.lastEventId : undefined;
+  // A receiver hears its own session only (and whether sync is on at all),
+  // never the user's other sessions, playlists or ratings.
+  const receiverSession = req.apiV1!.scope === 'receiver' ? req.apiV1!.outputGrant?.sid : undefined;
+  const send = receiverSession === undefined ? write : (event: { id: string; type: string; data: unknown }) => {
+    if (isReceiverSessionEvent(event, receiverSession)) write(event);
+  };
   const replay = replayApiV1Events(req.apiV1!.userId, lastEventId);
   if (replay === null) {
     write({ id: crypto.randomUUID(), type: 'resync.required', data: { reason: 'eventHistoryUnavailable' } });
   } else {
-    replay.forEach(write);
+    replay.forEach(send);
   }
-  const unsubscribe = subscribeApiV1Events(req.apiV1!.userId, write);
+  const unsubscribe = subscribeApiV1Events(req.apiV1!.userId, send);
   // Which device this stream belongs to, so remote commands are only sent
   // to devices that can hear them. A browser's EventSource names itself in
   // the query (it cannot send headers); others send X-Aurora-Client-Id.

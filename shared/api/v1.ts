@@ -233,8 +233,8 @@ export const queueEntrySchema = z.object({
   addedAt: ISO_DATE_TIME,
 }).meta({ id: 'PlaybackQueueEntry' });
 
-export const PLAYBACK_OUTPUT_KINDS = ['browser', 'cast'] as const;
-const PLAYBACK_OUTPUT_KIND_DESCRIPTION = 'browser: the device plays the session itself. cast: the device sends it to a Cast device it controls; `name` is the Cast device\'s.';
+export const PLAYBACK_OUTPUT_KINDS = ['browser', 'cast', 'receiver'] as const;
+const PLAYBACK_OUTPUT_KIND_DESCRIPTION = 'browser: the device plays the session itself. cast: the device sends it to a Cast device it controls; `name` is the Cast device\'s. receiver: the Cast receiver plays the session itself, with its own credential; a controller claims it, and `name` is the Cast device\'s.';
 
 export const PLAYBACK_OUTPUT_STATES = ['playing', 'paused', 'buffering', 'stopped', 'idle', 'error'] as const;
 
@@ -254,7 +254,7 @@ export const playbackOutputSchema = z.object({
   generation: z.number().int().positive().describe('Grant generation; goes up on every claim.'),
   claimedAt: ISO_DATE_TIME,
   castSessionId: z.string().nullable().optional()
-    .describe("kind cast: the Cast session the output sends to, when the server knows it (it is not kept across a server restart)."),
+    .describe("kind cast: the Cast session the output sends to; kind receiver: the Cast session the receiver runs in. When the server knows it (it is not kept across a server restart)."),
   status: z.enum(['active', 'unreachable', 'ended']).describe(
     'active: reporting. unreachable: silent for over a minute, last state kept; only a report or a new claim changes it. ended: the output itself reported stopped, idle or error.',
   ),
@@ -353,8 +353,11 @@ export const playbackOutputClaimSchema = z.object({
   kind: z.enum(PLAYBACK_OUTPUT_KINDS).describe(PLAYBACK_OUTPUT_KIND_DESCRIPTION),
   name: z.string().trim().min(1).max(120).optional(),
   castSessionId: z.string().trim().min(1).max(128).optional()
-    .describe('kind cast: the Cast session this device sends to, so another device can tell joining it from starting a new one.'),
-}).strict().meta({ id: 'PlaybackOutputClaim' });
+    .describe('kind cast: the Cast session this device sends to, so another device can tell joining it from starting a new one. kind receiver (required): the Cast session the receiver runs in; the output ID becomes `receiver:<castSessionId>`.'),
+}).strict().refine((claim) => claim.kind !== 'receiver' || !!claim.castSessionId, {
+  message: 'A receiver claim names the Cast session the receiver runs in.',
+  path: ['castSessionId'],
+}).meta({ id: 'PlaybackOutputClaim' });
 
 export const playbackOutputReportSchema = z.object({
   seq: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).describe('Increases with every report within one grant; a report not above the last accepted one is dropped.'),
@@ -362,7 +365,7 @@ export const playbackOutputReportSchema = z.object({
   reason: z.string().trim().min(1).max(40).optional().describe('Why the output stopped, e.g. "shutdown".'),
   queueEntryId: z.string().uuid().nullable(),
   positionMs: z.number().int().nonnegative(),
-  outputId: z.string().max(128).optional().describe('Optional; must match the output credential.'),
+  outputId: z.string().max(160).optional().describe('Optional; must match the output credential.'),
   outputGeneration: z.number().int().positive().optional().describe('Optional; must match the output credential.'),
 }).strict().meta({ id: 'PlaybackOutputReport' });
 
@@ -372,15 +375,17 @@ export const playbackOutputReportResultSchema = z.object({
 }).meta({ id: 'PlaybackOutputReportResult' });
 
 export const playbackOutputRefreshSchema = z.object({
-  outputId: z.string().min(1).max(128),
+  outputId: z.string().min(1).max(160),
   generation: z.number().int().positive(),
 }).strict().meta({ id: 'PlaybackOutputRefresh' });
 
 export const playbackOutputCredentialSchema = z.object({
-  token: z.string().describe('Output credential: a short-lived token bound to this session and grant. Keep it in memory only.'),
+  token: z.string().describe('Output credential: a short-lived token bound to this session and grant. Keep it in memory only. For a receiver output, a receiver credential, which the receiver itself uses.'),
   expiresAt: ISO_DATE_TIME,
   outputId: z.string(),
   generation: z.number().int().positive(),
+  renewableUntil: ISO_DATE_TIME.optional()
+    .describe('Receiver credentials only: the receiver may renew its own credential (POST …/output/renew) until then, 24 hours after a controller issued it.'),
 }).meta({ id: 'PlaybackOutputCredential' });
 
 export const playbackOutputClaimResultSchema = z.object({
@@ -406,7 +411,7 @@ export const playbackCommandSchema = z.discriminatedUnion('type', [
 
 export const playbackCommandRequestSchema = z.object({
   requestId: z.string().uuid().describe('A repeated requestId is accepted once.'),
-  outputId: z.string().min(1).max(128).describe("The output this command is for: the session's current output.id."),
+  outputId: z.string().min(1).max(160).describe("The output this command is for: the session's current output.id."),
   outputGeneration: z.number().int().positive().describe("Its current output.generation; a newer claim makes the command stale."),
   command: playbackCommandSchema,
 }).strict().meta({ id: 'PlaybackCommandRequest' });

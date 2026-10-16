@@ -951,9 +951,10 @@
                 "type": "string",
                 "enum": [
                   "browser",
-                  "cast"
+                  "cast",
+                  "receiver"
                 ],
-                "description": "browser: the device plays the session itself. cast: the device sends it to a Cast device it controls; `name` is the Cast device's."
+                "description": "browser: the device plays the session itself. cast: the device sends it to a Cast device it controls; `name` is the Cast device's. receiver: the Cast receiver plays the session itself, with its own credential; a controller claims it, and `name` is the Cast device's."
               },
               "name": {
                 "type": [
@@ -975,7 +976,7 @@
                   "string",
                   "null"
                 ],
-                "description": "kind cast: the Cast session the output sends to, when the server knows it (it is not kept across a server restart)."
+                "description": "kind cast: the Cast session the output sends to; kind receiver: the Cast session the receiver runs in. When the server knows it (it is not kept across a server restart)."
               },
               "status": {
                 "type": "string",
@@ -1186,7 +1187,7 @@
         "properties": {
           "token": {
             "type": "string",
-            "description": "Output credential: a short-lived token bound to this session and grant. Keep it in memory only."
+            "description": "Output credential: a short-lived token bound to this session and grant. Keep it in memory only. For a receiver output, a receiver credential, which the receiver itself uses."
           },
           "expiresAt": {
             "type": "string",
@@ -1198,6 +1199,11 @@
           "generation": {
             "type": "integer",
             "exclusiveMinimum": 0
+          },
+          "renewableUntil": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Receiver credentials only: the receiver may renew its own credential (POST …/output/renew) until then, 24 hours after a controller issued it."
           }
         },
         "required": [
@@ -1935,9 +1941,10 @@
             "type": "string",
             "enum": [
               "browser",
-              "cast"
+              "cast",
+              "receiver"
             ],
-            "description": "browser: the device plays the session itself. cast: the device sends it to a Cast device it controls; `name` is the Cast device's."
+            "description": "browser: the device plays the session itself. cast: the device sends it to a Cast device it controls; `name` is the Cast device's. receiver: the Cast receiver plays the session itself, with its own credential; a controller claims it, and `name` is the Cast device's."
           },
           "name": {
             "type": "string",
@@ -1948,7 +1955,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 128,
-            "description": "kind cast: the Cast session this device sends to, so another device can tell joining it from starting a new one."
+            "description": "kind cast: the Cast session this device sends to, so another device can tell joining it from starting a new one. kind receiver (required): the Cast session the receiver runs in; the output ID becomes `receiver:<castSessionId>`."
           }
         },
         "required": [
@@ -1962,7 +1969,7 @@
           "outputId": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 128
+            "maxLength": 160
           },
           "generation": {
             "type": "integer",
@@ -2014,7 +2021,7 @@
           },
           "outputId": {
             "type": "string",
-            "maxLength": 128,
+            "maxLength": 160,
             "description": "Optional; must match the output credential."
           },
           "outputGeneration": {
@@ -2042,7 +2049,7 @@
           "outputId": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 128,
+            "maxLength": 160,
             "description": "The output this command is for: the session's current output.id."
           },
           "outputGeneration": {
@@ -3726,8 +3733,7 @@
                     "type": "string",
                     "enum": [
                       "media",
-                      "sse",
-                      "receiver"
+                      "sse"
                     ]
                   },
                   "expiresIn": {
@@ -8676,7 +8682,7 @@
     },
     "/playback-sessions/{id}/output": {
       "post": {
-        "summary": "Play here: make the calling device the session output and get its output credential",
+        "summary": "Play here: make the calling device (or, with kind receiver, the Cast receiver it casts to) the session output and get its credential",
         "tags": [
           "Sessions"
         ],
@@ -8928,9 +8934,139 @@
         }
       }
     },
+    "/playback-sessions/{id}/output/renew": {
+      "post": {
+        "summary": "A Cast receiver renews its own receiver credential, up to renewableUntil",
+        "description": "Receiver credential only, for its own session. The new credential keeps the same renewableUntil.",
+        "tags": [
+          "Sessions"
+        ],
+        "security": [
+          {
+            "listenerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PlaybackOutputCredential"
+                    },
+                    "meta": {
+                      "type": "object",
+                      "properties": {
+                        "requestId": {
+                          "type": "string",
+                          "description": "Request ID echoed in the X-Request-Id response header."
+                        }
+                      },
+                      "required": [
+                        "requestId"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "RECEIVER_RENEWAL_EXPIRED: past renewableUntil; a controller must refresh it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "RECEIVER_CREDENTIAL_REQUIRED, or SCOPED_TOKEN_NOT_ALLOWED for another session; or PLAYBACK_SYNC_DISABLED: playback sync across devices is turned off for this account (the server admin's choice, or the user's where the admin lets each user decide)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "OUTPUT_GRANT_REPLACED: another output has been claimed since (current session in details.current)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/playback-sessions/{id}/reports": {
       "post": {
-        "summary": "Report what the output is playing (output credential only)",
+        "summary": "Report what the output is playing (output or receiver credential only)",
         "tags": [
           "Sessions"
         ],
@@ -9274,7 +9410,7 @@
         "tags": [
           "Events"
         ],
-        "description": "Use a short-lived sse token in the query string because EventSource cannot set Authorization headers; a full session token is refused. Each event's data is JSON `{id, type, occurredAt, data}`. Types: playbackSession.created / updated / handedOff / deleted (fetch the session when its revision is newer), playbackSession.progress (every accepted output report: `{sessionId, revision, outputId, generation, report}`; live only, never replayed), playlist.changed, annotation.changed, playbackSession.command (to the output: `{sessionId, outputId, generation, requestId, issuedBy, command}`; live only), library.revision, playbackSync.changed (`{enabled}`: whether the playback-session API works for this account now), and resync.required (the replay window was lost: re-fetch everything).",
+        "description": "Use a short-lived sse token (or a receiver credential, which hears only its own session) in the query string because EventSource cannot set Authorization headers; a full session token is refused. Each event's data is JSON `{id, type, occurredAt, data}`. Types: playbackSession.created / updated / handedOff / deleted (fetch the session when its revision is newer), playbackSession.progress (every accepted output report: `{sessionId, revision, outputId, generation, report}`; live only, never replayed), playlist.changed, annotation.changed, playbackSession.command (to the output: `{sessionId, outputId, generation, requestId, issuedBy, command}`; live only), library.revision, playbackSync.changed (`{enabled}`: whether the playback-session API works for this account now), and resync.required (the replay window was lost: re-fetch everything).",
         "security": [
           {
             "listenerAuth": []

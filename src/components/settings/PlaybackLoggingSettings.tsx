@@ -1,4 +1,7 @@
+import { useState } from 'react';
 import { usePlayerStore } from '../../store';
+import { mintScopedToken } from '../../api/auroraApi';
+import { castManager } from '../../utils/CastManager';
 
 const options = [
   { key: 'playbackDebugLogging', title: 'Browser playback diagnostics', description: 'Show local playback and prewarm details in this browser’s console and the telemetry readout below.' },
@@ -9,7 +12,25 @@ export function PlaybackLoggingSettings() {
   const playbackDebugLogging = usePlayerStore(state => state.playbackDebugLogging);
   const castDebugLogging = usePlayerStore(state => state.castDebugLogging);
   const setSettings = usePlayerStore(state => state.setSettings);
+  const castConnected = usePlayerStore(state => state.castConnected);
   const values = { playbackDebugLogging, castDebugLogging };
+  const [probing, setProbing] = useState(false);
+
+  // Phase 5 probe: results go to the server Cast log as receiver-probe markers.
+  const runProbe = async () => {
+    const { getAuthHeader, addToast } = usePlayerStore.getState();
+    setProbing(true);
+    try {
+      const { token } = await mintScopedToken(getAuthHeader(), 'sse', '15m');
+      const result = await castManager.runReceiverProbe(token);
+      if (result === 'busy') addToast('The receiver is still running the previous probe.', 'error');
+      else if (result !== 'started') addToast("The receiver didn't start the probe. It may not have the probe yet.", 'error');
+    } catch {
+      addToast("Couldn't start the receiver probe.", 'error');
+    } finally {
+      setProbing(false);
+    }
+  };
   return (
     <div className="mb-6 space-y-3">
       <p className="text-xs text-[var(--color-text-muted)]">Diagnostics preferences are saved on this browser. Server logging is configured under System → Logging.</p>
@@ -28,6 +49,15 @@ export function PlaybackLoggingSettings() {
           ><span aria-hidden="true" className="account-switch__thumb" /></button>
         </div>
       ))}
+      {castDebugLogging && castConnected && (
+        <div className="library-toggle-row">
+          <div>
+            <h5>Receiver probe</h5>
+            <p>Tests whether the Cast device can follow a playback session on its own, and logs the results in the server Cast log. Playback is not interrupted.</p>
+          </div>
+          <button type="button" className="btn btn-ghost btn-sm" disabled={probing} onClick={() => void runProbe()}>Run probe</button>
+        </div>
+      )}
     </div>
   );
 }

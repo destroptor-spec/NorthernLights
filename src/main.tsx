@@ -26,6 +26,7 @@ const sessionQueueTracks = (session: PlaybackSession) => toPlayableTracks(sessio
   .map((track, index) => ({ ...track, queueEntryId: session.queue[index].queueEntryId }));
 
 // "Sync playback across devices" (off unless the user turns it on here).
+castManager.addReceiverCanFollowListener(() => sessionMirror.noteReceiverCanFollow());
 sessionMirror.start(usePlayerStore, {
   getPositionSeconds: () => getPlaybackTimeSnapshot().currentTime,
   getOutputName: () => (usePlayerStore.getState().castConnected && castManager.getCastDeviceName()) || describeThisDevice(),
@@ -34,6 +35,12 @@ sessionMirror.start(usePlayerStore, {
   log: logPlaybackInfo,
   diagnostic: (level, marker, detail) => castManager.logSyncEvent(level, marker, detail),
   onSyncDisabled: () => void usePlayerStore.getState().refreshPlaybackSync(),
+  // Phase 5: a receiver that plays the session on its own gets it handed over.
+  receiverCanFollow: () => castManager.receiverCanFollowSession(),
+  handOverToReceiver: (handover, reason) => castManager.handOverSessionToReceiver(handover, reason),
+  // PR E: while the receiver follows, the session's queue is the receiver's.
+  onReceiverFollowsChanged: (following) => castManager.setReceiverFollowsSession(following),
+  adoptSession: (session) => usePlayerStore.getState().adoptFollowedCastQueue(sessionQueueTracks(session), session.currentEntryId),
   // One device plays at a time: another device took over, so stop here.
   onDisplaced: (replacement) => {
     const state = usePlayerStore.getState();
@@ -51,6 +58,7 @@ sessionFollower.start(usePlayerStore, {
   clientId: getAuroraClientId,
   mirror: sessionMirror,
   toTracks: sessionQueueTracks,
+  adoptCastQueue: (session) => usePlayerStore.getState().adoptFollowedCastQueue(sessionQueueTracks(session), session.currentEntryId),
   setPlaybackTime: (currentTime, duration) => setPlaybackTimeState({ currentTime, duration }),
   onPlaybackSyncChanged: () => void usePlayerStore.getState().refreshPlaybackSync(),
   diagnostic: (level, marker, detail) => castManager.logSyncEvent(level, marker, detail),
@@ -130,7 +138,10 @@ window.addEventListener('pageshow', (event) => {
 // every device re-reads it when it comes back to the foreground.
 let playbackSyncReadAt = 0;
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible' || Date.now() - playbackSyncReadAt < 15_000) return;
+  if (document.visibilityState !== 'visible') return;
+  // A receiver playing the session gets a fresh credential on every wake.
+  sessionMirror.noteWake();
+  if (Date.now() - playbackSyncReadAt < 15_000) return;
   playbackSyncReadAt = Date.now();
   void usePlayerStore.getState().refreshPlaybackSync();
 });

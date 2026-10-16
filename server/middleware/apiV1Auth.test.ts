@@ -1,10 +1,14 @@
 jest.mock('../services/auth.service', () => ({ verifyToken: jest.fn() }));
 jest.mock('../services/auroraAppAuth.service', () => ({ verifyAuroraAppKey: jest.fn() }));
-jest.mock('../services/scopedToken.service', () => ({ verifyScopedToken: jest.fn(), verifyOutputCredential: jest.fn() }));
+jest.mock('../services/scopedToken.service', () => ({
+  verifyScopedToken: jest.fn(),
+  verifyOutputCredential: jest.fn(),
+  verifyReceiverCredential: jest.fn(),
+}));
 
 import type { NextFunction, Request, Response } from 'express';
 import { verifyToken } from '../services/auth.service';
-import { verifyOutputCredential, verifyScopedToken } from '../services/scopedToken.service';
+import { verifyOutputCredential, verifyReceiverCredential, verifyScopedToken } from '../services/scopedToken.service';
 import { requireApiV1Auth, requireApiV1WebSession } from './apiV1Auth';
 
 function responseMock() {
@@ -65,11 +69,16 @@ describe('Aurora API v1 authentication boundaries', () => {
   });
 });
 
+const RECEIVER_CREDENTIAL = {
+  userId: 'user-1', username: 'alice', role: 'user', scope: 'receiver',
+  sid: 's-1', oid: 'receiver:cast-77', gen: 3, cap: 1_900_000_000, jti: 'j',
+};
+
 /**
  * Scoped tokens are narrow capabilities, so the allowlist is per scope. These
- * deny cases ARE the security guarantee — the `receiver` scope is handed to a
- * Cast device that keeps its own queue fed with no sender attached, so it must
- * reach exactly four endpoints and nothing else.
+ * deny cases ARE the security guarantee — a `receiver` credential is handed to
+ * a Cast device that plays one session on its own, so it must reach that
+ * session and the few endpoints playing needs, and nothing else.
  */
 describe('scoped token endpoint allowlist', () => {
   beforeEach(() => jest.clearAllMocks());
@@ -81,6 +90,9 @@ describe('scoped token endpoint allowlist', () => {
     (verifyScopedToken as jest.MockedFunction<typeof verifyScopedToken>).mockResolvedValue({
       userId: 'user-1', username: 'alice', role: 'user', scope,
     } as never);
+    (verifyReceiverCredential as jest.MockedFunction<typeof verifyReceiverCredential>).mockResolvedValue(
+      scope === 'receiver' ? RECEIVER_CREDENTIAL as never : null,
+    );
     const req = {
       headers: { authorization: 'Bearer scoped-token' },
       method, path, query: {}, requestId: 'r1',
@@ -104,6 +116,11 @@ describe('scoped token endpoint allowlist', () => {
       ['receiver', 'POST', '/tracks/track-1/playback'],
       ['receiver', 'POST', '/playback/reports'],
       ['receiver', 'GET', '/preferences'],
+      // Its own session (s-1): follow it, report, renew its credential.
+      ['receiver', 'GET', '/events'],
+      ['receiver', 'GET', '/playback-sessions/s-1'],
+      ['receiver', 'POST', '/playback-sessions/s-1/reports'],
+      ['receiver', 'POST', '/playback-sessions/s-1/output/renew'],
     ])('%s may %s %s', async (scope, method, path) => {
       const { allowed, principal } = await attempt(scope, method, path);
       expect(allowed).toBe(true);
@@ -126,7 +143,20 @@ describe('scoped token endpoint allowlist', () => {
       ['receiver', 'PUT', '/tracks/track-1/loved'],
       ['receiver', 'PUT', '/tracks/track-1/rating'],
       ['receiver', 'GET', '/artwork/abc'],
-      ['receiver', 'GET', '/events'],
+      // It follows its own session but never changes it, claims it or reads others.
+      ['receiver', 'GET', '/playback-sessions'],
+      ['receiver', 'POST', '/playback-sessions'],
+      ['receiver', 'PATCH', '/playback-sessions/s-1'],
+      ['receiver', 'DELETE', '/playback-sessions/s-1'],
+      ['receiver', 'POST', '/playback-sessions/s-1/output'],
+      ['receiver', 'POST', '/playback-sessions/s-1/output/refresh'],
+      ['receiver', 'POST', '/playback-sessions/s-1/handoff'],
+      ['receiver', 'GET', '/playback-sessions/s-1/reports'],
+      ['receiver', 'GET', '/playback-sessions/s-2'],
+      ['receiver', 'POST', '/playback-sessions/s-2/reports'],
+      ['receiver', 'POST', '/playback-sessions/s-2/output/renew'],
+      ['receiver', 'GET', '/playback-sessions/s-1%2Fx'],
+      ['receiver', 'POST', '/auth/scoped-token'],
       // Method matters, not just the path.
       ['receiver', 'GET', '/recommendations/next'],
       ['receiver', 'GET', '/playback/reports'],
@@ -144,6 +174,7 @@ describe('scoped token endpoint allowlist', () => {
       ['output', 'POST', '/playback-sessions/s-1/reports/extra'],
       ['output', 'POST', '/playback-sessions/s-1/output'],
       ['output', 'POST', '/playback-sessions/s-1/output/refresh'],
+      ['output', 'POST', '/playback-sessions/s-1/output/renew'],
       // Remote control comes from the user's devices, never from an output.
       ['output', 'POST', '/playback-sessions/s-1/commands'],
       ['receiver', 'POST', '/playback-sessions/s-1/commands'],
@@ -160,7 +191,10 @@ describe('scoped token endpoint allowlist', () => {
     });
 
     it('does not let a path prefix smuggle a receiver token past the matcher', async () => {
-      for (const path of ['/tracks/track-1/playback/extra', '/recommendations/next/foo', '/preferences/secret']) {
+      for (const path of [
+        '/tracks/track-1/playback/extra', '/recommendations/next/foo', '/preferences/secret',
+        '/playback-sessions/s-1/reports/extra', '/playback-sessions/s-1/output/renew/x',
+      ]) {
         expect((await attempt('receiver', 'POST', path)).allowed).toBe(false);
       }
     });
@@ -213,5 +247,82 @@ describe('output credentials', () => {
     await requireApiV1Auth(req, res, next);
     expect(next).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(401);
+  });
+});
+
+/**
+ * A receiver credential proves one grant on one session, like an output
+ * credential, and also follows that session's events. Whether the grant is
+ * still current is the routes' job.
+ */
+describe('receiver credentials', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const call = async (method: string, path: string, options: { query?: Record<string, string>; bearer?: boolean } = {}) => {
+    (verifyToken as jest.MockedFunction<typeof verifyToken>).mockResolvedValue({
+      userId: 'user-1', username: 'alice', role: 'user', scope: 'receiver',
+    } as never);
+    const req = {
+      headers: options.bearer === false ? {} : { authorization: 'Bearer receiver-token' },
+      method, path, query: options.query ?? {}, requestId: 'r1',
+    } as unknown as Request;
+    const res = responseMock();
+    const next = jest.fn() as unknown as NextFunction;
+    await requireApiV1Auth(req, res, next);
+    return {
+      allowed: (next as jest.Mock).mock.calls.length > 0,
+      status: res.status.mock.calls[0]?.[0],
+      code: res.json.mock.calls[0]?.[0]?.error?.code,
+      principal: (req as Request & { apiV1?: Record<string, unknown> }).apiV1,
+    };
+  };
+
+  it("acts as the receiver's own output, with its grant and renewal cap", async () => {
+    (verifyReceiverCredential as jest.MockedFunction<typeof verifyReceiverCredential>).mockResolvedValue(RECEIVER_CREDENTIAL as never);
+    const { allowed, principal } = await call('POST', '/playback-sessions/s-1/reports');
+    expect(allowed).toBe(true);
+    expect(principal).toMatchObject({
+      scope: 'receiver',
+      clientId: 'receiver:cast-77',
+      clientName: 'Aurora Cast receiver',
+      outputGrant: { sid: 's-1', oid: 'receiver:cast-77', gen: 3 },
+      receiverCap: 1_900_000_000,
+    });
+  });
+
+  it('refuses an unbound receiver token (once minted by /auth/scoped-token)', async () => {
+    (verifyReceiverCredential as jest.MockedFunction<typeof verifyReceiverCredential>).mockResolvedValue(null);
+    for (const path of ['/recommendations/next', '/playback/reports']) {
+      const { allowed, status, code } = await call('POST', path);
+      expect(allowed).toBe(false);
+      expect(status).toBe(401);
+      expect(code).toBe('INVALID_SCOPED_TOKEN');
+    }
+  });
+
+  it('opens its event stream with the credential in the query, as its own output', async () => {
+    (verifyReceiverCredential as jest.MockedFunction<typeof verifyReceiverCredential>).mockResolvedValue(RECEIVER_CREDENTIAL as never);
+    const { allowed, principal } = await call('GET', '/events', { bearer: false, query: { token: 'receiver-token' } });
+    expect(allowed).toBe(true);
+    expect(principal).toMatchObject({ scope: 'receiver', clientId: 'receiver:cast-77', outputGrant: { sid: 's-1' } });
+    expect(verifyScopedToken).not.toHaveBeenCalled();
+  });
+
+  it('still takes an sse token in the event query', async () => {
+    (verifyReceiverCredential as jest.MockedFunction<typeof verifyReceiverCredential>).mockResolvedValue(null);
+    (verifyScopedToken as jest.MockedFunction<typeof verifyScopedToken>).mockResolvedValue({
+      userId: 'user-1', username: 'alice', role: 'user', scope: 'sse',
+    } as never);
+    const { allowed, principal } = await call('GET', '/events', { bearer: false, query: { token: 'sse-token' } });
+    expect(allowed).toBe(true);
+    expect(principal).toMatchObject({ scope: 'sse' });
+    expect(verifyScopedToken).toHaveBeenCalledWith('sse-token', 'sse');
+  });
+
+  it('is not accepted in the query anywhere but the event stream', async () => {
+    (verifyReceiverCredential as jest.MockedFunction<typeof verifyReceiverCredential>).mockResolvedValue(RECEIVER_CREDENTIAL as never);
+    const { allowed, status } = await call('GET', '/playback-sessions/s-1', { bearer: false, query: { token: 'receiver-token' } });
+    expect(allowed).toBe(false);
+    expect(status).toBe(401);
   });
 });

@@ -91,3 +91,34 @@ async function replaceQueue(
   }
   return null;
 }
+
+/**
+ * Casting to a receiver that plays the session itself (docs/cast-receiver-output.md,
+ * PR E): start `entryId` there. This device's pending queue edits reach the
+ * session first, so the receiver finds the entry at the revision it is told.
+ */
+export async function startOnFollowingReceiver(entryId: string, deps: {
+  api?: Pick<typeof sessionApi, 'issuePlaybackCommand'>;
+  auth: Record<string, string>;
+  grant: { sessionId: string; outputId: string; generation: number } | null;
+  flush: () => Promise<PlaybackSession | null>;
+}): Promise<RemoteResult> {
+  const api = deps.api ?? sessionApi;
+  const grant = deps.grant;
+  if (!grant) return 'replaced';
+  try {
+    const session = await deps.flush();
+    if (!session || session.id !== grant.sessionId || !session.queue.some((entry) => entry.queueEntryId === entryId)) return 'failed';
+    await api.issuePlaybackCommand(deps.auth, grant.sessionId, {
+      requestId: createUuid(),
+      outputId: grant.outputId,
+      outputGeneration: grant.generation,
+      command: { type: 'load', revision: session.revision, entryId },
+    });
+    return 'sent';
+  } catch (error) {
+    if (error instanceof AuroraApiError && (error.code === 'OUTPUT_GRANT_REPLACED' || error.code === 'OUTPUT_NOT_ACTIVE')) return 'replaced';
+    if (error instanceof AuroraApiError && error.code === 'OUTPUT_UNREACHABLE') return 'unreachable';
+    return 'failed';
+  }
+}

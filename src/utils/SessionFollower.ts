@@ -1,8 +1,11 @@
 import type { PlaybackCommand, PlaybackSession } from '../../shared/api/v1';
 import { AuroraApiError } from '../api/auroraApi';
 import * as sessionApi from '../api/playbackSessions';
+import { currentSessionFromError } from '../api/playbackSessions';
 import type { TrackInfo } from './fileSystem';
-import { FOLLOW_STALE_MS, followFromSession, followedPositionMs, isFollowedOutputPlaying, type FollowedOutput } from './sessionFollow';
+import { MAX_SESSION_QUEUE, planQueueOperations } from './sessionQueueDiff';
+import { createUuid, isUuid } from './uuid';
+import { FOLLOW_STALE_MS, followFromSession, followedPositionMs, isCastOutput, isFollowedOutputPlaying, type FollowedOutput } from './sessionFollow';
 
 // The following side of "Sync playback across devices" (docs/playback_sessions.md,
 // Phase 2). While another device plays the user's session, an idle device
@@ -14,6 +17,11 @@ import { FOLLOW_STALE_MS, followFromSession, followedPositionMs, isFollowedOutpu
 // A device that plays, holds the output or is casting never follows: its own
 // queue is the session's (SessionMirror), and a Cast receiver's queue is never
 // replaced from here.
+//
+// Following a receiver that plays the session itself (Phase 5,
+// docs/cast-receiver-output.md), the queue edits made here (Play next, remove,
+// reorder) go to the session, where the receiver picks them up. Other outputs
+// keep their own queue, so there edits stay on this device.
 
 export interface FollowerPlayerState {
   syncPlaybackAcrossDevices: boolean;
@@ -44,7 +52,7 @@ export interface EventSourceLike {
 }
 
 export interface SessionFollowerOptions {
-  api?: Pick<typeof sessionApi, 'listPlaybackSessions' | 'getPlaybackSession'>;
+  api?: Pick<typeof sessionApi, 'listPlaybackSessions' | 'getPlaybackSession' | 'patchPlaybackSession'>;
   createEventSource?: (url: string) => EventSourceLike;
   /** This device's client ID, as the server knows it (X-Aurora-Client-Id). */
   clientId: () => string;
@@ -52,7 +60,15 @@ export interface SessionFollowerOptions {
     holdsOutput: () => boolean;
     currentGrant: () => { sessionId: string; outputId: string; generation: number } | null;
     noteReplaced: (sessionId: string, generation: number, replacement: { kind: string; name: string | null } | null) => Promise<void>;
+    /** True when this device should take `session`'s queue: it casts to a receiver that follows it. */
+    noteSessionChanged?: (session: PlaybackSession) => boolean;
   };
+  /**
+   * This device casts to a receiver that plays the session itself, and the
+   * session's queue changed (another device's edit, or a remote load): show
+   * it here. The receiver's own status says what plays.
+   */
+  adoptCastQueue?: (session: PlaybackSession) => void;
   /** The session's queue as playable tracks, keeping each entry's ID. */
   toTracks: (session: PlaybackSession) => TrackInfo[];
   setPlaybackTime: (currentTime: number, duration: number) => void;
@@ -70,6 +86,8 @@ export interface SessionFollowerOptions {
 
 const EVENTS_PATH = '/api/v1/events';
 const RECONNECT_DELAY_MS = 15_000;
+/** Edits made in quick succession (a drag) go as one patch. */
+const QUEUE_EDIT_DELAY_MS = 250;
 const TICK_MS = 1_000;
 const EVENT_SOURCE_CLOSED = 2;
 const SESSION_EVENTS = [
@@ -115,6 +133,9 @@ export class SessionFollower {
   private fetching = false;
   private refetch: string | null = null;
   private rendering = false;
+  private editTimer: ReturnType<typeof setTimeout> | null = null;
+  private editing = false;
+  private editAgain = false;
 
   /**
    * Another of the user's devices is casting to the Cast device with this
@@ -124,7 +145,10 @@ export class SessionFollower {
   castingElsewhere(castDeviceName: string, castSessionId: string | null): { outputId: string } | null {
     const output = this.session?.output;
     if (!output || !this.options || output.id === this.options.clientId()) return null;
-    if (output.kind !== 'cast' || output.status !== 'active' || output.name !== castDeviceName) return null;
+    // A receiver output this device claimed is its own Cast session (a
+    // reload or recovery rejoining it), not another device's.
+    if (output.kind === 'receiver' && this.session!.ownerClientId === this.options.clientId()) return null;
+    if (!isCastOutput(output) || output.status !== 'active' || output.name !== castDeviceName) return null;
     // Only the very Cast session it sends to: picking the device may also
     // start a new session, which ends the other device's (prod 2026-10-13
     // 22:16:20: the phone left a session it had just started).
@@ -145,7 +169,7 @@ export class SessionFollower {
   anotherDevicePlaying(): boolean {
     const output = this.session?.output;
     if (!output || !this.options || output.id === this.options.clientId()) return false;
-    return output.status === 'active' || (output.status === 'unreachable' && output.kind === 'cast');
+    return output.status === 'active' || (output.status === 'unreachable' && isCastOutput(output));
   }
 
   /** When this device last heard a report from `outputId` (local clock), or 0. */
@@ -197,6 +221,73 @@ export class SessionFollower {
     }
     if (state.playbackState !== previous.playbackState || state.castConnected !== previous.castConnected) {
       this.render();
+    }
+    // An edit made here, not this follower taking the session's queue.
+    if (state.playlist !== previous.playlist && !this.rendering && this.editsGoToSession(state)) this.scheduleQueueEdit();
+  }
+
+  /** Following a receiver that plays the session itself, from an idle device. */
+  private editsGoToSession(state: FollowerPlayerState): boolean {
+    return !!this.session && this.follow?.kind === 'receiver' && !this.busy(state);
+  }
+
+  private scheduleQueueEdit() {
+    if (this.editTimer) clearTimeout(this.editTimer);
+    this.editTimer = setTimeout(() => {
+      this.editTimer = null;
+      void this.sendQueueEdit();
+    }, QUEUE_EDIT_DELAY_MS);
+  }
+
+  /**
+   * Sends this device's queue, as anchored edits on the session it last
+   * read. When a newer change won meanwhile, the same edits are sent once
+   * more at its revision (anchors still mean the same thing there); an edit
+   * that cannot apply any more leaves the session's queue shown here.
+   */
+  private async sendQueueEdit(): Promise<void> {
+    if (this.editing) {
+      this.editAgain = true;
+      return;
+    }
+    const state = this.store?.getState();
+    const session = this.session;
+    if (!state || !session || !this.editsGoToSession(state)) return;
+    const local = state.playlist.map((track) => ({ entryId: track.queueEntryId || '', trackId: track.id }));
+    // Clearing the queue here does not stop the receiver.
+    if (!local.length || local.length > MAX_SESSION_QUEUE || local.some((entry) => !isUuid(entry.entryId))) return;
+    const server = session.queue.map((entry) => ({ entryId: entry.queueEntryId, trackId: entry.track.id }));
+    const operations = planQueueOperations(server, local, null);
+    if (!operations.length) return;
+    this.editing = true;
+    try {
+      let expectedRevision = session.revision;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const updated = await this.api.patchPlaybackSession(state.getAuthHeader(), session.id, {
+            expectedRevision, requestId: createUuid(), operations,
+          } as Parameters<typeof sessionApi.patchPlaybackSession>[2]);
+          this.options!.diagnostic?.('ok', 'sync-queue-edit-sent', `operations=${operations.length} revision=${updated.revision}`);
+          if (this.session?.id === updated.id && updated.revision > this.session.revision) this.session = updated;
+          return;
+        } catch (error) {
+          const current = currentSessionFromError(error);
+          if (attempt === 0 && current && error instanceof AuroraApiError && error.code === 'REVISION_CONFLICT') {
+            expectedRevision = current.revision;
+            continue;
+          }
+          this.options!.diagnostic?.('warn', 'sync-queue-edit-refused', `code=${error instanceof AuroraApiError ? error.code : 'network'}`);
+          if (current) await this.apply(current, false);
+          else this.fetchSession(session.id);
+          return;
+        }
+      }
+    } finally {
+      this.editing = false;
+      if (this.editAgain) {
+        this.editAgain = false;
+        this.scheduleQueueEdit();
+      }
     }
   }
 
@@ -416,6 +507,10 @@ export class SessionFollower {
       }
     }
     this.session = session;
+    if (this.options!.mirror.noteSessionChanged?.(session)) {
+      this.options!.diagnostic?.('ok', 'sync-receiver-queue-adopted', `revision=${session.revision} entries=${session.queue.length}`);
+      this.options!.adoptCastQueue?.(session);
+    }
     const previous = this.follow;
     this.follow = followFromSession(session, this.options!.clientId(), Date.now());
     const describe = (f: FollowedOutput | null) => (f ? `${f.kind}:${f.name}${f.silent ? ':silent' : ''}` : 'none');
