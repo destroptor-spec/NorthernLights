@@ -2,7 +2,7 @@ import { createStore } from 'zustand/vanilla';
 import type { PlaybackSession, PlaybackSessionPatch } from '../../../shared/api/v1';
 import { AuroraApiError } from '../../api/auroraApi';
 import type * as sessionApi from '../../api/playbackSessions';
-import { actionWhenReplaced, isSameCastDevice, SessionMirror, REPORT_INTERVAL_PAUSED_MS, REPORT_INTERVAL_PLAYING_MS, type MirroredPlayerState } from '../SessionMirror';
+import { actionWhenReplaced, CAST_KIND_SETTLE_MS, isSameCastDevice, SessionMirror, REPORT_INTERVAL_PAUSED_MS, REPORT_INTERVAL_PLAYING_MS, type MirroredPlayerState } from '../SessionMirror';
 import type { TrackInfo } from '../fileSystem';
 
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -221,12 +221,44 @@ it('stops when another device takes the output, until Play is pressed here', asy
   expect(api.claimPlaybackOutput).toHaveBeenCalledTimes(1);
 });
 
-it('claims again under the Cast device name when casting starts', async () => {
+it('claims again under the Cast device name when casting starts, once it has settled', async () => {
   const { api, store } = setup();
   await play(store);
   store.setState({ castConnected: true });
   await jest.advanceTimersByTimeAsync(0);
+  expect(api.claimPlaybackOutput).toHaveBeenCalledTimes(1);
+  await jest.advanceTimersByTimeAsync(CAST_KIND_SETTLE_MS);
   expect(api.claimPlaybackOutput).toHaveBeenCalledTimes(2);
+  expect(api.claimPlaybackOutput).toHaveBeenLastCalledWith(expect.anything(), 'session-1', expect.objectContaining({ kind: 'cast' }));
+});
+
+describe('a Cast connection that blinks off and on (stale-transport recovery)', () => {
+  it('does not claim at all when casting comes back within a second', async () => {
+    const { api, store } = setup({ castConnected: true });
+    await play(store);
+    expect(api.claimPlaybackOutput).toHaveBeenCalledTimes(1);
+    store.setState({ castConnected: false });
+    await jest.advanceTimersByTimeAsync(400);
+    store.setState({ castConnected: true });
+    await jest.advanceTimersByTimeAsync(CAST_KIND_SETTLE_MS * 2);
+    expect(api.claimPlaybackOutput).toHaveBeenCalledTimes(1);
+  });
+
+  it('claims as a Cast output again when casting came back while a claim was on its way', async () => {
+    // Prod 2026-10-16 08:43:01, Beoplay A9: the claim made in the blink said
+    // browser and nothing corrected it.
+    const { api, store } = setup({ castConnected: false });
+    let answer: (value: unknown) => void = () => undefined;
+    api.claimPlaybackOutput.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }) as never);
+    store.setState({ playbackState: 'playing' });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(api.claimPlaybackOutput).toHaveBeenLastCalledWith(expect.anything(), 'session-1', expect.objectContaining({ kind: 'browser' }));
+    store.setState({ castConnected: true }); // while the browser claim is still on its way
+    answer({ session: sessionOf([], 2), credential });
+    await jest.advanceTimersByTimeAsync(CAST_KIND_SETTLE_MS);
+    expect(api.claimPlaybackOutput).toHaveBeenCalledTimes(2);
+    expect(api.claimPlaybackOutput).toHaveBeenLastCalledWith(expect.anything(), 'session-1', expect.objectContaining({ kind: 'cast' }));
+  });
 });
 
 it('does not mirror a queue still keyed for a rejoinable Cast session', async () => {
