@@ -161,6 +161,12 @@ credential has run out. Details that differ from the plan below:
   music), a newer grant for this same receiver (wait for its handover, play
   on), and a sender in this Cast session claiming as a plain Cast output
   (stop following, play on).
+- The receiver advertises `session-follow` (and takes a handover) only once
+  a LOAD has given it a media token, and the sender counts the capability only
+  from a status that names a loaded entry. Prod 2026-10-16 19:27: the
+  receiver's startup status already named it, the sender handed over before
+  loading anything, PR E then blocked the sender's own first LOAD, and the
+  receiver, without a media token, could neither play nor log.
 - Played/skipped history is still reported by the sender for now, to avoid
   counting plays twice.
 - Shuffle is not applied on the receiver: the sender chooses the next track

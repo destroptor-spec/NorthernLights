@@ -8,7 +8,7 @@ import vm from 'vm';
  * ack, and gives up following when a sender loads a queue itself. Without the
  * module it behaves exactly as before.
  */
-function startReceiver(withFollower: boolean) {
+function startReceiver(withFollower: boolean, loadFirst = true) {
   const html = fs.readFileSync(path.join(process.cwd(), 'public/receiver.html'), 'utf8');
   const receiverDoc = new DOMParser().parseFromString(html, 'text/html');
   const inlineScript = receiverDoc.body.querySelector('script:not([src])')!;
@@ -66,7 +66,8 @@ function startReceiver(withFollower: boolean) {
   if (!context.start.mock.calls.length) throw new Error(document.getElementById('debug-panel')?.textContent || 'Receiver did not start');
   const [namespace, receive] = context.addCustomMessageListener.mock.calls[0];
   const load = player.setMessageInterceptor.mock.calls.find(([type]) => type === 'LOAD')![1];
-  load({ media: { contentId: 'https://music.example.test/api/stream/track/playlist.m3u8', customData: { token: 'media-token' }, metadata: { title: 'Track' } } });
+  const firstLoad = () => load({ media: { contentId: 'https://music.example.test/api/stream/track/playlist.m3u8', customData: { token: 'media-token' }, metadata: { title: 'Track' } } });
+  if (loadFirst) firstLoad();
   const caps = () => {
     context.sendCustomMessage.mockClear();
     receive({ senderId: 'sender', data: { type: 'aurora.diagnostics', enabled: false, requestId: 99 } });
@@ -76,7 +77,7 @@ function startReceiver(withFollower: boolean) {
   const loggedLines = () => fetch.mock.calls
     .filter(([url]) => String(url).startsWith('/api/cast/log'))
     .map(([, init]) => JSON.parse((init as unknown as { body: string }).body) as { message: string; detail: string });
-  return { namespace, receive, context, player, fetch, streams, load, caps, loggedLines };
+  return { namespace, receive, context, player, fetch, streams, load, firstLoad, caps, loggedLines };
 }
 
 const handover = {
@@ -97,6 +98,20 @@ test('advertises session-follow and takes a handover, with an ack', async () => 
   expect(r.fetch.mock.calls.some(([url, init]) => url === '/api/v1/playback-sessions/session-1'
     && (init as unknown as { headers: Record<string, string> }).headers.Authorization === 'Bearer receiver-secret')).toBe(true);
   expect(JSON.stringify(r.loggedLines())).not.toContain('receiver-secret');
+});
+
+test('neither advertises following nor takes a handover before the first LOAD', () => {
+  // Prod 2026-10-16 19:27: handed over before anything was loaded, it had no
+  // media token, the sender's own first LOAD was blocked, and nothing played.
+  const r = startReceiver(true, false);
+  expect(r.caps()).toEqual(['control', 'queue-insert', 'diagnostics']);
+  r.context.sendCustomMessage.mockClear();
+  r.receive({ senderId: 'sender', data: handover });
+  expect(r.context.sendCustomMessage).toHaveBeenCalledWith(r.namespace, 'sender', { type: 'aurora.session.follow.ack', requestId: 5, ok: false });
+  expect(r.streams).toEqual([]);
+
+  r.firstLoad();
+  expect(r.caps()).toContain('session-follow');
 });
 
 test('lets a sender that loads a queue itself take charge again', () => {

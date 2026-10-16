@@ -197,6 +197,8 @@
     function start(handover) {
       if (!handover || typeof handover.sessionId !== 'string' || typeof handover.outputId !== 'string'
         || typeof handover.token !== 'string' || !(handover.generation > 0)) return false;
+      // Items need the media token a sender's LOAD brings; without it nothing would play.
+      if (!env.mediaToken()) return false;
       if (state && state.sessionId === handover.sessionId && handover.generation < state.generation) return false;
       var sameGrant = state && state.sessionId === handover.sessionId && state.generation === handover.generation;
       var castSessionId = handover.outputId.indexOf('receiver:') === 0 ? handover.outputId.slice('receiver:'.length) : '';

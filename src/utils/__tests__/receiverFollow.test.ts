@@ -55,7 +55,7 @@ class FakeEventSource {
   emit(type: string, data: Record<string, unknown>) { this.listeners.get(type)?.({ data: JSON.stringify({ data }) }); }
 }
 
-function harness(options: { caf?: number[]; current?: number; session?: ReturnType<typeof sessionOf> } = {}) {
+function harness(options: { caf?: number[]; current?: number; session?: ReturnType<typeof sessionOf>; mediaToken?: string } = {}) {
   FakeEventSource.instances = [];
   let nextItemId = 100;
   const item = (n: number) => ({ itemId: nextItemId++, media: { customData: { queueEntryId: uuid(n) } } });
@@ -98,7 +98,7 @@ function harness(options: { caf?: number[]; current?: number; session?: ReturnTy
     setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms),
     clearTimeout: (timer: ReturnType<typeof setTimeout>) => clearTimeout(timer),
     now: () => Date.now(),
-    mediaToken: () => 'media-token',
+    mediaToken: () => (options.mediaToken === undefined ? 'media-token' : options.mediaToken),
     origin: 'https://aurora.example',
     marker: (name: string, detail: string) => markers.push(`${name} ${detail}`),
     onStopped,
@@ -191,6 +191,13 @@ describe('following', () => {
     expect(jump).toBeInstanceOf(messages.QueueUpdateRequestData);
     expect(jump.currentItemId).toBe(queue.items.find((i: any) => i.media.customData.queueEntryId === uuid(9)).itemId);
     expect(queue.removeItems).not.toHaveBeenCalledWith(expect.arrayContaining([100])); // never the item that plays
+  });
+
+  it('refuses a handover while it has no media token (no LOAD yet): nothing it built would play', () => {
+    const h = harness({ mediaToken: '' });
+    expect(h.follower.start(h.handover)).toBe(false);
+    expect(h.follower.following()).toBe(false);
+    expect(h.fetch).not.toHaveBeenCalled();
   });
 
   it('ignores another session, an older revision and a stale command', async () => {

@@ -1090,7 +1090,13 @@
           // Lets the sender tell this receiver from one cached before
           // aurora.control existed: both accept messages on the namespace,
           // but only this one acts on them.
-          caps: sessionFollower ? ['control', 'queue-insert', 'diagnostics', 'session-follow'] : ['control', 'queue-insert', 'diagnostics'],
+          // session-follow only once a LOAD has given this receiver a media
+          // token: before that it can neither play the session nor log, and a
+          // sender handing over then would block its own first LOAD (prod
+          // 2026-10-16 19:27: nothing ever played).
+          caps: sessionFollower && currentAuthToken
+            ? ['control', 'queue-insert', 'diagnostics', 'session-follow']
+            : ['control', 'queue-insert', 'diagnostics'],
           diagnosticsVerbose: receiverDiagnosticsVerbose,
           ts: Date.now()
         };
@@ -1458,7 +1464,8 @@
       function handleSessionFollow(event, data) {
         var ok = false;
         try {
-          ok = !!(sessionFollower && sessionFollower.start(data));
+          // Without a media token nothing it builds would play: let the sender cast as before.
+          ok = !!(sessionFollower && currentAuthToken && sessionFollower.start(data));
         } catch (startError) {
           postServerLog('warn', '[' + LOG_TAG + '] receiver-session-follow failed', safeStringify(startError));
         }

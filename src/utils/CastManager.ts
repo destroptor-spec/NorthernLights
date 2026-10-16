@@ -1419,7 +1419,9 @@ export class CastManager {
                         this.auroraControlCapLoggedSid = sessionId;
                         this.logCast('ok', 'Receiver accepts aurora-control', `sid=${sessionId || 'unknown'} caps=${status.caps.join(',')}`);
                     }
-                    if (sessionId && status.caps?.includes(RECEIVER_SESSION_FOLLOW_CAP) && this.sessionFollowCapSid !== sessionId) {
+                    // Only once something is loaded there: handing over before the
+                    // first LOAD blocks that LOAD (prod 2026-10-16 19:27).
+                    if (sessionId && status.queueEntryId && status.caps?.includes(RECEIVER_SESSION_FOLLOW_CAP) && this.sessionFollowCapSid !== sessionId) {
                         this.sessionFollowCapSid = sessionId;
                         this.logCast('ok', 'receiver-can-follow', `sid=${sessionId}`);
                         this.receiverFollowListeners.forEach((listener) => listener());

@@ -52,7 +52,7 @@ function harness(options: { answer?: (message: { requestId: number }) => unknown
         isConnected: () => connected,
     });
     manager.attachAuroraStatusListener(session, 'cast-77');
-    const status = (caps: string[]) => onMessage(NS, JSON.stringify({ type: 'aurora.status', caps }));
+    const status = (caps: string[], queueEntryId: string | null = 'entry-1') => onMessage(NS, JSON.stringify({ type: 'aurora.status', caps, queueEntryId }));
     return { manager, session, sent, status, disconnect: () => { connected = false; } };
 }
 
@@ -69,6 +69,19 @@ it('knows a receiver can follow only once its status says so, and tells listener
     expect(manager.receiverCanFollowSession()).toBe(true);
     expect(listener).toHaveBeenCalledTimes(1);
     expect(manager.logCast).toHaveBeenCalledWith('ok', 'receiver-can-follow', 'sid=cast-77');
+});
+
+it('does not count the capability before anything is loaded on the receiver', () => {
+    // Prod 2026-10-16 19:27: the receiver's startup status named session-follow,
+    // the sender handed over at once, and its own first LOAD was then blocked.
+    const { manager, status } = harness();
+    const listener = jest.fn();
+    manager.addReceiverCanFollowListener(listener);
+    status(['control', 'session-follow'], null);
+    expect(manager.receiverCanFollowSession()).toBe(false);
+    expect(listener).not.toHaveBeenCalled();
+    status(['control', 'session-follow']);
+    expect(listener).toHaveBeenCalledTimes(1);
 });
 
 it('hands the session over and settles on the receiver ack, never logging the token', async () => {
