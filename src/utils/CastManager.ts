@@ -29,7 +29,7 @@ import {
     transportStateFromPlayerState,
 } from './castWatchdogPolicy';
 import { CAST_MEDIA_NAMESPACE, ReconcileBurst, probeCastTransport } from './castTransportRecovery';
-import { applyCastStreamingQualityToHlsUrl, applyStreamingQualityToHlsUrl } from './streaming';
+import { applyCastStreamingQualityToHlsUrl, applyStreamingQualityToHlsUrl, resolveCastStreamingQuality } from './streaming';
 import { createQueueEntryId, ensureQueueEntryIds } from './queue';
 import type { TrackInfo } from './fileSystem';
 import { castEndSnapshot, shouldContinuePlayingAfterCast, type CastEndSnapshot } from './castEndHandoff';
@@ -974,7 +974,10 @@ export class CastManager {
             this.logCast('warn', 'receiver-session-handover', `${detail} result=not-connected`);
             return false;
         }
-        const result = await handOverToReceiver(handover, {
+        const result = await handOverToReceiver({
+            ...handover,
+            quality: resolveCastStreamingQuality(usePlayerStore.getState().streamingQuality),
+        }, {
             send: (message) => session.sendMessage(getAuroraStatusNamespace(session), message),
             acks: this.receiverFollowAcks,
             nextRequestId: () => ++this.auroraControlRequestId,

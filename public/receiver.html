@@ -693,6 +693,10 @@
     }
   </style>
   <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+  <!-- Phase 5: following the playback session. Only runs after a sender hands
+       over a session (aurora.session.follow); without it this receiver works
+       exactly as before. -->
+  <script src="receiver-follow.js"></script>
 </head>
 <body>
   <audio id="aurora-cast-media" preload="auto" aria-hidden="true"></audio>
@@ -840,6 +844,9 @@
       var currentTipIndex = 0;
       var pendingMediaInfo = null;
       var receiverStopReason = '';
+      // Set when following the session ended because its credential ran out:
+      // the idle screen then asks for Aurora instead of rotating tips.
+      var followEndedTip = '';
       var lastPlaybackActivityAt = Date.now();
       var dimmedLogged = false;
       var lastRender = {
@@ -1083,7 +1090,7 @@
           // Lets the sender tell this receiver from one cached before
           // aurora.control existed: both accept messages on the namespace,
           // but only this one acts on them.
-          caps: ['control', 'queue-insert', 'diagnostics'],
+          caps: sessionFollower ? ['control', 'queue-insert', 'diagnostics', 'session-follow'] : ['control', 'queue-insert', 'diagnostics'],
           diagnosticsVerbose: receiverDiagnosticsVerbose,
           ts: Date.now()
         };
@@ -1418,6 +1425,51 @@
         }
       }
 
+      // ── Phase 5: follow the playback session (receiver-follow.js) ────────
+      // Created only when the module loaded and this device can hold an event
+      // stream; only then is `session-follow` advertised. Nothing follows until
+      // a sender hands over a session.
+      var sessionFollower = null;
+      try {
+        if (window.AuroraSessionFollow && typeof EventSource === 'function' && typeof fetch === 'function') {
+          sessionFollower = window.AuroraSessionFollow.createFollower({
+            playerManager: playerManager,
+            queueManager: queueManager,
+            messages: cast.framework.messages,
+            fetch: function(url, init) { return fetch(url, init); },
+            EventSource: EventSource,
+            setTimeout: function(fn, ms) { return setTimeout(fn, ms); },
+            clearTimeout: function(timer) { clearTimeout(timer); },
+            now: function() { return Date.now(); },
+            mediaToken: function() { return currentAuthToken; },
+            origin: window.location.origin,
+            marker: function(name, detail) { postDiagnosticMarker(name, detail); },
+            onStopped: function(reason) {
+              if (reason === 'expired') followEndedTip = 'Open Aurora to keep playing.';
+              syncUi(true);
+            }
+          });
+        }
+      } catch (followerError) {
+        sessionFollower = null;
+        postServerLog('warn', '[' + LOG_TAG + '] receiver-session-follow unavailable', safeStringify(followerError));
+      }
+
+      function handleSessionFollow(event, data) {
+        var ok = false;
+        try {
+          ok = !!(sessionFollower && sessionFollower.start(data));
+        } catch (startError) {
+          postServerLog('warn', '[' + LOG_TAG + '] receiver-session-follow failed', safeStringify(startError));
+        }
+        if (ok) followEndedTip = '';
+        try {
+          context.sendCustomMessage(AURORA_STATUS_NS, event.senderId, {
+            type: 'aurora.session.follow.ack', requestId: data.requestId || null, ok: ok
+          });
+        } catch (ackError) { /* the sender retries, then casts as before */ }
+      }
+
       function handleAuroraMessage(event) {
         var data = event && event.data;
         if (typeof data === 'string') {
@@ -1440,6 +1492,8 @@
           handleAuroraQueueInsert(event, data);
         } else if (data.type === 'aurora.probe') {
           handleAuroraProbe(event, data);
+        } else if (data.type === 'aurora.session.follow') {
+          handleSessionFollow(event, data);
         }
       }
 
@@ -1682,9 +1736,10 @@
           ui.stateBanner.classList.toggle('is-visible', Boolean(bannerCopy));
           lastRender.bannerCopy = bannerCopy;
         }
-        if (force || lastRender.idleTip !== IDLE_TIPS[currentTipIndex]) {
-          ui.idleTip.textContent = IDLE_TIPS[currentTipIndex];
-          lastRender.idleTip = IDLE_TIPS[currentTipIndex];
+        var idleTip = followEndedTip || IDLE_TIPS[currentTipIndex];
+        if (force || lastRender.idleTip !== idleTip) {
+          ui.idleTip.textContent = idleTip;
+          lastRender.idleTip = idleTip;
         }
 
         setArtwork(imageUrl, title);
@@ -1816,6 +1871,14 @@
             }
           }
 
+          // A sender loading a queue itself is in charge of it again: stop
+          // following (what the follower loads is marked auroraFollow).
+          if (sessionFollower && sessionFollower.following()) {
+            var ownLoad = loadRequestData.media && loadRequestData.media.customData && loadRequestData.media.customData.auroraFollow;
+            if (!ownLoad) sessionFollower.noteForeignLoad();
+          }
+          // Something plays again: the "Open Aurora" idle hint no longer applies.
+          followEndedTip = '';
           if (loadRequestData.media) {
             normalizeMedia(loadRequestData.media);
             pendingMediaInfo = loadRequestData.media;
@@ -1913,6 +1976,7 @@
             suppressDefaultCastUi();
             postReceiverHeartbeat('media-status');
             syncUi(true);
+            if (sessionFollower) sessionFollower.notePlayerChanged();
           }
         }
       );

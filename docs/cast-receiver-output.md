@@ -136,7 +136,36 @@ Phase 1's leftover "session-bound receiver tokens".
   `sync-receiver-handover-failed`, `sync-receiver-left`; checklist row 20.
 - No kill switch (decided): a rollback of the receiver is the way back.
 
-### D. Receiver follows the session (`receiver.html`)
+### D. Receiver follows the session (`receiver.html`) — built (feat/receiver-follows)
+
+As built: the logic lives in `public/receiver-follow.js` (ES5 style, held to
+ES2017 and to Chrome 62's APIs by `npm run verify:receiver`), loaded by
+`receiver.html` and served `no-cache` with it. `receiver.html` itself only
+creates the follower (when the module loaded and EventSource and fetch
+exist), advertises `session-follow`, answers `aurora.session.follow`, tells
+the follower about media status changes, stops following when a sender LOADs
+a queue itself, and shows *Open Aurora to keep playing.* when the
+credential has run out. Details that differ from the plan below:
+- Items are built like the sender's (stream URL with the Cast quality from the
+  handover, `codec=aac`, the media token the receiver already holds; artwork
+  with the same token), not through `POST /tracks/:id/playback`, whose
+  15-minute media tokens would expire before a queued item plays.
+- The window keeps the common prefix of what follows the current item, drops
+  everything after it and appends the rest of the session's next 9 entries,
+  in one `removeItems` and one `insertItems`; previous items stay. The item
+  that plays is never removed: when its entry is gone the receiver jumps to
+  the session's current entry first (`QueueUpdateRequestData.currentItemId`
+  through `sendLocalMediaRequest`). A jump to an entry outside the window,
+  and `load`, start a new window with `playerManager.load`.
+- Being replaced has three cases: another device elsewhere (stop the
+  music), a newer grant for this same receiver (wait for its handover, play
+  on), and a sender in this Cast session claiming as a plain Cast output
+  (stop following, play on).
+- Played/skipped history is still reported by the sender for now, to avoid
+  counting plays twice.
+- Shuffle is not applied on the receiver: the sender chooses the next track
+  and sends a `load`.
+
 
 All of it only when the LOAD carries `sessionId` and `receiverToken`. Without
 them the receiver runs today's code path, unchanged.

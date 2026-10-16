@@ -39,6 +39,7 @@ describe('production PWA assets', () => {
     for (const [name, content] of Object.entries({
       'index.html': '<html>APP SHELL</html>',
       'receiver.html': '<html>RECEIVER</html>',
+      'receiver-follow.js': '/* follow */',
       'sw.js': '/* worker */',
       'workbox-build.js': '/* runtime */',
       'assets/index-hash.js': 'console.log("valid chunk");',
@@ -58,7 +59,7 @@ describe('production PWA assets', () => {
     expect(response.wire).not.toContain('APP SHELL');
   });
 
-  it.each(['/index.html', '/sw.js', '/workbox-build.js'])('revalidates deployment entrypoint %s', async (url) => {
+  it.each(['/index.html', '/sw.js', '/workbox-build.js', '/receiver.html', '/receiver-follow.js'])('revalidates deployment entrypoint %s', async (url) => {
     const response = await request(app, url);
     expect(response.status).toBe(200);
     expect(response.headers['cache-control']).toBe('no-cache');

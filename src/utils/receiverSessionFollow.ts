@@ -18,6 +18,8 @@ export interface ReceiverHandover {
   token: string;
   expiresAt: string;
   renewableUntil?: string;
+  /** The Cast stream quality the receiver builds its items with (the sender's, resolved for Cast). */
+  quality?: string;
 }
 
 export interface ReceiverFollowMessage extends ReceiverHandover {
