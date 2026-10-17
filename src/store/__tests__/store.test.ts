@@ -445,8 +445,8 @@ describe('casting to a receiver that plays the session itself (Phase 5, PR E)', 
     jest.spyOn(sessionMirror, 'currentGrant').mockReturnValue({ sessionId: 'session-1', outputId: 'receiver:cast-77', generation: 4 });
     (startOnFollowingReceiver as jest.Mock).mockClear().mockResolvedValue('sent');
     // Earlier tests stub playAtIndex; these need the real one.
-    const { playAtIndex, adoptFollowedCastQueue } = usePlayerStore.getInitialState();
-    usePlayerStore.setState({ playAtIndex, adoptFollowedCastQueue, playlist: tracks(1, 2, 3), currentIndex: 0, playbackState: 'playing', isBuffering: false, addToast: jest.fn() } as never);
+    const { playAtIndex, adoptSessionQueueAsOutput } = usePlayerStore.getInitialState();
+    usePlayerStore.setState({ playAtIndex, adoptSessionQueueAsOutput, playlist: tracks(1, 2, 3), currentIndex: 0, playbackState: 'playing', isBuffering: false, addToast: jest.fn() } as never);
   });
   afterEach(() => jest.restoreAllMocks());
 
@@ -468,14 +468,14 @@ describe('casting to a receiver that plays the session itself (Phase 5, PR E)', 
   });
 
   it("shows the session's queue, keeping the entry that plays", () => {
-    usePlayerStore.getState().adoptFollowedCastQueue(tracks(9, 1, 2, 3), entry(9));
+    usePlayerStore.getState().adoptSessionQueueAsOutput(tracks(9, 1, 2, 3), entry(9));
     expect(usePlayerStore.getState().playlist.map((t) => t.id)).toEqual(['t9', 't1', 't2', 't3']);
     expect(usePlayerStore.getState().currentIndex).toBe(1);
     expect(usePlayerStore.getState().playbackState).toBe('playing');
   });
 
   it("falls back to the session's current entry when the playing one is gone", () => {
-    usePlayerStore.getState().adoptFollowedCastQueue(tracks(7, 8), entry(8));
+    usePlayerStore.getState().adoptSessionQueueAsOutput(tracks(7, 8), entry(8));
     expect(usePlayerStore.getState().currentIndex).toBe(1);
   });
 
@@ -489,9 +489,39 @@ describe('casting to a receiver that plays the session itself (Phase 5, PR E)', 
     expect(usePlayerStore.getState().playlist.map((t) => t.id)).toEqual(['t1', 't2', 't3']);
   });
 
-  it('takes nothing when the receiver does not follow the session', () => {
+  it('without a following receiver, waits for the load when another device replaced the queue', () => {
     follows = false;
-    usePlayerStore.getState().adoptFollowedCastQueue(tracks(7, 8), entry(8));
+    usePlayerStore.getState().adoptSessionQueueAsOutput(tracks(7, 8), entry(8));
     expect(usePlayerStore.getState().playlist.map((t) => t.id)).toEqual(['t1', 't2', 't3']);
+  });
+});
+
+describe("playing here, the session's queue counts (Phase 3)", () => {
+  const entry = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+  const tracks = (...ns: number[]): TrackInfo[] => ns.map((n) => ({ id: `t${n}`, path: `/t${n}.mp3`, title: `T${n}`, queueEntryId: entry(n) }));
+  beforeEach(() => {
+    jest.spyOn(castManager, 'receiverFollowsSession').mockReturnValue(false);
+    const { adoptSessionQueueAsOutput } = usePlayerStore.getInitialState();
+    usePlayerStore.setState({ adoptSessionQueueAsOutput, playlist: tracks(1, 2, 3), currentIndex: 1, playbackState: 'playing' } as never);
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it("takes in another device's edit around the track that plays, which plays on", () => {
+    const reconcile = jest.spyOn(castManager, 'reconcileQueueEdits');
+    jest.spyOn(castManager, 'isConnected').mockReturnValue(false);
+    usePlayerStore.getState().adoptSessionQueueAsOutput(tracks(1, 2, 9, 3), entry(2));
+    expect(usePlayerStore.getState().playlist.map((t) => t.id)).toEqual(['t1', 't2', 't9', 't3']);
+    expect(usePlayerStore.getState()).toMatchObject({ currentIndex: 1, playbackState: 'playing' });
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  it('keeps the Infinity look of its picks, and hands the edit to a Cast window it manages', () => {
+    usePlayerStore.setState({ playlist: [...tracks(1, 2), { ...tracks(3)[0], isInfinity: true }] });
+    jest.spyOn(castManager, 'isConnected').mockReturnValue(true);
+    const reconcile = jest.spyOn(castManager, 'reconcileQueueEdits').mockImplementation(() => undefined);
+    usePlayerStore.getState().adoptSessionQueueAsOutput(tracks(2, 3, 4), entry(2));
+    expect(usePlayerStore.getState().playlist.map((t) => [t.id, !!t.isInfinity])).toEqual([['t2', false], ['t3', true], ['t4', false]]);
+    expect(usePlayerStore.getState().currentIndex).toBe(0);
+    expect(reconcile).toHaveBeenCalledTimes(1);
   });
 });
