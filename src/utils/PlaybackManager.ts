@@ -17,7 +17,7 @@ async function loadHls(): Promise<typeof Hls> {
     return hlsLoadPromise;
 }
 import { usePlayerStore, type PlaybackTelemetry } from '../store';
-import { getPlaybackTimeSnapshot, setPlaybackCurrentTime } from '../store/playbackTime';
+import { getPlaybackTimeSnapshot, setPlaybackCurrentTime, noteLocalPlaybackSeek } from '../store/playbackTime';
 import {
     AdaptiveHlsTelemetryTracker,
     applyAdaptiveDataSaverLevelCap,
@@ -1484,6 +1484,7 @@ class PlaybackManager {
         } else {
             if (isFinite(time) && time >= 0) {
                 this.audio.currentTime = time;
+                noteLocalPlaybackSeek(time);
             }
         }
         this.onTimeUpdateCallback?.(time);
