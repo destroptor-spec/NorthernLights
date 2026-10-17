@@ -8559,7 +8559,7 @@
             }
           },
           "409": {
-            "description": "REVISION_CONFLICT, ANCHOR_NOT_FOUND or ENTRY_ID_CONFLICT (each with the current session in details.current), or TRACKS_UNAVAILABLE",
+            "description": "REVISION_CONFLICT, ANCHOR_NOT_FOUND, ENTRY_ID_CONFLICT or CURRENT_ENTRY_PLAYING (the entry that plays cannot be removed; each with the current session in details.current), or TRACKS_UNAVAILABLE",
             "content": {
               "application/json": {
                 "schema": {

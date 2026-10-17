@@ -487,10 +487,10 @@ describe('queue edits on an idle device following a receiver (Phase 5)', () => {
     await connect();
     const newer = { ...receiverSession(), revision: 15 };
     api.patchPlaybackSession.mockRejectedValueOnce(new AuroraApiError('conflict', 409, 'REVISION_CONFLICT', undefined, { current: newer }));
-    store.setState({ playlist: [track(1), track(3)] });
+    store.setState({ playlist: [track(1), track(2)] }); // 3 removed (2 plays: never removable)
     await jest.advanceTimersByTimeAsync(250);
     expect(api.patchPlaybackSession).toHaveBeenCalledTimes(2);
-    expect(api.patchPlaybackSession.mock.calls[1][2]).toMatchObject({ expectedRevision: 15, operations: [{ type: 'remove', queueEntryIds: [uuid(2)] }] });
+    expect(api.patchPlaybackSession.mock.calls[1][2]).toMatchObject({ expectedRevision: 15, operations: [{ type: 'remove', queueEntryIds: [uuid(3)] }] });
 
     const gone = { ...receiverSession(), revision: 20, queue: receiverSession().queue.slice(0, 1) };
     api.patchPlaybackSession.mockRejectedValueOnce(new AuroraApiError('anchor', 409, 'ANCHOR_NOT_FOUND', undefined, { current: gone }));

@@ -137,7 +137,9 @@ describeDb('playback sessions', () => {
       // Round 10 starts something new, which is sent as one replaceQueue.
       const local = round === 10
         ? Array.from({ length: 8 }, fresh)
-        : session.queue.map((entry) => ({ entryId: entry.queueEntryId, trackId: entry.track.id })).filter(() => random() > 0.15);
+        // The entry that plays is never removed (Phase 3): the app skips it instead.
+        : session.queue.map((entry) => ({ entryId: entry.queueEntryId, trackId: entry.track.id }))
+          .filter((entry) => entry.entryId === session.currentEntryId || random() > 0.15);
       for (let edit = 0; edit < 5; edit += 1) {
         if (random() < 0.5 && local.length) {
           const [moved] = local.splice(Math.floor(random() * local.length), 1);
@@ -164,12 +166,22 @@ describeDb('playback sessions', () => {
     expect(await storedRows(session.id)).toHaveLength(2);
   });
 
-  it('moves the current entry to the head of the queue when it is removed', async () => {
+  it('never removes the entry that plays (skip it instead), and writes nothing', async () => {
     let session = await create(trackIds(0, 3), 1);
     session = await patch(session, [{ type: 'setTransport', positionMs: 5000 }]);
-    session = await patch(session, [{ type: 'remove', queueEntryIds: [session.currentEntryId!] }]);
-    expect(session.currentEntryId).toBe(session.queue[0].queueEntryId);
-    expect(session.positionMs).toBe(0);
+    const other = session.queue[2].queueEntryId;
+    const refused = await rejection(patch(session, [{ type: 'remove', queueEntryIds: [other, session.currentEntryId!] }]));
+    expect(refused).toBeInstanceOf(sessions.PlaybackSessionCurrentEntryError);
+    expect(refused.entryId).toBe(session.currentEntryId);
+    expect(refused.current.revision).toBe(session.revision);
+    expect(trackOrder((await sessions.getPlaybackSession(userId, session.id))!)).toEqual(trackIds(0, 3));
+  });
+
+  it('empties the queue with a replace, which drops the current entry too', async () => {
+    const session = await create(trackIds(0, 3), 1);
+    const cleared = await patch(session, [{ type: 'replaceQueue', trackIds: [], entryIds: [] }]);
+    expect(cleared.queue).toEqual([]);
+    expect(cleared.currentEntryId).toBeNull();
   });
 
   it('resets the position when the current entry changes, and keeps it otherwise', async () => {

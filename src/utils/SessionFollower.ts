@@ -257,7 +257,7 @@ export class SessionFollower {
     // Clearing the queue here does not stop the receiver.
     if (!local.length || local.length > MAX_SESSION_QUEUE || local.some((entry) => !isUuid(entry.entryId))) return;
     const server = session.queue.map((entry) => ({ entryId: entry.queueEntryId, trackId: entry.track.id }));
-    const operations = planQueueOperations(server, local, null);
+    const operations = planQueueOperations(server, local, null, session.currentEntryId);
     if (!operations.length) return;
     this.editing = true;
     try {

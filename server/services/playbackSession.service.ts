@@ -77,6 +77,17 @@ export class PlaybackSessionEntryIdError extends Error {
 /** A patch reused a requestId with a different body. */
 export class PlaybackSessionRequestReusedError extends Error {}
 
+/**
+ * The entry that plays is not queued any more, so it cannot be removed; Skip
+ * moves past it (Andreas, 2026-10-17). Replacing the whole queue still can.
+ */
+export class PlaybackSessionCurrentEntryError extends Error {
+  current: PlaybackSession | null = null;
+  constructor(public readonly entryId: string) {
+    super('The current entry cannot be removed.');
+  }
+}
+
 export type PlaybackSessionPatchResult = {
   session: PlaybackSession;
   /** The revision this patch produced; older than `session.revision` on a replay that others have since built on. */
@@ -399,11 +410,8 @@ export async function patchPlaybackSession(input: {
         }
         case 'remove': {
           const removed = new Set(operation.queueEntryIds);
+          if (currentEntryId && removed.has(currentEntryId)) throw new PlaybackSessionCurrentEntryError(currentEntryId);
           entries = entries.filter((entry) => !removed.has(entry.queue_entry_id));
-          if (currentEntryId && removed.has(currentEntryId)) {
-            currentEntryId = entries[0]?.queue_entry_id || null;
-            positionMs = 0;
-          }
           queueChanged = true;
           break;
         }
@@ -478,7 +486,8 @@ export async function patchPlaybackSession(input: {
     }
     // Anchor and entry-ID conflicts carry the current session, like a revision
     // conflict, so the client can rebase without another read.
-    if (error instanceof PlaybackSessionAnchorError || error instanceof PlaybackSessionEntryIdError) {
+    if (error instanceof PlaybackSessionAnchorError || error instanceof PlaybackSessionEntryIdError
+      || error instanceof PlaybackSessionCurrentEntryError) {
       error.current = await getPlaybackSession(input.userId, input.sessionId);
     }
     throw error;

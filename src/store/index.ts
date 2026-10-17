@@ -2847,6 +2847,8 @@ export const usePlayerStore = create<PlayerState>()(
         closeContextMenu: () => set({ contextMenu: null }),
 
         removeFromPlaylist: (index: number) => set((state: PlayerState) => {
+          // The track that plays is not queued any more: Skip moves past it.
+          if (index === state.currentIndex) return state;
           const newPlaylist = [...state.playlist];
           const [removed] = newPlaylist.splice(index, 1);
 
