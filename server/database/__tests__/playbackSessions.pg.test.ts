@@ -750,16 +750,19 @@ describeDb('playback sessions', () => {
       expect(await infinity.topUpSessionInfinity(userId, session.id, recommend)).toBe(0);
     });
 
-    it('only for a receiver output, with Infinity on', async () => {
+    it('only with Infinity on and something playing the session, of any kind (Phase 3)', async () => {
       const off = await playingOnReceiver(trackIds(0, 2), 1, { infinity: false });
       const { recommend } = engine();
       expect(await infinity.topUpSessionInfinity(userId, off.id, recommend)).toBe(0);
 
+      const idle = await patch(await create(trackIds(0, 2), 1), [{ type: 'setTransport', infinity: true }]);
+      expect(await infinity.topUpSessionInfinity(userId, idle.id, recommend)).toBe(0); // no output
+      expect(recommend).not.toHaveBeenCalled();
+
       let browser = await create(trackIds(0, 2), 1);
       browser = await sessions.claimPlaybackOutput({ userId, clientId: 'phone', sessionId: browser.id, output: { kind: 'browser' } });
       await patch(browser, [{ type: 'setTransport', infinity: true }]);
-      expect(await infinity.topUpSessionInfinity(userId, browser.id, recommend)).toBe(0);
-      expect(recommend).not.toHaveBeenCalled();
+      expect(await infinity.topUpSessionInfinity(userId, browser.id, recommend)).toBe(3); // nothing was ahead
     });
 
     it('stops when the engine has nothing, or offers a queued track again', async () => {

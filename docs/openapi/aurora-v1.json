@@ -1086,7 +1086,7 @@
           },
           "infinity": {
             "type": "boolean",
-            "description": "Infinity: the server keeps a few upcoming entries, chosen by the recommendation engine, while a Cast receiver plays the session itself."
+            "description": "Infinity: the server keeps a few upcoming entries, chosen by the recommendation engine, while something plays the session."
           },
           "source": {
             "type": [

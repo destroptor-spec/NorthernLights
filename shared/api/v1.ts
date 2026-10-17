@@ -271,7 +271,7 @@ export const playbackSessionSchema = z.object({
   playbackState: z.enum(['playing', 'paused', 'stopped']),
   repeatMode: z.enum(['none', 'one', 'all']),
   shuffle: z.boolean(),
-  infinity: z.boolean().describe('Infinity: the server keeps a few upcoming entries, chosen by the recommendation engine, while a Cast receiver plays the session itself.'),
+  infinity: z.boolean().describe('Infinity: the server keeps a few upcoming entries, chosen by the recommendation engine, while something plays the session.'),
   source: z.object({ kind: z.string(), id: z.string().nullable() }).nullable(),
   revision: z.number().int().positive(),
   queue: z.array(queueEntrySchema),

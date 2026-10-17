@@ -15,10 +15,9 @@ import {
 // queue changes, so every device and the output see them through the normal
 // sync path, and no two devices ever append for the same gap.
 //
-// For now only for a Cast receiver that plays the session itself (Phase 5):
-// its session's queue is the one that counts. A browser output still treats
-// its own queue as the one that counts and would undo these appends; it keeps
-// client-side Infinity until it takes the session's queue (Phase 3).
+// For every output: since Phase 3 each takes the session's queue, so an
+// append reaches the device that plays (a receiver that follows the session,
+// a browser, or a casting device that manages its Cast window).
 
 export const INFINITY_AHEAD = 3;
 /** The same windows the web client sends to /recommendations/next. */
@@ -34,9 +33,9 @@ type Recommend = (userId: string, input: NextRecommendationRequest) => Promise<{
 
 const running = new Map<string, Promise<number>>();
 
-/** Whether the server keeps this session's upcoming entries. */
+/** Whether the server keeps this session's upcoming entries: Infinity on, and something plays it. */
 export function serverKeepsInfinity(session: PlaybackSession): boolean {
-  return session.infinity && session.output?.kind === 'receiver' && session.output.status !== 'ended';
+  return session.infinity && !!session.output && session.output.status !== 'ended';
 }
 
 /** How many entries follow the current one, or null without a current entry. */
