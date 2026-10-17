@@ -133,6 +133,39 @@ describeDb('database read queries', () => {
     }
   });
 
+  it('returns stored artist artwork for similar artists when the primary image is missing', async () => {
+    const neighbour = (await pool.query("INSERT INTO artists (name) VALUES ('Neighbour Artist') RETURNING id")).rows[0].id;
+    const ownIds = [`${TRACK_ID}0`, `${TRACK_ID}1`];
+    const neighbourIds = ['bmVpZ2hib3VyMA==', 'bmVpZ2hib3VyMQ=='];
+    const features = { bpm: 120, acoustic_vector: Array(8).fill(0.5), embedding_vector: [1, ...Array(1279).fill(0)], feature_version: 2 };
+    try {
+      for (const [i, id] of neighbourIds.entries()) {
+        await pool.query(
+          `INSERT INTO tracks (id, title, artist, album, path, artist_id, album_id, duration)
+           VALUES ($1, $2, 'Neighbour Artist', 'Test Album', $3, $4, $5, 180)`,
+          [id, `Neighbour Track ${i}`, `bmVpZ2hib3Vy${i}`, neighbour, seeded.albumId],
+        );
+      }
+      for (const id of [...ownIds, ...neighbourIds]) await db.addTrackFeatures(id, features);
+      await db.refreshArtistAudioProfiles();
+      for (const [image, artwork, expected] of [
+        [null, '/artwork.jpg', '/artwork.jpg'],
+        ['', '/artwork.jpg', '/artwork.jpg'],
+        ['/portrait.jpg', '/artwork.jpg', '/portrait.jpg'],
+        [null, null, undefined],
+      ]) {
+        await pool.query('UPDATE artists SET image_url = $1, artwork_url = $2 WHERE id = $3', [image, artwork, neighbour]);
+        const similar = (await db.getSimilarArtistsByAudioProfile(seeded.artistId)).find(a => a.id === neighbour);
+        expect(similar).toMatchObject({ name: 'Neighbour Artist', imageUrl: expected });
+      }
+    } finally {
+      await pool.query('DELETE FROM track_features WHERE track_id = ANY($1::text[])', [[...ownIds, ...neighbourIds]]);
+      await pool.query('DELETE FROM tracks WHERE id = ANY($1::text[])', [neighbourIds]);
+      await pool.query('DELETE FROM artists WHERE id = $1', [neighbour]);
+      await db.refreshArtistAudioProfiles();
+    }
+  });
+
   it('reports the same missing and outdated backlog that incremental analysis selects', async () => {
     const directory = "/coverage/Blå — O'Brien";
     const ids = ['missing', 'loudness', 'embedding-only', 'legacy', 'current', 'future', 'simulated']

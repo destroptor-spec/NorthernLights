@@ -475,7 +475,7 @@ export async function computeArtistRadioCandidates(
     SELECT
       a.id::text AS artist_id,
       a.name AS artist_name,
-      a.image_url,
+      COALESCE(NULLIF(a.image_url, ''), NULLIF(a.artwork_url, '')) AS image_url,
       SUM(b.play_count) AS recent_plays,
       0.7 * SUM(CASE WHEN b.year_month >=
         date_trunc('month', NOW() - INTERVAL '60 days')::date
@@ -490,7 +490,7 @@ export async function computeArtistRadioCandidates(
     WHERE b.user_id = $1
       AND b.year_month >= date_trunc('month', NOW() - INTERVAL '180 days')::date
       AND ${variousArtistsExclusion('a')}
-    GROUP BY a.id, a.name, a.image_url
+    GROUP BY a.id, a.name, a.image_url, a.artwork_url
     HAVING SUM(b.play_count) >= 10
     ORDER BY score DESC
     LIMIT $2

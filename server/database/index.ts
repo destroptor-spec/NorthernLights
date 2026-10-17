@@ -3673,8 +3673,9 @@ export async function getSimilarArtistsByAudioProfile(artistId: string, limit: n
   // Target profile is computed live for just this artist (indexed by
   // artist_id) so it stays correct even between MV refreshes; candidates come
   // from the precomputed artist_audio_profiles MV instead of re-aggregating
-  // the whole library on every request. image_url is read live from artists
-  // (it updates independently of analysis).
+  // the whole library on every request. The image is read live from artists
+  // (it updates independently of analysis), falling back to the provider
+  // artwork like the Artists grid does.
   const res = await db.query(`
     WITH target AS (
       SELECT
@@ -3691,7 +3692,7 @@ export async function getSimilarArtistsByAudioProfile(artistId: string, limit: n
       SELECT
         p.artist_id AS id,
         a.name,
-        a.image_url,
+        COALESCE(NULLIF(a.image_url, ''), NULLIF(a.artwork_url, '')) AS image_url,
         p.track_count,
         p.album_count,
         p.analyzed_tracks,
