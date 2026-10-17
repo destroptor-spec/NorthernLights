@@ -3,6 +3,7 @@ import { selectDisplayedPlaying } from '../../utils/sessionFollow';
 import { sendRemoteAction, startOnFollowingReceiver } from '../../utils/sessionRemote';
 import { castManager } from '../../utils/CastManager';
 import { sessionMirror } from '../../utils/SessionMirror';
+import * as auroraApi from '../../api/auroraApi';
 import { sessionFollower } from '../../utils/SessionFollower';
 
 jest.mock('../../utils/sessionRemote', () => ({ sendRemoteAction: jest.fn(async () => 'sent'), startOnFollowingReceiver: jest.fn(async () => 'sent') }));
@@ -453,6 +454,16 @@ describe('casting to a receiver that plays the session itself (Phase 5, PR E)', 
   it("falls back to the session's current entry when the playing one is gone", () => {
     usePlayerStore.getState().adoptFollowedCastQueue(tracks(7, 8), entry(8));
     expect(usePlayerStore.getState().currentIndex).toBe(1);
+  });
+
+  it('leaves Infinity to the server while the receiver follows the session (Phase 4)', async () => {
+    const recommend = jest.spyOn(auroraApi, 'fetchNextRecommendation').mockResolvedValue(null);
+    const { ensureInfinityQueue, fetchNextInfinityTrack } = usePlayerStore.getInitialState();
+    usePlayerStore.setState({ ensureInfinityQueue, fetchNextInfinityTrack, isInfinityMode: true, isFetchingInfinity: false, currentIndex: 2 } as never);
+    await usePlayerStore.getState().ensureInfinityQueue();
+    await usePlayerStore.getState().fetchNextInfinityTrack(true);
+    expect(recommend).not.toHaveBeenCalled();
+    expect(usePlayerStore.getState().playlist.map((t) => t.id)).toEqual(['t1', 't2', 't3']);
   });
 
   it('takes nothing when the receiver does not follow the session', () => {

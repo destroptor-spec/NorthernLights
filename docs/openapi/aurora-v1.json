@@ -1084,6 +1084,10 @@
           "shuffle": {
             "type": "boolean"
           },
+          "infinity": {
+            "type": "boolean",
+            "description": "Infinity: the server keeps a few upcoming entries, chosen by the recommendation engine, while a Cast receiver plays the session itself."
+          },
           "source": {
             "type": [
               "object",
@@ -1134,6 +1138,7 @@
           "playbackState",
           "repeatMode",
           "shuffle",
+          "infinity",
           "source",
           "revision",
           "queue",
@@ -1915,6 +1920,9 @@
                       ]
                     },
                     "shuffle": {
+                      "type": "boolean"
+                    },
+                    "infinity": {
                       "type": "boolean"
                     }
                   },

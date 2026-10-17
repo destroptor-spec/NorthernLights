@@ -28,6 +28,8 @@ export interface MirroredPlayerState {
   currentIndex: number | null;
   repeat: PlaybackSession['repeatMode'];
   shuffle: boolean;
+  /** Infinity on this device; the server keeps it for a receiver that follows the session (Phase 4). */
+  isInfinityMode?: boolean;
   playbackState: 'playing' | 'paused' | 'stopped';
   isBuffering: boolean;
   castConnected: boolean;
@@ -346,7 +348,8 @@ export class SessionMirror {
       this.scheduleKindCheck();
       return;
     }
-    if (state.playlist !== previous.playlist || state.repeat !== previous.repeat || state.shuffle !== previous.shuffle) {
+    if (state.playlist !== previous.playlist || state.repeat !== previous.repeat || state.shuffle !== previous.shuffle
+      || state.isInfinityMode !== previous.isInfinityMode) {
       this.scheduleFlush(FLUSH_DELAY_MS);
     }
     if (state.playbackState !== previous.playbackState || state.isBuffering !== previous.isBuffering || state.currentIndex !== previous.currentIndex) {
@@ -540,7 +543,10 @@ export class SessionMirror {
     if (local.length > MAX_SESSION_QUEUE) return;
     if (local.some((entry) => this.blockedTrackIds.has(entry.trackId))) return;
 
-    const operations = planSessionPatch(this.session, local, state.currentIndex, { repeatMode: state.repeat, shuffle: state.shuffle });
+    const operations = planSessionPatch(this.session, local, state.currentIndex, {
+      repeatMode: state.repeat, shuffle: state.shuffle,
+      ...(state.isInfinityMode !== undefined ? { infinity: state.isInfinityMode } : {}),
+    });
     if (!operations.length) return;
     const patch = { expectedRevision: this.session.revision, operations };
     const body = JSON.stringify(patch);
