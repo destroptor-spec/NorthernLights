@@ -14,7 +14,7 @@ const NOISE_GROUP = /[\(\[]\s*[^\)\]]*\b(?:official|video|audio|lyrics?|visuali[
 // normalization to both sides.
 export function cleanYouTubeVideoTitle(title: string): string {
   if (!title) return '';
-  let t = title.replace(NOISE_GROUP, ' ');
+  let t = title.replace(NOISE_GROUP, group => /\b(live|acoustic|remix|instrumental|karaoke|demo|edit)\b/i.test(group) ? group : ' ');
   // Trailing dash-qualifiers, e.g. "Song - Official Video".
   t = t.replace(/\s+[-–—]\s+(?:official\s+)?(?:music\s+)?(?:video|audio|lyrics?|visuali[sz]er|hd|4k|mv)\s*$/i, '');
   return t.replace(/\s+/g, ' ').trim();

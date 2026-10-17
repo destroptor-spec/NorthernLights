@@ -29,6 +29,27 @@ The former combined preference migrates to both switches on first rehydration.
 Once a Cast preference is saved explicitly, browser diagnostics no longer change
 it. Neither preference changes the server-wide HLS setting.
 
+## Music video diagnostics
+
+With **Browser playback diagnostics** enabled in Settings → Playback, the
+**Music video diagnostics** readout shows the last mobile Now Playing attempt.
+Play the affected song and open Now Playing, then return to Settings and choose
+**Copy video report**. If clipboard access is denied, the report remains
+selectable in the text field.
+
+The report distinguishes disabled settings/Cast gating, match lookup failures
+(including HTTP status), no match, YouTube API loading, iframe readiness timeout,
+player state, autoplay blocking, and numeric YouTube errors. It includes the
+actually loaded frontend asset name, browser user agent, origin, installed/browser
+display mode, worker control state, track/video IDs, and visibility transitions.
+Only the latest attempt's 20 events are retained in memory, including after Now
+Playing closes. Nothing is persisted or uploaded; closing/reloading the page
+clears the record. Auth headers, query strings, and raw exception text are not
+recorded. A diagnostic timeout does not prevent a late player from becoming ready.
+
+This identifies the failing stage; successful browser emulation does not establish
+successful playback in an installed Android app.
+
 ## Receiver protocol
 
 The receiver advertises `diagnostics` on `urn:x-cast:aurora.status`. The sender

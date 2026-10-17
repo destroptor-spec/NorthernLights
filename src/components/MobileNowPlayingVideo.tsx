@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { usePlayerStore } from '../store/index';
 import { usePlaybackTimeStore } from '../store/playbackTime';
 import { loadYouTubeIframeApi, type YTPlayer } from '../utils/youtubeIframeApi';
+import { recordMusicVideoEvent } from '../store/musicVideoDiagnostics';
 
 export type VideoPhase = 'none' | 'buffering' | 'visible' | 'ended';
 
@@ -11,10 +12,10 @@ interface Props {
 }
 
 // How far video time may drift from audio time before we re-sync (seconds).
-// Kept coarse on purpose — the brief is "roughly matches", and tight per-frame
-// syncing would cause visible stutter.
-const DRIFT_THRESHOLD_SECONDS = 2.5;
-const DRIFT_CHECK_INTERVAL_MS = 4000;
+// Correct timestamp drift without repeatedly seeking while YouTube buffers.
+const DRIFT_THRESHOLD_SECONDS = 0.75;
+const DRIFT_CHECK_INTERVAL_MS = 1000;
+const SEEK_COOLDOWN_MS = 2000;
 // How often we poll for the player reaching PLAYING (a reliable signal that it
 // has buffered enough to render) before the cross-fade reveal.
 const REVEAL_POLL_INTERVAL_MS = 250;
@@ -38,10 +39,14 @@ function MobileNowPlayingVideo({ videoId, onPhaseChange }: Props) {
     let ready = false;
     let failed = false;
     let autoplayBlocked = false;
+    let ended = false;
+    let lastSeekAt = -Infinity;
     let player: YTPlayer | null = null;
     let driftTimer: number | undefined;
     let revealTimer: number | undefined;
+    let readyTimer: number | undefined;
     let unsubPlayback: (() => void) | undefined;
+    let unsubTime: (() => void) | undefined;
 
     // YT.Player replaces the element it's given with an <iframe>. Give it a
     // throwaway child so React keeps owning `host` and there's no DOM conflict
@@ -55,36 +60,73 @@ function MobileNowPlayingVideo({ videoId, onPhaseChange }: Props) {
       if (!cancelled) onPhaseChangeRef.current(phase);
     };
 
+    const syncPosition = (force = false) => {
+      if (cancelled || failed || !ready || !player || document.visibilityState !== 'visible') return;
+      const time = usePlaybackTimeStore.getState().currentTime;
+      if (!Number.isFinite(time) || time < 0) return;
+      const duration = player.getDuration();
+      if (duration > 0 && time >= duration) {
+        if (!ended) player.pauseVideo();
+        ended = true;
+        revealed = false;
+        setPhase('ended');
+        return;
+      }
+      if (ended && !force) return;
+      ended = false;
+      const drift = Math.abs(time - player.getCurrentTime());
+      if (force || (drift > DRIFT_THRESHOLD_SECONDS && Date.now() - lastSeekAt >= SEEK_COOLDOWN_MS)) {
+        lastSeekAt = Date.now();
+        player.seekTo(time, true);
+      }
+    };
+    const mirrorPlayback = () => {
+      if (cancelled || failed || !ready || !player) return;
+      player.mute();
+      // seekTo can itself start playback. Mute before both seek and play.
+      syncPosition(true);
+      if (document.visibilityState === 'visible' && !ended && usePlayerStore.getState().playbackState === 'playing') {
+        autoplayBlocked = false;
+        player.playVideo();
+      } else player.pauseVideo();
+    };
     const retryAutoplay = () => {
       if (cancelled || failed || !ready || !autoplayBlocked || !player) return;
       if (usePlayerStore.getState().playbackState !== 'playing') return;
-      autoplayBlocked = false;
-      player.mute();
-      player.playVideo();
+      recordMusicVideoEvent('gesture-retry');
+      mirrorPlayback();
     };
-    // Retry inside a user gesture if the phone denied scripted playback.
     const surface = host.closest('.mobile-now-playing-shell') ?? host;
     surface.addEventListener('pointerup', retryAutoplay);
+    const noteVisibility = () => {
+      recordMusicVideoEvent(document.visibilityState === 'visible' ? 'visible' : 'hidden');
+      mirrorPlayback();
+    };
+    const onPageShow = (event: PageTransitionEvent) => { if (event.persisted) mirrorPlayback(); };
+    document.addEventListener('visibilitychange', noteVisibility);
+    window.addEventListener('pageshow', onPageShow);
 
     const reveal = () => {
-      if (revealed || cancelled || failed) return;
-      revealed = true;
-      if (revealTimer) window.clearInterval(revealTimer);
-      // Correct the buffering-induced lag: the audio kept advancing while the
-      // video buffered, so the onReady seek is now stale. Re-sync to the audio's
-      // current position the moment we actually start showing the video.
-      if (player) {
-        const audioTime = usePlaybackTimeStore.getState().currentTime || 0;
-        if (audioTime > 0) player.seekTo(audioTime, true);
+      if (cancelled || failed || !ready || document.visibilityState !== 'visible') return;
+      syncPosition();
+      if (ended) return;
+      if (!revealed) {
+        revealed = true;
+        setPhase('visible');
       }
-      setPhase('visible');
     };
 
     setPhase('buffering');
+    recordMusicVideoEvent('api-loading');
 
     loadYouTubeIframeApi()
       .then((YT) => {
         if (cancelled) return;
+
+        recordMusicVideoEvent('player-loading');
+        readyTimer = window.setTimeout(() => {
+          if (!cancelled && !ready && !failed) recordMusicVideoEvent('player-timeout');
+        }, 20000);
 
         player = new YT.Player(target, {
           videoId,
@@ -106,32 +148,41 @@ function MobileNowPlayingVideo({ videoId, onPhaseChange }: Props) {
             onReady: (e) => {
               if (cancelled) return;
               ready = true;
-              const p = e.target;
-              p.mute(); // belt-and-braces: never play audio
-              const audioTime = usePlaybackTimeStore.getState().currentTime || 0;
-              if (audioTime > 0) p.seekTo(audioTime, true);
-              // Only start buffering/playing if the track itself is playing.
-              if (usePlayerStore.getState().playbackState === 'playing') p.playVideo();
+              window.clearTimeout(readyTimer);
+              recordMusicVideoEvent('ready');
+              player = e.target;
+              mirrorPlayback();
             },
             onStateChange: (e) => {
               if (cancelled || failed) return;
+              recordMusicVideoEvent('state', e.data);
               if (e.data === YT.PlayerState.PLAYING) {
-                // Playing => buffered enough to render. Reveal with a cross-fade.
+                autoplayBlocked = false;
+                if (document.visibilityState !== 'visible' || usePlayerStore.getState().playbackState !== 'playing') {
+                  e.target.pauseVideo();
+                  return;
+                }
                 reveal();
               } else if (e.data === YT.PlayerState.ENDED) {
                 // Video finished before the track did → fade back to cover art.
                 setPhase('ended');
                 revealed = false;
+                ended = true;
               }
             },
             // Non-embeddable / age-restricted / removed video → silent cover fallback.
-            onError: () => {
+            onError: (e) => {
+              if (cancelled) return;
               failed = true;
+              window.clearTimeout(readyTimer);
+              recordMusicVideoEvent('embed-error', e.data);
               setPhase('none');
               window.clearInterval(revealTimer);
               window.clearInterval(driftTimer);
             },
             onAutoplayBlocked: () => {
+              if (cancelled || failed) return;
+              recordMusicVideoEvent('autoplay-blocked');
               autoplayBlocked = true;
               revealed = false;
               setPhase('none');
@@ -144,9 +195,14 @@ function MobileNowPlayingVideo({ videoId, onPhaseChange }: Props) {
         unsubPlayback = usePlayerStore.subscribe((state) => {
           if (state.playbackState === lastPlayback) return;
           lastPlayback = state.playbackState;
-          if (!player || !ready || failed) return;
-          if (state.playbackState === 'playing') player.playVideo();
-          else player.pauseVideo();
+          mirrorPlayback();
+        });
+
+        let lastSeek = usePlaybackTimeStore.getState().seekRevision;
+        unsubTime = usePlaybackTimeStore.subscribe(state => {
+          if (state.seekRevision === lastSeek) return;
+          lastSeek = state.seekRevision;
+          mirrorPlayback();
         });
 
         // Safety-net reveal: poll for the player actually playing, in case the
@@ -156,25 +212,30 @@ function MobileNowPlayingVideo({ videoId, onPhaseChange }: Props) {
           if (player.getPlayerState?.() === YT.PlayerState.PLAYING) reveal();
         }, REVEAL_POLL_INTERVAL_MS);
 
-        // Coarse drift correction once the video is showing.
+        // Check once per second; corrections have a separate seek cooldown.
         driftTimer = window.setInterval(() => {
           if (!player || !ready || !revealed || failed) return;
           if (usePlayerStore.getState().playbackState !== 'playing') return;
-          const audioTime = usePlaybackTimeStore.getState().currentTime || 0;
-          const videoTime = player.getCurrentTime?.() ?? 0;
-          if (Math.abs(audioTime - videoTime) > DRIFT_THRESHOLD_SECONDS) {
-            player.seekTo(audioTime, true);
-          }
+          if (player.getPlayerState() === YT.PlayerState.PLAYING) syncPosition();
         }, DRIFT_CHECK_INTERVAL_MS);
       })
-      .catch(() => setPhase('none'));
+      .catch(() => {
+        if (cancelled) return;
+        window.clearTimeout(readyTimer);
+        recordMusicVideoEvent('api-failed');
+        setPhase('none');
+      });
 
     return () => {
       cancelled = true;
+      window.clearTimeout(readyTimer);
       if (driftTimer) window.clearInterval(driftTimer);
       if (revealTimer) window.clearInterval(revealTimer);
       unsubPlayback?.();
+      unsubTime?.();
       surface.removeEventListener('pointerup', retryAutoplay);
+      document.removeEventListener('visibilitychange', noteVisibility);
+      window.removeEventListener('pageshow', onPageShow);
       try {
         player?.destroy();
       } catch {

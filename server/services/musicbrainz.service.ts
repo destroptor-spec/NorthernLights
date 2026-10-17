@@ -68,7 +68,8 @@ async function processMbQueue() {
   mbQueueRunning = false;
 }
 
-export async function mbFetch(url: string): Promise<any> {
+export async function mbFetch(url: string, signal?: AbortSignal): Promise<any> {
+  signal?.throwIfAborted();
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -86,8 +87,12 @@ export async function mbFetch(url: string): Promise<any> {
   }
 
   return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal?.reason);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    const cleanup = () => signal?.removeEventListener('abort', onAbort);
     mbQueue.push({
       fn: async () => {
+        signal?.throwIfAborted();
         const headers: Record<string, string> = {
           'User-Agent': MB_USER_AGENT,
           'Accept': 'application/json'
@@ -96,12 +101,12 @@ export async function mbFetch(url: string): Promise<any> {
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
-        const res = await fetch(parsed.toString(), { headers });
+        const res = await fetch(parsed.toString(), { headers, ...(signal ? { signal } : {}) });
         if (!res.ok) throw new Error(`MusicBrainz HTTP ${res.status}`);
         return res.json();
       },
-      resolve,
-      reject
+      resolve: value => { cleanup(); resolve(value); },
+      reject: error => { cleanup(); reject(error); }
     });
     processMbQueue();
   });

@@ -11,6 +11,8 @@ import { normalizeGenreIdentity } from '../utils/genreIdentity';
 import { splitArtistNames, uniqueArtistNames } from '../../shared/artistCredit';
 import { accountProtection, type AccountProtection } from '../../shared/accountProtection';
 export { splitArtistNames };
+export { getArtistVideoUploads, saveArtistVideoCatalog, noteArtistVideoFailure } from './musicVideos';
+export type { VideoUpload, VideoAssociation } from './musicVideos';
 
 let pool: Pool | null = null;
 let initPromise: Promise<Pool> | null = null;
@@ -1108,6 +1110,28 @@ export async function initDB(): Promise<Pool> {
           last_error TEXT,
           fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
+
+        ALTER TABLE artist_videos_cache ADD COLUMN IF NOT EXISTS source_key TEXT;
+        ALTER TABLE artist_videos_cache ADD COLUMN IF NOT EXISTS library_key TEXT;
+        ALTER TABLE artist_videos_cache ADD COLUMN IF NOT EXISTS uploads_cached BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE artist_videos_cache ADD COLUMN IF NOT EXISTS retry_after TIMESTAMPTZ;
+        ALTER TABLE artist_videos_cache ADD COLUMN IF NOT EXISTS attempt_source_key TEXT;
+        CREATE TABLE IF NOT EXISTS artist_video_uploads (
+          artist_id UUID NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+          video_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          thumbnail_url TEXT,
+          published_at TIMESTAMPTZ,
+          position INTEGER NOT NULL,
+          PRIMARY KEY (artist_id,video_id)
+        );
+        CREATE TABLE IF NOT EXISTS track_video_matches (
+          track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+          artist_id UUID NOT NULL,
+          video_id TEXT NOT NULL,
+          FOREIGN KEY (artist_id,video_id) REFERENCES artist_video_uploads(artist_id,video_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS track_video_matches_artist_idx ON track_video_matches(artist_id,video_id);
 
         -- Daily API-unit counter. One row per calendar day (e.g. '2026-04-19').
         -- YouTube Data API quota resets daily (Pacific midnight); a day key is
@@ -6313,7 +6337,7 @@ export type MusicVideoRow = {
 export async function getArtistVideosCache(artistId: string) {
   const db = await initDB();
   const res = await db.query(
-    'SELECT artist_id, youtube_channel_id, videos_count, last_error, fetched_at FROM artist_videos_cache WHERE artist_id = $1',
+    'SELECT * FROM artist_videos_cache WHERE artist_id = $1',
     [artistId]
   );
   return res.rows[0] || null;
@@ -6371,6 +6395,15 @@ export async function replaceArtistVideos(artistId: string, videos: Omit<MusicVi
 // track so the rail can credit the song's artists (e.g. "Kaskade, deadmau5").
 export async function getMusicVideosForArtist(artistId: string, limit: number = 30) {
   const db = await initDB();
+  const cache = await getArtistVideosCache(artistId);
+  if (cache?.uploads_cached) {
+    const result = await db.query(`SELECT v.video_id,v.artist_id,m.track_id,t.title,v.thumbnail_url,v.published_at,v.position,
+      c.fetched_at,t.artist AS track_artist,t.artists AS track_artists
+      FROM artist_video_uploads v JOIN artist_videos_cache c ON c.artist_id=v.artist_id
+      JOIN LATERAL (SELECT track_id FROM track_video_matches WHERE artist_id=v.artist_id AND video_id=v.video_id ORDER BY track_id LIMIT 1) m ON TRUE
+      JOIN tracks t ON t.id=m.track_id WHERE v.artist_id=$1 ORDER BY v.position LIMIT $2`, [artistId, limit]);
+    return result.rows as (MusicVideoRow & { track_artist: string | null; track_artists: string | null })[];
+  }
   const res = await db.query(`
     SELECT mv.*, t.artist AS track_artist, t.artists AS track_artists
     FROM artist_music_videos mv
@@ -6388,7 +6421,14 @@ export async function getMusicVideosForArtist(artistId: string, limit: number = 
 export async function getMusicVideoByTrackId(trackId: string) {
   const db = await initDB();
   const res = await db.query(
-    `SELECT video_id, title, thumbnail_url FROM artist_music_videos WHERE track_id = $1 LIMIT 1`,
+    `SELECT v.video_id,t.title,v.thumbnail_url FROM track_video_matches m
+      JOIN artist_video_uploads v ON v.artist_id=m.artist_id AND v.video_id=m.video_id
+      JOIN tracks t ON t.id=m.track_id WHERE m.track_id=$1 AND t.artist_id=m.artist_id
+     UNION ALL
+     SELECT v.video_id,v.title,v.thumbnail_url FROM artist_music_videos v
+      LEFT JOIN artist_videos_cache c ON c.artist_id=v.artist_id
+      WHERE v.track_id=$1 AND NOT COALESCE(c.uploads_cached,FALSE)
+     LIMIT 1`,
     [trackId]
   );
   return res.rows[0] || null;

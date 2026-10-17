@@ -220,23 +220,33 @@ export const MetadataTab: React.FC = () => {
 
     // YouTube live status (server-fetched — whether a key is stored + daily usage).
     const [youtubeStatus, setYoutubeStatus] = useState<YoutubeStatusResp | null>(null);
+    const [youtubeStatusState, setYoutubeStatusState] = useState<'loading' | 'ready' | 'error'>('loading');
+    const youtubeStatusRequest = useRef(0);
     const [youtubeTestStatus, setYoutubeTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
     const [youtubeTestMessage, setYoutubeTestMessage] = useState('');
 
     const refreshYoutubeStatus = useCallback(async () => {
+        const request = ++youtubeStatusRequest.current;
+        setYoutubeStatusState('loading');
         try {
-            const res = await fetch('/api/providers/youtube/status', { headers: getAuthHeader() });
-            if (res.ok) {
-                const data = await res.json() as YoutubeStatusResp;
-                setYoutubeStatus(data);
-            }
-        } catch {}
+            const res = await fetch('/api/providers/youtube/status', { headers: getAuthHeader(), cache: 'no-store' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json() as YoutubeStatusResp;
+            if (request !== youtubeStatusRequest.current) return;
+            setYoutubeStatus(data);
+            setYoutubeStatusState('ready');
+        } catch {
+            if (request !== youtubeStatusRequest.current) return;
+            setYoutubeStatus(null);
+            setYoutubeStatusState('error');
+        }
     }, [getAuthHeader]);
 
     useEffect(() => {
         if (metadataTab === 'youtube') {
-            refreshYoutubeStatus();
+            void refreshYoutubeStatus();
         }
+        return () => { youtubeStatusRequest.current++; };
     }, [metadataTab, refreshYoutubeStatus]);
 
     // Effective redirect URI the server will use (override if set, else SERVER_URL default)
@@ -311,7 +321,7 @@ export const MetadataTab: React.FC = () => {
             label="YouTube Integration"
             status={youtubeEnabled && youtubeApiKey ? 'available' : (youtubeEnabled ? 'partial' : 'unavailable')}
             message={youtubeEnabled && youtubeApiKey
-                ? 'Ready for music videos on artist pages'
+                ? 'Configured for artist videos and mobile backgrounds'
                 : youtubeEnabled
                     ? 'Requires a YouTube Data API key'
                     : 'Integration currently disabled'}
@@ -1062,8 +1072,8 @@ export const MetadataTab: React.FC = () => {
                                 icon={<Video size={16} />}
                             />
                             <DependencyInfoBox
-                                title="Library-only matching"
-                                description="Only the artist's official-channel uploads that map to a track you own are shown — no unrelated clips"
+                                title="Mobile video backgrounds"
+                                description="Matched videos can follow local playback in Now Playing. Enable Music video backgrounds under Settings → Appearance."
                                 icon={<Headphones size={16} />}
                             />
                         </div>
@@ -1072,14 +1082,14 @@ export const MetadataTab: React.FC = () => {
                     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 flex flex-col gap-4 shadow-sm">
                         {/* Note about the key + quota */}
                         <div className="bg-blue-500/5 dark:bg-blue-500/10 border border-blue-500/10 dark:border-blue-500/20 rounded-lg p-3 text-xs text-blue-700 dark:text-blue-200">
-                            <strong>Note:</strong> Create a <strong>YouTube Data API v3</strong> key in the Google Cloud console. The free quota is 10,000 units/day; matching one artist costs ~3 units. Videos are resolved from the artist&apos;s YouTube channel link (via MusicBrainz), so artists without one show no rail.
+                            <strong>Note:</strong> Use a <strong>YouTube Data API v3</strong> key from the Google Cloud console. Matching checks up to 100 recent uploads from the artist&apos;s linked channel against your library. Missing channel links can be fetched through MusicBrainz when enabled and an artist ID is available. A matching video is not guaranteed for every song.
                         </div>
 
                         {/* Enable toggle */}
                         <div className="flex items-center justify-between">
                             <div>
                                 <label className="text-sm font-medium text-[var(--color-text-primary)] block">{youtubeEnabled ? 'Integration Enabled' : 'Integration Disabled'}</label>
-                                <p className="text-xs text-[var(--color-text-muted)] mt-0.5">When disabled, no calls are made and the Music Videos rail is hidden (cached matches still render).</p>
+                                <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Controls automatic video lookup and mobile video backgrounds. Turning it off keeps the cached matches stored.</p>
                             </div>
                             <button
                                 onClick={() => setSettings({ youtubeEnabled: !youtubeEnabled })}
@@ -1111,11 +1121,12 @@ export const MetadataTab: React.FC = () => {
                                                 setYoutubeTestMessage('');
                                                 try {
                                                     // Persist the key/toggle/limits before testing — admin may have just edited them.
-                                                    await fetch('/api/settings', {
+                                                    const saved = await fetch('/api/settings', {
                                                         method: 'POST',
                                                         headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
                                                         body: JSON.stringify({ youtubeEnabled, youtubeApiKey, youtubeCacheTtlDays, youtubeDailyQuotaCap, youtubeHardStop }),
                                                     });
+                                                    if (!saved.ok) throw new Error(`Could not save YouTube settings (HTTP ${saved.status}). Connection test was not run.`);
                                                     const res = await fetch('/api/providers/youtube/test', { method: 'POST', headers: getAuthHeader() });
                                                     const data = await res.json();
                                                     if (res.ok && data.status === 'ok') {
@@ -1126,9 +1137,9 @@ export const MetadataTab: React.FC = () => {
                                                         setYoutubeTestMessage(data.error || `HTTP ${res.status}`);
                                                     }
                                                     refreshYoutubeStatus();
-                                                } catch (e: any) {
+                                                } catch (e: unknown) {
                                                     setYoutubeTestStatus('error');
-                                                    setYoutubeTestMessage(e?.message || 'Network error');
+                                                    setYoutubeTestMessage(e instanceof Error ? e.message : 'Network error');
                                                 }
                                             }}
                                             className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50"
@@ -1144,9 +1155,16 @@ export const MetadataTab: React.FC = () => {
                                 <div className="flex flex-col gap-2 pt-3 border-t border-[var(--glass-border)]">
                                     <div className="flex items-baseline justify-between">
                                         <label className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Daily Quota Usage</label>
-                                        <span className="text-xs text-[var(--color-text-muted)]">{youtubeStatus?.usage.day || '—'}</span>
+                                        <span className="text-xs text-[var(--color-text-muted)]">{youtubeStatusState === 'ready' ? youtubeStatus?.usage.day : '—'}</span>
                                     </div>
                                     {(() => {
+                                        if (youtubeStatusState === 'loading') return <p role="status" className="text-sm text-[var(--color-text-muted)]">Loading quota usage…</p>;
+                                        if (youtubeStatusState === 'error' || !youtubeStatus) return (
+                                            <div className="flex items-center justify-between gap-3">
+                                                <p role="status" className="text-sm text-[var(--color-text-muted)]">Quota usage unavailable.</p>
+                                                <button type="button" className="btn btn-ghost btn-sm" onClick={() => void refreshYoutubeStatus()}>Retry</button>
+                                            </div>
+                                        );
                                         const usage = youtubeStatus?.usage;
                                         const count = usage?.count ?? 0;
                                         const cap = usage?.cap ?? youtubeDailyQuotaCap;
@@ -1213,6 +1231,7 @@ export const MetadataTab: React.FC = () => {
                                         </div>
                                     </div>
                                     <p className="text-xs text-[var(--color-text-muted)]">Changes to the cap and TTL are saved with the global <strong>Save</strong> button or when you press <strong>Save &amp; Test</strong>.</p>
+                                    <p className="text-xs text-[var(--color-text-muted)]">Cache TTL controls when channel uploads are refreshed. Existing matches stay available during refreshes and temporary failures. New library copies can be matched from cached uploads without another YouTube call; temporary failures use a short retry delay instead of waiting for the TTL.</p>
                                 </div>
                             </>
                         )}
