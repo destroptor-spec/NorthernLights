@@ -1,6 +1,27 @@
 import type { TrackInfo } from './fileSystem';
 import { logPlaybackInfo } from './playbackDebug';
+import { canBrowserPlayNative } from './losslessCapability';
 import { applyCastStreamingQualityToHlsUrl, applyStreamingQualityToHlsUrl, type StreamingQualityPreset } from './streaming';
+
+// Preparing ahead is a non-essential optimization, so don't spend bandwidth on
+// it when we shouldn't: offline (the request just fails), Save-Data enabled, or
+// a slow cellular link. Reads navigator directly since this is not a React hook.
+// Shared with PlaybackManager, which loads the next original file ahead.
+export function backgroundPrefetchSkipReason(): string | null {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'offline';
+    const conn = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
+    if (conn?.saveData) return 'save-data';
+    if (conn?.effectiveType === '2g' || conn?.effectiveType === 'slow-2g') return `slow connection (${conn.effectiveType})`;
+    return null;
+}
+
+/**
+ * At Source quality a file this browser plays as it is streams directly
+ * (PlaybackManager.playUrl), never through HLS. Casting always uses HLS.
+ */
+export function playsDirect(track: Pick<TrackInfo, 'format'>, streamingQuality: StreamingQualityPreset, castConnected = false): boolean {
+    return !castConnected && streamingQuality === 'source' && canBrowserPlayNative(track.format);
+}
 
 type PrewarmOptions = {
     castConnected?: boolean;
@@ -35,23 +56,14 @@ class PreloadManager {
         }
     }
 
-    // Prewarming is a non-essential optimization, so don't spend bandwidth on it
-    // when we shouldn't: offline (the request just fails), Save-Data enabled, or a
-    // slow cellular link. Reads navigator directly since this is not a React hook.
-    private prewarmSkipReason(): string | null {
-        if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'offline';
-        const conn = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
-        if (conn?.saveData) return 'save-data';
-        if (conn?.effectiveType === '2g' || conn?.effectiveType === 'slow-2g') return `slow connection (${conn.effectiveType})`;
-        return null;
-    }
-
     public prewarmTrack(
         track: TrackInfo,
         streamingQuality: StreamingQualityPreset,
         options: PrewarmOptions = {}
     ): void {
-        const skipReason = this.prewarmSkipReason();
+        // Nothing plays an HLS session for a track that streams directly.
+        if (playsDirect(track, streamingQuality, options.castConnected)) return;
+        const skipReason = backgroundPrefetchSkipReason();
         if (skipReason) {
             logPlaybackInfo(`[Preload] Skipping prewarm: ${skipReason}`);
             return;

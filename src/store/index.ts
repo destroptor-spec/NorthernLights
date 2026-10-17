@@ -538,7 +538,7 @@ export interface FilterState {
   queryResultIds: string[] | null;
 }
 
-export type PlaybackLoadPath = 'none' | 'cast' | 'direct' | 'prepared-hls' | 'fallback-hls' | 'lossless-passthrough';
+export type PlaybackLoadPath = 'none' | 'cast' | 'direct' | 'prepared-hls' | 'prepared-direct' | 'fallback-hls' | 'lossless-passthrough';
 export type PlaybackPrepareStatus = 'idle' | 'preparing' | 'ready' | 'failed';
 export type PlaybackRecoveryPath = 'none' | 'normal-hls-after-prepare-failure' | 'normal-hls-after-promotion-failure' | 'fixed-quality-after-adaptive-failure';
 export type PrebufferPolicy = 'off' | 'conservative' | 'aggressive';
