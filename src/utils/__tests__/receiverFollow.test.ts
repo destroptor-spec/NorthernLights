@@ -55,7 +55,7 @@ class FakeEventSource {
   emit(type: string, data: Record<string, unknown>) { this.listeners.get(type)?.({ data: JSON.stringify({ data }) }); }
 }
 
-function harness(options: { caf?: number[]; current?: number; session?: ReturnType<typeof sessionOf>; mediaToken?: string } = {}) {
+function harness(options: { caf?: number[]; current?: number; session?: ReturnType<typeof sessionOf>; mediaToken?: string; lagMs?: number } = {}) {
   FakeEventSource.instances = [];
   let nextItemId = 100;
   const item = (n: number) => ({ itemId: nextItemId++, media: { customData: { queueEntryId: uuid(n) } } });
@@ -64,8 +64,15 @@ function harness(options: { caf?: number[]; current?: number; session?: ReturnTy
     current: options.current ?? 0,
     getItems() { return this.items; },
     getCurrentItemIndex() { return this.current; },
-    insertItems: jest.fn(function (this: any, items: any[]) { items.forEach((i) => { i.itemId = nextItemId++; this.items.push(i); }); }),
-    removeItems: jest.fn(function (this: any, ids: number[]) { this.items = this.items.filter((i: any) => !ids.includes(i.itemId)); }),
+    // CAF applies these a moment after the call; lagMs plays that.
+    insertItems: jest.fn(function (this: any, items: any[]) {
+      const apply = () => items.forEach((i) => { i.itemId = nextItemId++; this.items.push(i); });
+      if (options.lagMs) setTimeout(apply, options.lagMs); else apply();
+    }),
+    removeItems: jest.fn(function (this: any, ids: number[]) {
+      const apply = () => { this.items = this.items.filter((i: any) => !ids.includes(i.itemId)); };
+      if (options.lagMs) setTimeout(apply, options.lagMs); else apply();
+    }),
     setRepeatMode: jest.fn(),
   };
   let playerState = 'PLAYING';
@@ -198,6 +205,33 @@ describe('following', () => {
     expect(h.follower.start(h.handover)).toBe(false);
     expect(h.follower.following()).toBe(false);
     expect(h.fetch).not.toHaveBeenCalled();
+  });
+
+  it('waits for its last batch to show before planning the next, so nothing is inserted twice', async () => {
+    // Prod 2026-10-17 10:29-10:37: a server top-up right after each track
+    // change was planned on the queue before the last insert had landed.
+    const h = harness({ caf: [1, 2, 3], lagMs: 200 });
+    h.setSession(sessionOf([1, 2, 3, 4, 5, 6]));
+    h.follower.start(h.handover);
+    await h.settle(); // inserts 4, 5, 6 (lands in 200 ms)
+    h.setSession(sessionOf([1, 2, 3, 4, 5, 6, 7], { revision: 11 })); // the server appends 7 meanwhile
+    h.stream().emit('playbackSession.updated', { sessionId: 'session-1', revision: 11 });
+    await h.settle();
+    await jest.advanceTimersByTimeAsync(1_000);
+    expect(h.queue.items.map((i: any) => i.media.customData.queueEntryId)).toEqual([1, 2, 3, 4, 5, 6, 7].map(uuid));
+    expect(h.markers.join('\n')).toContain('removed=0 inserted=1 revision=11');
+  });
+
+  it('plans anyway when its last batch never shows', async () => {
+    const h = harness({ caf: [1, 2], lagMs: 60_000 });
+    h.setSession(sessionOf([1, 2, 3]));
+    h.follower.start(h.handover);
+    await h.settle();
+    h.setSession(sessionOf([1, 2, 3, 4], { revision: 11 }));
+    h.stream().emit('playbackSession.updated', { sessionId: 'session-1', revision: 11 });
+    await jest.advanceTimersByTimeAsync(3_500);
+    expect(h.markers.join('\n')).toContain('result=batch-not-seen');
+    expect(h.queue.insertItems).toHaveBeenCalledTimes(2);
   });
 
   it('ignores another session, an older revision and a stale command', async () => {

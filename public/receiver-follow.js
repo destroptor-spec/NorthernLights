@@ -40,6 +40,15 @@
    * the same 8 items removed three times in a second).
    */
   var SAME_PLAN_MS = 3000;
+  /**
+   * CAF applies insertItems/removeItems a moment after the call, so the next
+   * plan waits (up to this long) until getItems shows the last batch. Planned
+   * on the old queue, it inserted the same entries again (prod 2026-10-17
+   * 10:29-10:37: removed/inserted grew 1, 2, 3 as a server top-up followed
+   * every track change).
+   */
+  var BATCH_LANDS_MS = 3000;
+  var BATCH_POLL_MS = 250;
   /** Upcoming items kept on the receiver after the one that plays. */
   var UPCOMING = 9;
   var FORCED_CODEC = 'aac';
@@ -128,6 +137,9 @@
     var reconcileTimer = null;
     var settleTimer = null;
     var lastPlan = { key: '', at: 0 };
+    /** The last batch sent: what should follow `anchor` once CAF has applied it. */
+    var pendingBatch = null;
+    var batchTimer = null;
     var idleSettled = false;
     var seq = 0;
     var loading = false;
@@ -251,6 +263,8 @@
       idleTimer = clearTimer(idleTimer);
       reconcileTimer = clearTimer(reconcileTimer);
       settleTimer = clearTimer(settleTimer);
+      batchTimer = clearTimer(batchTimer);
+      pendingBatch = null;
       state = null;
       session = null;
       // Another device plays now: no sender may be connected to stop this one.
@@ -443,6 +457,22 @@
       }, RECONCILE_SETTLE_MS);
     }
 
+    /** True once getItems shows the last batch (or it can no longer, or too long has passed). */
+    function batchLanded(items) {
+      if (!pendingBatch) return true;
+      var at = -1;
+      for (var i = 0; i < items.length; i++) {
+        if (entryIdOf(items[i]) === pendingBatch.anchor) { at = i; break; }
+      }
+      var after = at < 0 ? [] : items.slice(at + 1).map(entryIdOf);
+      if (at >= 0 && after.join(',') !== pendingBatch.expect.join(',') && env.now() < pendingBatch.until) return false;
+      if (at >= 0 && after.join(',') !== pendingBatch.expect.join(',')) {
+        marker('receiver-window-reconciled', 'result=batch-not-seen waitedMs=' + BATCH_LANDS_MS);
+      }
+      pendingBatch = null;
+      return true;
+    }
+
     /** Brings the receiver's window in line with the session, in one batch. */
     function reconcile(reason) {
       if (!state || !session) return;
@@ -451,6 +481,16 @@
         return;
       }
       var items = env.queueManager.getItems ? env.queueManager.getItems() : [];
+      if (!batchLanded(items)) {
+        // Look again shortly; whatever changed meanwhile is planned then.
+        if (!batchTimer) {
+          batchTimer = env.setTimeout(function () {
+            batchTimer = null;
+            reconcile(reason);
+          }, BATCH_POLL_MS);
+        }
+        return;
+      }
       var currentIndex = env.queueManager.getCurrentItemIndex ? env.queueManager.getCurrentItemIndex() : -1;
       var playing = currentIndex >= 0 ? entryIdOf(items[currentIndex]) : null;
       setRepeat(session.repeatMode);
@@ -482,6 +522,11 @@
       try {
         if (plan.removeItemIds.length) env.queueManager.removeItems(plan.removeItemIds);
         if (plan.insert.length) env.queueManager.insertItems(plan.insert.map(buildItem));
+        pendingBatch = {
+          anchor: playing,
+          expect: desired.map(function (entry) { return entry.queueEntryId; }),
+          until: env.now() + BATCH_LANDS_MS
+        };
         marker('receiver-window-reconciled', 'reason=' + reason + ' removed=' + plan.removeItemIds.length
           + ' inserted=' + plan.insert.length + ' revision=' + session.revision);
       } catch (error) {
@@ -534,6 +579,7 @@
       queue.items = items;
       queue.startIndex = 0;
       load.queueData = queue;
+      pendingBatch = null; // a new queue: nothing of the last batch to wait for
       loading = true;
       marker('receiver-window-reconciled', 'reason=' + why + ' result=load items=' + items.length + ' revision=' + session.revision);
       var settle = function (ok) {
