@@ -5,6 +5,7 @@ import { ARTWORK_EXTRACTION_VERSION } from '../services/artworkVersion';
 import { AUDIO_FEATURE_VERSION, PENDING_AUDIO_FEATURES_SQL } from '../services/audioFeatureVersion';
 import type { LibraryDirectoryStats } from '../../shared/libraryStats';
 import { normalizeGenreIdentity } from '../utils/genreIdentity';
+import { artistImageSql } from '../utils/artistImage';
 // Canonical artist-credit splitter, shared with the client (see
 // shared/artistCredit.ts). Re-exported so existing `import('../database')`
 // consumers (e.g. library.routes) keep resolving `splitArtistNames` here.
@@ -1632,7 +1633,7 @@ export async function searchLibraryRanked(
                 SIMILARITY(LOWER(a.name), $2),
                 CASE WHEN $3::text IS NULL THEN 0 ELSE SIMILARITY(COALESCE(a.normalized_key, ''), $3) END
               )::real AS match_similarity,
-              JSONB_BUILD_OBJECT('id', a.id, 'name', a.name, 'image_url', a.image_url) AS item
+              JSONB_BUILD_OBJECT('id', a.id, 'name', a.name, 'image_url', ${artistImageSql('a')}) AS item
        FROM artists a
        WHERE a.merged_into IS NULL
          AND (a.name ILIKE $1 OR ($4::text IS NOT NULL AND a.normalized_key LIKE $4))
@@ -3674,8 +3675,7 @@ export async function getSimilarArtistsByAudioProfile(artistId: string, limit: n
   // artist_id) so it stays correct even between MV refreshes; candidates come
   // from the precomputed artist_audio_profiles MV instead of re-aggregating
   // the whole library on every request. The image is read live from artists
-  // (it updates independently of analysis), falling back to the provider
-  // artwork like the Artists grid does.
+  // (it updates independently of analysis).
   const res = await db.query(`
     WITH target AS (
       SELECT
@@ -3692,7 +3692,7 @@ export async function getSimilarArtistsByAudioProfile(artistId: string, limit: n
       SELECT
         p.artist_id AS id,
         a.name,
-        COALESCE(NULLIF(a.image_url, ''), NULLIF(a.artwork_url, '')) AS image_url,
+        ${artistImageSql('a')} AS image_url,
         p.track_count,
         p.album_count,
         p.analyzed_tracks,
@@ -5944,7 +5944,7 @@ export type SubscriptionSource = 'explicit' | 'auto';
 export async function getArtistSubscriptions(userId: string) {
   const db = await initDB();
   const res = await db.query(`
-    SELECT a.id, a.name, a.image_url, a.mbid, a.jambase_id, uas.created_at, uas.source
+    SELECT a.id, a.name, ${artistImageSql('a')} AS image_url, a.mbid, a.jambase_id, uas.created_at, uas.source
     FROM user_artist_subscriptions uas
     JOIN artists a ON a.id = uas.artist_id
     WHERE uas.user_id = $1
@@ -6017,7 +6017,7 @@ export async function undismissAutoArtist(userId: string, artistId: string) {
 export async function getDismissedAutoArtists(userId: string) {
   const db = await initDB();
   const res = await db.query(`
-    SELECT a.id, a.name, a.image_url, d.dismissed_at
+    SELECT a.id, a.name, ${artistImageSql('a')} AS image_url, d.dismissed_at
     FROM user_dismissed_auto_artists d
     JOIN artists a ON a.id = d.artist_id
     WHERE d.user_id = $1
@@ -6032,7 +6032,7 @@ export async function getDismissedAutoArtists(userId: string) {
 export async function getAutoAddCandidates(userId: string, limit: number = 20) {
   const db = await initDB();
   const res = await db.query(`
-    SELECT a.id, a.name, a.image_url, a.mbid,
+    SELECT a.id, a.name, ${artistImageSql('a')} AS image_url, a.mbid,
            SUM(ups.play_count)::int AS user_plays,
            MAX(ups.last_played_at) AS last_played_at
     FROM user_playback_stats ups
@@ -6046,7 +6046,7 @@ export async function getAutoAddCandidates(userId: string, limit: number = 20) {
       AND s.artist_id IS NULL
       AND d.artist_id IS NULL
       AND COALESCE(a.is_va_pseudo, FALSE) = FALSE
-    GROUP BY a.id, a.name, a.image_url, a.mbid
+    GROUP BY a.id, a.name, a.image_url, a.artwork_url, a.mbid
     HAVING SUM(ups.play_count) >= 3
     ORDER BY user_plays DESC
     LIMIT $2
@@ -6071,14 +6071,14 @@ export async function searchLibraryArtists(userId: string, query: string, limit:
   const keyQuery = normalizeArtistIdentityKey(trimmed);
   const qKey = keyQuery ? `%${keyQuery}%` : null;
   const res = await db.query(`
-    SELECT a.id, a.name, a.image_url, a.mbid,
+    SELECT a.id, a.name, ${artistImageSql('a')} AS image_url, a.mbid,
            COALESCE(SUM(ups.play_count), 0)::int AS user_plays
     FROM artists a
     JOIN tracks t ON t.artist_id = a.id
     LEFT JOIN user_playback_stats ups ON ups.track_id = t.id AND ups.user_id = $1
     WHERE (LOWER(a.name) LIKE $2 OR ($4::text IS NOT NULL AND a.normalized_key LIKE $4))
       AND COALESCE(a.is_va_pseudo, FALSE) = FALSE
-    GROUP BY a.id, a.name, a.image_url, a.mbid
+    GROUP BY a.id, a.name, a.image_url, a.artwork_url, a.mbid
     ORDER BY user_plays DESC, a.name ASC
     LIMIT $3
   `, [userId, q, limit, qKey]);
@@ -6090,7 +6090,7 @@ export async function searchLibraryArtists(userId: string, query: string, limit:
 export async function getUserTopArtists(userId: string, limit: number = 10) {
   const db = await initDB();
   const res = await db.query(`
-    SELECT a.id, a.name, a.image_url, a.mbid,
+    SELECT a.id, a.name, ${artistImageSql('a')} AS image_url, a.mbid,
            SUM(ups.play_count)::int AS user_plays,
            MAX(ups.last_played_at) AS last_played_at
     FROM user_playback_stats ups
@@ -6098,7 +6098,7 @@ export async function getUserTopArtists(userId: string, limit: number = 10) {
     JOIN artists a ON a.id = t.artist_id
     WHERE ups.user_id = $1
       AND COALESCE(a.is_va_pseudo, FALSE) = FALSE
-    GROUP BY a.id, a.name, a.image_url, a.mbid
+    GROUP BY a.id, a.name, a.image_url, a.artwork_url, a.mbid
     ORDER BY user_plays DESC
     LIMIT $2
   `, [userId, limit]);
@@ -6231,7 +6231,7 @@ export async function getHubEventsForUser(
   params.push(limit);
   const limitParam = `$${params.length}`;
   const res = await db.query(`
-    SELECT ce.*, a.name AS artist_name, a.image_url AS artist_image_url
+    SELECT ce.*, a.name AS artist_name, ${artistImageSql('a')} AS artist_image_url
     FROM concert_events ce
     JOIN user_artist_subscriptions uas ON uas.artist_id = ce.artist_id
     JOIN artists a ON a.id = ce.artist_id

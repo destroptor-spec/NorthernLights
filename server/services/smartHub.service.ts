@@ -3,6 +3,7 @@ import OpenAI from 'openai';
 import { getLlmConfig, extractJson } from './llm.service';
 import { withTransaction } from '../utils/db';
 import { christmasExclusionSql } from '../utils/seasonalFilter';
+import { artistImageSql } from '../utils/artistImage';
 import {
   enumerateCompletedWrappedPeriods,
   wrappedYmToLocalMs,
@@ -362,7 +363,7 @@ export async function computeJumpBackIn(userId: string, limit = 12): Promise<Jum
   const artistRes = await db.query(
     `
     SELECT a.id::text AS id, a.name,
-           COALESCE(NULLIF(a.image_url, ''), NULLIF(a.artwork_url, '')) AS image_url,
+           ${artistImageSql('a')} AS image_url,
            MAX(ups.last_played_at) AS last_played_at
     FROM user_playback_stats ups
     JOIN tracks t ON t.id = ups.track_id
@@ -475,7 +476,7 @@ export async function computeArtistRadioCandidates(
     SELECT
       a.id::text AS artist_id,
       a.name AS artist_name,
-      COALESCE(NULLIF(a.image_url, ''), NULLIF(a.artwork_url, '')) AS image_url,
+      ${artistImageSql('a')} AS image_url,
       SUM(b.play_count) AS recent_plays,
       0.7 * SUM(CASE WHEN b.year_month >=
         date_trunc('month', NOW() - INTERVAL '60 days')::date

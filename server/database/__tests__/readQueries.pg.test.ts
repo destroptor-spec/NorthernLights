@@ -166,6 +166,54 @@ describeDb('database read queries', () => {
     }
   });
 
+  it('returns stored artist artwork in search, subscriptions, auto-add and concerts', async () => {
+    const trackId = `${TRACK_ID}0`;
+    const artistId = seeded.artistId;
+    await pool.query(`INSERT INTO user_playback_stats (user_id, track_id, play_count, last_played_at)
+      VALUES ($1, $2, 3, NOW()) ON CONFLICT (user_id, track_id)
+      DO UPDATE SET play_count = 3, last_played_at = NOW()`, [USER_ID, trackId]);
+    await pool.query(`INSERT INTO concert_events (jambase_event_id, artist_id, event_date)
+      VALUES ('artwork-test', $1, CURRENT_DATE + 7)`, [artistId]);
+    const images = async () => {
+      const ranked = (await db.searchLibraryRanked('Test Artist', USER_ID)).results
+        .find(r => r.type === 'artist' && (r.item as any).id === artistId)?.item as any;
+      const autoAdd = (await db.getAutoAddCandidates(USER_ID)).find((a: any) => a.id === artistId);
+      await db.addArtistSubscription(USER_ID, artistId);
+      const subscribed = (await db.getArtistSubscriptions(USER_ID)).find((a: any) => a.id === artistId);
+      const event = (await db.getHubEventsForUser(USER_ID)).find((e: any) => e.artist_id === artistId);
+      await db.removeArtistSubscription(USER_ID, artistId);
+      await db.dismissAutoArtist(USER_ID, artistId);
+      const dismissed = (await db.getDismissedAutoArtists(USER_ID)).find((a: any) => a.id === artistId);
+      await db.undismissAutoArtist(USER_ID, artistId);
+      return {
+        ranked: ranked?.image_url,
+        autoAdd: autoAdd?.image_url,
+        topArtists: (await db.getUserTopArtists(USER_ID)).find((a: any) => a.id === artistId)?.image_url,
+        librarySearch: (await db.searchLibraryArtists(USER_ID, 'Test Artist')).find((a: any) => a.id === artistId)?.image_url,
+        subscribed: subscribed?.image_url,
+        event: event?.artist_image_url,
+        dismissed: dismissed?.image_url,
+      };
+    };
+    const every = (url: string) => ({ ranked: url, autoAdd: url, topArtists: url, librarySearch: url, subscribed: url, event: url, dismissed: url });
+    try {
+      for (const [image, artwork, expected] of [
+        [null, '/artwork.jpg', '/artwork.jpg'],
+        ['', '/artwork.jpg', '/artwork.jpg'],
+        ['/portrait.jpg', '/artwork.jpg', '/portrait.jpg'],
+      ] as const) {
+        await pool.query('UPDATE artists SET image_url = $1, artwork_url = $2 WHERE id = $3', [image, artwork, artistId]);
+        expect(await images()).toEqual(every(expected));
+      }
+    } finally {
+      await pool.query('UPDATE artists SET image_url = NULL, artwork_url = NULL WHERE id = $1', [artistId]);
+      await pool.query("DELETE FROM concert_events WHERE jambase_event_id = 'artwork-test'");
+      await pool.query('DELETE FROM user_artist_subscriptions WHERE user_id = $1', [USER_ID]);
+      await pool.query('DELETE FROM user_dismissed_auto_artists WHERE user_id = $1', [USER_ID]);
+      await pool.query('DELETE FROM user_playback_stats WHERE user_id = $1 AND track_id = $2', [USER_ID, trackId]);
+    }
+  });
+
   it('reports the same missing and outdated backlog that incremental analysis selects', async () => {
     const directory = "/coverage/Blå — O'Brien";
     const ids = ['missing', 'loudness', 'embedding-only', 'legacy', 'current', 'future', 'simulated']
