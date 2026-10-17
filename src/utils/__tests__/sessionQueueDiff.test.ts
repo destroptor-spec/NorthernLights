@@ -138,3 +138,19 @@ describe('the entry that plays (Phase 3)', () => {
     expect(planQueueOperations([], [], null)).toEqual([]);
   });
 });
+
+describe('Infinity picks', () => {
+  it("marks an insert of this device's own Infinity picks, apart from the user's additions", () => {
+    const server = ['a', 'c', 'd'].map((id) => ({ entryId: id, trackId: id.toUpperCase() }));
+    const local = [
+      ...server,
+      { entryId: 'b', trackId: 'B' },
+      { entryId: 'i1', trackId: 'I1', infinity: true },
+      { entryId: 'i2', trackId: 'I2', infinity: true },
+    ];
+    expect(planQueueOperations(server, local, 0)).toEqual([
+      { type: 'insert', afterEntryId: 'd', trackIds: ['B'], entryIds: ['b'] },
+      { type: 'insert', afterEntryId: 'b', trackIds: ['I1', 'I2'], entryIds: ['i1', 'i2'], addedBy: 'infinity' },
+    ]);
+  });
+});

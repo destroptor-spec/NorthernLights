@@ -932,6 +932,9 @@ export async function initDB(): Promise<Pool> {
           UNIQUE (session_id, position)
         );
         CREATE INDEX IF NOT EXISTS playback_session_entries_track_idx ON playback_session_entries(track_id);
+        -- Who added the entry: 'infinity' for Infinity picks (server or client),
+        -- NULL for everything else, so every device can show them apart.
+        ALTER TABLE playback_session_entries ADD COLUMN IF NOT EXISTS added_by TEXT;
 
         -- Idempotency keys for session patches (docs/playback_sessions.md, Sync
         -- protocol). Recorded in the transaction that applies the patch, so a

@@ -1163,13 +1163,22 @@
           "addedAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "addedBy": {
+            "type": "string",
+            "enum": [
+              "user",
+              "infinity"
+            ],
+            "description": "infinity: an Infinity pick (by the server, or a client that chose it itself). user: anything else. Clients show Infinity picks apart until they play."
           }
         },
         "required": [
           "queueEntryId",
           "position",
           "track",
-          "addedAt"
+          "addedAt",
+          "addedBy"
         ]
       },
       "PlaybackOutputClaimResult": {
@@ -1820,6 +1829,14 @@
                       },
                       "maxItems": 200,
                       "description": "Client-proposed queue entry IDs, one unique UUID per track. Omitted, the server generates them."
+                    },
+                    "addedBy": {
+                      "type": "string",
+                      "enum": [
+                        "user",
+                        "infinity"
+                      ],
+                      "description": "Mark the inserted entries as Infinity picks (`infinity`). Default `user`."
                     }
                   },
                   "required": [
