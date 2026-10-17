@@ -907,8 +907,12 @@ export interface PlayerState {
    * continues from `positionSeconds`.
    */
   adoptSessionQueue: (tracks: TrackInfo[] | null, index: number, positionSeconds: number) => void;
-  /** Casting to a receiver that plays the session itself: show the session's queue here. */
-  adoptFollowedCastQueue: (tracks: TrackInfo[], currentEntryId: string | null) => void;
+  /**
+   * This device is the session's output (it plays, or casts): take in the
+   * session's queue, which another device changed (Phase 3). What plays
+   * keeps playing.
+   */
+  adoptSessionQueueAsOutput: (tracks: TrackInfo[], currentEntryId: string | null) => void;
   setSessionFollow: (follow: FollowedOutput | null) => void;
   /** Remote control "load": replace the queue with these tracks (entry IDs kept) and play `index`. */
   playSessionQueue: (tracks: TrackInfo[], index: number) => Promise<void>;
@@ -3129,17 +3133,27 @@ export const usePlayerStore = create<PlayerState>()(
           persistContinuitySnapshot(true);
         },
 
-        adoptFollowedCastQueue: (tracks: TrackInfo[], currentEntryId: string | null) => {
-          if (!castManager.receiverFollowsSession()) return;
+        adoptSessionQueueAsOutput: (incoming: TrackInfo[], currentEntryId: string | null) => {
           const state = get();
-          const same = state.playlist.length === tracks.length
-            && state.playlist.every((track, index) => track.queueEntryId === tracks[index].queueEntryId);
+          const same = state.playlist.length === incoming.length
+            && state.playlist.every((track, index) => track.queueEntryId === incoming[index].queueEntryId);
           if (same) return;
-          // Keep what plays (the receiver's status moves it on); else the session's current entry.
+          const follows = castManager.receiverFollowsSession();
+          // Keep what plays. It can't be removed from the queue, so it is gone
+          // only when another device started something new: its load command
+          // follows and starts it here. A following receiver moves on by itself.
           const playingId = state.currentIndex !== null ? state.playlist[state.currentIndex]?.queueEntryId : undefined;
-          let index = tracks.findIndex((track) => track.queueEntryId === playingId);
-          if (index < 0) index = tracks.findIndex((track) => track.queueEntryId === currentEntryId);
-          set({ playlist: tracks, currentIndex: index >= 0 ? index : (tracks.length ? 0 : null), queueSource: null });
+          let index = incoming.findIndex((track) => track.queueEntryId === playingId);
+          if (index < 0 && playingId && !follows) return;
+          if (index < 0) index = incoming.findIndex((track) => track.queueEntryId === currentEntryId);
+          // Infinity picks keep their look.
+          const infinity = new Set(state.playlist.filter((track) => track.isInfinity).map((track) => track.queueEntryId));
+          const tracks = incoming.map((track) => (infinity.has(track.queueEntryId) ? { ...track, isInfinity: true } : track));
+          const currentIndex = index >= 0 ? index : (tracks.length ? 0 : null);
+          set({ playlist: tracks, currentIndex, queueSource: null });
+          // A Cast receiver that does not follow the session gets the edit from here.
+          if (castManager.isConnected() && !follows) castManager.reconcileQueueEdits();
+          prewarmNextFromState({ ...get(), playlist: tracks, currentIndex }, currentIndex);
           persistContinuitySnapshot(true);
         },
 
