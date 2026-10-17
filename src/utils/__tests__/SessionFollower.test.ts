@@ -26,6 +26,7 @@ const sessionOf = (entries: number[], extra: Partial<PlaybackSession> = {}): Pla
   playbackState: 'playing',
   repeatMode: 'none',
   shuffle: false,
+  infinity: false,
   source: null,
   revision: 12,
   queue: entries.map((n, position) => ({

@@ -129,6 +129,7 @@ import {
 } from '../services/playbackSession.service';
 import { isPlaybackSyncEnabledFor } from '../services/playbackSync.service';
 import { publishApiV1Event, replayApiV1Events, subscribeApiV1Events, noteClientListening } from '../services/apiV1Events.service';
+import { topUpSessionInfinity } from '../services/sessionInfinity.service';
 import {
   generateEphemeralScopedToken,
   generateOutputCredential,
@@ -1041,6 +1042,8 @@ router.patch('/playback-sessions/:id', async (req, res) => {
     // A replayed requestId answers with the current session plus the revision
     // the original attempt produced.
     dataResponse(req, res, result.session, 200, { appliedRevision: result.appliedRevision, replayed: result.replayed });
+    // Infinity switched on, or the queue shortened: the server tops it up.
+    if (!result.replayed) void topUpSessionInfinity(req.apiV1!.userId, result.session.id);
   } catch (error) {
     handleSessionError(req, res, error);
   }
@@ -1075,6 +1078,7 @@ router.post('/playback-sessions/:id/output', async (req, res) => {
     const credential = await credentialForGrant(req, output.kind, {
       sid: session.id, oid: session.output!.id, gen: session.output!.generation,
     });
+    if (output.kind === 'receiver') void topUpSessionInfinity(req.apiV1!.userId, session.id);
     dataResponse(req, res, {
       session,
       credential: { ...credential, outputId: session.output!.id, generation: session.output!.generation },
@@ -1138,7 +1142,10 @@ router.post('/playback-sessions/:id/reports', async (req, res) => {
   const report = parseBody(playbackOutputReportSchema, req, res);
   if (!report) return;
   try {
-    dataResponse(req, res, await reportPlaybackOutput({ userId: req.apiV1!.userId, grant, sessionId: req.params.id, report }));
+    const { accepted, revision, entryChanged } = await reportPlaybackOutput({ userId: req.apiV1!.userId, grant, sessionId: req.params.id, report });
+    dataResponse(req, res, { accepted, revision });
+    // The output moved to another entry: the server keeps Infinity ahead of it.
+    if (entryChanged) void topUpSessionInfinity(req.apiV1!.userId, req.params.id);
   } catch (error) {
     handleSessionError(req, res, error);
   }

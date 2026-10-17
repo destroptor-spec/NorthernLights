@@ -917,6 +917,8 @@ export async function initDB(): Promise<Pool> {
         ALTER TABLE playback_sessions ADD COLUMN IF NOT EXISTS output_entry_id UUID;
         ALTER TABLE playback_sessions ADD COLUMN IF NOT EXISTS output_position_ms INTEGER;
         ALTER TABLE playback_sessions ADD COLUMN IF NOT EXISTS output_reported_at TIMESTAMPTZ;
+        -- Infinity, owned by the server (Phase 4): keep a few upcoming entries.
+        ALTER TABLE playback_sessions ADD COLUMN IF NOT EXISTS infinity BOOLEAN NOT NULL DEFAULT FALSE;
 
         CREATE TABLE IF NOT EXISTS playback_session_entries (
           session_id UUID NOT NULL REFERENCES playback_sessions(id) ON DELETE CASCADE,

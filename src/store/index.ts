@@ -2127,6 +2127,9 @@ export const usePlayerStore = create<PlayerState>()(
           // The queue here is a copy of the playing device's; topping it up
           // here would only diverge from it (prod 2026-10-14).
           if (isFollowingAnotherDevice(get())) return;
+          // A receiver that plays the session itself: the server keeps its
+          // Infinity (Phase 4), so two devices never append for one gap.
+          if (castManager.receiverFollowsSession()) return;
           if (!get().isInfinityMode || get().isFetchingInfinity) return;
           // One bounded worker fills three upcoming slots. Yield first so its
           // promise exists before any store subscriber can ask for another top-up.
@@ -2149,6 +2152,8 @@ export const usePlayerStore = create<PlayerState>()(
         fetchNextInfinityTrack: async (isPrefetch = false) => {
           const state = get();
           if (state.isFetchingInfinity) return;
+          // The server keeps Infinity for a receiver that follows the session.
+          if (castManager.receiverFollowsSession()) return;
           
           set({ isFetchingInfinity: true });
           try {

@@ -18,6 +18,7 @@ const sessionOf = (tracks: TrackInfo[], revision: number, extra: Partial<Playbac
   playbackState: 'paused',
   repeatMode: 'none',
   shuffle: false,
+  infinity: false,
   source: null,
   revision,
   queue: tracks.map((t, position) => ({
@@ -715,4 +716,16 @@ describe('while the receiver follows the session (Phase 5, PR E)', () => {
     expect(mirror.receiverFollows()).toBe(false);
     expect(mirror.noteSessionChanged(sessionOf([track(1)], 50))).toBe(false);
   });
+});
+
+it('mirrors the Infinity toggle into the session with repeat and shuffle (Phase 4)', async () => {
+  const { api, store } = setup({ isInfinityMode: false });
+  await play(store);
+  await jest.advanceTimersByTimeAsync(300);
+  api.patchPlaybackSession.mockClear();
+  store.setState({ isInfinityMode: true });
+  await jest.advanceTimersByTimeAsync(300);
+  expect(api.patchPlaybackSession).toHaveBeenCalledWith(expect.anything(), 'session-1', expect.objectContaining({
+    operations: [{ type: 'setTransport', repeatMode: 'none', shuffle: false, infinity: true }],
+  }));
 });

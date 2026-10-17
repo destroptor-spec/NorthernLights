@@ -31,6 +31,8 @@ jest.mock('../../utils/CastManager', () => ({
   castManager: {
     isConnected: () => isConnected(),
     appendToQueue: (t: unknown) => appendToQueue(t),
+    // Phase 4: the server keeps Infinity only for a receiver that follows the session.
+    receiverFollowsSession: () => false,
     setDiagnosticsVerbose: jest.fn(),
     addStateChangeListener: jest.fn(),
     addHealthListener: jest.fn(),
