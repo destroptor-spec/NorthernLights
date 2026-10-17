@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { usePlayerStore } from '../store';
 import type { Track } from '../api/auroraApi';
 import { Hub } from './Hub';
@@ -27,7 +27,7 @@ const emptySmart = {
 
 let routes: Record<string, unknown>;
 const fetchMock = jest.fn(async (url: string, init?: RequestInit) => {
-  const key = `${init?.method || 'GET'} ${url}`;
+  const key = `${init?.method || 'GET'} ${url.split('?')[0]}`;
   const body = key in routes ? routes[key] : {};
   return { ok: true, status: 200, json: async () => ({ data: body }), headers: { get: () => null } };
 });
@@ -47,7 +47,7 @@ beforeEach(() => {
     'GET /api/v1/hub/smart': emptySmart,
   };
   usePlayerStore.setState({
-    library: [], albums: [{ id: 'al1', title: 'Album' }], playlists: [],
+    library: [], artists: [], albums: [{ id: 'al1', title: 'Album' }], playlists: [], isLibraryLoading: false,
     authToken: 'jwt', mediaAccessToken: 'media', streamingQuality: 'auto',
     llmBaseUrl: 'http://llm', llmModelName: 'model', toasts: [],
     setPlaylist, fetchPlaylistsFromServer: jest.fn(async () => {}),
@@ -132,4 +132,43 @@ it('opens an artist radio through v1 with a JSON body', async () => {
   const [, init] = callTo('POST /api/v1/hub/artist-radio')!;
   expect(new Headers(init!.headers).get('Content-Type')).toBe('application/json');
   expect(JSON.parse(String(init!.body))).toEqual({ artistId: 'a1' });
+});
+
+const jumpArtist = { type: 'artist', id: 'artist-1', title: 'Test Artist', subtitle: 'Artist', imageUrl: null, lastPlayedAt: 123 };
+
+it.each(['image_url', 'artwork_url'] as const)('updates Jump back in when a later artist page supplies %s', async field => {
+  routes['GET /api/v1/hub/smart'] = { ...emptySmart, jumpBackIn: [jumpArtist] };
+  renderHub();
+  const tile = await screen.findByLabelText('open Test Artist');
+  expect(tile.querySelector('img')).toBeNull();
+  const requestsBefore = fetchMock.mock.calls.length;
+  act(() => usePlayerStore.setState({ artists: [{ id: 'artist-1', name: 'Test Artist', [field]: '/portrait.jpg' }] }));
+  await waitFor(() => expect(tile.querySelector('img')?.getAttribute('src')).toBe('/portrait.jpg'));
+  expect(fetchMock.mock.calls).toHaveLength(requestsBefore);
+});
+
+it('keeps a supplied Hub portrait ahead of entity and track fallbacks', async () => {
+  routes['GET /api/v1/hub/smart'] = { ...emptySmart, jumpBackIn: [{ ...jumpArtist, imageUrl: '/hub.jpg' }] };
+  usePlayerStore.setState({ artists: [{ id: 'artist-1', name: 'Test Artist', image_url: '/entity.jpg' }] });
+  renderHub();
+  const tile = await screen.findByLabelText('open Test Artist');
+  expect(tile.querySelector('img')?.getAttribute('src')).toBe('/hub.jpg');
+});
+
+it('accepts a portrait-only Hub refresh without another play', async () => {
+  jest.useFakeTimers();
+  try {
+    routes['GET /api/v1/hub/smart'] = { ...emptySmart, jumpBackIn: [jumpArtist] };
+    const view = renderHub();
+    await act(async () => { await jest.advanceTimersByTimeAsync(0); });
+    expect(screen.getByLabelText('open Test Artist').querySelector('img')).toBeNull();
+    routes['GET /api/v1/hub/smart'] = { ...emptySmart, jumpBackIn: [{ ...jumpArtist, imageUrl: '/new-portrait.jpg' }] };
+    await act(async () => { await jest.advanceTimersByTimeAsync(30000); });
+    await act(async () => { await jest.advanceTimersByTimeAsync(400); });
+    await act(async () => { await jest.advanceTimersByTimeAsync(400); });
+    expect(screen.getByLabelText('open Test Artist').querySelector('img')?.getAttribute('src')).toBe('/new-portrait.jpg');
+    view.unmount();
+  } finally {
+    jest.useRealTimers();
+  }
 });

@@ -111,6 +111,28 @@ describeDb('database read queries', () => {
     }
   });
 
+  it('returns stored artist artwork in Jump back in without waiting for client entity pages', async () => {
+    const { computeJumpBackIn } = await import('../../services/smartHub.service');
+    await pool.query(`INSERT INTO user_playback_stats (user_id, track_id, play_count, last_played_at)
+      VALUES ($1, $2, 1, NOW()) ON CONFLICT (user_id, track_id)
+      DO UPDATE SET last_played_at = NOW()`, [USER_ID, `${TRACK_ID}0`]);
+    try {
+      for (const [image, artwork, expected] of [
+        [null, '/artwork.jpg', '/artwork.jpg'],
+        ['', '/artwork.jpg', '/artwork.jpg'],
+        ['/portrait.jpg', '/artwork.jpg', '/portrait.jpg'],
+        [null, null, null],
+      ]) {
+        await pool.query('UPDATE artists SET image_url = $1, artwork_url = $2 WHERE id = $3', [image, artwork, seeded.artistId]);
+        const tile = (await computeJumpBackIn(USER_ID)).find(t => t.type === 'artist' && t.id === seeded.artistId);
+        expect(tile).toMatchObject({ title: 'Test Artist', imageUrl: expected });
+      }
+    } finally {
+      await pool.query('UPDATE artists SET image_url = NULL, artwork_url = NULL WHERE id = $1', [seeded.artistId]);
+      await pool.query('DELETE FROM user_playback_stats WHERE user_id = $1 AND track_id = $2', [USER_ID, `${TRACK_ID}0`]);
+    }
+  });
+
   it('reports the same missing and outdated backlog that incremental analysis selects', async () => {
     const directory = "/coverage/Blå — O'Brien";
     const ids = ['missing', 'loudness', 'embedding-only', 'legacy', 'current', 'future', 'simulated']

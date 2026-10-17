@@ -361,14 +361,16 @@ export async function computeJumpBackIn(userId: string, limit = 12): Promise<Jum
   // Recently played artists (top played in last 60 days)
   const artistRes = await db.query(
     `
-    SELECT a.id::text AS id, a.name, a.image_url, MAX(ups.last_played_at) AS last_played_at
+    SELECT a.id::text AS id, a.name,
+           COALESCE(NULLIF(a.image_url, ''), NULLIF(a.artwork_url, '')) AS image_url,
+           MAX(ups.last_played_at) AS last_played_at
     FROM user_playback_stats ups
     JOIN tracks t ON t.id = ups.track_id
     JOIN artists a ON a.id = t.artist_id
     WHERE ups.user_id = $1
       AND ups.last_played_at > NOW() - INTERVAL '60 days'
       AND ${variousArtistsExclusion('a')}
-    GROUP BY a.id, a.name, a.image_url
+    GROUP BY a.id, a.name, a.image_url, a.artwork_url
     ORDER BY last_played_at DESC
     LIMIT $2
     `,
