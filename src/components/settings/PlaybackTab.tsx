@@ -13,6 +13,8 @@ const formatTelemetryTime = (timestamp: number | null): string => {
 const formatLoadPath = (path: string): string => {
     switch (path) {
         case 'prepared-hls': return 'Prepared HLS';
+        case 'prepared-direct': return 'Prepared original file';
+        case 'lossless-passthrough': return 'Original file';
         case 'fallback-hls': return 'Fallback HLS';
         case 'cast': return 'Cast';
         case 'direct': return 'Direct file';
@@ -190,10 +192,10 @@ export const PlaybackTab: React.FC = () => {
                         </select>
                         <p className="text-xs text-[var(--color-text-muted)] mt-1.5">
                             {prebufferPolicy === 'off'
-                                ? 'Disables HLS prewarm and local prepared audio. Use this if a browser or device behaves badly with background preparation.'
+                                ? 'Nothing is prepared in the background. Use this if a browser or device behaves badly with background preparation.'
                                 : prebufferPolicy === 'aggressive'
-                                ? 'Keeps the next track ready for local promotion and also prewarms the following HLS session. Uses more server CPU and temporary storage.'
-                                : 'Prepares only the immediate next track on the server and in the local audio pipeline.'
+                                ? 'Keeps the next track ready to play and also prepares the HLS stream of the one after. At Source quality, a file this browser plays as it is loads the original file ahead instead. Uses more server CPU and temporary storage.'
+                                : 'Keeps the next track ready to play: its HLS stream, or at Source quality the original file when this browser plays it as it is. Not on Save-Data or a slow connection.'
                             }
                         </p>
                     </div>

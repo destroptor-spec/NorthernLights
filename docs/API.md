@@ -1325,6 +1325,7 @@ HLS media playlist segment mapping index.
 Start HLS stream slicing/transcoding in the background before playback begins.
 - **Query Params**: `quality`, `codec`, and optional `maxBitrate=64k` for a Data Saver Auto package.
 - **Auto behavior**: prepares the complete adaptive package in one FFmpeg process and returns rendition count details. Conservative prebuffering requests one queued track; aggressive prebuffering may request two tracks, still with one process per Auto track.
+- **Not for direct playback**: a track the client will stream as its original file (`quality=source` and a format the browser plays natively) is never prewarmed; the web client loads that file ahead itself instead.
 - **Example Response**:
   ```json
   {
