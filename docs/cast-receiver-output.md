@@ -252,9 +252,9 @@ edits (Play next, remove, reorder) go to the session as anchored patches,
 planned against the session it last read and sent once more at a newer
 revision if one won meanwhile (`sync-queue-edit-sent`); an edit that cannot
 apply any more leaves the session's queue shown (`sync-queue-edit-refused`).
-Clearing the queue there does not stop the receiver. Following a browser or
-plain Cast output, edits stay on that device as before: those outputs treat
-their own queue as the one that counts, which is Phase 3 work.
+Clearing the queue there does not stop the receiver. Since Phase 3 every
+output takes the session's queue, so the same holds when the idle device
+follows a browser or plain Cast output.
 
 **Still open for D:**
 - If another sender takes the receiver over inside the same Cast session
