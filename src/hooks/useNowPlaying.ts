@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { usePlayerStore } from '../store';
 import type { TrackInfo } from '../utils/fileSystem';
+import { selectDisplayedPlaybackState } from '../utils/sessionFollow';
 
 export type NowPlayingState = 'playing' | 'paused' | 'stopped';
 
@@ -10,8 +11,9 @@ export function useCurrentTrack(): TrackInfo | null {
   );
 }
 
+/** This device's state, or the controlled device's when it controls one. */
 export function useNowPlayingState(): NowPlayingState {
-  return usePlayerStore((s) => s.playbackState);
+  return usePlayerStore(selectDisplayedPlaybackState);
 }
 
 export function useIsCurrentTrack(trackId: string | undefined): boolean {
