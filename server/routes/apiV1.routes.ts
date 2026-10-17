@@ -1079,7 +1079,7 @@ router.post('/playback-sessions/:id/output', async (req, res) => {
     const credential = await credentialForGrant(req, output.kind, {
       sid: session.id, oid: session.output!.id, gen: session.output!.generation,
     });
-    if (output.kind === 'receiver') void topUpSessionInfinity(req.apiV1!.userId, session.id);
+    void topUpSessionInfinity(req.apiV1!.userId, session.id);
     dataResponse(req, res, {
       session,
       credential: { ...credential, outputId: session.output!.id, generation: session.output!.generation },

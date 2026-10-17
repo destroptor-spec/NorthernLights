@@ -324,7 +324,12 @@ describe('Infinity kept by the server (Phase 4)', () => {
     expect(topUpSessionInfinity).not.toHaveBeenCalled();
   });
 
-  it('tops up once a controller claims the output for a receiver', async () => {
+  it('tops up once a device claims the output, for itself or a receiver', async () => {
+    (claimPlaybackOutput as jest.Mock).mockResolvedValueOnce(session(output));
+    await call('post', '/playback-sessions/:id/output', { kind: 'browser', name: 'Aurora Web' }, { id: 's-1' });
+    expect(topUpSessionInfinity).toHaveBeenCalledWith('user-1', '11111111-1111-4111-8111-111111111111');
+    (topUpSessionInfinity as jest.Mock).mockClear();
+
     (claimPlaybackOutput as jest.Mock).mockResolvedValue(session({
       id: 'receiver:cast-77', kind: 'receiver', name: 'NAD', castSessionId: 'cast-77',
       generation: 3, claimedAt: '2026-10-14T11:00:00.000Z', status: 'active', report: null,

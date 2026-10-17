@@ -74,6 +74,14 @@ let playGeneration = 0;
 // After a Cast session ends with playback left paused here, the track and
 // position to start from on the next Play (local audio still holds whatever
 // played before casting, so a plain resume would play the wrong thing).
+/**
+ * The server keeps Infinity for what this device plays (Phase 4): it is the
+ * session's output (or casts to the receiver that is), with sync on.
+ */
+function serverKeepsInfinity(state: { syncPlaybackAcrossDevices: boolean }): boolean {
+  return castManager.receiverFollowsSession() || (state.syncPlaybackAcrossDevices && sessionMirror.holdsOutput());
+}
+
 /** This idle device shows another device's playback (SessionFollower). */
 function isFollowingAnotherDevice(state: { sessionFollow: FollowedOutput | null; playbackState: string }): boolean {
   return !!state.sessionFollow && state.playbackState !== 'playing' && !castManager.isConnected();
@@ -2131,9 +2139,10 @@ export const usePlayerStore = create<PlayerState>()(
           // The queue here is a copy of the playing device's; topping it up
           // here would only diverge from it (prod 2026-10-14).
           if (isFollowingAnotherDevice(get())) return;
-          // A receiver that plays the session itself: the server keeps its
-          // Infinity (Phase 4), so two devices never append for one gap.
-          if (castManager.receiverFollowsSession()) return;
+          // This device plays the session (or casts to a receiver that does):
+          // the server keeps its Infinity (Phase 4), so two devices never
+          // append for one gap.
+          if (serverKeepsInfinity(get())) return;
           if (!get().isInfinityMode || get().isFetchingInfinity) return;
           // One bounded worker fills three upcoming slots. Yield first so its
           // promise exists before any store subscriber can ask for another top-up.
@@ -2156,8 +2165,8 @@ export const usePlayerStore = create<PlayerState>()(
         fetchNextInfinityTrack: async (isPrefetch = false) => {
           const state = get();
           if (state.isFetchingInfinity) return;
-          // The server keeps Infinity for a receiver that follows the session.
-          if (castManager.receiverFollowsSession()) return;
+          // The server keeps Infinity for the session this device plays.
+          if (serverKeepsInfinity(get())) return;
           
           set({ isFetchingInfinity: true });
           try {

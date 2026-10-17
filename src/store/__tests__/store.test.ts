@@ -514,3 +514,37 @@ describe("playing here, the session's queue counts (Phase 3)", () => {
     expect(reconcile).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('Infinity on the session this device plays (Phase 4, every output)', () => {
+  const entry = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+  const tracks = (...ns: number[]): TrackInfo[] => ns.map((n) => ({ id: `t${n}`, path: `/t${n}.mp3`, queueEntryId: entry(n) }));
+  afterEach(() => jest.restoreAllMocks());
+
+  const prepare = (sync: boolean, holds: boolean) => {
+    jest.spyOn(castManager, 'receiverFollowsSession').mockReturnValue(false);
+    jest.spyOn(sessionMirror, 'holdsOutput').mockReturnValue(holds);
+    const recommend = jest.spyOn(auroraApi, 'fetchNextRecommendation').mockResolvedValue(null);
+    const { ensureInfinityQueue, fetchNextInfinityTrack } = usePlayerStore.getInitialState();
+    usePlayerStore.setState({
+      ensureInfinityQueue, fetchNextInfinityTrack, isInfinityMode: true, isFetchingInfinity: false,
+      syncPlaybackAcrossDevices: sync, playlist: tracks(1, 2), currentIndex: 1, stop: jest.fn(),
+    } as never);
+    return recommend;
+  };
+
+  it('leaves it to the server while this device holds the output, with sync on', async () => {
+    const recommend = prepare(true, true);
+    await usePlayerStore.getState().ensureInfinityQueue();
+    expect(recommend).not.toHaveBeenCalled();
+  });
+
+  it('keeps choosing here with sync off, or before this device holds the output', async () => {
+    const off = prepare(false, true);
+    await usePlayerStore.getState().ensureInfinityQueue();
+    expect(off).toHaveBeenCalled();
+    jest.restoreAllMocks();
+    const notYet = prepare(true, false);
+    await usePlayerStore.getState().ensureInfinityQueue();
+    expect(notYet).toHaveBeenCalled();
+  });
+});
