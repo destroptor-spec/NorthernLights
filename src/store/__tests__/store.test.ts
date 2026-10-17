@@ -1,5 +1,5 @@
 import { restorePersistedPlayerState, usePlayerStore } from '../index';
-import { selectDisplayedPlaying } from '../../utils/sessionFollow';
+import { selectDisplayedPlaybackState, selectDisplayedPlaying } from '../../utils/sessionFollow';
 import { sendRemoteAction, startOnFollowingReceiver } from '../../utils/sessionRemote';
 import { castManager } from '../../utils/CastManager';
 import { sessionMirror } from '../../utils/SessionMirror';
@@ -284,6 +284,17 @@ describe('Music Store Logic', () => {
       expect(selectDisplayedPlaying(usePlayerStore.getState())).toBe(true);
       usePlayerStore.getState().setSessionFollow(follow({ state: 'paused' }));
       expect(selectDisplayedPlaying(usePlayerStore.getState())).toBe(false);
+    });
+
+    it("shows the controlled device's state on now-playing indicators too", () => {
+      // Prod 2026-10-17: the Play/Pause button said playing while the album
+      // header and the bars in the track list said paused.
+      following();
+      expect(selectDisplayedPlaybackState(usePlayerStore.getState())).not.toBe('playing');
+      usePlayerStore.setState({ remoteControlOutputId: 'desktop' });
+      expect(selectDisplayedPlaybackState(usePlayerStore.getState())).toBe('playing');
+      usePlayerStore.getState().setSessionFollow(follow({ state: 'paused' }));
+      expect(selectDisplayedPlaybackState(usePlayerStore.getState())).toBe('paused');
     });
 
     it('the device chip changes the choice without doing anything else', async () => {

@@ -1,4 +1,5 @@
 import type { PlaybackOutput, PlaybackSession } from '../../shared/api/v1';
+import type { PlaybackState } from './PlaybackManager';
 
 // The following side of "Sync playback across devices" (docs/playback_sessions.md,
 // Phase 2): what an idle device knows about the device that plays the session.
@@ -107,4 +108,15 @@ export function selectRemoteTarget(state: {
 export function selectDisplayedPlaying(state: Parameters<typeof selectRemoteTarget>[0]): boolean {
   const remote = selectRemoteTarget(state);
   return remote ? isFollowedOutputPlaying(remote) : state.playbackState === 'playing';
+}
+
+/**
+ * What now-playing indicators (bars, badges, detail-view headers) show: the
+ * controlled device's state, else this one's — the same rule as the
+ * Play/Pause button, so the two never disagree.
+ */
+export function selectDisplayedPlaybackState(state: Parameters<typeof selectRemoteTarget>[0] & { playbackState: PlaybackState }): PlaybackState {
+  const remote = selectRemoteTarget(state);
+  if (remote) return isFollowedOutputPlaying(remote) ? 'playing' : 'paused';
+  return state.playbackState;
 }
