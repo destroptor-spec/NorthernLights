@@ -499,12 +499,14 @@ describe('queue edits on an idle device following a receiver (Phase 5)', () => {
     expect(store.getState().playlist.map((t) => t.queueEntryId)).toEqual([uuid(1)]);
   });
 
-  it('keeps edits on this device when it follows a browser or Cast output, or casts itself', async () => {
+  it('sends them for a browser or Cast output too (Phase 3), but not while this device casts itself', async () => {
     const browser = setup();
     await browser.connect();
-    browser.store.setState({ playlist: [track(1), track(3)] });
+    browser.store.setState({ playlist: [track(1), track(2)] }); // 3 removed
     await jest.advanceTimersByTimeAsync(250);
-    expect(browser.api.patchPlaybackSession).not.toHaveBeenCalled();
+    expect(browser.api.patchPlaybackSession).toHaveBeenCalledWith(expect.anything(), 'session-1', expect.objectContaining({
+      operations: [{ type: 'remove', queueEntryIds: [uuid(3)] }],
+    }));
 
     const casting = setup({ castConnected: true }, receiverSession());
     await casting.connect();

@@ -18,10 +18,9 @@ import { FOLLOW_STALE_MS, followFromSession, followedPositionMs, isCastOutput, i
 // queue is the session's (SessionMirror), and a Cast receiver's queue is never
 // replaced from here.
 //
-// Following a receiver that plays the session itself (Phase 5,
-// docs/cast-receiver-output.md), the queue edits made here (Play next, remove,
-// reorder) go to the session, where the receiver picks them up. Other outputs
-// keep their own queue, so there edits stay on this device.
+// The queue edits made here while following (Play next, remove, reorder) go
+// to the session, where the device that plays picks them up: a receiver that
+// follows the session (Phase 5) or any other output (Phase 3).
 
 export interface FollowerPlayerState {
   syncPlaybackAcrossDevices: boolean;
@@ -226,9 +225,13 @@ export class SessionFollower {
     if (state.playlist !== previous.playlist && !this.rendering && this.editsGoToSession(state)) this.scheduleQueueEdit();
   }
 
-  /** Following a receiver that plays the session itself, from an idle device. */
+  /**
+   * Following another device from an idle one. Every output takes the
+   * session's queue (Phase 3), so an edit made here reaches the device that
+   * plays, whichever kind it is.
+   */
   private editsGoToSession(state: FollowerPlayerState): boolean {
-    return !!this.session && this.follow?.kind === 'receiver' && !this.busy(state);
+    return !!this.session && !!this.follow && !this.busy(state);
   }
 
   private scheduleQueueEdit() {
