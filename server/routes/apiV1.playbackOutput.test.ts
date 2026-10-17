@@ -7,6 +7,7 @@ jest.mock('../services/playbackSession.service', () => ({
   getCurrentOutputGrant: jest.fn(),
   reportPlaybackOutput: jest.fn(),
   issuePlaybackCommand: jest.fn(),
+  patchPlaybackSession: jest.fn(),
 }));
 jest.mock('../services/sessionInfinity.service', () => ({ topUpSessionInfinity: jest.fn(async () => 0) }));
 jest.mock('../services/scopedToken.service', () => ({
@@ -29,6 +30,8 @@ import {
   issuePlaybackCommand,
   PlaybackOutputNotActiveError,
   PlaybackOutputUnreachableError,
+  patchPlaybackSession,
+  PlaybackSessionCurrentEntryError,
 } from '../services/playbackSession.service';
 import { generateEphemeralScopedToken, generateOutputCredential, generateReceiverCredential } from '../services/scopedToken.service';
 import { isClientListening, publishApiV1Event } from '../services/apiV1Events.service';
@@ -36,7 +39,7 @@ import { topUpSessionInfinity } from '../services/sessionInfinity.service';
 
 const principal = { userId: 'user-1', username: 'andreas', role: 'admin', authKind: 'jwt', clientId: 'laptop-5678', clientName: 'Aurora Web' };
 
-async function call(method: 'post', path: string, body: unknown, params: Record<string, string> = {}, apiV1: Record<string, unknown> = principal) {
+async function call(method: 'post' | 'patch', path: string, body: unknown, params: Record<string, string> = {}, apiV1: Record<string, unknown> = principal) {
   const layer = router.stack.find((l) => l.route?.path === path && l.route.stack.some((h) => h.method === method))!;
   const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis(), end: jest.fn() };
   const req = { apiV1, requestId: 'r1', body, params, headers: {} } as unknown as Request;
@@ -329,4 +332,15 @@ describe('Infinity kept by the server (Phase 4)', () => {
     await call('post', '/playback-sessions/:id/output', { kind: 'receiver', name: 'NAD', castSessionId: 'cast-77' }, { id: 's-1' });
     expect(topUpSessionInfinity).toHaveBeenCalledWith('user-1', '11111111-1111-4111-8111-111111111111');
   });
+});
+
+it('refuses removing the entry that plays with 409 CURRENT_ENTRY_PLAYING and the current session (Phase 3)', async () => {
+  const refusal = new PlaybackSessionCurrentEntryError('22222222-2222-4222-8222-222222222222');
+  refusal.current = session(output);
+  (patchPlaybackSession as jest.Mock).mockRejectedValueOnce(refusal);
+  const { status, body } = await call('patch', '/playback-sessions/:id', {
+    expectedRevision: 4, operations: [{ type: 'remove', queueEntryIds: ['22222222-2222-4222-8222-222222222222'] }],
+  }, { id: 's-1' });
+  expect(status).toBe(409);
+  expect(body.error).toMatchObject({ code: 'CURRENT_ENTRY_PLAYING', details: { entryId: '22222222-2222-4222-8222-222222222222', current: { revision: 4 } } });
 });

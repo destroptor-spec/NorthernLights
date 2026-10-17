@@ -23,6 +23,18 @@ describe('Music Store Logic', () => {
     expect(usePlayerStore.getState().library[0].title).toBe('c');
   });
 
+  it('never removes the track that plays from the queue (Skip moves past it)', () => {
+    usePlayerStore.setState({
+      playlist: [{ id: 'a', path: '/a.mp3' }, { id: 'b', path: '/b.mp3' }, { id: 'c', path: '/c.mp3' }],
+      currentIndex: 1,
+    });
+    usePlayerStore.getState().removeFromPlaylist(1);
+    expect(usePlayerStore.getState().playlist.map((t: TrackInfo) => t.id)).toEqual(['a', 'b', 'c']);
+    usePlayerStore.getState().removeFromPlaylist(2);
+    expect(usePlayerStore.getState().playlist.map((t: TrackInfo) => t.id)).toEqual(['a', 'b']);
+    expect(usePlayerStore.getState().currentIndex).toBe(1);
+  });
+
   it('moves a track in the playlist', () => {
     usePlayerStore.setState({
       playlist: [

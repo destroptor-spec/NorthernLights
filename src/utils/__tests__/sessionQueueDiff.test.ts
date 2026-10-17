@@ -121,3 +121,20 @@ it('adds repeat and shuffle when they differ from the session', () => {
     { type: 'setTransport', repeatMode: 'all', shuffle: false },
   ]);
 });
+
+describe('the entry that plays (Phase 3)', () => {
+  const ref = (n: number) => ({ entryId: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`, trackId: `t${n}` });
+
+  it('is never planned as a removal, even when this device lacks it', () => {
+    const operations = planQueueOperations([ref(1), ref(2), ref(3)], [ref(1), ref(3)], 0, ref(2).entryId);
+    expect(operations).toEqual([]);
+    expect(planQueueOperations([ref(1), ref(2), ref(3)], [ref(1)], 0, ref(2).entryId))
+      .toEqual([{ type: 'remove', queueEntryIds: [ref(3).entryId] }]);
+  });
+
+  it('goes with the rest when the queue is emptied: a replace with nothing', () => {
+    expect(planQueueOperations([ref(1), ref(2)], [], null, ref(1).entryId))
+      .toEqual([{ type: 'replaceQueue', trackIds: [], entryIds: [] }]);
+    expect(planQueueOperations([], [], null)).toEqual([]);
+  });
+});

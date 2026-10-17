@@ -125,7 +125,7 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
 
   const handleRemoveFromQueue = useCallback((index: number) => {
     const removed = playlist[index];
-    if (!removed) return;
+    if (!removed || index === currentIndex) return; // the track that plays is skipped, not removed
 
     const snapshot = playlist.map((track) => ({ ...track }));
     const snapshotIndex = currentIndex;
