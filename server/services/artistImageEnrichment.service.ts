@@ -37,6 +37,11 @@ export interface ArtistImageEnrichmentResult {
 
 const PER_QUERY = 200;          // page size when scanning for work
 const MAX_PER_RUN = 20000;      // hard ceiling so one run can't loop forever
+// Pause between artists. The provider throttles are tuned for someone waiting on
+// an artist page (Genius 4 req/s); nobody waits on this batch, and a full-speed
+// run of a thousand artists is what gets a free API key rate limited (Genius
+// blocked prod for over an hour on 2026-10-18). ~1.3 Genius requests/s at most.
+const BACKGROUND_PACE_MS = 1500;
 
 let isRunning = false;
 
@@ -59,7 +64,9 @@ async function anyMetadataProviderConfigured(): Promise<boolean> {
  * Resumable: stops on rate-limit and continues on the next invocation since
  * processed artists fall out of the work set. Guarded against concurrent runs.
  */
-export async function enrichArtistImages(): Promise<ArtistImageEnrichmentResult> {
+export async function enrichArtistImages(
+  { paceMs = BACKGROUND_PACE_MS }: { paceMs?: number } = {}
+): Promise<ArtistImageEnrichmentResult> {
   const empty: ArtistImageEnrichmentResult = {
     attempted: 0, succeeded: 0, noImage: 0, failed: 0, ranOutOfQuota: false,
   };
@@ -82,6 +89,7 @@ export async function enrichArtistImages(): Promise<ArtistImageEnrichmentResult>
 
       for (const artist of batch) {
         seen.add(artist.id);
+        if (result.attempted > 0 && paceMs > 0) await new Promise((r) => setTimeout(r, paceMs));
         result.attempted++;
         try {
           const data = await getArtistData(artist.name, artist.mbid);
