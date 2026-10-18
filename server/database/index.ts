@@ -3380,10 +3380,14 @@ export async function getArtistsPage(options: EntityListPageOptions) {
 // artist, so once it runs (even when the provider has no image) the artist drops
 // out of this set and isn't re-fetched every scan. New artists added by a scan
 // start at last_updated 0, so they are picked up automatically. An imageless
-// artist whose fetch is older than the 30-day metadata cache TTL comes back, so
-// a provider gap (or a picture added upstream later) is retried rather than
-// final. Never-fetched artists first, then by track count so the artists you
-// actually own the most of get pictures first.
+// library artist (one with its own tracks) whose fetch is older than the 30-day
+// metadata cache TTL comes back, so a provider gap (or a picture added upstream
+// later) is retried rather than final. Credit-only names (composers, engineers,
+// featured artists) are fetched once here and otherwise refreshed lazily when
+// their page is opened: most have no picture anywhere, and re-asking for
+// thousands of them every month only spends the provider's rate limit.
+// Never-fetched artists first, then by track count so the artists you actually
+// own the most of get pictures first.
 export async function getArtistsNeedingImage(limit: number) {
   const db = await initDB();
   const safeLimit = Math.max(1, Math.min(20000, Math.floor(limit) || 0));
@@ -3393,7 +3397,8 @@ export async function getArtistsNeedingImage(limit: number) {
       WHERE a.merged_into IS NULL
         AND (a.image_url IS NULL OR a.image_url = '')
         AND (COALESCE(a.last_updated, 0) = 0
-             OR a.last_updated < EXTRACT(EPOCH FROM NOW() - INTERVAL '30 days'))
+             OR (a.last_updated < EXTRACT(EPOCH FROM NOW() - INTERVAL '30 days')
+                 AND EXISTS (SELECT 1 FROM tracks t WHERE t.artist_id = a.id)))
         AND lower(btrim(a.name)) NOT IN ('', 'unknown artist', 'various artists', '???')
       ORDER BY (COALESCE(a.last_updated, 0) = 0) DESC,
                (SELECT count(*) FROM tracks t WHERE t.artist_id = a.id) DESC, a.name ASC
