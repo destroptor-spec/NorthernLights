@@ -111,6 +111,34 @@ describeDb('database read queries', () => {
     }
   });
 
+  it('selects never-fetched artists first, then imageless artists past the cache TTL', async () => {
+    const day = 86400;
+    const now = Math.floor(Date.now() / 1000);
+    const rows: Array<[string, string | null, number]> = [
+      ['Stale Imageless', null, now - 40 * day],
+      ['Recent Imageless', null, now - 5 * day],
+      ['Stale With Image', '/portrait.jpg', now - 40 * day],
+      ['Never Fetched', null, 0],
+    ];
+    const ids: string[] = [];
+    try {
+      for (const [i, [name, image, lastUpdated]] of rows.entries()) {
+        const id = (await pool.query('INSERT INTO artists (name, image_url, last_updated) VALUES ($1, $2, $3) RETURNING id', [name, image, lastUpdated])).rows[0].id;
+        ids.push(id);
+        await pool.query(
+          `INSERT INTO tracks (id, title, artist, album, path, artist_id, album_id, duration)
+           VALUES ($1, 'Track', $2, 'Test Album', $3, $4, $5, 180)`,
+          [`c2VsZWN0b3I=${i}`, name, `c2VsZWN0b3I=${i}`, id, seeded.albumId],
+        );
+      }
+      const selected = (await db.getArtistsNeedingImage(50)).map(a => a.name).filter(name => rows.some(r => r[0] === name));
+      expect(selected).toEqual(['Never Fetched', 'Stale Imageless']);
+    } finally {
+      await pool.query('DELETE FROM tracks WHERE artist_id = ANY($1::uuid[])', [ids]);
+      await pool.query('DELETE FROM artists WHERE id = ANY($1::uuid[])', [ids]);
+    }
+  });
+
   it('reports the same missing and outdated backlog that incremental analysis selects', async () => {
     const directory = "/coverage/Blå — O'Brien";
     const ids = ['missing', 'loudness', 'embedding-only', 'legacy', 'current', 'future', 'simulated']

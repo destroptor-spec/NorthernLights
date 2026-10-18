@@ -257,6 +257,10 @@ export async function getArtistData(
 
   let wasRateLimited = false;
   let lastError: string | undefined;
+  // A provider that could have supplied the picture failed (outage, 5xx,
+  // Genius 429). The artist must not be stamped as fetched, or the image
+  // backfill never asks again.
+  let imageLookupFailed = false;
 
   for (const api of apisToTry) {
     try {
@@ -281,7 +285,9 @@ export async function getArtistData(
               );
             }
 
-            if (!match) match = hits[0];
+            // No song by this artist in the hits: leave it unmatched rather
+            // than borrowing the first hit's artist, whose picture and bio
+            // belong to someone else (e.g. Electrypnose → Seed Nation).
 
             const artistId = match?.result?.primary_artist?.id;
             const imageUrl = match?.result?.primary_artist?.image_url;
@@ -367,6 +373,13 @@ export async function getArtistData(
       }
       if (data.imageUrl && data.bio) break;
     } catch (e) {
+      if (api === 'genius' || imgProvider === 'lastfm') {
+        imageLookupFailed = true;
+        if (isRateLimitError(e)) wasRateLimited = true;
+        lastError = isRateLimitError(e)
+          ? `Rate limited by ${api === 'genius' ? 'Genius' : 'Last.fm'}`
+          : lastError || `${api}: ${e instanceof Error ? e.message : String(e)}`;
+      }
       console.warn(`[Metadata] Failed fetching from ${api}:`, e);
     }
   }
@@ -392,12 +405,12 @@ export async function getArtistData(
       data.imageUrl || null,
       data.bio || null,
       mbArtistId || cached?.mbid || null,
-      !wasRateLimited,
+      !wasRateLimited && !(imageLookupFailed && !data.imageUrl),
       extras
     );
   }
 
-  if (lastError && !data.imageUrl && !data.bio) {
+  if (lastError && !data.imageUrl && (!data.bio || imageLookupFailed)) {
     data.error = lastError;
   }
 
