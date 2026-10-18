@@ -12,7 +12,7 @@ jest.mock('../../database', () => ({ getSystemSetting: jest.fn() }));
 jest.mock('./cache', () => ({
   getCachedArtist: jest.fn(),
   upsertArtistCache: jest.fn(async () => {}),
-  isCacheFresh: jest.fn(() => false),
+  isCacheFresh: jest.requireActual('./cache').isCacheFresh,
 }));
 jest.mock('./providers/genius', () => ({ geniusSearch: jest.fn(), geniusGetArtist: jest.fn() }));
 jest.mock('./providers/lastfm', () => ({
@@ -101,4 +101,36 @@ it('does not hold back the fetch stamp for a Last.fm failure when Last.fm is not
   await getArtistData('Usher');
 
   expect(stamped()).toBe(true);
+});
+
+describe('cached artists', () => {
+  const daysAgo = (days: number) => Math.floor(Date.now() / 1000) - days * 86400;
+  const providersCalled = () =>
+    jest.mocked(geniusSearch).mock.calls.length + jest.mocked(lastFmArtistInfo).mock.calls.length;
+
+  it.each([
+    ['with a picture, 20 days old', { image_url: 'https://images.genius.com/u.png', last_updated: daysAgo(20) }],
+    ['without a picture, 3 days old', { image_url: null, last_updated: daysAgo(3) }],
+  ])('serves a completed lookup %s without asking any provider, even lacking artwork and tags', async (_label, row) => {
+    jest.mocked(getCachedArtist).mockResolvedValue({ name: 'Usher', bio: 'Cached bio.', artwork_url: null, community_tags: null, ...row });
+
+    const data = await getArtistData('Usher');
+
+    expect(data.bio).toBe('Cached bio.');
+    expect(providersCalled()).toBe(0);
+    expect(upsertArtistCache).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['without a picture, 8 days old', { image_url: null, last_updated: daysAgo(8) }],
+    ['with a picture, 31 days old', { image_url: 'https://images.genius.com/u.png', last_updated: daysAgo(31) }],
+    ['never completed', { image_url: null, last_updated: 0 }],
+  ])('asks the providers again for a row %s', async (_label, row) => {
+    jest.mocked(getCachedArtist).mockResolvedValue({ name: 'Usher', bio: 'Cached bio.', ...row });
+    jest.mocked(geniusSearch).mockResolvedValue({ response: { hits: [] } } as never);
+
+    await getArtistData('Usher');
+
+    expect(geniusSearch).toHaveBeenCalledTimes(1);
+  });
 });

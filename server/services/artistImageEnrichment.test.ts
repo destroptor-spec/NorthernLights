@@ -16,7 +16,26 @@ beforeEach(() => {
   jest.mocked(getSystemSetting).mockImplementation(async (key: string) => (key === 'geniusApiKey' ? 'key' : null));
 });
 
-afterEach(() => jest.restoreAllMocks());
+afterEach(() => {
+  jest.useRealTimers();
+  jest.restoreAllMocks();
+});
+
+it('paces a background run between artists', async () => {
+  jest.useFakeTimers();
+  jest.mocked(getArtistsNeedingImage).mockResolvedValue(artists);
+  jest.mocked(getArtistData).mockResolvedValue({ imageUrl: 'https://images.genius.com/x.png' });
+
+  const run = enrichArtistImages({ paceMs: 1500 });
+  await jest.advanceTimersByTimeAsync(0);
+  expect(getArtistData).toHaveBeenCalledTimes(1);
+  await jest.advanceTimersByTimeAsync(1499);
+  expect(getArtistData).toHaveBeenCalledTimes(1);
+  await jest.advanceTimersByTimeAsync(1);
+  expect(getArtistData).toHaveBeenCalledTimes(2);
+  await jest.advanceTimersByTimeAsync(1500);
+  await expect(run).resolves.toMatchObject({ attempted: 3, succeeded: 3 });
+});
 
 it('stops the run at the first failed lookup instead of marking the rest as having no image', async () => {
   jest.mocked(getArtistsNeedingImage).mockResolvedValue(artists);
@@ -24,7 +43,7 @@ it('stops the run at the first failed lookup instead of marking the rest as havi
     .mockResolvedValueOnce({ imageUrl: 'https://images.genius.com/a.png' })
     .mockResolvedValueOnce({ bio: 'B bio', error: 'genius: HTTP 503' });
 
-  const result = await enrichArtistImages();
+  const result = await enrichArtistImages({ paceMs: 0 });
 
   expect(getArtistData).toHaveBeenCalledTimes(2);
   expect(result).toMatchObject({ attempted: 2, succeeded: 1, noImage: 0, failed: 1, stoppedOnError: 'genius: HTTP 503' });
@@ -34,7 +53,7 @@ it('still treats a rate limit as running out of quota', async () => {
   jest.mocked(getArtistsNeedingImage).mockResolvedValue(artists);
   jest.mocked(getArtistData).mockResolvedValueOnce({ error: 'Rate limited by Genius' });
 
-  const result = await enrichArtistImages();
+  const result = await enrichArtistImages({ paceMs: 0 });
 
   expect(result).toMatchObject({ attempted: 1, ranOutOfQuota: true });
   expect(result.stoppedOnError).toBeUndefined();
@@ -46,7 +65,7 @@ it('fetches each artist at most once per run even if it stays selectable', async
   jest.mocked(getArtistsNeedingImage).mockResolvedValue(artists);
   jest.mocked(getArtistData).mockResolvedValue({});
 
-  const result = await enrichArtistImages();
+  const result = await enrichArtistImages({ paceMs: 0 });
 
   expect(getArtistData).toHaveBeenCalledTimes(3);
   expect(result).toMatchObject({ attempted: 3, noImage: 3, failed: 0 });
