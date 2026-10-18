@@ -7674,6 +7674,15 @@ a:focus-visible > .genre-card .genre-card__label {
   font-weight: 500;
 }
 
+.mobile-now-artist-link {
+  color: inherit;
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.mobile-now-artist-link:active {
+  color: var(--color-text-primary);
+}
+
 .mobile-now-album {
   margin-top: 0.2rem;
   overflow: hidden;
