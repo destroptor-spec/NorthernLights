@@ -1,4 +1,5 @@
 import { workerLog } from './workerLog';
+import { firstTagValue, joinTagValues, splitTagValues } from '../utils/tagValues';
 import * as mm from 'music-metadata';
 import sharp from 'sharp';
 import { hashArt, resolveArtwork, encodeArt, artExists, ART_SIZES, ARTWORK_EXTRACTION_VERSION } from '../services/artCache';
@@ -166,9 +167,10 @@ function splitNames(raw: string): string[] {
   const trimmed = raw.trim();
   if (!trimmed) return [];
   // Split on common separators that taggers use for compound credits.
-  // ";", " / ", " & ", ", " — but keep parenthesized fragments intact.
+  // NUL (raw ID3v2.3 multi-value frames), ";", " / ", " & ", ", " — but keep
+  // parenthesized fragments intact.
   const parts = trimmed
-    .split(/\s*;\s*|\s+\/\s+|\s+&\s+|\s+vs\.?\s+|\s+feat\.?\s+|\s+ft\.?\s+|\s+featuring\s+|\s*,\s*/i)
+    .split(/\s*\x00\s*|\s*;\s*|\s+\/\s+|\s+&\s+|\s+vs\.?\s+|\s+feat\.?\s+|\s+ft\.?\s+|\s+featuring\s+|\s*,\s*/i)
     .map(s => s.trim())
     .filter(Boolean);
   return parts.length > 0 ? parts : [trimmed];
@@ -393,12 +395,12 @@ process.stdin.on('data', async (chunk: string) => {
         metadata: {
             artHash,
             artworkVersion,
-            artist: metadata.common.artist || metadata.common.albumartist || null,
-            albumartist: metadata.common.albumartist || null,
-            title: metadata.common.title || null,
-            artists: metadata.common.artists || null,
-            album: metadata.common.album || null,
-            genre: metadata.common.genre || null,
+            artist: joinTagValues(metadata.common.artist) || joinTagValues(metadata.common.albumartist),
+            albumartist: joinTagValues(metadata.common.albumartist),
+            title: joinTagValues(metadata.common.title, ' / '),
+            artists: splitTagValues(metadata.common.artists).length > 0 ? splitTagValues(metadata.common.artists) : null,
+            album: joinTagValues(metadata.common.album, ' / '),
+            genre: splitTagValues(metadata.common.genre).length > 0 ? splitTagValues(metadata.common.genre) : null,
             duration: metadata.format.duration || 0,
             trackNumber: metadata.common.track.no || null,
             discNumber: metadata.common.disk?.no || null,
@@ -414,8 +416,8 @@ process.stdin.on('data', async (chunk: string) => {
             mbRecordingId: metadata.common.musicbrainz_recordingid || null,
             mbTrackId: metadata.common.musicbrainz_trackid || null,
             mbAlbumId: metadata.common.musicbrainz_albumid || null,
-            mbArtistId: Array.isArray(metadata.common.musicbrainz_artistid) ? metadata.common.musicbrainz_artistid[0] : (metadata.common.musicbrainz_artistid || null),
-            mbAlbumArtistId: Array.isArray(metadata.common.musicbrainz_albumartistid) ? metadata.common.musicbrainz_albumartistid[0] : (metadata.common.musicbrainz_albumartistid || null),
+            mbArtistId: firstTagValue(metadata.common.musicbrainz_artistid),
+            mbAlbumArtistId: firstTagValue(metadata.common.musicbrainz_albumartistid),
             mbReleaseGroupId: metadata.common.musicbrainz_releasegroupid || null,
             mbWorkId: metadata.common.musicbrainz_workid || null,
             rawUrls: rawUrls.length > 0 ? rawUrls : null,
