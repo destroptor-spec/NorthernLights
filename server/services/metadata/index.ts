@@ -152,6 +152,8 @@ async function getProviderSettings(): Promise<ProviderSettings> {
 
 // ─── Public API ─────────────────────────────────────────────────────
 
+const ARTIST_NO_IMAGE_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
+
 /**
  * Fetch artist data (image, bio, MusicBrainz metadata).
  * Checks DB cache first, falls back to external APIs.
@@ -166,27 +168,26 @@ export async function getArtistData(
   const cached = await getCachedArtist(name);
   const wantsGeniusArtwork = settings.providerArtistArtwork === 'genius' && !!settings.geniusApiKey;
 
-  if (cached && isCacheFresh(cached.last_updated)) {
-    if (
-      (cached.image_url || cached.bio || cached.area || cached.artist_type || cached.disambiguation) &&
-      (!wantsGeniusArtwork || cached.artwork_url) &&
-      (cached.community_tags || (!settings.lastFmApiKey && !settings.musicBrainzEnabled))
-    ) {
-      return {
-        imageUrl: cached.image_url || undefined,
-        artworkUrl: settings.providerArtistArtwork === 'none' ? undefined : cached.artwork_url || undefined,
-        bio: cached.bio || undefined,
-        disambiguation: cached.disambiguation || undefined,
-        area: cached.area || undefined,
-        type: cached.artist_type || undefined,
-        lifeSpan: cached.lifespan_begin ? { begin: cached.lifespan_begin || undefined, end: cached.lifespan_end || undefined } : undefined,
-        links: cached.links ? JSON.parse(cached.links) : undefined,
-        genres: cached.genres ? JSON.parse(cached.genres) : undefined,
-        communityTags: cached.community_tags ? JSON.parse(cached.community_tags) : undefined,
-        listeners: cached.listeners || undefined,
-        members: cached.members ? JSON.parse(cached.members) : undefined,
-      };
-    }
+  // A stamped row is a completed lookup (failed ones stay unstamped), so serve
+  // it while fresh rather than asking every provider again on each page view:
+  // the APIs are free and rate limited. Without a picture it is re-checked
+  // weekly, so an artist that missed out during a provider outage recovers
+  // soon; with one, after the usual 30 days.
+  if (cached && isCacheFresh(cached.last_updated, cached.image_url ? undefined : ARTIST_NO_IMAGE_RECHECK_MS)) {
+    return {
+      imageUrl: cached.image_url || undefined,
+      artworkUrl: settings.providerArtistArtwork === 'none' ? undefined : cached.artwork_url || undefined,
+      bio: cached.bio || undefined,
+      disambiguation: cached.disambiguation || undefined,
+      area: cached.area || undefined,
+      type: cached.artist_type || undefined,
+      lifeSpan: cached.lifespan_begin ? { begin: cached.lifespan_begin || undefined, end: cached.lifespan_end || undefined } : undefined,
+      links: cached.links ? JSON.parse(cached.links) : undefined,
+      genres: cached.genres ? JSON.parse(cached.genres) : undefined,
+      communityTags: cached.community_tags ? JSON.parse(cached.community_tags) : undefined,
+      listeners: cached.listeners || undefined,
+      members: cached.members ? JSON.parse(cached.members) : undefined,
+    };
   }
 
   let data: ArtistData = {};
