@@ -19,6 +19,7 @@ import { parseArtistsForDisplay } from '../utils/artistUtils';
 import { useKnownArtistKeys } from '../hooks/useKnownArtistKeys';
 import { PlaylistItem } from './PlaylistItem';
 import { useToast } from '../hooks/useToast';
+import type { TrackInfo } from '../utils/fileSystem';
 
 // Clear-with-undo, shared by the desktop sidebar header and the mobile
 // now-playing queue header so the two surfaces never drift apart.
@@ -42,6 +43,29 @@ export function useClearQueueWithUndo() {
   }, [addToast, clearPlaylist, currentIndex, playlist, restoreQueueSnapshot]);
 }
 
+// Remove-with-undo for one queue row, shared by the rows' ✕ and the track
+// menu's "Remove from queue". Reads the queue when called, so a menu opened
+// a while ago removes the entry it was opened on, wherever it is now.
+export function useRemoveFromQueueWithUndo() {
+  const { addToast } = useToast();
+  return useCallback((queueEntryIdOrIndex: string | number) => {
+    const { playlist, currentIndex, removeFromPlaylist, restoreQueueSnapshot } = usePlayerStore.getState();
+    const index = typeof queueEntryIdOrIndex === 'number'
+      ? queueEntryIdOrIndex
+      : playlist.findIndex((track) => track.queueEntryId === queueEntryIdOrIndex);
+    const removed = playlist[index];
+    if (!removed || index === currentIndex) return; // the track that plays is skipped, not removed
+
+    const snapshot = playlist.map((track) => ({ ...track }));
+    removeFromPlaylist(index);
+    addToast(`Removed "${removed.title || 'track'}" from queue.`, 'info', {
+      actionLabel: 'Undo',
+      onAction: () => restoreQueueSnapshot(snapshot, currentIndex),
+      duration: 6500,
+    });
+  }, [addToast]);
+}
+
 export interface QueueListHandle {
   scrollToIndex: (
     index: number,
@@ -57,6 +81,8 @@ interface QueueListProps {
   scrollMargin?: number;
   collapsed?: boolean;
   listClassName?: string;
+  /** The mobile Now Playing queue: touch rows (see PlaylistItem `touch`). */
+  touch?: boolean;
 }
 
 // The virtualized queue rows plus their drag-reorder and remove-with-undo
@@ -65,7 +91,7 @@ interface QueueListProps {
 // the Dnd contexts always wrap the list; on touch layouts the drag handle is
 // hidden and reordering uses the rows' chevron buttons instead.
 export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function QueueList(
-  { getScrollElement, scrollMargin = 0, collapsed = false, listClassName = '' },
+  { getScrollElement, scrollMargin = 0, collapsed = false, listClassName = '', touch = false },
   ref,
 ) {
   const playlist = usePlayerStore(state => state.playlist);
@@ -73,10 +99,10 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
   // A tap goes to the device that plays, when this one controls it.
   const playAtIndex = usePlayerStore(state => state.playQueueEntry);
   const moveInPlaylist = usePlayerStore(state => state.moveInPlaylist);
-  const removeFromPlaylist = usePlayerStore(state => state.removeFromPlaylist);
-  const restoreQueueSnapshot = usePlayerStore(state => state.restoreQueueSnapshot);
   const openContextMenu = usePlayerStore(state => state.openContextMenu);
-  const { addToast } = useToast();
+  // The menu knows which queue entry it was opened on (Remove from queue).
+  const openRowMenu = useCallback((track: TrackInfo, x: number, y: number) =>
+    openContextMenu(track, x, y, undefined, undefined, track.queueEntryId), [openContextMenu]);
 
   const getArtistLink = usePlayerStore(state => (artistName: string) => {
     const entity = state.artists.find((a: any) => a.name?.toLowerCase() === artistName.toLowerCase());
@@ -93,7 +119,7 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
   const virtualizer = useVirtualizer({
     count: playlist.length,
     getScrollElement,
-    estimateSize: () => (collapsed ? 80 : 70),
+    estimateSize: () => (collapsed ? 80 : touch ? 62 : 70),
     overscan: 10,
     scrollMargin,
   });
@@ -109,8 +135,9 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
     })
   );
 
-  // We map IDs to track IDs, using an index modifier so duplicates don't conflict
-  const sortableItems = useMemo(() => playlist.map((t, idx) => `${t.id}-${idx}`), [playlist]);
+  // Queue entry IDs are unique and stay with a row when it moves, so a drag
+  // animates the row itself; position-based IDs only for entries without one.
+  const sortableItems = useMemo(() => playlist.map((t, idx) => t.queueEntryId || `${t.id}-${idx}`), [playlist]);
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
@@ -123,19 +150,7 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
     }
   }, [sortableItems, moveInPlaylist]);
 
-  const handleRemoveFromQueue = useCallback((index: number) => {
-    const removed = playlist[index];
-    if (!removed || index === currentIndex) return; // the track that plays is skipped, not removed
-
-    const snapshot = playlist.map((track) => ({ ...track }));
-    const snapshotIndex = currentIndex;
-    removeFromPlaylist(index);
-    addToast(`Removed "${removed.title || 'track'}" from queue.`, 'info', {
-      actionLabel: 'Undo',
-      onAction: () => restoreQueueSnapshot(snapshot, snapshotIndex),
-      duration: 6500,
-    });
-  }, [addToast, currentIndex, playlist, removeFromPlaylist, restoreQueueSnapshot]);
+  const handleRemoveFromQueue = useRemoveFromQueueWithUndo();
 
   return (
     <div className={listClassName}>
@@ -187,10 +202,11 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
                     onPlay={playAtIndex}
                     onRemove={handleRemoveFromQueue}
                     onMove={moveInPlaylist}
-                    onContextMenu={openContextMenu}
+                    onContextMenu={openRowMenu}
                     getArtistLink={getArtistLink}
                     parseArtists={parseArtists}
                     opacity={(t.isInfinity && (currentIndex === null || idx > currentIndex)) ? 0.6 : 1}
+                    touch={touch}
                   />
                 </div>
               );

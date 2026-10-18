@@ -557,6 +557,7 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
               getScrollElement={() => scrollerRef.current}
               scrollMargin={queueOffset}
               listClassName="px-3 pb-2"
+              touch
             />
           </div>
         </section>

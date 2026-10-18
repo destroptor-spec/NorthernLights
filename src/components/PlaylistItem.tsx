@@ -16,7 +16,13 @@ export interface PlaylistItemProps {
   isSidebarCollapsed: boolean;
   totalTracks: number;
   opacity?: number;
-  
+  /**
+   * The mobile Now Playing queue: no hover, so nothing hides behind it. A
+   * 44px drag handle and an always-visible menu button; artists are plain
+   * text (a tap on the row plays it); remove and love live in the menu.
+   */
+  touch?: boolean;
+
   onPlay: (index: number) => void;
   onRemove: (index: number) => void;
   onMove: (from: number, to: number) => void;
@@ -26,7 +32,7 @@ export interface PlaylistItemProps {
 }
 
 export const PlaylistItem = memo(({
-  id, track, index, isActive, isSidebarCollapsed, totalTracks, opacity = 1,
+  id, track, index, isActive, isSidebarCollapsed, totalTracks, opacity = 1, touch = false,
   onPlay, onRemove, onMove, onContextMenu, getArtistLink, parseArtists
 }: PlaylistItemProps) => {
   const {
@@ -44,6 +50,63 @@ export const PlaylistItem = memo(({
     opacity: isDragging ? 0.5 : opacity,
     zIndex: isDragging ? 10 : 1,
   };
+  const title = track.title ?? track.path.split(/[\\\/]/).pop();
+
+  if (touch) {
+    return (
+      <li
+        ref={setNodeRef}
+        style={style}
+        className={`queue-row-touch flex items-center gap-3 py-1.5 pl-2 my-[2px] rounded-lg border select-none
+          ${isActive ? 'bg-emerald-500/10 border-emerald-500/20' : 'border-transparent'}
+          ${isDragging ? 'bg-[var(--glass-bg)] shadow-lg' : ''}`}
+        onClick={() => onPlay(index)}
+        // A long press opens the menu, like the ⋯ button.
+        onContextMenu={(e) => { e.preventDefault(); onContextMenu(track, e.clientX, e.clientY); }}
+        role="button"
+        tabIndex={0}
+        aria-current={isActive ? 'true' : undefined}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onPlay(index);
+          }
+        }}
+      >
+        <AlbumArt artUrl={track.artUrl} artist={track.artist} className="w-12 h-12 rounded-sm shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className={`text-[0.9rem] truncate ${isActive ? 'text-[var(--color-primary)] font-semibold' : 'text-[var(--color-text-secondary)]'}`}>
+            {title}
+          </div>
+          <div className="text-[0.75rem] text-[var(--color-text-muted)] truncate mt-[2px]">
+            {track.artist && parseArtists(track.artist).join(', ')}
+            {track.artist && track.duration !== undefined && ' · '}
+            {track.duration !== undefined && <span className="tabular-nums">{formatTime(track.duration)}</span>}
+          </div>
+        </div>
+        <button
+          type="button"
+          className="queue-row-touch-btn"
+          aria-label={`More options for ${title}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onContextMenu(track, e.clientX, e.clientY);
+          }}
+        >
+          <MoreHorizontal size={18} />
+        </button>
+        <span
+          {...attributes}
+          {...listeners}
+          className="queue-row-touch-btn queue-row-drag-handle"
+          aria-label={`Reorder ${title}`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <GripVertical size={18} />
+        </span>
+      </li>
+    );
+  }
 
   return (
     <li

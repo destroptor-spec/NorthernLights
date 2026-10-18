@@ -7341,6 +7341,31 @@ a:focus-visible > .genre-card .genre-card__label {
    below the fold, so rows stay readable and the backdrop needs no awareness
    of it. NOT positioned on purpose — the queue-list wrapper's offsetTop must
    keep resolving against .mobile-now-scroll (virtualizer scrollMargin). */
+/* Mobile Now Playing queue rows (PlaylistItem touch): 44px targets, nothing on hover. */
+.queue-row-touch-btn {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: 0.5rem;
+  color: var(--color-text-muted);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.queue-row-touch-btn:active {
+  color: var(--color-text-primary);
+  background: rgba(255, 255, 255, 0.06);
+}
+/* Dragging starts from the handle at once; the rest of the row scrolls. */
+.queue-row-drag-handle {
+  touch-action: none;
+  cursor: grab;
+}
+
 .mobile-now-queue {
   min-height: 100%;
   scroll-snap-align: start;

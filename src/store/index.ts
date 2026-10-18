@@ -899,8 +899,9 @@ export interface PlayerState {
   restoreQueueSnapshot: (playlist: TrackInfo[], currentIndex: number | null) => void;
 
   // Global Track Context Menu
-  contextMenu: { track: TrackInfo; x: number; y: number; playlistId?: string; playlistTrackIndex?: number } | null;
-  openContextMenu: (track: TrackInfo, x: number, y: number, playlistId?: string, playlistTrackIndex?: number) => void;
+  /** `queueEntryId`: opened on that row of the play queue (offers Remove from queue). */
+  contextMenu: { track: TrackInfo; x: number; y: number; playlistId?: string; playlistTrackIndex?: number; queueEntryId?: string } | null;
+  openContextMenu: (track: TrackInfo, x: number, y: number, playlistId?: string, playlistTrackIndex?: number, queueEntryId?: string) => void;
   closeContextMenu: () => void;
 
   // Playback Actions
@@ -2855,8 +2856,8 @@ export const usePlayerStore = create<PlayerState>()(
         }),
 
         // Global context menu
-        contextMenu: null as { track: TrackInfo; x: number; y: number; playlistId?: string; playlistTrackIndex?: number } | null,
-        openContextMenu: (track: TrackInfo, x: number, y: number, playlistId?: string, playlistTrackIndex?: number) => set({ contextMenu: { track, x, y, playlistId, playlistTrackIndex } }),
+        contextMenu: null as { track: TrackInfo; x: number; y: number; playlistId?: string; playlistTrackIndex?: number; queueEntryId?: string } | null,
+        openContextMenu: (track: TrackInfo, x: number, y: number, playlistId?: string, playlistTrackIndex?: number, queueEntryId?: string) => set({ contextMenu: { track, x, y, playlistId, playlistTrackIndex, queueEntryId } }),
         closeContextMenu: () => set({ contextMenu: null }),
 
         removeFromPlaylist: (index: number) => set((state: PlayerState) => {
