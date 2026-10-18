@@ -22,7 +22,7 @@ import { useToast } from './hooks/useToast';
 import { playbackManager } from './utils/PlaybackManager';
 import { GlobalScanningIndicator } from './components/GlobalScanningIndicator';
 import { applyPendingPwaUpdate } from './utils/pwaUpdate';
-import { isServerDatabaseConnected } from './utils/serverHealth';
+import { getServerDatabaseHealth, isServerDatabaseConnected, pollDecision } from './utils/serverHealth';
 
 const SetupWizard = React.lazy(() => import('./components/SetupWizard').then(module => ({ default: module.SetupWizard })));
 const LoginPage = React.lazy(() => import('./components/LoginPage').then(module => ({ default: module.LoginPage })));
@@ -205,16 +205,20 @@ const App: React.FC = () => {
     performInitialChecks();
 
     // Persistent health poller
+    let unreachableStreak = 0;
     const interval = setInterval(async () => {
       const previouslyConnected = dbConnectedRef.current;
-      let ok = await isServerDatabaseConnected();
-      // A single failed probe can just mean the request queue was saturated
-      // (provider lookups share the same six-per-origin connection pool) and
-      // the health fetch timed out. Confirm with a second probe before
-      // swapping the whole UI to the database recovery panel.
-      if (!ok && previouslyConnected === true) {
-        ok = await isServerDatabaseConnected();
+      let health = await getServerDatabaseHealth();
+      // A server that says its database is down is asked once more before
+      // the whole UI swaps to the recovery panel. A poll with no answer (the
+      // request queue was saturated, a slow server, a flaky network) only
+      // counts after several in a row (pollDecision).
+      if (health === 'down' && previouslyConnected === true) {
+        health = await getServerDatabaseHealth();
       }
+      const decision = pollDecision(health, { connected: previouslyConnected, unreachableStreak });
+      unreachableStreak = decision.unreachableStreak;
+      const ok = decision.connected;
       setDbConnected(ok);
 
       // Only trigger a sync if we just became healthy (transition from false to true)

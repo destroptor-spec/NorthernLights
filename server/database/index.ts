@@ -1,4 +1,5 @@
 import { Pool } from 'pg';
+import { databaseHost } from './dbHost';
 import path from 'path';
 import fs from 'fs';
 import { ARTWORK_EXTRACTION_VERSION } from '../services/artworkVersion';
@@ -42,7 +43,7 @@ export async function initDB(): Promise<Pool> {
       const instance = new Pool({
         user: process.env.DB_USER || 'musicuser',
         password: process.env.DB_PASSWORD || 'musicpass',
-        host: process.env.DB_HOST || 'localhost',
+        host: databaseHost(),
         port: parseInt(process.env.DB_PORT || '5432', 10),
         database: process.env.DB_NAME || 'musicdb',
         max: 20,
