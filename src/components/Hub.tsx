@@ -89,7 +89,7 @@ function getCollectionsSignature(collections: HubCollection[]): string {
 function getSmartBundleSignature(bundle: SmartBundle | null): string {
   if (!bundle) return 'none';
   const jumpBackIn = bundle.jumpBackIn
-    .map((tile) => `${tile.type}:${tile.id}:${tile.title}:${tile.lastPlayedAt}`)
+    .map((tile) => `${tile.type}:${tile.id}:${tile.title}:${tile.subtitle}:${tile.imageUrl || ''}:${tile.lastPlayedAt}`)
     .join(',');
   const radios = bundle.artistRadios
     .map((radio) => `${radio.artistId}:${radio.artistName}:${radio.imageUrl || ''}:${radio.withArtists.join('+')}`)
@@ -982,6 +982,7 @@ export const Hub: React.FC = () => {
   // including currentIndex/isBuffering/playbackState changes during playback.
   const library = usePlayerStore((s) => s.library);
   const albums = usePlayerStore((s) => s.albums);
+  const artists = usePlayerStore((s) => s.artists);
   const albumCount = usePlayerStore((s) => s.albums.length);
   const authToken = usePlayerStore((s) => s.authToken);
   const isLibraryLoading = usePlayerStore((s) => s.isLibraryLoading);
@@ -1143,9 +1144,8 @@ export const Hub: React.FC = () => {
     if (tracks.length > 0) setPlaylist(tracks, 0);
   };
 
-  // Server-side imageUrl is populated for artists (artists.image_url) but
-  // null for albums/playlists. Fill in the gap from the local library /
-  // playlist store, which carries embedded artwork from the audio files.
+  // Hub data and entity pages arrive independently. Resolve missing images
+  // from reactive entity lists, then any loaded track/playlist artwork.
   const resolveTileImage = (tile: JumpTile): string | null => {
     if (tile.imageUrl) return tile.imageUrl;
     if (tile.type === 'album') {
@@ -1167,6 +1167,8 @@ export const Hub: React.FC = () => {
       return firstWithArt?.artUrl ?? null;
     }
     if (tile.type === 'artist') {
+      const artist = artists.find((a) => a.id === tile.id);
+      if (artist?.image_url || artist?.artwork_url) return artist.image_url || artist.artwork_url || null;
       const t = library.find((lt) => (lt as any).artistId === tile.id);
       return t?.artUrl ?? null;
     }

@@ -3,6 +3,7 @@ import OpenAI from 'openai';
 import { getLlmConfig, extractJson } from './llm.service';
 import { withTransaction } from '../utils/db';
 import { christmasExclusionSql } from '../utils/seasonalFilter';
+import { artistImageSql } from '../utils/artistImage';
 import {
   enumerateCompletedWrappedPeriods,
   wrappedYmToLocalMs,
@@ -361,14 +362,16 @@ export async function computeJumpBackIn(userId: string, limit = 12): Promise<Jum
   // Recently played artists (top played in last 60 days)
   const artistRes = await db.query(
     `
-    SELECT a.id::text AS id, a.name, a.image_url, MAX(ups.last_played_at) AS last_played_at
+    SELECT a.id::text AS id, a.name,
+           ${artistImageSql('a')} AS image_url,
+           MAX(ups.last_played_at) AS last_played_at
     FROM user_playback_stats ups
     JOIN tracks t ON t.id = ups.track_id
     JOIN artists a ON a.id = t.artist_id
     WHERE ups.user_id = $1
       AND ups.last_played_at > NOW() - INTERVAL '60 days'
       AND ${variousArtistsExclusion('a')}
-    GROUP BY a.id, a.name, a.image_url
+    GROUP BY a.id, a.name, a.image_url, a.artwork_url
     ORDER BY last_played_at DESC
     LIMIT $2
     `,
@@ -473,7 +476,7 @@ export async function computeArtistRadioCandidates(
     SELECT
       a.id::text AS artist_id,
       a.name AS artist_name,
-      a.image_url,
+      ${artistImageSql('a')} AS image_url,
       SUM(b.play_count) AS recent_plays,
       0.7 * SUM(CASE WHEN b.year_month >=
         date_trunc('month', NOW() - INTERVAL '60 days')::date
@@ -488,7 +491,7 @@ export async function computeArtistRadioCandidates(
     WHERE b.user_id = $1
       AND b.year_month >= date_trunc('month', NOW() - INTERVAL '180 days')::date
       AND ${variousArtistsExclusion('a')}
-    GROUP BY a.id, a.name, a.image_url
+    GROUP BY a.id, a.name, a.image_url, a.artwork_url
     HAVING SUM(b.play_count) >= 10
     ORDER BY score DESC
     LIMIT $2
