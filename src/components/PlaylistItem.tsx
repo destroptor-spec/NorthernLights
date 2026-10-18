@@ -147,16 +147,19 @@ export const PlaylistItem = memo(({
             >
               <MoreHorizontal size={16} />
             </button>
-            <button
-              aria-label={`Remove track ${track.title ?? track.path}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                onRemove(index);
-              }}
-              className="flex items-center justify-center p-1 rounded-md text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-black/5 dark:hover:bg-white/5 transition-ui"
-            >
-              <span className="text-[0.8rem]">✕</span>
-            </button>
+            {/* The track that plays is not queued any more: Skip moves past it. */}
+            {!isActive && (
+              <button
+                aria-label={`Remove track ${track.title ?? track.path}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemove(index);
+                }}
+                className="flex items-center justify-center p-1 rounded-md text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-black/5 dark:hover:bg-white/5 transition-ui"
+              >
+                <span className="text-[0.8rem]">✕</span>
+              </button>
+            )}
           </div>
         </>
       )}

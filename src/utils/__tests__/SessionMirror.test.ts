@@ -18,6 +18,7 @@ const sessionOf = (tracks: TrackInfo[], revision: number, extra: Partial<Playbac
   playbackState: 'paused',
   repeatMode: 'none',
   shuffle: false,
+  infinity: false,
   source: null,
   revision,
   queue: tracks.map((t, position) => ({
@@ -671,12 +672,12 @@ describe('while the receiver follows the session (Phase 5, PR E)', () => {
     expect(onReceiverFollowsChanged).toHaveBeenLastCalledWith(false);
   });
 
-  it("takes the session's queue when its own edit lost to a newer change, instead of overwriting it", async () => {
+  it("takes the session's queue when its own edit can no longer apply, instead of overwriting it", async () => {
     const { api, store, mirror, adoptSession } = followingSetup();
     await play(store);
     await jest.advanceTimersByTimeAsync(0);
     const newer = sessionOf([track(1), track(9)], 9);
-    api.patchPlaybackSession.mockRejectedValueOnce(new AuroraApiError('conflict', 409, 'REVISION_CONFLICT', undefined, { current: newer }));
+    api.patchPlaybackSession.mockRejectedValueOnce(new AuroraApiError('anchor', 409, 'ANCHOR_NOT_FOUND', undefined, { current: newer }));
     store.setState({ playlist: [track(1), track(2)] });
     await jest.advanceTimersByTimeAsync(300);
     expect(adoptSession).toHaveBeenCalledWith(newer);
@@ -709,10 +710,65 @@ describe('while the receiver follows the session (Phase 5, PR E)', () => {
     expect(session?.queue.map((entry) => entry.queueEntryId)).toContain(uuid(8));
   });
 
-  it('is not set for a cast or browser output', async () => {
+  it('does not follow for a cast or browser output, which still takes in newer sessions (Phase 3)', async () => {
     const { store, mirror } = setup();
     await play(store);
     expect(mirror.receiverFollows()).toBe(false);
-    expect(mirror.noteSessionChanged(sessionOf([track(1)], 50))).toBe(false);
+    expect(mirror.noteSessionChanged(sessionOf([track(1)], 50))).toBe(true);
+  });
+});
+
+it('mirrors the Infinity toggle into the session with repeat and shuffle (Phase 4)', async () => {
+  const { api, store } = setup({ isInfinityMode: false });
+  await play(store);
+  await jest.advanceTimersByTimeAsync(300);
+  api.patchPlaybackSession.mockClear();
+  store.setState({ isInfinityMode: true });
+  await jest.advanceTimersByTimeAsync(300);
+  expect(api.patchPlaybackSession).toHaveBeenCalledWith(expect.anything(), 'session-1', expect.objectContaining({
+    operations: [{ type: 'setTransport', repeatMode: 'none', shuffle: false, infinity: true }],
+  }));
+});
+
+describe("the session's queue counts on every output (Phase 3)", () => {
+  it('sends a lost edit again at the newer revision, and shows the merged queue', async () => {
+    const adoptSession = jest.fn();
+    const { api, store } = setup({}, [], { adoptSession });
+    await play(store);
+    await jest.advanceTimersByTimeAsync(300);
+    const base = api.patchPlaybackSession.mock.calls.length;
+    // Another device put 9 at the head meanwhile.
+    const newer = sessionOf([track(9), track(1), track(2), track(3)], 9);
+    api.patchPlaybackSession.mockRejectedValueOnce(new AuroraApiError('conflict', 409, 'REVISION_CONFLICT', undefined, { current: newer }));
+    const merged = sessionOf([track(9), track(1), track(2), track(3), track(4)], 10);
+    api.patchPlaybackSession.mockResolvedValueOnce(merged);
+    store.setState({ playlist: [track(1), track(2), track(3), track(4)] }); // this device appended 4
+    await jest.advanceTimersByTimeAsync(300);
+    const sent = api.patchPlaybackSession.mock.calls.slice(base).map(([, , patch]) => patch as any);
+    expect(sent).toHaveLength(2);
+    expect(sent[1].expectedRevision).toBe(9);
+    expect(sent[1].operations).toEqual(sent[0].operations); // the same anchored edit
+    expect(sent[1].operations).toEqual([{ type: 'insert', afterEntryId: uuid(3), trackIds: ['track-4'], entryIds: [uuid(4)] }]);
+    expect(adoptSession).toHaveBeenCalledWith(merged);
+  });
+
+  it("never resends its whole queue over another device's change, and takes the session after repeated losses", async () => {
+    const adoptSession = jest.fn();
+    const { api, store } = setup({}, [], { adoptSession });
+    await play(store);
+    await jest.advanceTimersByTimeAsync(300);
+    const base = api.patchPlaybackSession.mock.calls.length;
+    const newer = sessionOf([track(1), track(3)], 9); // another device removed 2
+    for (let i = 0; i < 3; i += 1) {
+      api.patchPlaybackSession.mockRejectedValueOnce(new AuroraApiError('conflict', 409, 'REVISION_CONFLICT', undefined, { current: { ...newer, revision: 9 + i } }));
+    }
+    store.setState({ playlist: [track(1), track(2), track(3), track(4)] });
+    await jest.advanceTimersByTimeAsync(300);
+    const edits = api.patchPlaybackSession.mock.calls.slice(base).map(([, , patch]) => (patch as any).operations);
+    expect(edits).toHaveLength(3); // the edit, then two rebases
+    for (const operations of edits) {
+      expect(operations).toEqual([{ type: 'insert', afterEntryId: uuid(3), trackIds: ['track-4'], entryIds: [uuid(4)] }]);
+    }
+    expect(adoptSession).toHaveBeenLastCalledWith(expect.objectContaining({ revision: 11 }));
   });
 });

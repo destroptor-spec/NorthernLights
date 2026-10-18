@@ -18,10 +18,9 @@ import { FOLLOW_STALE_MS, followFromSession, followedPositionMs, isCastOutput, i
 // queue is the session's (SessionMirror), and a Cast receiver's queue is never
 // replaced from here.
 //
-// Following a receiver that plays the session itself (Phase 5,
-// docs/cast-receiver-output.md), the queue edits made here (Play next, remove,
-// reorder) go to the session, where the receiver picks them up. Other outputs
-// keep their own queue, so there edits stay on this device.
+// The queue edits made here while following (Play next, remove, reorder) go
+// to the session, where the device that plays picks them up: a receiver that
+// follows the session (Phase 5) or any other output (Phase 3).
 
 export interface FollowerPlayerState {
   syncPlaybackAcrossDevices: boolean;
@@ -60,15 +59,15 @@ export interface SessionFollowerOptions {
     holdsOutput: () => boolean;
     currentGrant: () => { sessionId: string; outputId: string; generation: number } | null;
     noteReplaced: (sessionId: string, generation: number, replacement: { kind: string; name: string | null } | null) => Promise<void>;
-    /** True when this device should take `session`'s queue: it casts to a receiver that follows it. */
+    /** True when this device, the session's output, should take `session`'s queue. */
     noteSessionChanged?: (session: PlaybackSession) => boolean;
   };
   /**
-   * This device casts to a receiver that plays the session itself, and the
-   * session's queue changed (another device's edit, or a remote load): show
-   * it here. The receiver's own status says what plays.
+   * This device is the session's output (it plays, or casts) and the
+   * session's queue changed (another device's edit, or a server Infinity
+   * append): take it in here, keeping what plays (Phase 3).
    */
-  adoptCastQueue?: (session: PlaybackSession) => void;
+  adoptPlayingQueue?: (session: PlaybackSession) => void;
   /** The session's queue as playable tracks, keeping each entry's ID. */
   toTracks: (session: PlaybackSession) => TrackInfo[];
   setPlaybackTime: (currentTime: number, duration: number) => void;
@@ -226,9 +225,13 @@ export class SessionFollower {
     if (state.playlist !== previous.playlist && !this.rendering && this.editsGoToSession(state)) this.scheduleQueueEdit();
   }
 
-  /** Following a receiver that plays the session itself, from an idle device. */
+  /**
+   * Following another device from an idle one. Every output takes the
+   * session's queue (Phase 3), so an edit made here reaches the device that
+   * plays, whichever kind it is.
+   */
   private editsGoToSession(state: FollowerPlayerState): boolean {
-    return !!this.session && this.follow?.kind === 'receiver' && !this.busy(state);
+    return !!this.session && !!this.follow && !this.busy(state);
   }
 
   private scheduleQueueEdit() {
@@ -257,7 +260,7 @@ export class SessionFollower {
     // Clearing the queue here does not stop the receiver.
     if (!local.length || local.length > MAX_SESSION_QUEUE || local.some((entry) => !isUuid(entry.entryId))) return;
     const server = session.queue.map((entry) => ({ entryId: entry.queueEntryId, trackId: entry.track.id }));
-    const operations = planQueueOperations(server, local, null);
+    const operations = planQueueOperations(server, local, null, session.currentEntryId);
     if (!operations.length) return;
     this.editing = true;
     try {
@@ -508,8 +511,8 @@ export class SessionFollower {
     }
     this.session = session;
     if (this.options!.mirror.noteSessionChanged?.(session)) {
-      this.options!.diagnostic?.('ok', 'sync-receiver-queue-adopted', `revision=${session.revision} entries=${session.queue.length}`);
-      this.options!.adoptCastQueue?.(session);
+      this.options!.diagnostic?.('ok', 'sync-queue-adopted', `revision=${session.revision} entries=${session.queue.length}`);
+      this.options!.adoptPlayingQueue?.(session);
     }
     const previous = this.follow;
     this.follow = followFromSession(session, this.options!.clientId(), Date.now());

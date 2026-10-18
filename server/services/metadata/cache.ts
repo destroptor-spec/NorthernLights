@@ -2,9 +2,9 @@ import { initDB } from '../../database';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days in ms
 
-function isCacheFresh(lastUpdated: number): boolean {
+function isCacheFresh(lastUpdated: number, ttlMs: number = CACHE_TTL): boolean {
   if (!lastUpdated) return false;
-  return Date.now() - lastUpdated * 1000 < CACHE_TTL;
+  return Date.now() - lastUpdated * 1000 < ttlMs;
 }
 
 export async function getCachedArtist(name: string): Promise<any | null> {

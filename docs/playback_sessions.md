@@ -3,10 +3,13 @@
 **Status:** Proposed, 2026-10-11; revised 2026-10-12 after review (phase
 dependencies, windowing, entry-anchored ops, report ordering, receiver auth,
 playback confirmation), then for patch idempotency keys, evidence-only
-termination of an unreachable output, and server-side output grants. Nothing here is implemented beyond what
-[What exists today](#what-exists-today) lists.
-**Related:** #56 (receiver-driven Infinity, PRs A–C merged), #72 (mid-song 310),
-#39, #40, [API.md § Durable playback sessions](API.md).
+termination of an unreachable output, and server-side output grants.
+**Built:** Phases 0–5, 2026-10-12 to 2026-10-17. The [Migration plan](#migration-plan)
+gives each phase's state and what is still unverified. Phase 6 is not started.
+[What exists today](#what-exists-today) describes the starting point in October.
+**Related:** #56 (receiver-driven state, closed 2026-10-18 after Phase 5), #72
+(mid-song 310, closed), #39 (closed), #40 (launch `invalid_parameter`, open),
+[API.md § Durable playback sessions](API.md).
 
 Today every Aurora client owns its own queue, and the phone or desktop that
 started a Cast session also has to keep the Cast device supplied. This proposal
@@ -374,6 +377,14 @@ Phase 4 therefore improves browser playback and multi-device consistency.
 "Infinity continues on the Cast device with the phone asleep" is a Phase 5
 outcome.
 
+**As built (#140, #145).** The server keeps K = 3 entries ahead whenever the
+session has Infinity on and an output that has not ended (`sessionInfinity.service.ts`,
+single-flight per session). It checks after every patch, after every report that
+moves to another entry, and after every claim. A client leaves Infinity to the
+server while it holds the output, or casts to a receiver that follows the
+session. With sync off, or before its claim lands, it still chooses its own
+tracks.
+
 ### Cast receiver as an output
 
 This is #56's PRs D/E/F, reframed around the session instead of a
@@ -430,7 +441,7 @@ its credentials. Its token is therefore narrow, bound and finite:
 
 - **Session and grant binding.** A `receiver` token is the receiver's *output
   credential*. It is minted only by claiming the output role for a receiver
-  (`POST /playback-sessions/:id/output` with `kind: "cast"`, called by a
+  (`POST /playback-sessions/:id/output` with `kind: "receiver"`, called by a
   controller of that session). It carries `sid`, `oid` and `gen` claims naming
   exactly one session and one output grant, plus a `jti`. It is never minted
   from the generic `POST /auth/scoped-token`, which keeps refusing
@@ -452,8 +463,11 @@ its credentials. Its token is therefore narrow, bound and finite:
   JWT. This replaces the earlier "SSE accepts only `sse` tokens" wording: `/events`
   accepts an `sse` token (all of the user's events) or a `receiver` token (one
   session's events).
-- **Lifetime.** 12 h, as #63 allows. The token does not renew itself, so a
-  stolen one expires on its own. Any sender that connects to the session pushes
+- **Lifetime.** 12 h, as #63 allows. Decided 2026-10-14: while it is the
+  session's current output, the receiver renews its own credential
+  (`POST /playback-sessions/:id/output/renew`). Each renewal lasts at most 12 h,
+  and never beyond a 24 h cap (`renewableUntil`) counted from when a controller
+  last gave it a credential. So a stolen token still dies within 24 h. Any sender that connects to the session pushes
   a fresh token over `urn:x-cast:aurora.status` (`aurora.auth.refresh`, acked),
   so in normal use the token is refreshed every time the phone wakes up. A
   refresh re-mints for the **same, still-current grant** (same `oid` and `gen`).
@@ -465,9 +479,8 @@ its credentials. Its token is therefore narrow, bound and finite:
   its CAF window; their media URLs carry their own tokens. Then it shows an idle
   state: *Open Aurora to keep playing*. It does not stop mid-track, and it does
   not fall back to any other credential. The session on the server is
-  untouched, so opening Aurora resumes from it. Whether a receiver may exchange
-  its own token for a fresh one while it is the session's active output, under
-  an absolute cap, is an [open question](#open-questions). The default is no.
+  untouched, so opening Aurora resumes from it. With self-renewal, this happens
+  when no device has woken for 24 h, or when the grant is replaced.
 - **Revocation.** Handing the output to another device, or deleting the
   session, replaces or deletes the grant. The old receiver's token still
   verifies, but its `gen` is no longer current, so every report and session
@@ -551,9 +564,9 @@ Every phase ships on its own and leaves the app working.
 | **0. Fixes now** | (a) [Windowed Cast loads](#phase-0-windowed-cast-loads) with replenishment, capped by count and bytes; the `invalid_parameter` fallback loads the window, not one track. (b) Bind sender position and duration to the current `queueEntryId`. (c) Interim Infinity: keep K = 3 tracks ahead instead of 1. (d) [Playback confirmation](#playback-confirmation) with a bounded retry. One PR each. | No | Prod log: no `invalid_parameter` queue loads; a 68+ item queue plays past the first window; no `source=remote-player` position from a different title; no queue run-dry while the phone is backgrounded for the length of K tracks; every start ends in `playback-confirmed` or a visible `playback-unconfirmed` error |
 | **1. Server readiness** | Prerequisite: [database export and import](database_export_import.md), so a pre-deploy export exists while the dev channel shares prod's database; schema changes stay additive. Then close the gaps above: UUID entry ids, **entry-anchored `insert`/`move`, client-proposed entry IDs and a per-patch `requestId`** (the contract change in [Sync protocol](#sync-protocol)), controller/output roles, **server-side output grants** with output credentials carrying `sid`/`oid`/`gen`, position reports with `seq` and heartbeats, the unreachable output state (cleared only by positive evidence), **grant-bound `receiver` tokens**, bulk entry writes, durable session history, stored shuffle order, gap-free positions. | No | Contract tests for each op, conflict, anchor-gone and duplicate-ID case and rebase; retry tests (same `requestId` returns the original success, a reused key with a different body gets 422, a rejected patch leaves no key); report tests (replaced grant, body/credential mismatch, guessed generation without the credential, out-of-order `seq`, seek within a track); token tests (wrong `sid` denied on every route, refresh cannot revive a replaced grant); unreachable-state tests (no silence or rejoin failure ends an output); load test with 2,000-entry queues |
 | **2. Mirror** | The web client writes its queue through to the server session and subscribes to `/events`. The local queue is still authoritative. Payoff: "continue on this device". | No | Two devices show the same queue within seconds; no behaviour change when offline |
-| **3. Authoritative** | Client edits go to the session (optimistic plus rebase); joining clients read before writing; auto-cast only without an active output. | No | Oct 10 17:31 scenario no longer reproducible; conflict test across two devices |
-| **4. Server Infinity** | Server keeps K upcoming entries and is the only component choosing Infinity tracks; clients stop calling `/recommendations/next`. **Cast senders keep forwarding** upcoming entries to receivers without the session-follow capability (see [Infinity](#infinity-owned-by-the-server)). | No | No duplicate appends across two devices; Infinity continues in browser playback across a reload or device switch; Cast behaviour unchanged |
-| **5. Receiver follows the session** | #56 PRs D/E/F reframed: windowed load, session-bound receiver token, window reconciliation (insert, remove, reorder, current-entry deletion, refill, repeat-all wrap), receiver reports, playback confirmation from the receiver. Additive and capability-gated, so older receivers keep today's behaviour. Sender forwarding retires per session once the receiver advertises the capability and has reported. | **Yes** | Device matrix (NAD, Stue TV, Beoplay A9, a speaker group): playback, *including Infinity*, continues ≥ 1 hour with the phone asleep; a queue edit from a second device reaches the receiver; a takeover leaves the queue preserved; token expiry with no phone ends in the idle state, not mid-track |
+| **3. Authoritative** (built 2026-10-17: #142 the playing track can't be removed, #143 the playing device takes in other devices' edits and rebases its own, #144 an idle device's edits reach whichever device plays. Prod checks passed 2026-10-17; the Oct 10 17:31 scenario has not been re-run as such) | Client edits go to the session (optimistic plus rebase); joining clients read before writing; auto-cast only without an active output. | No | Oct 10 17:31 scenario no longer reproducible; conflict test across two devices |
+| **4. Server Infinity** (built 2026-10-17: #140 for receiver outputs, #145 for every output. Verified on the NAD with Chrome closed, and in browser playback across a reload and a device switch) | Server keeps K upcoming entries and is the only component choosing Infinity tracks; clients stop calling `/recommendations/next`. **Cast senders keep forwarding** upcoming entries to receivers without the session-follow capability (see [Infinity](#infinity-owned-by-the-server)). | No | No duplicate appends across two devices; Infinity continues in browser playback across a reload or device switch; Cast behaviour unchanged |
+| **5. Receiver follows the session** (built 2026-10-16: #138, which merged PRs B–E and #137 as one stack, then #141. Verified on the NAD and a speaker group. Not yet: the Beoplay A9, the 1-hour run with the phone asleep, token expiry with no phone. See [cast-receiver-output.md](cast-receiver-output.md)) | #56 PRs D/E/F reframed: windowed load, session-bound receiver token, window reconciliation (insert, remove, reorder, current-entry deletion, refill, repeat-all wrap), receiver reports, playback confirmation from the receiver. Additive and capability-gated, so older receivers keep today's behaviour. Sender forwarding retires per session once the receiver advertises the capability and has reported. | **Yes** | Device matrix (NAD, Stue TV, Beoplay A9, a speaker group): playback, *including Infinity*, continues ≥ 1 hour with the phone asleep; a queue edit from a second device reaches the receiver; a takeover leaves the queue preserved; token expiry with no phone ends in the idle state, not mid-track |
 | **6. Listen together** | Members, roles, invites, UI. | No (built on 5) | Two accounts edit one queue playing on the NAD |
 
 **Phase 4 depends on Phase 5 for Cast.** Server Infinity cannot keep a Cast
@@ -710,7 +723,8 @@ everything it needs (`aurora.queue.insert`, CAF queue).
 
 1. **Castlite.** B&O speakers (Beoplay A9) are among the Cast partner speakers
    that may run a restricted receiver environment. Does `EventSource` (or `fetch`
-   polling) work there? Answer this before Phase 5.
+   polling) work there? *Partly answered:* the NAD and a speaker group follow
+   the session (Phase 5). The A9 is untested (checklist row 27).
 2. **One session or several per user?** Desktop at work and NAD at home at the same
    time is two outputs. The table supports multiple sessions; the UI question is
    which one a newly opened client joins.
@@ -720,11 +734,9 @@ everything it needs (`aurora.queue.insert`, CAF queue).
 4. **Subsonic clients.** OpenSubsonic `savePlayQueue` / `getPlayQueue` and
    `getNowPlaying` (empty today) could map onto the session, giving Symfonium
    cross-device resume.
-5. **Receiver token self-renewal.** Should a receiver that is the session's
-   current output be allowed to exchange its token for a fresh one, under an
-   absolute cap (say 24 h from the sender's mint), so an all-day party survives
-   with no phone? The default in this design is no: expiry ends in the idle
-   state.
+5. **Receiver token self-renewal.** *Decided 2026-10-14: yes.* Renewal up to
+   a 24 h cap from when a controller last gave the receiver a credential (see
+   [Receiver authentication](#receiver-authentication)).
 6. **Confirmation deadline.** 15 s is a starting point. Derive the real number
    from the start-to-first-progress times in `cast-receiver.log`, per device.
 7. **Server restarts during playback (#72).** Sessions survive a restart (they're
@@ -895,6 +907,10 @@ columns):
 **Behaviour** (Andreas's decisions):
 - One session per user; a device reuses the latest one, and starting an album
   replaces its queue instead of creating a session.
+- *(Superseded by Phase 3: the session's queue counts on every output. The
+  playing device takes in other devices' edits and keeps what plays; a lost
+  edit of its own is sent again at the newer revision, or dropped when it can
+  no longer apply. The track that plays is not removable.)*
 - The playing device's local queue is authoritative. `SessionMirror` (a client
   singleton) watches the store, diffs each queue change into anchored ops with
   client-proposed UUID entry IDs and a `requestId`, one PATCH in flight at a

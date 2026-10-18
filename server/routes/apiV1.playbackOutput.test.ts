@@ -7,7 +7,9 @@ jest.mock('../services/playbackSession.service', () => ({
   getCurrentOutputGrant: jest.fn(),
   reportPlaybackOutput: jest.fn(),
   issuePlaybackCommand: jest.fn(),
+  patchPlaybackSession: jest.fn(),
 }));
+jest.mock('../services/sessionInfinity.service', () => ({ topUpSessionInfinity: jest.fn(async () => 0) }));
 jest.mock('../services/scopedToken.service', () => ({
   ...jest.requireActual('../services/scopedToken.service'),
   generateOutputCredential: jest.fn(async () => ({ token: 'output-token', expiresAt: '2026-10-13T12:00:00.000Z' })),
@@ -28,13 +30,16 @@ import {
   issuePlaybackCommand,
   PlaybackOutputNotActiveError,
   PlaybackOutputUnreachableError,
+  patchPlaybackSession,
+  PlaybackSessionCurrentEntryError,
 } from '../services/playbackSession.service';
 import { generateEphemeralScopedToken, generateOutputCredential, generateReceiverCredential } from '../services/scopedToken.service';
 import { isClientListening, publishApiV1Event } from '../services/apiV1Events.service';
+import { topUpSessionInfinity } from '../services/sessionInfinity.service';
 
 const principal = { userId: 'user-1', username: 'andreas', role: 'admin', authKind: 'jwt', clientId: 'laptop-5678', clientName: 'Aurora Web' };
 
-async function call(method: 'post', path: string, body: unknown, params: Record<string, string> = {}, apiV1: Record<string, unknown> = principal) {
+async function call(method: 'post' | 'patch', path: string, body: unknown, params: Record<string, string> = {}, apiV1: Record<string, unknown> = principal) {
   const layer = router.stack.find((l) => l.route?.path === path && l.route.stack.some((h) => h.method === method))!;
   const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis(), end: jest.fn() };
   const req = { apiV1, requestId: 'r1', body, params, headers: {} } as unknown as Request;
@@ -52,6 +57,7 @@ const session = (output: PlaybackSession['output']): PlaybackSession => ({
   playbackState: 'paused',
   repeatMode: 'none',
   shuffle: false,
+  infinity: false,
   source: null,
   revision: 4,
   queue: [],
@@ -297,4 +303,49 @@ describe('a Cast receiver as the output', () => {
     }
     expect(isClientListening('user-events', 'receiver:cast-77')).toBe(false);
   });
+});
+
+describe('Infinity kept by the server (Phase 4)', () => {
+  const outputPrincipal = {
+    userId: 'user-1', username: 'andreas', role: 'admin', authKind: 'scoped', scope: 'receiver',
+    clientId: 'receiver:cast-77', clientName: 'Aurora Cast receiver', outputGrant: { sid: 's-1', oid: 'receiver:cast-77', gen: 3 },
+  };
+  const report = { seq: 4, state: 'playing', queueEntryId: '22222222-2222-4222-8222-222222222222', positionMs: 0 };
+
+  it('tops up after a report that moved to another entry, and not after a position report', async () => {
+    (reportPlaybackOutput as jest.Mock).mockResolvedValueOnce({ accepted: true, revision: 6, entryChanged: true });
+    const moved = await call('post', '/playback-sessions/:id/reports', report, { id: 's-1' }, outputPrincipal);
+    expect(moved.body.data).toEqual({ accepted: true, revision: 6 }); // the reporter sees no more than before
+    expect(topUpSessionInfinity).toHaveBeenCalledWith('user-1', 's-1');
+
+    (topUpSessionInfinity as jest.Mock).mockClear();
+    (reportPlaybackOutput as jest.Mock).mockResolvedValueOnce({ accepted: true, revision: 6, entryChanged: false });
+    await call('post', '/playback-sessions/:id/reports', { ...report, seq: 5, positionMs: 10_000 }, { id: 's-1' }, outputPrincipal);
+    expect(topUpSessionInfinity).not.toHaveBeenCalled();
+  });
+
+  it('tops up once a device claims the output, for itself or a receiver', async () => {
+    (claimPlaybackOutput as jest.Mock).mockResolvedValueOnce(session(output));
+    await call('post', '/playback-sessions/:id/output', { kind: 'browser', name: 'Aurora Web' }, { id: 's-1' });
+    expect(topUpSessionInfinity).toHaveBeenCalledWith('user-1', '11111111-1111-4111-8111-111111111111');
+    (topUpSessionInfinity as jest.Mock).mockClear();
+
+    (claimPlaybackOutput as jest.Mock).mockResolvedValue(session({
+      id: 'receiver:cast-77', kind: 'receiver', name: 'NAD', castSessionId: 'cast-77',
+      generation: 3, claimedAt: '2026-10-14T11:00:00.000Z', status: 'active', report: null,
+    }));
+    await call('post', '/playback-sessions/:id/output', { kind: 'receiver', name: 'NAD', castSessionId: 'cast-77' }, { id: 's-1' });
+    expect(topUpSessionInfinity).toHaveBeenCalledWith('user-1', '11111111-1111-4111-8111-111111111111');
+  });
+});
+
+it('refuses removing the entry that plays with 409 CURRENT_ENTRY_PLAYING and the current session (Phase 3)', async () => {
+  const refusal = new PlaybackSessionCurrentEntryError('22222222-2222-4222-8222-222222222222');
+  refusal.current = session(output);
+  (patchPlaybackSession as jest.Mock).mockRejectedValueOnce(refusal);
+  const { status, body } = await call('patch', '/playback-sessions/:id', {
+    expectedRevision: 4, operations: [{ type: 'remove', queueEntryIds: ['22222222-2222-4222-8222-222222222222'] }],
+  }, { id: 's-1' });
+  expect(status).toBe(409);
+  expect(body.error).toMatchObject({ code: 'CURRENT_ENTRY_PLAYING', details: { entryId: '22222222-2222-4222-8222-222222222222', current: { revision: 4 } } });
 });

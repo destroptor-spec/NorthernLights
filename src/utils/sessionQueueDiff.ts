@@ -9,7 +9,7 @@ import type { PlaybackSession, PlaybackSessionPatch } from '../../shared/api/v1'
 
 export type SessionOperation = PlaybackSessionPatch['operations'][number];
 export interface QueueEntryRef { entryId: string; trackId: string }
-export interface MirroredTransport { repeatMode: PlaybackSession['repeatMode']; shuffle: boolean }
+export interface MirroredTransport { repeatMode: PlaybackSession['repeatMode']; shuffle: boolean; infinity?: boolean }
 
 // Server limits (shared/api/v1.ts).
 export const MAX_PATCH_OPERATIONS = 50;
@@ -37,13 +37,22 @@ function longestIncreasingRun(values: number[]): number[] {
   return run.reverse();
 }
 
-export function planQueueOperations(server: QueueEntryRef[], local: QueueEntryRef[], currentIndex: number | null): SessionOperation[] {
+export function planQueueOperations(
+  server: QueueEntryRef[],
+  local: QueueEntryRef[],
+  currentIndex: number | null,
+  /** The session's current entry: it plays, so it is never removed (only a replace drops it). */
+  currentEntryId: string | null = null,
+): SessionOperation[] {
   const replace = (): SessionOperation[] => [{
     type: 'replaceQueue',
     trackIds: local.map((entry) => entry.trackId),
     entryIds: local.map((entry) => entry.entryId),
     ...(currentIndex !== null && local[currentIndex] ? { currentIndex } : {}),
   }];
+
+  // An emptied queue (Clear) replaces the session's with nothing.
+  if (!local.length) return server.length ? replace() : [];
 
   const serverTrack = new Map(server.map((entry) => [entry.entryId, entry.trackId]));
   // An entry ID that now names another track cannot be patched in place.
@@ -55,7 +64,9 @@ export function planQueueOperations(server: QueueEntryRef[], local: QueueEntryRe
   if (local.length > 0 && kept.length * 2 < local.length) return replace();
 
   const operations: SessionOperation[] = [];
-  const removed = server.filter((entry) => !localPosition.has(entry.entryId)).map((entry) => entry.entryId);
+  const removed = server
+    .filter((entry) => !localPosition.has(entry.entryId) && entry.entryId !== currentEntryId)
+    .map((entry) => entry.entryId);
   for (let at = 0; at < removed.length; at += MAX_REMOVE_ENTRIES) {
     operations.push({ type: 'remove', queueEntryIds: removed.slice(at, at + MAX_REMOVE_ENTRIES) });
   }
@@ -96,15 +107,19 @@ export function planQueueOperations(server: QueueEntryRef[], local: QueueEntryRe
 
 /** Everything the device holding the output owns in the session, except what its reports carry. */
 export function planSessionPatch(
-  session: Pick<PlaybackSession, 'queue' | 'repeatMode' | 'shuffle'>,
+  session: Pick<PlaybackSession, 'queue' | 'repeatMode' | 'shuffle'> & { infinity?: boolean; currentEntryId?: string | null },
   local: QueueEntryRef[],
   currentIndex: number | null,
   transport: MirroredTransport,
 ): SessionOperation[] {
   const server = session.queue.map((entry) => ({ entryId: entry.queueEntryId, trackId: entry.track.id }));
-  const operations = planQueueOperations(server, local, currentIndex);
-  if (transport.repeatMode !== session.repeatMode || transport.shuffle !== session.shuffle) {
-    operations.push({ type: 'setTransport', repeatMode: transport.repeatMode, shuffle: transport.shuffle });
+  const operations = planQueueOperations(server, local, currentIndex, session.currentEntryId ?? null);
+  const infinityChanged = transport.infinity !== undefined && transport.infinity !== (session.infinity ?? false);
+  if (transport.repeatMode !== session.repeatMode || transport.shuffle !== session.shuffle || infinityChanged) {
+    operations.push({
+      type: 'setTransport', repeatMode: transport.repeatMode, shuffle: transport.shuffle,
+      ...(transport.infinity !== undefined ? { infinity: transport.infinity } : {}),
+    });
   }
   return operations;
 }

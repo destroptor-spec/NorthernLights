@@ -4,17 +4,20 @@ import {
   getTracksByArtist,
   incrementYoutubeApiUsage,
   getYoutubeApiUsage,
-  upsertArtistVideosCache,
   getArtistVideosCache,
-  replaceArtistVideos,
   getMusicVideosForArtist,
   getMusicVideoByTrackId,
   getTrackById,
   isCompilationArtistName,
-  type MusicVideoRow,
+  getArtistVideoUploads,
+  saveArtistVideoCatalog,
+  noteArtistVideoFailure,
+  type VideoUpload,
 } from '../database';
-import { getSongDedupKey } from './candidatePool.service';
-import { videoTitleCandidates } from './youtubeTitle';
+import { createHash } from 'node:crypto';
+import { matchVideoUploads } from './youtubeMatching';
+import { loadArtistVideoLinks } from './metadata/videoLinks';
+import type { TrackVideoLookup } from '../../shared/musicVideos';
 
 const YT_BASE = 'https://www.googleapis.com/youtube/v3';
 const USER_AGENT = 'AuroraMediaServer/1.0';
@@ -164,7 +167,7 @@ function findYouTubeUrl(links: { url: string; type: string }[]): string | null {
     if (!raw) continue;
     try {
       const u = new URL(raw.startsWith('http') ? raw : `https://${raw}`);
-      if (isYouTubeHost(u.hostname)) return u.toString();
+      if (isYouTubeHost(u.hostname) && parseChannelUrl(u.toString())) return u.toString();
     } catch {
       // Skip malformed URLs.
     }
@@ -230,31 +233,6 @@ async function resolveArtistChannelId(artist: any): Promise<{ channelId: string 
   return { channelId, reason: channelId ? null : 'Channel link did not resolve', ready: true };
 }
 
-// ─── Title matching ─────────────────────────────────────────────────────
-// Title cleaning / candidate generation lives in ./youtubeTitle (pure + tested).
-
-// Title-only match key, scoped to one artist's catalogue (we already filter by
-// artist_id), so the artist component is intentionally dropped — collaborator
-// strings differ too often between YouTube and file tags. Omitting the mb id
-// forces getSongDedupKey's `meta:` branch.
-function titleKey(title: string): string {
-  return getSongDedupKey({ title });
-}
-
-// Rank competing videos for the same track: prefer the official music video
-// over lyric/audio uploads. Higher is better.
-function videoQualityScore(title: string): number {
-  const t = title.toLowerCase();
-  let score = 0;
-  if (/\bofficial\b/.test(t)) score += 2;
-  if (/\bvideo\b/.test(t)) score += 2;
-  if (/\blyrics?\b/.test(t)) score -= 1;
-  if (/\baudio\b/.test(t)) score -= 1;
-  return score;
-}
-
-type RawVideo = { videoId: string; title: string; thumbnailUrl: string | null; publishedAt: string | null; position: number };
-
 function pickThumbnail(thumbs: any): string | null {
   if (!thumbs) return null;
   const t = thumbs.maxres || thumbs.standard || thumbs.high || thumbs.medium || thumbs.default;
@@ -263,13 +241,13 @@ function pickThumbnail(thumbs: any): string | null {
 
 // ─── Fetch + match a single artist's channel uploads ────────────────────
 
-async function listChannelUploads(channelId: string, maxVideos: number): Promise<RawVideo[]> {
+async function listChannelUploads(channelId: string, maxVideos: number): Promise<VideoUpload[]> {
   // 1 unit: resolve the channel's uploads playlist.
   const chData: any = await ytFetch('channels', { part: 'contentDetails', id: channelId }, 1);
   const uploadsPlaylist = chData?.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
   if (!uploadsPlaylist) return [];
 
-  const videos: RawVideo[] = [];
+  const videos: VideoUpload[] = [];
   let pageToken: string | undefined;
   let position = 0;
   // Up to 2 pages (100 uploads) keeps quota at ~3 units/artist while covering
@@ -284,6 +262,7 @@ async function listChannelUploads(channelId: string, maxVideos: number): Promise
     for (const item of (data?.items || [])) {
       const videoId = item?.contentDetails?.videoId || item?.snippet?.resourceId?.videoId;
       if (!videoId) continue;
+      if (videos.some(video => video.videoId === videoId)) continue;
       videos.push({
         videoId,
         title: item?.snippet?.title || '',
@@ -299,137 +278,112 @@ async function listChannelUploads(channelId: string, maxVideos: number): Promise
   return videos;
 }
 
-// Resolve + fetch + match + write cache for a single artist. Idempotent.
-export async function refreshArtistVideos(artistId: string): Promise<{ count: number; channelId: string | null }> {
-  const artist: any = await getArtistById(artistId);
-  if (!artist) throw new Error(`Artist ${artistId} not found`);
+type RefreshResult = { refreshed: boolean; reason: string; retryAfterMs?: number };
+const RETRY_MS = 60_000;
+const artistRefreshes = new Map<string, Promise<RefreshResult>>();
+const fingerprint = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const sourceKey = (artist: { links?: unknown; mbid?: string | null }, mbid: string | null) =>
+  fingerprint({ mbid: artist.mbid || mbid, links: parseArtistLinks(artist).map(link => link.url).sort() });
 
-  if (isCompilationArtistName(artist.name)) {
-    await upsertArtistVideosCache(artistId, { channelId: null, videosCount: 0, lastError: 'Compilation pseudo-artist — videos not applicable' });
-    return { count: 0, channelId: null };
-  }
-
-  let channelId: string | null = (await getArtistVideosCache(artistId))?.youtube_channel_id || null;
-  if (!channelId) {
-    const resolved = await resolveArtistChannelId(artist);
-    channelId = resolved.channelId;
-    if (!channelId) {
-      // Don't poison the cache while the artist's links are still loading —
-      // leaving no row lets the next visit retry once metadata is present.
-      if (resolved.ready) {
-        await upsertArtistVideosCache(artistId, { channelId: null, videosCount: 0, lastError: resolved.reason });
-      }
-      return { count: 0, channelId: null };
-    }
-  }
-
-  try {
-    const uploads = await listChannelUploads(channelId, 100);
-
-    // Build a title-only key map of the artist's library tracks.
-    const tracks = await getTracksByArtist(artistId);
-    const trackByKey = new Map<string, any>();
-    for (const t of tracks) {
-      const key = titleKey(t.title || '');
-      if (!key.endsWith(':')) trackByKey.set(key, t); // skip empty titles
-    }
-
-    // Match each upload to a library track; keep the best video per track.
-    const bestByTrack = new Map<string, { video: RawVideo; track: any; score: number }>();
-    for (const v of uploads) {
-      let matched: any = null;
-      for (const c of videoTitleCandidates(v.title)) {
-        const t = trackByKey.get(titleKey(c));
-        if (t) { matched = t; break; }
-      }
-      if (!matched) continue;
-
-      const score = videoQualityScore(v.title);
-      const existing = bestByTrack.get(matched.id);
-      if (!existing || score > existing.score) {
-        bestByTrack.set(matched.id, { video: v, track: matched, score });
-      }
-    }
-
-    // Dedupe by video_id: two library tracks sharing a title (e.g. original +
-    // remaster) can map to the same upload. Keep the first (lowest position) so
-    // the stored count matches the rows actually written (video_id is the PK).
-    const seenVideoIds = new Set<string>();
-    const rows: Omit<MusicVideoRow, 'fetched_at'>[] = Array.from(bestByTrack.values())
-      .sort((a, b) => a.video.position - b.video.position)
-      .filter(({ video }) => {
-        if (seenVideoIds.has(video.videoId)) return false;
-        seenVideoIds.add(video.videoId);
-        return true;
-      })
-      .map(({ video, track }) => ({
-        video_id: video.videoId,
-        artist_id: artistId,
-        track_id: track.id,
-        title: track.title || video.title,
-        thumbnail_url: video.thumbnailUrl,
-        published_at: video.publishedAt,
-        position: video.position,
-      }));
-
-    await replaceArtistVideos(artistId, rows);
-    await upsertArtistVideosCache(artistId, { channelId, videosCount: rows.length, lastError: null });
-    return { count: rows.length, channelId };
-  } catch (err: any) {
-    if (err instanceof YoutubeBudgetError) throw err;
-    await upsertArtistVideosCache(artistId, { channelId, videosCount: 0, lastError: err.message || 'Fetch failed' });
-    throw err;
-  }
-}
-
-// Fetch only if the cache is stale (or missing). Videos rarely change, so the
-// default TTL is generous.
-const artistRefreshes = new Map<string, Promise<{ refreshed: boolean; reason: string }>>();
-
-export function refreshArtistVideosIfStale(artistId: string, ttlDays?: number): Promise<{ refreshed: boolean; reason: string }> {
+// Both the artist rail and Now Playing share this work, including metadata
+// resolution, local rematching, provider calls and retry cooldowns.
+export function refreshArtistVideosIfStale(artistId: string, ttlDays?: number): Promise<RefreshResult> {
   const pending = artistRefreshes.get(artistId);
   if (pending) return pending;
-  const refresh = refreshArtistVideosIfStaleOnce(artistId, ttlDays).finally(() => {
-    artistRefreshes.delete(artistId);
-  });
+  const refresh = refreshArtistVideosOnce(artistId, ttlDays).finally(() => artistRefreshes.delete(artistId));
   artistRefreshes.set(artistId, refresh);
   return refresh;
 }
 
-async function refreshArtistVideosIfStaleOnce(artistId: string, ttlDays?: number): Promise<{ refreshed: boolean; reason: string }> {
-  const ttl = typeof ttlDays === 'number' && ttlDays > 0
-    ? ttlDays
-    : (await getSystemSetting('youtubeCacheTtlDays')) as number | null ?? 14;
+// Retained for callers that explicitly request a refresh. It still shares the
+// in-flight work and respects provider-error cooldowns.
+export async function refreshArtistVideos(artistId: string) {
+  await refreshArtistVideosIfStale(artistId, Number.MIN_VALUE);
   const cache = await getArtistVideosCache(artistId);
-  if (!cache) {
-    await refreshArtistVideos(artistId);
-    return { refreshed: true, reason: 'no-cache' };
-  }
-  const ageMs = Date.now() - new Date(cache.fetched_at).getTime();
-  const ttlMs = ttl * 24 * 60 * 60 * 1000;
-  if (ageMs >= ttlMs) {
-    await refreshArtistVideos(artistId);
-    return { refreshed: true, reason: 'stale' };
-  }
-  return { refreshed: false, reason: 'fresh' };
+  return { count: cache?.videos_count ?? 0, channelId: cache?.youtube_channel_id ?? null };
 }
 
-// Now Playing must be able to populate matches without an artist-page visit.
-// Existing matches are free; misses reuse the same bounded channel lookup,
-// cache freshness and daily budget as the artist rail.
-export async function getMusicVideoForTrack(trackId: string) {
-  if (!(await isYouTubeEnabled())) return null;
-  const cached = await getMusicVideoByTrackId(trackId);
-  if (cached) return cached;
-  const track = await getTrackById(trackId);
-  if (!track?.artistId) return null;
-  try {
-    await refreshArtistVideosIfStale(track.artistId);
-  } catch {
-    // Provider errors or exhausted quota must not interrupt music playback.
-    return null;
+async function refreshArtistVideosOnce(artistId: string, ttlDays?: number): Promise<RefreshResult> {
+  let artist = await getArtistById(artistId);
+  if (!artist) return { refreshed: false, reason: 'no-artist' };
+  const tracks = await getTracksByArtist(artistId);
+  const mbid: string | null = artist.mbid || tracks.find(track => track.mbArtistId)?.mbArtistId || null;
+  let source = sourceKey(artist, mbid);
+  const libraryKey = fingerprint(['v1', tracks.map(track => [track.id, track.title]).sort((a, b) => String(a[0]).localeCompare(String(b[0])))]);
+  const cache = await getArtistVideosCache(artistId);
+  const configuredTtl = ttlDays ?? await getSystemSetting('youtubeCacheTtlDays');
+  const ttl = typeof configuredTtl === 'number' && Number.isFinite(configuredTtl) && configuredTtl > 0 ? configuredTtl : 14;
+  const fresh = cache?.uploads_cached && cache.source_key === source
+    && Date.now() - new Date(cache.fetched_at).getTime() < ttl * 86400000;
+
+  // A library change only needs the cached upload titles. No provider quota.
+  if (cache?.uploads_cached && cache.source_key === source && cache.library_key !== libraryKey) {
+    const uploads = await getArtistVideoUploads(artistId);
+    await saveArtistVideoCatalog(artistId, uploads, matchVideoUploads(uploads, tracks), {
+      fetched: false, sourceKey: source, libraryKey, channelId: cache.youtube_channel_id,
+    });
   }
-  return getMusicVideoByTrackId(trackId);
+  if (fresh && !cache.last_error) return { refreshed: false, reason: 'fresh' };
+  const retryAfterMs = cache?.attempt_source_key === source ? new Date(cache.retry_after ?? 0).getTime() - Date.now() : 0;
+  if (retryAfterMs > 0) return { refreshed: false, reason: cache.last_error === 'metadata-pending' ? 'pending' : 'temporary-error', retryAfterMs };
+
+  try {
+    let metadataLoaded = false;
+    if (!parseArtistLinks(artist).length && !isCompilationArtistName(artist.name)) {
+      metadataLoaded = await loadArtistVideoLinks(artistId, mbid);
+      artist = await getArtistById(artistId) ?? artist;
+      source = sourceKey(artist, mbid);
+    }
+    if (!parseArtistLinks(artist).length && !metadataLoaded && !isCompilationArtistName(artist.name)) {
+      await noteArtistVideoFailure(artistId, source, 'metadata-pending', RETRY_MS);
+      return { refreshed: false, reason: 'pending', retryAfterMs: RETRY_MS };
+    }
+    const resolved = isCompilationArtistName(artist.name) ? { channelId: null }
+      : cache?.source_key === source && cache.youtube_channel_id ? { channelId: cache.youtube_channel_id }
+      : await resolveArtistChannelId(artist);
+    const uploads = resolved.channelId ? await listChannelUploads(resolved.channelId, 100) : [];
+    await saveArtistVideoCatalog(artistId, uploads, matchVideoUploads(uploads, tracks), {
+      fetched: true, sourceKey: source, libraryKey, channelId: resolved.channelId,
+    });
+    return { refreshed: true, reason: 'refreshed' };
+  } catch (error) {
+    await noteArtistVideoFailure(artistId, source, error instanceof YoutubeBudgetError ? 'quota-exhausted' : 'provider-error', RETRY_MS);
+    throw error;
+  }
+}
+
+// Existing matches return immediately while freshness is checked in the
+// background. Cold lookups wait briefly, then tell the client to retry without
+// holding its request open behind provider queues.
+export async function lookupMusicVideoForTrack(trackId: string, waitMs = 1000): Promise<TrackVideoLookup> {
+  if (!(await isYouTubeEnabled())) return { video: null, status: 'disabled' };
+  const [cached, track] = await Promise.all([getMusicVideoByTrackId(trackId), getTrackById(trackId)]);
+  if (!track?.artistId) return { video: cached, status: cached ? 'matched' : 'no-match' };
+  const refresh = refreshArtistVideosIfStale(track.artistId);
+  if (cached) {
+    void refresh.catch(() => {});
+    return { video: cached, status: 'matched' };
+  }
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const result = await Promise.race([
+      refresh,
+      new Promise<null>(resolve => { timeout = setTimeout(() => resolve(null), waitMs); }),
+    ]);
+    const video = await getMusicVideoByTrackId(trackId);
+    if (video) return { video, status: 'matched' };
+    if (!result) return { video: null, status: 'pending', retryAfterMs: 2000 };
+    if (result.reason === 'pending' || result.reason === 'temporary-error') {
+      return { video: null, status: result.reason, retryAfterMs: result.retryAfterMs };
+    }
+    return { video: null, status: 'no-match' };
+  } catch {
+    return { video: null, status: 'temporary-error', retryAfterMs: RETRY_MS };
+  } finally { clearTimeout(timeout); }
+}
+
+export async function getMusicVideoForTrack(trackId: string) {
+  return (await lookupMusicVideoForTrack(trackId)).video;
 }
 
 export async function testYouTubeConnection(): Promise<{ ok: boolean; error?: string; sample?: string }> {

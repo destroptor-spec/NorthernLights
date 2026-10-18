@@ -17,7 +17,7 @@ async function loadHls(): Promise<typeof Hls> {
     return hlsLoadPromise;
 }
 import { usePlayerStore, type PlaybackTelemetry } from '../store';
-import { getPlaybackTimeSnapshot, setPlaybackCurrentTime } from '../store/playbackTime';
+import { getPlaybackTimeSnapshot, setPlaybackCurrentTime, noteLocalPlaybackSeek } from '../store/playbackTime';
 import {
     AdaptiveHlsTelemetryTracker,
     applyAdaptiveDataSaverLevelCap,
@@ -28,6 +28,8 @@ import {
     type BrowserNetworkInformation,
 } from './streaming';
 import { canBrowserPlayNative } from './losslessCapability';
+import { backgroundPrefetchSkipReason } from './PreloadManager';
+import type { PlaybackLoadPath } from '../store';
 import { logPlaybackInfo } from './playbackDebug';
 import { audioOutputManager } from './AudioOutputManager';
 import type { TrackInfo } from './fileSystem';
@@ -681,6 +683,16 @@ class PlaybackManager {
                 return;
             }
 
+            // The original file of the next track, loaded ahead (prepareNextDirect).
+            if (useRawPassthrough && this.isPreparedUrl(rawUrl)) {
+                try {
+                    await this.promotePreparedAudio('prepared-direct');
+                    return;
+                } catch (error) {
+                    console.warn('[Playback] Prepared direct file failed, loading it again:', error);
+                }
+            }
+
             // Clean up previous HLS instance if switching away
             this.destroyHls();
 
@@ -733,9 +745,12 @@ class PlaybackManager {
         if (castManager.isConnected()) return;
         const streamingQuality = usePlayerStore.getState().streamingQuality;
         const effectiveHlsUrl = applyStreamingQualityToHlsUrl(hlsUrl, streamingQuality);
-        // Skip HLS warmup for lossless raw passthrough — playUrl will set
-        // <audio preload="auto"> and let the browser buffer the original bytes.
-        if (streamingQuality === 'source' && canBrowserPlayNative(format)) return;
+        // Source quality, a file this browser plays as it is: playUrl streams
+        // the original bytes, so those are what to load ahead, not HLS.
+        if (streamingQuality === 'source' && canBrowserPlayNative(format)) {
+            this.prepareNextDirect(rawUrl, title, artist);
+            return;
+        }
         const key = this.normalizePreparedUrlKey(effectiveHlsUrl || rawUrl);
         if (!key || !effectiveHlsUrl.includes('.m3u8')) return;
         if (this.nextUrlKey === key) return;
@@ -824,6 +839,64 @@ class PlaybackManager {
             });
             this.destroyPreparedAudio();
         }
+    }
+
+    /**
+     * Loads the next track's original file in a second element while this one
+     * plays, so a skip or the end of the track switches to it at once. Without
+     * it every skip at Source quality fetched a lossless file from scratch
+     * (prod 2026-10-17: 2–6 s per skip).
+     */
+    private prepareNextDirect(rawUrl: string, title?: string, artist?: string): void {
+        const key = rawUrl ? this.normalizePreparedUrlKey(rawUrl) : '';
+        if (!key || this.nextUrlKey === key) return;
+        this.destroyPreparedAudio();
+        this.lastPrepareFailureReason = null;
+        const trackTitle = title || 'Unknown Title';
+        // Tens of megabytes: hold back where the HLS prewarm does.
+        const skipReason = backgroundPrefetchSkipReason();
+        if (skipReason) {
+            logPlaybackInfo(`[Playback] Not loading the next file ahead: ${skipReason}`);
+            this.recordTelemetry({ prepareStatus: 'idle', preparedTrackTitle: null, preparedTrackArtist: null, prebufferSkippedReason: skipReason });
+            return;
+        }
+
+        logPlaybackInfo(`[Playback] Preparing next direct file: ${trackTitle}${artist ? ` by ${artist}` : ''}`);
+        this.recordTelemetry({
+            preparedTrackTitle: trackTitle,
+            preparedTrackArtist: artist || null,
+            prepareStatus: 'preparing',
+            prepareStartedAt: Date.now(),
+            prepareReadyAt: null,
+            prepareError: null,
+            recoveredFromPrepareFailure: false,
+            recoveryPath: 'none',
+            recoveryError: null,
+            prebufferPolicy: usePlayerStore.getState().prebufferPolicy,
+            prebufferSkippedReason: null,
+        });
+
+        const nextAudio = this.createAudioElement();
+        this.syncLocalAudioOutputState(nextAudio);
+        this.attachAudioEvents(nextAudio);
+        this.nextAudio = nextAudio;
+        this.nextUrlKey = key;
+        if (this.audioContext) this.attachLoudnessChain(nextAudio);
+        nextAudio.addEventListener('canplay', () => {
+            if (nextAudio !== this.nextAudio) return;
+            logPlaybackInfo(`[Playback] Prepared next direct file: ${trackTitle}${artist ? ` by ${artist}` : ''}`);
+            this.recordTelemetry({ prepareStatus: 'ready', prepareReadyAt: Date.now(), prepareError: null });
+        }, { once: true });
+        nextAudio.addEventListener('error', () => {
+            if (nextAudio !== this.nextAudio) return;
+            const prepareError = nextAudio.error?.message || `media error ${nextAudio.error?.code ?? ''}`.trim();
+            console.warn('[Playback] Prepared next direct file failed:', prepareError);
+            this.lastPrepareFailureReason = prepareError;
+            this.recordTelemetry({ prepareStatus: 'failed', prepareError });
+            this.destroyPreparedAudio();
+        }, { once: true });
+        nextAudio.src = rawUrl;
+        nextAudio.load();
     }
 
     private recordTelemetry(telemetry: Partial<PlaybackTelemetry>): void {
@@ -1180,7 +1253,7 @@ class PlaybackManager {
         return !!this.nextAudio && this.nextUrlKey === this.normalizePreparedUrlKey(url);
     }
 
-    private async promotePreparedAudio(): Promise<void> {
+    private async promotePreparedAudio(loadPath: PlaybackLoadPath = 'prepared-hls'): Promise<void> {
         if (!this.nextAudio || !this.nextUrlKey) return;
 
         const oldAudio = this.audio;
@@ -1226,7 +1299,7 @@ class PlaybackManager {
 
         logPlaybackInfo('[Playback] Promoting prepared next track');
         this.recordTelemetry({
-            loadPath: 'prepared-hls',
+            loadPath,
             currentTrackTitle: this.currentTitle,
             currentTrackArtist: this.currentArtist,
             preparedAudioUsed: true,
@@ -1411,6 +1484,7 @@ class PlaybackManager {
         } else {
             if (isFinite(time) && time >= 0) {
                 this.audio.currentTime = time;
+                noteLocalPlaybackSeek(time);
             }
         }
         this.onTimeUpdateCallback?.(time);

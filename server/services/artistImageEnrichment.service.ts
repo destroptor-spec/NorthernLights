@@ -15,9 +15,11 @@ import { getArtistData } from './metadata';
 // getArtistData() writes image_url via upsertArtistCache and is throttled per
 // provider (Last.fm / Genius / MusicBrainz token buckets in metadata/rateLimiter
 // + metadata/providers/musicbrainz), so a serial loop here is already rate-safe.
-// It also stamps last_updated on every non-rate-limited fetch, so artists with no
-// available image drop out of getArtistsNeedingImage and are not re-fetched on
-// later runs — while rate-limited artists keep last_updated=0 and are retried.
+// It stamps last_updated only when the lookup completed, so artists the provider
+// has no image for drop out of getArtistsNeedingImage until the cache TTL — while
+// artists whose lookup failed (rate limit, outage) stay unstamped. A failed
+// lookup ends the run: the provider is unlikely to recover mid-run, and the same
+// unstamped artists would otherwise be fetched again and again.
 //
 // Purging images when an artist is removed needs no work here: artist images are
 // URL-only (stored in artists.image_url, no local file cache), so deleting the
@@ -29,11 +31,17 @@ export interface ArtistImageEnrichmentResult {
   noImage: number;     // provider had no picture (still marked done so we stop asking)
   failed: number;
   ranOutOfQuota: boolean;
+  stoppedOnError?: string; // a lookup failed; the rest waits for the next run
   skipped?: 'already_running' | 'no_provider';
 }
 
 const PER_QUERY = 200;          // page size when scanning for work
 const MAX_PER_RUN = 20000;      // hard ceiling so one run can't loop forever
+// Pause between artists. The provider throttles are tuned for someone waiting on
+// an artist page (Genius 4 req/s); nobody waits on this batch, and a full-speed
+// run of a thousand artists is what gets a free API key rate limited (Genius
+// blocked prod for over an hour on 2026-10-18). ~1.3 Genius requests/s at most.
+const BACKGROUND_PACE_MS = 1500;
 
 let isRunning = false;
 
@@ -56,7 +64,9 @@ async function anyMetadataProviderConfigured(): Promise<boolean> {
  * Resumable: stops on rate-limit and continues on the next invocation since
  * processed artists fall out of the work set. Guarded against concurrent runs.
  */
-export async function enrichArtistImages(): Promise<ArtistImageEnrichmentResult> {
+export async function enrichArtistImages(
+  { paceMs = BACKGROUND_PACE_MS }: { paceMs?: number } = {}
+): Promise<ArtistImageEnrichmentResult> {
   const empty: ArtistImageEnrichmentResult = {
     attempted: 0, succeeded: 0, noImage: 0, failed: 0, ranOutOfQuota: false,
   };
@@ -69,19 +79,27 @@ export async function enrichArtistImages(): Promise<ArtistImageEnrichmentResult>
 
   isRunning = true;
   const result: ArtistImageEnrichmentResult = { ...empty };
+  const seen = new Set<string>();
   try {
     while (result.attempted < MAX_PER_RUN) {
-      const batch = await getArtistsNeedingImage(
+      const batch = (await getArtistsNeedingImage(
         Math.min(PER_QUERY, MAX_PER_RUN - result.attempted)
-      );
+      )).filter((artist) => !seen.has(artist.id));
       if (batch.length === 0) break;
 
       for (const artist of batch) {
+        seen.add(artist.id);
+        if (result.attempted > 0 && paceMs > 0) await new Promise((r) => setTimeout(r, paceMs));
         result.attempted++;
         try {
           const data = await getArtistData(artist.name, artist.mbid);
           if (data.error && /rate|429/i.test(data.error)) {
             result.ranOutOfQuota = true;
+            break;
+          }
+          if (data.error && !data.imageUrl) {
+            result.failed++;
+            result.stoppedOnError = data.error;
             break;
           }
           if (data.imageUrl) result.succeeded++;
@@ -96,14 +114,15 @@ export async function enrichArtistImages(): Promise<ArtistImageEnrichmentResult>
         }
       }
 
-      if (result.ranOutOfQuota) break;
+      if (result.ranOutOfQuota || result.stoppedOnError) break;
     }
 
     if (result.attempted > 0) {
       console.log(
         `[ArtistImages] enriched ${result.succeeded}/${result.attempted} ` +
         `(no image: ${result.noImage}, failed: ${result.failed}` +
-        `${result.ranOutOfQuota ? ', stopped on rate limit' : ''})`
+        `${result.ranOutOfQuota ? ', stopped on rate limit' : ''}` +
+        `${result.stoppedOnError ? `, stopped on error: ${result.stoppedOnError}` : ''})`
       );
     }
     return result;

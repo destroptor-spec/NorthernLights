@@ -15,6 +15,7 @@ type SessionRow = {
   playback_state: 'playing' | 'paused' | 'stopped';
   repeat_mode: 'none' | 'one' | 'all';
   shuffle: boolean;
+  infinity: boolean;
   source_kind: string | null;
   source_id: string | null;
   revision: string | number;
@@ -75,6 +76,17 @@ export class PlaybackSessionEntryIdError extends Error {
 }
 /** A patch reused a requestId with a different body. */
 export class PlaybackSessionRequestReusedError extends Error {}
+
+/**
+ * The entry that plays is not queued any more, so it cannot be removed; Skip
+ * moves past it (Andreas, 2026-10-17). Replacing the whole queue still can.
+ */
+export class PlaybackSessionCurrentEntryError extends Error {
+  current: PlaybackSession | null = null;
+  constructor(public readonly entryId: string) {
+    super('The current entry cannot be removed.');
+  }
+}
 
 export type PlaybackSessionPatchResult = {
   session: PlaybackSession;
@@ -190,6 +202,7 @@ async function serializeSession(db: PoolClient | Awaited<ReturnType<typeof initD
     playbackState: row.playback_state,
     repeatMode: row.repeat_mode,
     shuffle: row.shuffle,
+    infinity: row.infinity === true,
     source: row.source_kind ? { kind: row.source_kind, id: row.source_id } : null,
     revision: Number(row.revision),
     queue: queue.map(({ entry, track }, position) => ({
@@ -359,6 +372,7 @@ export async function patchPlaybackSession(input: {
     let playbackState = row.playback_state;
     let repeatMode = row.repeat_mode;
     let shuffle = row.shuffle;
+    let infinity = row.infinity === true;
 
     for (const operation of input.patch.operations) {
       switch (operation.type) {
@@ -396,11 +410,8 @@ export async function patchPlaybackSession(input: {
         }
         case 'remove': {
           const removed = new Set(operation.queueEntryIds);
+          if (currentEntryId && removed.has(currentEntryId)) throw new PlaybackSessionCurrentEntryError(currentEntryId);
           entries = entries.filter((entry) => !removed.has(entry.queue_entry_id));
-          if (currentEntryId && removed.has(currentEntryId)) {
-            currentEntryId = entries[0]?.queue_entry_id || null;
-            positionMs = 0;
-          }
           queueChanged = true;
           break;
         }
@@ -431,6 +442,7 @@ export async function patchPlaybackSession(input: {
           if (operation.playbackState !== undefined) playbackState = operation.playbackState;
           if (operation.repeatMode !== undefined) repeatMode = operation.repeatMode;
           if (operation.shuffle !== undefined) shuffle = operation.shuffle;
+          if (operation.infinity !== undefined) infinity = operation.infinity;
           break;
         }
       }
@@ -440,10 +452,10 @@ export async function patchPlaybackSession(input: {
     const updated = await client.query(`
       UPDATE playback_sessions
       SET current_entry_id = $3, position_ms = $4, playback_state = $5,
-          repeat_mode = $6, shuffle = $7, revision = revision + 1, updated_at = NOW()
+          repeat_mode = $6, shuffle = $7, infinity = $8, revision = revision + 1, updated_at = NOW()
       WHERE id = $1 AND user_id = $2
       RETURNING *
-    `, [input.sessionId, input.userId, currentEntryId, positionMs, playbackState, repeatMode, shuffle]);
+    `, [input.sessionId, input.userId, currentEntryId, positionMs, playbackState, repeatMode, shuffle, infinity]);
     const appliedRevision = Number(updated.rows[0].revision);
     if (requestId) {
       // An expired key that hasn't been pruned yet is reused as a new one.
@@ -474,7 +486,8 @@ export async function patchPlaybackSession(input: {
     }
     // Anchor and entry-ID conflicts carry the current session, like a revision
     // conflict, so the client can rebase without another read.
-    if (error instanceof PlaybackSessionAnchorError || error instanceof PlaybackSessionEntryIdError) {
+    if (error instanceof PlaybackSessionAnchorError || error instanceof PlaybackSessionEntryIdError
+      || error instanceof PlaybackSessionCurrentEntryError) {
       error.current = await getPlaybackSession(input.userId, input.sessionId);
     }
     throw error;
@@ -648,7 +661,7 @@ export async function reportPlaybackOutput(input: {
   grant: { sid: string; oid: string; gen: number };
   sessionId: string;
   report: PlaybackOutputReport;
-}): Promise<{ accepted: boolean; revision: number }> {
+}): Promise<{ accepted: boolean; revision: number; entryChanged?: boolean }> {
   const { grant, report } = input;
   if (grant.sid !== input.sessionId
     || (report.outputId !== undefined && report.outputId !== grant.oid)
@@ -719,7 +732,8 @@ export async function reportPlaybackOutput(input: {
         reportedAt: new Date(updated.rows[0].output_reported_at).toISOString(),
       },
     }, { transient: true });
-    return { accepted: true, revision };
+    // entryChanged is for the server (Infinity, Phase 4), not for the reporter.
+    return { accepted: true, revision, entryChanged: currentEntryId !== row.current_entry_id };
   } catch (error) {
     if (!(error instanceof PlaybackOutputGrantReplacedError)) {
       try { await client.query('ROLLBACK'); } catch { /* transaction already closed */ }

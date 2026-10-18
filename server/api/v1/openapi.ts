@@ -195,7 +195,7 @@ const sessionPatchResponses = {
       }),
     })),
   },
-  409: { description: 'REVISION_CONFLICT, ANCHOR_NOT_FOUND or ENTRY_ID_CONFLICT (each with the current session in details.current), or TRACKS_UNAVAILABLE', content: json(schemas.ApiError) },
+  409: { description: 'REVISION_CONFLICT, ANCHOR_NOT_FOUND, ENTRY_ID_CONFLICT or CURRENT_ENTRY_PLAYING (the entry that plays cannot be removed; each with the current session in details.current), or TRACKS_UNAVAILABLE', content: json(schemas.ApiError) },
   422: { description: 'IDEMPOTENCY_KEY_REUSED: the requestId was used for a different body', content: json(schemas.ApiError) },
 };
 path({ method: 'patch', path: '/playback-sessions/{id}', summary: 'Apply optimistic queue or transport changes', tags: ['Sessions'], security: authed, request: { params: idParams, body: { required: true, content: json(playbackSessionPatchSchema) } }, responses: sessionResponses(sessionPatchResponses) });

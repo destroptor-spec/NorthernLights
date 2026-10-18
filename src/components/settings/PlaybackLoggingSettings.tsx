@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { usePlayerStore } from '../../store';
 import { mintScopedToken } from '../../api/auroraApi';
 import { castManager } from '../../utils/CastManager';
+import { MusicVideoDiagnostics } from './MusicVideoDiagnostics';
 
 const options = [
   { key: 'playbackDebugLogging', title: 'Browser playback diagnostics', description: 'Show local playback and prewarm details in this browser’s console and the telemetry readout below.' },
@@ -49,6 +50,7 @@ export function PlaybackLoggingSettings() {
           ><span aria-hidden="true" className="account-switch__thumb" /></button>
         </div>
       ))}
+      {playbackDebugLogging && <MusicVideoDiagnostics />}
       {castDebugLogging && castConnected && (
         <div className="library-toggle-row">
           <div>

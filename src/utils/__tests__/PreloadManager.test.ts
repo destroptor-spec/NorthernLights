@@ -1,6 +1,8 @@
 import type { TrackInfo } from '../fileSystem';
 import { preloadManager } from '../PreloadManager';
 
+jest.mock('../losslessCapability', () => ({ canBrowserPlayNative: (format?: string) => format === 'FLAC' }));
+
 const makeTrack = (id: string): TrackInfo => ({
   id,
   path: `/${id}.flac`,
@@ -77,5 +79,24 @@ describe('PreloadManager', () => {
     const url = (global.fetch as jest.Mock).mock.calls[0][0] as URL;
     expect(url.searchParams.get('quality')).toBe('auto');
     expect(url.searchParams.has('codec')).toBe(false);
+  });
+
+  // Prod 2026-10-17: at Source quality every next track was transcoded into an
+  // HLS session that nothing played; those files stream directly.
+  it('warms no HLS session for a track that streams directly at Source quality', () => {
+    const playlist = [makeTrack('current-direct'), { ...makeTrack('next-direct'), format: 'FLAC' }];
+    preloadManager.prewarmNext(playlist, 0, 'source');
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('still warms HLS at Source for a format this browser cannot play, and while casting', () => {
+    const playlist = [makeTrack('current-mixed'), { ...makeTrack('next-wma'), format: 'ASF/Windows Media' }, { ...makeTrack('after-flac'), format: 'FLAC' }];
+    preloadManager.prewarmNext(playlist, 0, 'source', { aheadCount: 2 });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(String((global.fetch as jest.Mock).mock.calls[0][0])).toContain('next-wma');
+
+    (global.fetch as jest.Mock).mockClear();
+    preloadManager.prewarmNext([makeTrack('current-cast-src'), { ...makeTrack('next-cast-flac'), format: 'FLAC' }], 0, 'source', { castConnected: true });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 });

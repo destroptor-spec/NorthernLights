@@ -137,7 +137,9 @@ describeDb('playback sessions', () => {
       // Round 10 starts something new, which is sent as one replaceQueue.
       const local = round === 10
         ? Array.from({ length: 8 }, fresh)
-        : session.queue.map((entry) => ({ entryId: entry.queueEntryId, trackId: entry.track.id })).filter(() => random() > 0.15);
+        // The entry that plays is never removed (Phase 3): the app skips it instead.
+        : session.queue.map((entry) => ({ entryId: entry.queueEntryId, trackId: entry.track.id }))
+          .filter((entry) => entry.entryId === session.currentEntryId || random() > 0.15);
       for (let edit = 0; edit < 5; edit += 1) {
         if (random() < 0.5 && local.length) {
           const [moved] = local.splice(Math.floor(random() * local.length), 1);
@@ -164,12 +166,22 @@ describeDb('playback sessions', () => {
     expect(await storedRows(session.id)).toHaveLength(2);
   });
 
-  it('moves the current entry to the head of the queue when it is removed', async () => {
+  it('never removes the entry that plays (skip it instead), and writes nothing', async () => {
     let session = await create(trackIds(0, 3), 1);
     session = await patch(session, [{ type: 'setTransport', positionMs: 5000 }]);
-    session = await patch(session, [{ type: 'remove', queueEntryIds: [session.currentEntryId!] }]);
-    expect(session.currentEntryId).toBe(session.queue[0].queueEntryId);
-    expect(session.positionMs).toBe(0);
+    const other = session.queue[2].queueEntryId;
+    const refused = await rejection(patch(session, [{ type: 'remove', queueEntryIds: [other, session.currentEntryId!] }]));
+    expect(refused).toBeInstanceOf(sessions.PlaybackSessionCurrentEntryError);
+    expect(refused.entryId).toBe(session.currentEntryId);
+    expect(refused.current.revision).toBe(session.revision);
+    expect(trackOrder((await sessions.getPlaybackSession(userId, session.id))!)).toEqual(trackIds(0, 3));
+  });
+
+  it('empties the queue with a replace, which drops the current entry too', async () => {
+    const session = await create(trackIds(0, 3), 1);
+    const cleared = await patch(session, [{ type: 'replaceQueue', trackIds: [], entryIds: [] }]);
+    expect(cleared.queue).toEqual([]);
+    expect(cleared.currentEntryId).toBeNull();
   });
 
   it('resets the position when the current entry changes, and keeps it otherwise', async () => {
@@ -546,16 +558,18 @@ describeDb('playback sessions', () => {
       const { session, grant } = await playing();
       const [first, second] = session.queue.map((entry) => entry.queueEntryId);
 
+      // entryChanged tells the server (Infinity) that the output moved to another entry.
       expect(await reportAs(grant, { seq: 1, state: 'playing', queueEntryId: first, positionMs: 0 }))
-        .toEqual({ accepted: true, revision: session.revision + 1 });
+        .toEqual({ accepted: true, revision: session.revision + 1, entryChanged: false });
       expect(await reportAs(grant, { seq: 2, state: 'playing', queueEntryId: first, positionMs: 10_000 }))
-        .toEqual({ accepted: true, revision: session.revision + 1 });
+        .toEqual({ accepted: true, revision: session.revision + 1, entryChanged: false });
       let current = await read(session.id);
       expect(current).toMatchObject({ playbackState: 'playing', currentEntryId: first, positionMs: 10_000 });
       expect(current.output).toMatchObject({ status: 'active', report: { seq: 2, state: 'playing', queueEntryId: first, positionMs: 10_000 } });
 
       // The output moved on to the next track by itself.
-      expect((await reportAs(grant, { seq: 3, state: 'playing', queueEntryId: second, positionMs: 1_000 })).revision).toBe(session.revision + 2);
+      expect(await reportAs(grant, { seq: 3, state: 'playing', queueEntryId: second, positionMs: 1_000 }))
+        .toEqual({ accepted: true, revision: session.revision + 2, entryChanged: true });
       expect((await reportAs(grant, { seq: 4, state: 'paused', queueEntryId: second, positionMs: 2_000 })).revision).toBe(session.revision + 3);
       // Buffering is between states: the session keeps saying paused.
       expect((await reportAs(grant, { seq: 5, state: 'buffering', queueEntryId: second, positionMs: 2_000 })).revision).toBe(session.revision + 3);
@@ -687,6 +701,104 @@ describeDb('playback sessions', () => {
       for (let seq = 2; seq < 8; seq++) await reportAs(grant, { seq, state: 'playing', queueEntryId: entry, positionMs: seq * 10_000 });
       // Built on the revision read before six position reports, and still accepted.
       await expect(patch(before, [{ type: 'insert', afterEntryId: entry, trackIds: [trackId(50)] }], 'phone-1234')).resolves.toBeDefined();
+    });
+  });
+
+  describe('Infinity kept by the server (Phase 4)', () => {
+    let infinity: typeof import('../../services/sessionInfinity.service');
+    beforeAll(async () => { infinity = await import('../../services/sessionInfinity.service'); });
+
+    // A fake recommendation engine: the next track not excluded, from 500 on.
+    const engine = () => {
+      const calls: Array<{ exclude: string[]; seedTrackIds?: string[]; sessionHistoryTrackIds: string[] }> = [];
+      let next = 500;
+      const recommend = jest.fn(async (_user: string, input: any) => {
+        calls.push(input);
+        while (input.exclude.includes(trackId(next))) next += 1;
+        return { id: trackId(next++) };
+      });
+      return { recommend, calls };
+    };
+    const playingOnReceiver = async (ids: string[], currentIndex: number, options: { infinity?: boolean } = {}) => {
+      let session = await create(ids, currentIndex);
+      session = await sessions.claimPlaybackOutput({
+        userId, clientId: 'phone', sessionId: session.id, output: { kind: 'receiver', name: 'NAD', castSessionId: 'cast-1' },
+      });
+      if (options.infinity !== false) session = await patch(session, [{ type: 'setTransport', infinity: true }]);
+      return session;
+    };
+
+    it('stores the Infinity setting with the session', async () => {
+      const session = await create(trackIds(0, 2));
+      expect(session.infinity).toBe(false);
+      const on = await patch(session, [{ type: 'setTransport', infinity: true }]);
+      expect(on.infinity).toBe(true);
+      expect((await sessions.getPlaybackSession(userId, session.id))!.infinity).toBe(true);
+    });
+
+    it('keeps three entries after the one that plays, seeded from the end of the queue', async () => {
+      const session = await playingOnReceiver(trackIds(0, 4), 2);
+      const { recommend, calls } = engine();
+      expect(await infinity.topUpSessionInfinity(userId, session.id, recommend)).toBe(2);
+      const after = (await sessions.getPlaybackSession(userId, session.id))!;
+      expect(trackOrder(after)).toEqual([...trackIds(0, 4), trackId(500), trackId(501)]);
+      expectContiguous(after);
+      expect(calls[0].seedTrackIds).toEqual(trackIds(0, 4));
+      expect(calls[0].sessionHistoryTrackIds).toEqual(trackIds(0, 3));
+      expect(calls[0].exclude).toEqual(expect.arrayContaining(trackIds(0, 4)));
+      // Enough ahead: nothing more.
+      expect(await infinity.topUpSessionInfinity(userId, session.id, recommend)).toBe(0);
+    });
+
+    it('only with Infinity on and something playing the session, of any kind (Phase 3)', async () => {
+      const off = await playingOnReceiver(trackIds(0, 2), 1, { infinity: false });
+      const { recommend } = engine();
+      expect(await infinity.topUpSessionInfinity(userId, off.id, recommend)).toBe(0);
+
+      const idle = await patch(await create(trackIds(0, 2), 1), [{ type: 'setTransport', infinity: true }]);
+      expect(await infinity.topUpSessionInfinity(userId, idle.id, recommend)).toBe(0); // no output
+      expect(recommend).not.toHaveBeenCalled();
+
+      let browser = await create(trackIds(0, 2), 1);
+      browser = await sessions.claimPlaybackOutput({ userId, clientId: 'phone', sessionId: browser.id, output: { kind: 'browser' } });
+      await patch(browser, [{ type: 'setTransport', infinity: true }]);
+      expect(await infinity.topUpSessionInfinity(userId, browser.id, recommend)).toBe(3); // nothing was ahead
+    });
+
+    it('stops when the engine has nothing, or offers a queued track again', async () => {
+      const session = await playingOnReceiver(trackIds(0, 2), 1);
+      expect(await infinity.topUpSessionInfinity(userId, session.id, jest.fn(async () => null))).toBe(0);
+      const repeat = jest.fn(async () => ({ id: trackId(0) }));
+      expect(await infinity.topUpSessionInfinity(userId, session.id, repeat)).toBe(0);
+      expect(repeat).toHaveBeenCalledTimes(1);
+    });
+
+    it('never appends twice for one gap, however often it is asked', async () => {
+      const session = await playingOnReceiver(trackIds(0, 2), 1);
+      const { recommend } = engine();
+      const results = await Promise.all([1, 2, 3].map(() => infinity.topUpSessionInfinity(userId, session.id, recommend)));
+      expect(results).toEqual([3, 3, 3]); // one run, joined
+      expect(trackOrder((await sessions.getPlaybackSession(userId, session.id))!)).toHaveLength(5);
+    });
+
+    it('reads the session again when another device edited it meanwhile', async () => {
+      const session = await playingOnReceiver(trackIds(0, 2), 1);
+      let edited = false;
+      const recommend = jest.fn(async (_user: string, input: any) => {
+        if (!edited) {
+          edited = true;
+          // The phone appends while the engine thinks.
+          await patch((await sessions.getPlaybackSession(userId, session.id))!, [{ type: 'insert', afterEntryId: session.queue[1].queueEntryId, trackIds: [trackId(900)] }]);
+        }
+        let n = 600;
+        while (input.exclude.includes(trackId(n))) n += 1;
+        return { id: trackId(n) };
+      });
+      await infinity.topUpSessionInfinity(userId, session.id, recommend);
+      const after = (await sessions.getPlaybackSession(userId, session.id))!;
+      expect(trackOrder(after).slice(0, 3)).toEqual([...trackIds(0, 2), trackId(900)]);
+      expect(after.queue.length - 2).toBe(3); // three ahead of the current entry
+      expectContiguous(after);
     });
   });
 

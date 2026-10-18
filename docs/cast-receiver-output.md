@@ -1,9 +1,13 @@
 # Cast receiver as its own output (Phase 5 spec)
 
-Status: **in progress** (updated 2026-10-14). PR A shipped (#113–#115, with
-#118 and #122); B and C are in review (#131, #132), the probe is built, and D
-and E follow. No receiver product code is written until the probe below has
-run on the device matrix. Background and the full design: [playback_sessions.md](playback_sessions.md)
+Status: **built** (updated 2026-10-18). PR A shipped (#113–#115, with #118
+and #122). PRs B–E, the probe and #137 merged as one stack in #138
+(2026-10-16), followed by #141 (wait for CAF queue batches to land). Server
+Infinity for receivers came with #140. Verified on the NAD (checklist rows
+22–26) and a speaker group; the Beoplay A9 (row 27) is untested. Of the
+[verification](#verification-phase-5-done-when-from-the-design) list, the
+1-hour run with the phone asleep and token expiry with no phone are not yet
+confirmed. Background and the full design: [playback_sessions.md](playback_sessions.md)
 (Cast receiver as an output, Receiver authentication, Phase 5). Care rules:
 [cast-design-checklist.md](cast-design-checklist.md) and the receiver
 regression caution (one issue per PR, sender-side first, receiver only when
@@ -174,6 +178,8 @@ session never LOAD (PR E), and a second sender leaves (#119/#123). Details that 
   counting plays twice.
 - Shuffle is not applied on the receiver: the sender chooses the next track
   and sends a `load`.
+- The receiver does not tell the sender when it stops following (expiry or
+  being replaced).
 
 
 All of it only when the LOAD carries `sessionId` and `receiverToken`. Without
@@ -252,9 +258,9 @@ edits (Play next, remove, reorder) go to the session as anchored patches,
 planned against the session it last read and sent once more at a newer
 revision if one won meanwhile (`sync-queue-edit-sent`); an edit that cannot
 apply any more leaves the session's queue shown (`sync-queue-edit-refused`).
-Clearing the queue there does not stop the receiver. Following a browser or
-plain Cast output, edits stay on that device as before: those outputs treat
-their own queue as the one that counts, which is Phase 3 work.
+Clearing the queue there does not stop the receiver. Since Phase 3 every
+output takes the session's queue, so the same holds when the idle device
+follows a browser or plain Cast output.
 
 **Still open for D:**
 - If another sender takes the receiver over inside the same Cast session

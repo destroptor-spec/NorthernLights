@@ -10,8 +10,10 @@ import { createUuid, isUuid } from './uuid';
 // The playing side of "Sync playback across devices" (docs/playback_sessions.md,
 // Phase 2). While this device plays, it holds the session's output: it mirrors
 // its queue, repeat and shuffle into the user's one playback session, and
-// reports what it plays. Its local queue is authoritative, so a conflict is
-// answered by planning again from the session the server sent back.
+// reports what it plays. The session's queue is the one that counts (Phase
+// 3): another device's edit is taken in here, and an edit of this device's
+// that lost to a newer change is sent again at the newer revision (its
+// anchors still mean the same thing), or dropped when it cannot apply any more.
 //
 // Following another device (adopting its queue, "Playing on …") is
 // SessionFollower's job.
@@ -28,6 +30,8 @@ export interface MirroredPlayerState {
   currentIndex: number | null;
   repeat: PlaybackSession['repeatMode'];
   shuffle: boolean;
+  /** Infinity on this device; the server keeps it for a receiver that follows the session (Phase 4). */
+  isInfinityMode?: boolean;
   playbackState: 'playing' | 'paused' | 'stopped';
   isBuffering: boolean;
   castConnected: boolean;
@@ -67,9 +71,9 @@ export interface SessionMirrorOptions {
   /** The receiver took the session, or this device no longer holds it for the receiver. */
   onReceiverFollowsChanged?: (following: boolean) => void;
   /**
-   * While the receiver follows the session, the session's queue is the one
-   * that counts: an edit of this device's that lost to a newer change is
-   * dropped, and the session's queue is taken instead.
+   * The session's queue is the one that counts (Phase 3): take it in here,
+   * after an edit of this device's was merged with another device's, or was
+   * dropped because it could no longer apply.
    */
   adoptSession?: (session: PlaybackSession) => void;
 }
@@ -82,7 +86,8 @@ const REPORT_SOON_MS = 300;
 const RETRY_DELAY_MS = 5_000;
 const CLAIM_RETRY_DELAY_MS = 30_000;
 const REFRESH_BEFORE_EXPIRY_MS = 5 * 60_000;
-const MAX_CONFLICT_RETRIES = 3;
+/** A lost edit is sent again at the newer revision at most this often. */
+const MAX_REBASES = 2;
 /** A wake renews a receiver's credential (and so its 24-hour cap) at most this often. */
 const WAKE_REFRESH_MIN_INTERVAL_MS = 60_000;
 /**
@@ -91,7 +96,8 @@ const WAKE_REFRESH_MIN_INTERVAL_MS = 60_000;
  * Beoplay A9). The kind is claimed once that has settled.
  */
 export const CAST_KIND_SETTLE_MS = 1_000;
-const CONFLICT_CODES = new Set(['REVISION_CONFLICT', 'ANCHOR_NOT_FOUND', 'ENTRY_ID_CONFLICT']);
+/** The edit cannot apply to the newer session: take the session's queue instead. */
+const UNAPPLIABLE_CODES = new Set(['ANCHOR_NOT_FOUND', 'ENTRY_ID_CONFLICT', 'CURRENT_ENTRY_PLAYING']);
 
 type OutputKind = 'browser' | 'cast' | 'receiver';
 
@@ -150,7 +156,6 @@ export class SessionMirror {
   private claiming: Promise<void> | null = null;
   private patching = false;
   private dirty = false;
-  private conflicts = 0;
   private failedPatch: { requestId: string; body: string } | null = null;
   private readonly blockedTrackIds = new Set<string>();
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -265,12 +270,12 @@ export class SessionMirror {
   }
 
   /**
-   * SessionFollower read a newer session while the receiver follows it. True
-   * when this device should take its queue: nothing of its own is on the way
-   * (an edit in flight answers with the newer session anyway).
+   * SessionFollower read a newer session while this device holds the output.
+   * True when this device should take its queue: nothing of its own is on
+   * the way (an edit in flight answers with the newer session anyway).
    */
   noteSessionChanged(session: PlaybackSession): boolean {
-    if (!this.receiverFollowing || !this.grant || session.id !== this.grant.sessionId) return false;
+    if (!this.grant || session.id !== this.grant.sessionId) return false;
     if (this.session && session.revision <= this.session.revision) return false;
     if (this.patching || this.dirty || this.flushTimer) return false;
     this.session = session;
@@ -346,7 +351,8 @@ export class SessionMirror {
       this.scheduleKindCheck();
       return;
     }
-    if (state.playlist !== previous.playlist || state.repeat !== previous.repeat || state.shuffle !== previous.shuffle) {
+    if (state.playlist !== previous.playlist || state.repeat !== previous.repeat || state.shuffle !== previous.shuffle
+      || state.isInfinityMode !== previous.isInfinityMode) {
       this.scheduleFlush(FLUSH_DELAY_MS);
     }
     if (state.playbackState !== previous.playbackState || state.isBuffering !== previous.isBuffering || state.currentIndex !== previous.currentIndex) {
@@ -361,7 +367,6 @@ export class SessionMirror {
     this.grant = null;
     this.session = null;
     this.dirty = false;
-    this.conflicts = 0;
     this.failedPatch = null;
   }
 
@@ -540,7 +545,10 @@ export class SessionMirror {
     if (local.length > MAX_SESSION_QUEUE) return;
     if (local.some((entry) => this.blockedTrackIds.has(entry.trackId))) return;
 
-    const operations = planSessionPatch(this.session, local, state.currentIndex, { repeatMode: state.repeat, shuffle: state.shuffle });
+    const operations = planSessionPatch(this.session, local, state.currentIndex, {
+      repeatMode: state.repeat, shuffle: state.shuffle,
+      ...(state.isInfinityMode !== undefined ? { infinity: state.isInfinityMode } : {}),
+    });
     if (!operations.length) return;
     const patch = { expectedRevision: this.session.revision, operations };
     const body = JSON.stringify(patch);
@@ -552,11 +560,32 @@ export class SessionMirror {
 
     this.patching = true;
     try {
-      const session = await this.api.patchPlaybackSession(state.getAuthHeader(), sessionId, { ...patch, requestId } as PlaybackSessionPatch);
+      let attempt: { expectedRevision: number; requestId: string } = { expectedRevision: patch.expectedRevision, requestId };
+      let session: PlaybackSession;
+      for (let rebase = 0; ; rebase += 1) {
+        try {
+          session = await this.api.patchPlaybackSession(state.getAuthHeader(), sessionId, { ...patch, ...attempt } as PlaybackSessionPatch);
+          break;
+        } catch (error) {
+          // A newer change won: send the same edit again at its revision.
+          const newer = currentSessionFromError(error);
+          if (rebase < MAX_REBASES && newer && error instanceof AuroraApiError && error.code === 'REVISION_CONFLICT'
+            && this.grant?.credential.generation === generation) {
+            this.options?.diagnostic?.('ok', 'sync-edit-rebased', `revision=${newer.revision}`);
+            attempt = { expectedRevision: newer.revision, requestId: createUuid() };
+            continue;
+          }
+          throw error;
+        }
+      }
       if (this.grant?.credential.generation !== generation) return;
       this.session = session;
       this.failedPatch = null;
-      this.conflicts = 0;
+      // Rebased onto another device's change: show the merged queue here.
+      const merged = session.queue.map((entry) => entry.queueEntryId).join(',');
+      if (merged !== entriesOf(this.store.getState().playlist).map((entry) => entry.entryId).join(',')) {
+        this.options?.adoptSession?.(session);
+      }
       // A report may have named an entry the session did not have yet.
       const current = state.currentIndex !== null ? state.playlist[state.currentIndex]?.queueEntryId : null;
       if (current && session.currentEntryId !== current) this.reportSoon();
@@ -581,21 +610,15 @@ export class SessionMirror {
     this.failedPatch = null;
     if (this.syncDisabled(error)) return;
     const current = currentSessionFromError(error);
-    if (CONFLICT_CODES.has(error.code) && current && this.receiverFollowing) {
-      // The session counts while the receiver follows it: a newer change
-      // (another device's, or a remote load) wins over this device's edit.
+    if ((UNAPPLIABLE_CODES.has(error.code) || error.code === 'REVISION_CONFLICT') && current) {
+      // The session's queue counts: an edit that cannot apply to the newer
+      // session (or kept losing to newer changes) is dropped, and the
+      // session's queue is taken instead.
       this.log('a newer session change won over this edit; taking the session', error.code);
       this.options?.diagnostic?.('warn', 'sync-edit-dropped', `code=${error.code} revision=${current.revision}`);
       this.session = current;
       this.dirty = false;
       this.options?.adoptSession?.(current);
-      return;
-    }
-    if (CONFLICT_CODES.has(error.code) && current) {
-      this.session = current;
-      this.conflicts += 1;
-      if (this.conflicts <= MAX_CONFLICT_RETRIES) this.dirty = true;
-      else this.log('giving up on this change after repeated conflicts', error.code);
       return;
     }
     if (error.code === 'TRACKS_UNAVAILABLE') {

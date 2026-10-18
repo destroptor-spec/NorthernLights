@@ -80,9 +80,15 @@ describe('adaptive HLS runtime caching', () => {
 
 describe('public image caching boundary', () => {
     it.each(['/api/status', '/api/private.jpg', '/rest/getCoverArt.png', '/api/library/scan/status'])('does not capture authenticated/API requests: %s', (pathname) => {
-        expect(isPublicImageRequest({ url: new URL(pathname, 'https://aurora.test') })).toBe(false);
+        expect(isPublicImageRequest({ url: new URL(pathname, 'https://aurora.test'), sameOrigin: true })).toBe(false);
     });
     it('retains public image caching', () => {
-        expect(isPublicImageRequest({ url: new URL('https://example.test/cover.jpg') })).toBe(true);
+        expect(isPublicImageRequest({ url: new URL('https://aurora.test/cover.jpg'), sameOrigin: true })).toBe(true);
+    });
+    it.each([
+        'https://images.genius.com/0d46b6d23734cdfc989af2eeb4730f9a.640x640x1.jpg',
+        'https://lastfm.freetls.fastly.net/i/u/300x300/2a96cbd8b46e442fc41c2b86b821562f.png',
+    ])('leaves cross-origin provider images to the browser: %s', (href) => {
+        expect(isPublicImageRequest({ url: new URL(href), sameOrigin: false })).toBe(false);
     });
 });

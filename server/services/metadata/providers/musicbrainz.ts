@@ -40,10 +40,10 @@ export function extractMbMembers(relations: any[]): string[] {
   return members;
 }
 
-export async function mbGetArtist(mbid: string): Promise<MbArtist | null> {
+export async function mbGetArtist(mbid: string, signal?: AbortSignal): Promise<MbArtist | null> {
   try {
     const artist = await mbFetch(
-      `https://musicbrainz.org/ws/2/artist/${mbid}?inc=url-rels+artist-rels+tags+genres+ratings&fmt=json`
+      `https://musicbrainz.org/ws/2/artist/${mbid}?inc=url-rels+artist-rels+tags+genres+ratings&fmt=json`, signal
     );
     return artist || null;
   } catch (err: any) {

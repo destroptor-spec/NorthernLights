@@ -152,6 +152,8 @@ async function getProviderSettings(): Promise<ProviderSettings> {
 
 // ─── Public API ─────────────────────────────────────────────────────
 
+const ARTIST_NO_IMAGE_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
+
 /**
  * Fetch artist data (image, bio, MusicBrainz metadata).
  * Checks DB cache first, falls back to external APIs.
@@ -166,27 +168,26 @@ export async function getArtistData(
   const cached = await getCachedArtist(name);
   const wantsGeniusArtwork = settings.providerArtistArtwork === 'genius' && !!settings.geniusApiKey;
 
-  if (cached && isCacheFresh(cached.last_updated)) {
-    if (
-      (cached.image_url || cached.bio || cached.area || cached.artist_type || cached.disambiguation) &&
-      (!wantsGeniusArtwork || cached.artwork_url) &&
-      (cached.community_tags || (!settings.lastFmApiKey && !settings.musicBrainzEnabled))
-    ) {
-      return {
-        imageUrl: cached.image_url || undefined,
-        artworkUrl: settings.providerArtistArtwork === 'none' ? undefined : cached.artwork_url || undefined,
-        bio: cached.bio || undefined,
-        disambiguation: cached.disambiguation || undefined,
-        area: cached.area || undefined,
-        type: cached.artist_type || undefined,
-        lifeSpan: cached.lifespan_begin ? { begin: cached.lifespan_begin || undefined, end: cached.lifespan_end || undefined } : undefined,
-        links: cached.links ? JSON.parse(cached.links) : undefined,
-        genres: cached.genres ? JSON.parse(cached.genres) : undefined,
-        communityTags: cached.community_tags ? JSON.parse(cached.community_tags) : undefined,
-        listeners: cached.listeners || undefined,
-        members: cached.members ? JSON.parse(cached.members) : undefined,
-      };
-    }
+  // A stamped row is a completed lookup (failed ones stay unstamped), so serve
+  // it while fresh rather than asking every provider again on each page view:
+  // the APIs are free and rate limited. Without a picture it is re-checked
+  // weekly, so an artist that missed out during a provider outage recovers
+  // soon; with one, after the usual 30 days.
+  if (cached && isCacheFresh(cached.last_updated, cached.image_url ? undefined : ARTIST_NO_IMAGE_RECHECK_MS)) {
+    return {
+      imageUrl: cached.image_url || undefined,
+      artworkUrl: settings.providerArtistArtwork === 'none' ? undefined : cached.artwork_url || undefined,
+      bio: cached.bio || undefined,
+      disambiguation: cached.disambiguation || undefined,
+      area: cached.area || undefined,
+      type: cached.artist_type || undefined,
+      lifeSpan: cached.lifespan_begin ? { begin: cached.lifespan_begin || undefined, end: cached.lifespan_end || undefined } : undefined,
+      links: cached.links ? JSON.parse(cached.links) : undefined,
+      genres: cached.genres ? JSON.parse(cached.genres) : undefined,
+      communityTags: cached.community_tags ? JSON.parse(cached.community_tags) : undefined,
+      listeners: cached.listeners || undefined,
+      members: cached.members ? JSON.parse(cached.members) : undefined,
+    };
   }
 
   let data: ArtistData = {};
@@ -255,8 +256,32 @@ export async function getArtistData(
   if (bioProvider === 'genius' && !settings.geniusApiKey && settings.lastFmApiKey)
     pushApi('lastfm');
 
+  // Each provider records what it found, and the configured provider wins after
+  // the loop, with the other one as the fallback. The asking order alone used to
+  // decide: the provider asked first supplied both the picture and the bio, so
+  // with Genius pictures a Last.fm bio preference was never used.
+  type ArtistSource = 'genius' | 'lastfm';
+  const otherSource = (source: ArtistSource): ArtistSource => (source === 'genius' ? 'lastfm' : 'genius');
+  const preferredSource = (choice: string): ArtistSource => {
+    const source: ArtistSource = choice === 'genius' ? 'genius' : 'lastfm';
+    const configured = source === 'genius' ? settings.geniusApiKey : settings.lastFmApiKey;
+    return configured ? source : otherSource(source);
+  };
+  const imagePreference = preferredSource(imgProvider);
+  const bioPreference = preferredSource(bioProvider);
+  const found = {
+    imageUrl: {} as Partial<Record<ArtistSource, string>>,
+    bio: {} as Partial<Record<ArtistSource, string>>,
+  };
+  const pick = (field: keyof typeof found, preference: ArtistSource) =>
+    found[field][preference] ?? found[field][otherSource(preference)];
+
   let wasRateLimited = false;
   let lastError: string | undefined;
+  // A provider that could have supplied the picture failed (outage, 5xx,
+  // Genius 429). The artist must not be stamped as fetched, or the image
+  // backfill never asks again.
+  let imageLookupFailed = false;
 
   for (const api of apisToTry) {
     try {
@@ -281,7 +306,9 @@ export async function getArtistData(
               );
             }
 
-            if (!match) match = hits[0];
+            // No song by this artist in the hits: leave it unmatched rather
+            // than borrowing the first hit's artist, whose picture and bio
+            // belong to someone else (e.g. Electrypnose → Seed Nation).
 
             const artistId = match?.result?.primary_artist?.id;
             const imageUrl = match?.result?.primary_artist?.image_url;
@@ -289,17 +316,25 @@ export async function getArtistData(
 
             if (
               imageUrl &&
-              !data.imageUrl &&
+              !found.imageUrl.genius &&
               !imageUrl.includes('default_cover_image.png')
             ) {
-              data.imageUrl = imageUrl;
+              found.imageUrl.genius = imageUrl;
             }
 
             if (wantsGeniusArtwork && fallbackArtworkUrl && !data.artworkUrl && !fallbackArtworkUrl.includes('default_cover_image.png')) {
               data.artworkUrl = fallbackArtworkUrl;
             }
 
-            if (artistId && (!data.bio || (wantsGeniusArtwork && !data.artworkUrl))) {
+            // The artist record holds the bio, header artwork and avatar; skip
+            // the call when none of them is still wanted from Genius. Its bio
+            // is only wanted when Genius is the bio provider: Last.fm has one
+            // for most artists, and the call is half of the Genius traffic.
+            const wantsGeniusArtist =
+              (wantsGeniusArtwork && !data.artworkUrl) ||
+              !found.imageUrl.genius ||
+              (!found.bio.genius && (bioPreference === 'genius' || !settings.lastFmApiKey));
+            if (artistId && wantsGeniusArtist) {
               const artistJson = await geniusGetArtist(
                 artistId,
                 settings.geniusApiKey
@@ -313,10 +348,10 @@ export async function getArtistData(
                 }
                 if (
                   artistImageUrl &&
-                  !data.imageUrl &&
+                  !found.imageUrl.genius &&
                   !artistImageUrl.includes('default_avatar')
                 ) {
-                  data.imageUrl = artistImageUrl;
+                  found.imageUrl.genius = artistImageUrl;
                 }
                 const bioPlain =
                   artist?.description?.plain;
@@ -325,7 +360,7 @@ export async function getArtistData(
                   bioPlain.trim().length > 0 &&
                   bioPlain !== '?'
                 ) {
-                  data.bio = bioPlain;
+                  found.bio.genius = bioPlain;
                 }
               }
             }
@@ -335,13 +370,13 @@ export async function getArtistData(
         try {
           const artist = await lastFmArtistInfo(name, settings.lastFmApiKey);
           if (artist) {
-            if (!data.bio && artist.bio?.summary) {
-              const rawBio = artist.bio.summary;
-              data.bio = cleanHtml(rawBio.split('<a href')[0].trim());
+            if (artist.bio?.summary) {
+              const lastFmBio = cleanHtml(artist.bio.summary.split('<a href')[0].trim());
+              if (lastFmBio) found.bio.lastfm = lastFmBio;
             }
-            if (!data.imageUrl && artist.image) {
+            if (artist.image) {
               const imageUrl = extractLastFmImage(artist.image);
-              if (imageUrl) data.imageUrl = imageUrl;
+              if (imageUrl) found.imageUrl.lastfm = imageUrl;
             }
             if (!data.listeners && artist.stats?.listeners) {
               data.listeners = artist.stats.listeners;
@@ -365,12 +400,21 @@ export async function getArtistData(
           throw err;
         }
       }
-      if (data.imageUrl && data.bio) break;
+      if (found.imageUrl[imagePreference] && found.bio[bioPreference]) break;
     } catch (e) {
+      if (api === 'genius' || imgProvider === 'lastfm') {
+        imageLookupFailed = true;
+        if (isRateLimitError(e)) wasRateLimited = true;
+        lastError = isRateLimitError(e)
+          ? `Rate limited by ${api === 'genius' ? 'Genius' : 'Last.fm'}`
+          : lastError || `${api}: ${e instanceof Error ? e.message : String(e)}`;
+      }
       console.warn(`[Metadata] Failed fetching from ${api}:`, e);
     }
   }
 
+  data.imageUrl = pick('imageUrl', imagePreference);
+  data.bio = pick('bio', bioPreference);
   data.communityTags = sortedCommunityTags(communityTagMap);
 
   if (!wasRateLimited || data.imageUrl || data.bio) {
@@ -392,12 +436,12 @@ export async function getArtistData(
       data.imageUrl || null,
       data.bio || null,
       mbArtistId || cached?.mbid || null,
-      !wasRateLimited,
+      !wasRateLimited && !(imageLookupFailed && !data.imageUrl),
       extras
     );
   }
 
-  if (lastError && !data.imageUrl && !data.bio) {
+  if (lastError && !data.imageUrl && (!data.bio || imageLookupFailed)) {
     data.error = lastError;
   }
 

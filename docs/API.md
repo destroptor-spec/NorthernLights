@@ -216,6 +216,10 @@ Every queue mutation includes `expectedRevision`. A stale revision returns `409 
 
 Supported patch operations are `replaceQueue`, `insert`, `remove`, `move`, and `setTransport`. Queue entries have stable UUIDs so duplicate track IDs remain independently addressable.
 
+**The entry that plays is not removable.** It is not queued any more: skipping moves past it. A `remove` that names the session's `currentEntryId` is refused with `409 CURRENT_ENTRY_PLAYING` (`details.entryId`, `details.current`) and nothing in the patch is applied. `replaceQueue` still replaces everything, the current entry included, and `replaceQueue` with no tracks empties the queue.
+
+**Infinity, kept by the server.** `setTransport` takes `infinity` (boolean) alongside `repeatMode` and `shuffle`, and the session returns it as `infinity`. While it is on and something plays the session (an output that has not ended, of any kind), the server keeps three entries after the current one. It asks the recommendation engine, seeded from the end of the queue and excluding what is queued, and appends the result as an ordinary queue change (`playbackSession.updated`), at most one run at a time per session. It checks after a report moves the output to another entry, after any patch, and when the output is claimed. An output takes the session's queue as the one that counts, so it plays what the server appends; a client that holds the output (or casts to a receiver that does) must not append Infinity tracks itself. `POST /recommendations/next` stays for clients that play without a session.
+
 **Anchors.** `insert` and `move` take either a numeric position (`index` / `toIndex`) or `afterEntryId`, never both. `afterEntryId: null` means the head of the queue. An anchor means the same thing after other clients' edits, so a client can rebase a rejected patch by resending it; positions cannot. If the anchor has been removed, the server answers `409 ANCHOR_NOT_FOUND` with `details.anchorEntryId` and the current session in `details.current`. Moving an entry that no longer exists is a no-op, and moving an entry after itself leaves it in place. First-party clients use only anchors; the position forms remain for existing clients.
 
 **Proposed entry IDs.** `insert` and `replaceQueue` accept `entryIds`, one unique UUID per track, so an optimistic local entry and the confirmed server entry share an ID from the start. On `insert`, an ID that is already in the queue rejects the whole patch with `409 ENTRY_ID_CONFLICT` (`details.entryIds`, `details.current`). On `replaceQueue`, an ID that names an existing entry for the same track keeps that entry; for a different track it is a conflict. Without `entryIds` the server generates IDs.
@@ -1323,6 +1327,7 @@ HLS media playlist segment mapping index.
 Start HLS stream slicing/transcoding in the background before playback begins.
 - **Query Params**: `quality`, `codec`, and optional `maxBitrate=64k` for a Data Saver Auto package.
 - **Auto behavior**: prepares the complete adaptive package in one FFmpeg process and returns rendition count details. Conservative prebuffering requests one queued track; aggressive prebuffering may request two tracks, still with one process per Auto track.
+- **Not for direct playback**: a track the client will stream as its original file (`quality=source` and a format the browser plays natively) is never prewarmed; the web client loads that file ahead itself instead.
 - **Example Response**:
   ```json
   {

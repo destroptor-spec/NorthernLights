@@ -31,7 +31,7 @@ import {
   refreshArtistVideosIfStale,
   testYouTubeConnection,
   getMusicVideosForArtist,
-  getMusicVideoForTrack,
+  lookupMusicVideoForTrack,
   getCurrentDayUsage as getYoutubeDayUsage,
   YoutubeBudgetError,
   YoutubeConfigError,
@@ -1171,6 +1171,7 @@ router.get('/providers/external/artist-videos/:artistId', requireAuth, async (re
     try {
       const r = await refreshArtistVideosIfStale(artistId);
       refreshed = r.refreshed;
+      stale = r.reason === 'pending' || r.reason === 'temporary-error';
     } catch (err) {
       if (err instanceof YoutubeBudgetError) {
         stale = true;
@@ -1200,8 +1201,8 @@ router.get('/providers/external/artist-videos/:artistId', requireAuth, async (re
 // the same freshness, concurrency and quota limits as the artist-page rail.
 router.get('/providers/external/track-video/:trackId', requireAuth, async (req, res) => {
   try {
-    const video = await getMusicVideoForTrack(String(req.params.trackId));
-    res.json({ video: video || null });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(await lookupMusicVideoForTrack(String(req.params.trackId)));
   } catch (err: any) {
     console.error('[YouTube] track-video error:', err.message);
     res.status(500).json({ error: err.message });
