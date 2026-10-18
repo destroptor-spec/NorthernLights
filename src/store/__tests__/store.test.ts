@@ -10,7 +10,7 @@ jest.mock('../../utils/sessionRemote', () => ({ sendRemoteAction: jest.fn(async 
 import { TrackInfo } from '../../utils/fileSystem';
 import { hasNextTrack } from '../../utils/queue';
 import { playbackManager } from '../../utils/PlaybackManager';
-import { getPlaybackTimeSnapshot } from '../playbackTime';
+import { getPlaybackTimeSnapshot, setPlaybackTimeState } from '../playbackTime';
 
 describe('Music Store Logic', () => {
   beforeEach(() => {
@@ -557,5 +557,49 @@ describe('Infinity on the session this device plays (Phase 4, every output)', ()
     const notYet = prepare(true, false);
     await usePlayerStore.getState().ensureInfinityQueue();
     expect(notYet).toHaveBeenCalled();
+  });
+});
+
+describe('plays and scrobbles counted here or by the server', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  // Drives the store's onTimeUpdate the way playback does.
+  const listenUntil = (seconds: number) => (playbackManager as unknown as { onTimeUpdateCallback: (t: number) => void }).onTimeUpdateCallback(seconds);
+  const prepare = (sync: boolean, holds: boolean) => {
+    jest.spyOn(castManager, 'receiverFollowsSession').mockReturnValue(false);
+    jest.spyOn(sessionMirror, 'holdsOutput').mockReturnValue(holds);
+    const fetchMock = jest.fn(async (_url: string, _init?: { body: string }) => ({ ok: true }));
+    (globalThis as unknown as { fetch: unknown }).fetch = fetchMock;
+    const recordPlay = jest.fn();
+    setPlaybackTimeState({ currentTime: 0, duration: 200 });
+    usePlayerStore.setState({
+      syncPlaybackAcrossDevices: sync, recordPlay,
+      playlist: [{ id: 't1', path: '/t1.mp3', title: 'One', artist: 'A' }], currentIndex: 0,
+      _scrobbleStartAt: 1_000_000, _scrobbleEligible: false, playedThresholdPercent: 50,
+      lastFmConnected: true, lastFmScrobbleEnabled: true, listenBrainzConnected: false, listenBrainzScrobbleEnabled: false,
+    } as never);
+    const scrobbles = () => fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/scrobble'));
+    return { recordPlay, scrobbles };
+  };
+
+  it('with sync off, scrobbles the moment the track counts as played, not only when it ends by itself', () => {
+    // Prod 2026-10-18: nothing was scrobbled after Next, or while casting.
+    const { recordPlay, scrobbles } = prepare(false, false);
+    listenUntil(90);
+    expect(scrobbles()).toHaveLength(0);
+    listenUntil(101);
+    expect(recordPlay).toHaveBeenCalledWith('t1');
+    expect(scrobbles()).toHaveLength(1);
+    expect(JSON.parse(scrobbles()[0][1]!.body).tracks[0]).toMatchObject({ artist: 'A', track: 'One', timestamp: 1000 });
+    listenUntil(150);
+    expect(scrobbles()).toHaveLength(1);
+  });
+
+  it('leaves plays and scrobbles to the server while this device plays the session', () => {
+    const { recordPlay, scrobbles } = prepare(true, true);
+    listenUntil(150);
+    expect(recordPlay).not.toHaveBeenCalled();
+    expect(scrobbles()).toHaveLength(0);
+    expect(usePlayerStore.getState()._scrobbleEligible).toBe(true); // a later Next is still no skip
   });
 });

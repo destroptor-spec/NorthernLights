@@ -10,6 +10,7 @@ jest.mock('../services/playbackSession.service', () => ({
   patchPlaybackSession: jest.fn(),
 }));
 jest.mock('../services/sessionInfinity.service', () => ({ topUpSessionInfinity: jest.fn(async () => 0) }));
+jest.mock('../services/sessionListens.service', () => ({ noteSessionReport: jest.fn(async () => undefined), forgetSessionListen: jest.fn() }));
 jest.mock('../services/scopedToken.service', () => ({
   ...jest.requireActual('../services/scopedToken.service'),
   generateOutputCredential: jest.fn(async () => ({ token: 'output-token', expiresAt: '2026-10-13T12:00:00.000Z' })),
@@ -36,6 +37,7 @@ import {
 import { generateEphemeralScopedToken, generateOutputCredential, generateReceiverCredential } from '../services/scopedToken.service';
 import { isClientListening, publishApiV1Event } from '../services/apiV1Events.service';
 import { topUpSessionInfinity } from '../services/sessionInfinity.service';
+import { noteSessionReport } from '../services/sessionListens.service';
 
 const principal = { userId: 'user-1', username: 'andreas', role: 'admin', authKind: 'jwt', clientId: 'laptop-5678', clientName: 'Aurora Web' };
 
@@ -322,6 +324,18 @@ describe('Infinity kept by the server (Phase 4)', () => {
     (reportPlaybackOutput as jest.Mock).mockResolvedValueOnce({ accepted: true, revision: 6, entryChanged: false });
     await call('post', '/playback-sessions/:id/reports', { ...report, seq: 5, positionMs: 10_000 }, { id: 's-1' }, outputPrincipal);
     expect(topUpSessionInfinity).not.toHaveBeenCalled();
+  });
+
+  it('counts plays and scrobbles from every accepted report, and never from a stale one', async () => {
+    (noteSessionReport as jest.Mock).mockClear();
+    (reportPlaybackOutput as jest.Mock).mockResolvedValueOnce({ accepted: true, revision: 6, entryChanged: false });
+    await call('post', '/playback-sessions/:id/reports', { ...report, seq: 6, positionMs: 20_000 }, { id: 's-1' }, outputPrincipal);
+    expect(noteSessionReport).toHaveBeenCalledWith('user-1', 's-1', expect.objectContaining({ state: 'playing', positionMs: 20_000 }));
+
+    (noteSessionReport as jest.Mock).mockClear();
+    (reportPlaybackOutput as jest.Mock).mockResolvedValueOnce({ accepted: false, revision: 6 });
+    await call('post', '/playback-sessions/:id/reports', { ...report, seq: 2 }, { id: 's-1' }, outputPrincipal);
+    expect(noteSessionReport).not.toHaveBeenCalled();
   });
 
   it('tops up once a device claims the output, for itself or a receiver', async () => {

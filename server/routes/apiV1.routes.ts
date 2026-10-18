@@ -131,6 +131,7 @@ import {
 import { isPlaybackSyncEnabledFor } from '../services/playbackSync.service';
 import { publishApiV1Event, replayApiV1Events, subscribeApiV1Events, noteClientListening } from '../services/apiV1Events.service';
 import { topUpSessionInfinity } from '../services/sessionInfinity.service';
+import { forgetSessionListen, noteSessionReport } from '../services/sessionListens.service';
 import {
   generateEphemeralScopedToken,
   generateOutputCredential,
@@ -1145,6 +1146,8 @@ router.post('/playback-sessions/:id/reports', async (req, res) => {
   try {
     const { accepted, revision, entryChanged } = await reportPlaybackOutput({ userId: req.apiV1!.userId, grant, sessionId: req.params.id, report });
     dataResponse(req, res, { accepted, revision });
+    // Plays, skips and scrobbles are counted here, whatever plays the session.
+    if (accepted) void noteSessionReport(req.apiV1!.userId, req.params.id, report);
     // The output moved to another entry: the server keeps Infinity ahead of it.
     if (entryChanged) void topUpSessionInfinity(req.apiV1!.userId, req.params.id);
   } catch (error) {
@@ -1190,6 +1193,7 @@ router.delete('/playback-sessions/:id', async (req, res) => {
   if (!input) return;
   try {
     await deletePlaybackSession(req.apiV1!.userId, req.params.id, input.expectedRevision);
+    forgetSessionListen(req.params.id);
     res.status(204).end();
   } catch (error) {
     handleSessionError(req, res, error);
