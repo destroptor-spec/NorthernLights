@@ -1,5 +1,6 @@
 type RuntimeCacheMatchContext = {
     url: URL;
+    sameOrigin?: boolean;
 };
 
 type RuntimeCacheErrorContext = {
@@ -9,8 +10,13 @@ type RuntimeCacheErrorContext = {
 
 // API image-looking URLs must not fall into the public image cache when the
 // generic API NetworkOnly route is removed. Dedicated artwork routes opt in.
-export function isPublicImageRequest({ url }: RuntimeCacheMatchContext): boolean {
-    return !/^\/(?:api|rest)(?:\/|$)/.test(url.pathname)
+// Same-origin only: the worker's own fetches obey the CSP served with sw.js,
+// whose connect-src doesn't list image hosts, so intercepting a provider image
+// (images.genius.com, Last.fm) makes it fail where the page's img-src allows
+// it. External images reach the worker cache through proxy-image instead.
+export function isPublicImageRequest({ url, sameOrigin }: RuntimeCacheMatchContext): boolean {
+    return sameOrigin === true
+        && !/^\/(?:api|rest)(?:\/|$)/.test(url.pathname)
         && /\.(?:png|jpg|jpeg|gif|webp|avif)$/.test(url.href);
 }
 
