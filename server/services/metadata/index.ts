@@ -256,6 +256,26 @@ export async function getArtistData(
   if (bioProvider === 'genius' && !settings.geniusApiKey && settings.lastFmApiKey)
     pushApi('lastfm');
 
+  // Each provider records what it found, and the configured provider wins after
+  // the loop, with the other one as the fallback. The asking order alone used to
+  // decide: the provider asked first supplied both the picture and the bio, so
+  // with Genius pictures a Last.fm bio preference was never used.
+  type ArtistSource = 'genius' | 'lastfm';
+  const otherSource = (source: ArtistSource): ArtistSource => (source === 'genius' ? 'lastfm' : 'genius');
+  const preferredSource = (choice: string): ArtistSource => {
+    const source: ArtistSource = choice === 'genius' ? 'genius' : 'lastfm';
+    const configured = source === 'genius' ? settings.geniusApiKey : settings.lastFmApiKey;
+    return configured ? source : otherSource(source);
+  };
+  const imagePreference = preferredSource(imgProvider);
+  const bioPreference = preferredSource(bioProvider);
+  const found = {
+    imageUrl: {} as Partial<Record<ArtistSource, string>>,
+    bio: {} as Partial<Record<ArtistSource, string>>,
+  };
+  const pick = (field: keyof typeof found, preference: ArtistSource) =>
+    found[field][preference] ?? found[field][otherSource(preference)];
+
   let wasRateLimited = false;
   let lastError: string | undefined;
   // A provider that could have supplied the picture failed (outage, 5xx,
@@ -296,17 +316,25 @@ export async function getArtistData(
 
             if (
               imageUrl &&
-              !data.imageUrl &&
+              !found.imageUrl.genius &&
               !imageUrl.includes('default_cover_image.png')
             ) {
-              data.imageUrl = imageUrl;
+              found.imageUrl.genius = imageUrl;
             }
 
             if (wantsGeniusArtwork && fallbackArtworkUrl && !data.artworkUrl && !fallbackArtworkUrl.includes('default_cover_image.png')) {
               data.artworkUrl = fallbackArtworkUrl;
             }
 
-            if (artistId && (!data.bio || (wantsGeniusArtwork && !data.artworkUrl))) {
+            // The artist record holds the bio, header artwork and avatar; skip
+            // the call when none of them is still wanted from Genius. Its bio
+            // is only wanted when Genius is the bio provider: Last.fm has one
+            // for most artists, and the call is half of the Genius traffic.
+            const wantsGeniusArtist =
+              (wantsGeniusArtwork && !data.artworkUrl) ||
+              !found.imageUrl.genius ||
+              (!found.bio.genius && (bioPreference === 'genius' || !settings.lastFmApiKey));
+            if (artistId && wantsGeniusArtist) {
               const artistJson = await geniusGetArtist(
                 artistId,
                 settings.geniusApiKey
@@ -320,10 +348,10 @@ export async function getArtistData(
                 }
                 if (
                   artistImageUrl &&
-                  !data.imageUrl &&
+                  !found.imageUrl.genius &&
                   !artistImageUrl.includes('default_avatar')
                 ) {
-                  data.imageUrl = artistImageUrl;
+                  found.imageUrl.genius = artistImageUrl;
                 }
                 const bioPlain =
                   artist?.description?.plain;
@@ -332,7 +360,7 @@ export async function getArtistData(
                   bioPlain.trim().length > 0 &&
                   bioPlain !== '?'
                 ) {
-                  data.bio = bioPlain;
+                  found.bio.genius = bioPlain;
                 }
               }
             }
@@ -342,13 +370,13 @@ export async function getArtistData(
         try {
           const artist = await lastFmArtistInfo(name, settings.lastFmApiKey);
           if (artist) {
-            if (!data.bio && artist.bio?.summary) {
-              const rawBio = artist.bio.summary;
-              data.bio = cleanHtml(rawBio.split('<a href')[0].trim());
+            if (artist.bio?.summary) {
+              const lastFmBio = cleanHtml(artist.bio.summary.split('<a href')[0].trim());
+              if (lastFmBio) found.bio.lastfm = lastFmBio;
             }
-            if (!data.imageUrl && artist.image) {
+            if (artist.image) {
               const imageUrl = extractLastFmImage(artist.image);
-              if (imageUrl) data.imageUrl = imageUrl;
+              if (imageUrl) found.imageUrl.lastfm = imageUrl;
             }
             if (!data.listeners && artist.stats?.listeners) {
               data.listeners = artist.stats.listeners;
@@ -372,7 +400,7 @@ export async function getArtistData(
           throw err;
         }
       }
-      if (data.imageUrl && data.bio) break;
+      if (found.imageUrl[imagePreference] && found.bio[bioPreference]) break;
     } catch (e) {
       if (api === 'genius' || imgProvider === 'lastfm') {
         imageLookupFailed = true;
@@ -385,6 +413,8 @@ export async function getArtistData(
     }
   }
 
+  data.imageUrl = pick('imageUrl', imagePreference);
+  data.bio = pick('bio', bioPreference);
   data.communityTags = sortedCommunityTags(communityTagMap);
 
   if (!wasRateLimited || data.imageUrl || data.bio) {
