@@ -1,6 +1,6 @@
 import { memo, useEffect, useState } from 'react';
 import { usePlayerStore } from '../store/index';
-import { useFollowedDeviceLabel } from '../hooks/useFollowedDeviceName';
+import { DeviceStrip } from './DeviceStrip';
 import { useDisplayedPlaying } from '../hooks/useDisplayedPlaying';
 import { hasNextTrack } from '../utils/queue';
 import { Play, Speaker } from 'lucide-react';
@@ -23,7 +23,6 @@ const MobileMiniPlayer = () => {
   const prevTrack = usePlayerStore((s) => s.prevTrack);
   const castConnected = usePlayerStore((s) => s.castConnected);
   const castPlaybackStatus = usePlayerStore((s) => s.castPlaybackStatus);
-  const followedDeviceLabel = useFollowedDeviceLabel();
   const audioOutputSupported = usePlayerStore((s) => s.audioOutputSupported);
   const audioOutputActive = usePlayerStore((s) => s.audioOutputActive);
   const audioOutputDeviceLabel = usePlayerStore((s) => s.audioOutputDeviceLabel);
@@ -116,8 +115,8 @@ const MobileMiniPlayer = () => {
   // Only a failed Cast start changes the device line; a start in progress
   // shows the play button's spinner and nothing else.
   const castDeviceLabel = castDeviceName || 'Cast device';
-  const secondaryLabel = followedDeviceLabel ? followedDeviceLabel
-    : !castConnected ? (currentTrack.artist || 'Unknown Artist')
+  // Another device that plays is named by the device strip, not here.
+  const secondaryLabel = !castConnected ? (currentTrack.artist || 'Unknown Artist')
     : castPlaybackStatus === 'unconfirmed' ? `Playback not confirmed on ${castDeviceLabel}`
     : castDeviceLabel;
 
@@ -221,6 +220,7 @@ const MobileMiniPlayer = () => {
             </button>
           </div>
         </div>
+        <DeviceStrip variant="mini" />
       </div>
     </>
   );

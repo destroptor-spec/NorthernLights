@@ -16,6 +16,7 @@ import { buildBloomGradient } from '../utils/coverGradient';
 import { useTrackMusicVideo } from '../hooks/useTrackMusicVideo';
 import MobileNowPlayingVideo, { type VideoPhase } from './MobileNowPlayingVideo';
 import { QueueList, useClearQueueWithUndo, type QueueListHandle } from './QueueList';
+import { DeviceStrip } from './DeviceStrip';
 import { hardwareKeysControlCastVolume } from '../utils/castVolumeKeys';
 
 interface MobileNowPlayingProps {
@@ -311,23 +312,10 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
             locally, "on {device}" when casting or on a selected output. */}
         <div className="mobile-now-playing-heading">
           <span className="mobile-now-heading-line">
-            {(castConnected || followedDeviceName) && <span className="mobile-now-heading-dot" aria-hidden="true" />}
+            {castConnected && <span className="mobile-now-heading-dot" aria-hidden="true" />}
             Now Playing
             {castConnected && castDeviceName && (
               <span className="mobile-now-heading-device"> on {castDeviceName}</span>
-            )}
-            {!castConnected && followedDeviceName && (
-              <>
-                {' '}
-                <button
-                  type="button"
-                  className="mobile-now-heading-device mobile-now-heading-device-button"
-                  onClick={() => usePlayerStore.getState().openPlayWhere()}
-                  aria-label={`Music is on ${followedDeviceName}. Choose where to play`}
-                >
-                  on {followedDeviceName}
-                </button>
-              </>
             )}
             {!castConnected && !followedDeviceName && audioOutputActive && (
               <span className="mobile-now-heading-device"> on {audioOutputDeviceLabel || 'selected output'}</span>
@@ -517,6 +505,7 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
 
           <CastButton size="sm" showIntro={false} className="mobile-now-cast-control" />
         </div>
+        <DeviceStrip variant="full" />
       </div>
 
       {/* Safe area bottom spacer */}

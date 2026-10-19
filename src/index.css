@@ -9005,49 +9005,79 @@ a:focus-visible > .genre-card .genre-card__label {
   color: var(--color-text-secondary);
 }
 
-/* "Playing on <device>": another device plays the session and this one
-   follows it (Sync playback across devices). Takes the signal chain's place. */
-.player-follow {
-  display: inline-flex;
+/* "Playing on <device>" (DeviceStrip): another device plays the session and
+   this one follows it. One slim full-width band on every player surface, built
+   like the offline notice; tapping it opens "Play where?". */
+.device-strip {
+  display: flex;
   align-items: center;
-  gap: 0.4rem;
+  justify-content: center;
+  gap: 0.45rem;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 16px;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--color-primary) 22%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  color: var(--color-primary);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 150ms var(--ease-out);
+}
+.device-strip:hover,
+.device-strip:focus-visible {
+  background: color-mix(in srgb, var(--color-primary) 20%, transparent);
+}
+.device-strip:active {
+  background: color-mix(in srgb, var(--color-primary) 26%, transparent);
+}
+.device-strip-label {
   min-width: 0;
   overflow: hidden;
-  white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: 0.75rem;
-  color: var(--color-primary);
+  white-space: nowrap;
 }
-
-button.player-follow {
-  background: none;
-  border: 0;
-  padding: 0;
-  font: inherit;
-  font-size: 0.75rem;
-  cursor: pointer;
+.device-strip-chevron {
+  opacity: 0.7;
 }
-
-button.player-follow:hover {
-  text-decoration: underline;
-}
-
-.mobile-now-heading-device-button {
-  background: none;
-  border: 0;
-  padding: 0;
-  font: inherit;
-  cursor: pointer;
-}
-
-.player-follow::before {
+/* Room at the end of the page for the strip the player has grown by. */
+.app-scroll-viewport.has-device-strip::after {
   content: '';
-  inline-size: 0.4rem;
-  block-size: 0.4rem;
-  flex: 0 0 0.4rem;
-  border-radius: var(--radius-pill);
-  background: var(--color-primary);
-  box-shadow: 0 0 0.6rem color-mix(in srgb, var(--color-primary) 60%, transparent);
+  display: block;
+  height: 44px;
+}
+/* The device stopped answering: the offline notice's warning tint. */
+.device-strip.is-silent {
+  color: var(--color-warning);
+  border-top-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+}
+/* Desktop bar: the shell's bottom row, edge to edge (docked or floating). */
+.device-strip--bar {
+  margin: 8px -16px -8px;
+  width: calc(100% + 32px);
+  border-radius: 0 0 21px 21px;
+}
+.player-shell--dock .device-strip--bar {
+  margin: 8px -24px -8px;
+  width: calc(100% + 48px);
+  border-radius: 0;
+}
+/* Mobile: touch targets. */
+.device-strip--mini {
+  min-height: 40px;
+}
+.device-strip--full {
+  min-height: 44px;
+  margin-top: 0.75rem;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 22%, transparent);
+}
+.device-strip--full.is-silent {
+  border-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
 }
 
 .player-artist-link {

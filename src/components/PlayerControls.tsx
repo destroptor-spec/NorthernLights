@@ -466,16 +466,9 @@ export const PlayerControls: React.FC = () => {
                   {currentTrack.artist || 'Unknown Artist'}
                 </span>
               )}
-              {followedDeviceLabel ? (
-                <button
-                  type="button"
-                  className="player-follow"
-                  title={`${followedDeviceLabel}. Choose where to play`}
-                  onClick={() => usePlayerStore.getState().openPlayWhere()}
-                >
-                  {followedDeviceLabel}
-                </button>
-              ) : (sourceFormat || castConnected || audioOutputActive) && (
+              {/* While another device plays, the device strip says where
+                  (DeviceStrip); this device's own signal chain says nothing. */}
+              {!followedDeviceLabel && (sourceFormat || castConnected || audioOutputActive) && (
                 <SignalChain
                   sourceFormat={sourceFormat}
                   sourceBitrate={sourceBitrate}
