@@ -4,15 +4,16 @@ import { usePlayerStore } from '../store/index';
 import { useFollowedDeviceLabel } from '../hooks/useFollowedDeviceName';
 
 /**
- * "Playing on NAD Forstærker": one strip with one look on every player
- * surface (the desktop bar, docked or floating; the mobile mini player; full
- * Now Playing), shown only while this device follows another one that plays
- * the session. Tapping it opens "Play where?". Built like the offline notice:
+ * "Playing on NAD Forstærker": one strip with one look on the player bars
+ * (the desktop bar, docked or floating, and the mobile mini player; full Now
+ * Playing says it in its heading instead), shown only while this device
+ * follows another one that plays the session. Tapping it opens "Play
+ * where?". Built like the offline notice:
  * a slim full-width band with an icon and one line. Before, the line lived in
  * a different place on each surface, and replaced the artist on the mini
  * player (Andreas, 2026-10-18).
  */
-export const DeviceStrip: React.FC<{ variant: 'bar' | 'mini' | 'full' }> = ({ variant }) => {
+export const DeviceStrip: React.FC<{ variant: 'bar' | 'mini' }> = ({ variant }) => {
   const label = useFollowedDeviceLabel();
   const silent = usePlayerStore((s) => !!s.sessionFollow?.silent);
   if (!label) return null;

@@ -7545,15 +7545,6 @@ a:focus-visible > .genre-card .genre-card__label {
   text-overflow: ellipsis;
 }
 
-/* Live-cast state dot in the heading (replaces the old state chip). */
-.mobile-now-heading-dot {
-  inline-size: 0.4rem;
-  block-size: 0.4rem;
-  flex: 0 0 0.4rem;
-  border-radius: var(--radius-pill);
-  background: var(--color-primary);
-  box-shadow: 0 0 0.6rem color-mix(in srgb, var(--color-primary) 60%, transparent);
-}
 
 .mobile-now-playing-content {
   flex: 1;
@@ -9070,16 +9061,19 @@ a:focus-visible > .genre-card .genre-card__label {
 .device-strip--mini {
   min-height: 40px;
 }
-.device-strip--full {
-  min-height: 44px;
-  margin-top: 0.75rem;
-  border-radius: 14px;
-  border: 1px solid color-mix(in srgb, var(--color-primary) 22%, transparent);
+.mobile-now-heading-device-button {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
-.device-strip--full.is-silent {
-  border-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
+.mobile-now-heading-device.is-silent {
+  color: var(--color-warning);
 }
-
 .player-artist-link {
   text-decoration: none;
   cursor: pointer;

@@ -30,9 +30,9 @@ test('names the device that plays, and opens "Play where?" without expanding the
 
 test('says paused, and warns when the device stops answering', () => {
   usePlayerStore.setState({ sessionFollow: follow({ state: 'paused' }) } as never);
-  const { rerender } = render(<DeviceStrip variant="full" />);
+  const { rerender } = render(<DeviceStrip variant="bar" />);
   expect(screen.getByText('Paused on NAD Forstærker')).toBeTruthy();
   act(() => { usePlayerStore.setState({ sessionFollow: follow({ silent: true } as Partial<FollowedOutput>) } as never); });
-  rerender(<DeviceStrip variant="full" />);
+  rerender(<DeviceStrip variant="bar" />);
   expect(screen.getByText("NAD Forstærker isn't responding").closest('button')!.className).toContain('is-silent');
 });
