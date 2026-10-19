@@ -47,8 +47,6 @@ export const MainContent: React.FC = () => {
   const isScanningGlobal = usePlayerStore(state => state.isScanning);
   const playlist = usePlayerStore(state => state.playlist);
   const [playerPlacement] = usePlayerPlacement();
-  // The device strip makes the player taller while another device plays.
-  const deviceStripShown = usePlayerStore(state => !!state.sessionFollow);
   const [folderPathInput, setFolderPathInput] = React.useState('');
   // The single scroll viewport shared by every routed page (and the virtualized
   // grids). Restore its position on back/forward, reset to top on fresh nav.
@@ -63,7 +61,7 @@ export const MainContent: React.FC = () => {
             ? 'pb-32 md:pb-24'
             : 'pb-32 md:pb-44'
           : 'pb-16 md:pb-4'
-      }${playlist.length > 0 && deviceStripShown ? ' has-device-strip' : ''}`}>
+      }`}>
         {!hasLibrary && !isLibraryLoading && !libraryError
           && (location.pathname === '/' || location.pathname === '/library') ? (
           <React.Suspense fallback={<RouteFallback />}>

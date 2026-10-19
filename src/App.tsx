@@ -2,6 +2,7 @@ import React from 'react';
 import { PlaylistSidebar } from './components/PlaylistSidebar';
 import PlayerShell from './components/PlayerShell';
 import MobileMiniPlayer from './components/MobileMiniPlayer';
+import { DeviceStrip } from './components/DeviceStrip';
 import MobileBottomTabs from './components/MobileBottomTabs';
 import MobileHeader from './components/MobileHeader';
 import DesktopTabBar from './components/DesktopTabBar';
@@ -635,7 +636,9 @@ const App: React.FC = () => {
             onToggleScanner={toggleScanner}
           />
 
-          {!isOnline && (
+          {/* One notice under the top bar. Offline wins: "Playing on" another
+              device can't be true while this one can't reach the server. */}
+          {!isOnline ? (
             <div
               role="status"
               aria-live="polite"
@@ -644,6 +647,8 @@ const App: React.FC = () => {
               <WifiOff className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
               <span>You're offline — playing from cache. Library updates and search are paused.</span>
             </div>
+          ) : (
+            <DeviceStrip />
           )}
 
           <MainContent />

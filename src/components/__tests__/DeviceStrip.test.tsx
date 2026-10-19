@@ -12,27 +12,23 @@ afterEach(() => act(() => { usePlayerStore.setState({ sessionFollow: null } as n
 
 test('shows nothing while this device plays, or nothing plays elsewhere', () => {
   usePlayerStore.setState({ sessionFollow: null } as never);
-  const { container } = render(<DeviceStrip variant="bar" />);
+  const { container } = render(<DeviceStrip />);
   expect(container.firstChild).toBeNull();
 });
 
-test('names the device that plays, and opens "Play where?" without expanding the mini player', () => {
+test('names the device that plays, and opens "Play where?"', () => {
   const openPlayWhere = jest.fn();
   usePlayerStore.setState({ sessionFollow: follow(), openPlayWhere } as never);
-  const outer = jest.fn();
-  render(<div onClick={outer}><DeviceStrip variant="mini" /></div>);
-  const strip = screen.getByRole('button', { name: 'Playing on NAD Forstærker. Choose where to play' });
-  expect(strip.className).toContain('device-strip--mini');
-  strip.click();
+  render(<DeviceStrip />);
+  screen.getByRole('button', { name: 'Playing on NAD Forstærker. Choose where to play' }).click();
   expect(openPlayWhere).toHaveBeenCalled();
-  expect(outer).not.toHaveBeenCalled();
 });
 
 test('says paused, and warns when the device stops answering', () => {
   usePlayerStore.setState({ sessionFollow: follow({ state: 'paused' }) } as never);
-  const { rerender } = render(<DeviceStrip variant="bar" />);
+  const { rerender } = render(<DeviceStrip />);
   expect(screen.getByText('Paused on NAD Forstærker')).toBeTruthy();
   act(() => { usePlayerStore.setState({ sessionFollow: follow({ silent: true } as Partial<FollowedOutput>) } as never); });
-  rerender(<DeviceStrip variant="bar" />);
+  rerender(<DeviceStrip />);
   expect(screen.getByText("NAD Forstærker isn't responding").closest('button')!.className).toContain('is-silent');
 });

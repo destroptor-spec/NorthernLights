@@ -8997,8 +8997,8 @@ a:focus-visible > .genre-card .genre-card__label {
 }
 
 /* "Playing on <device>" (DeviceStrip): another device plays the session and
-   this one follows it. One slim full-width band on every player surface, built
-   like the offline notice; tapping it opens "Play where?". */
+   this one follows it. One slim full-width band under the top bar, where the
+   offline notice goes (offline replaces it); tapping it opens "Play where?". */
 .device-strip {
   display: flex;
   align-items: center;
@@ -9008,7 +9008,7 @@ a:focus-visible > .genre-card .genre-card__label {
   min-height: 32px;
   padding: 6px 16px;
   border: 0;
-  border-top: 1px solid color-mix(in srgb, var(--color-primary) 22%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-primary) 22%, transparent);
   background: color-mix(in srgb, var(--color-primary) 12%, transparent);
   color: var(--color-primary);
   font: inherit;
@@ -9034,32 +9034,17 @@ a:focus-visible > .genre-card .genre-card__label {
 .device-strip-chevron {
   opacity: 0.7;
 }
-/* Room at the end of the page for the strip the player has grown by. */
-.app-scroll-viewport.has-device-strip::after {
-  content: '';
-  display: block;
-  height: 44px;
-}
 /* The device stopped answering: the offline notice's warning tint. */
+/* Tappable on touch screens: 44px (DESIGN.md). */
+@media (max-width: 767px) {
+  .device-strip {
+    min-height: 44px;
+  }
+}
 .device-strip.is-silent {
   color: var(--color-warning);
-  border-top-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
   background: color-mix(in srgb, var(--color-warning) 12%, transparent);
-}
-/* Desktop bar: the shell's bottom row, edge to edge (docked or floating). */
-.device-strip--bar {
-  margin: 8px -16px -8px;
-  width: calc(100% + 32px);
-  border-radius: 0 0 21px 21px;
-}
-.player-shell--dock .device-strip--bar {
-  margin: 8px -24px -8px;
-  width: calc(100% + 48px);
-  border-radius: 0;
-}
-/* Mobile: touch targets. */
-.device-strip--mini {
-  min-height: 40px;
 }
 .mobile-now-heading-device-button {
   background: none;

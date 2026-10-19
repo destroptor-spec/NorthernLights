@@ -1,6 +1,6 @@
 import { memo, useEffect, useState } from 'react';
 import { usePlayerStore } from '../store/index';
-import { DeviceStrip } from './DeviceStrip';
+
 import { useDisplayedPlaying } from '../hooks/useDisplayedPlaying';
 import { hasNextTrack } from '../utils/queue';
 import { Play, Speaker } from 'lucide-react';
@@ -220,7 +220,6 @@ const MobileMiniPlayer = () => {
             </button>
           </div>
         </div>
-        <DeviceStrip variant="mini" />
       </div>
     </>
   );

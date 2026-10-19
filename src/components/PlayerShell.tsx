@@ -2,7 +2,6 @@ import React, { useRef, useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import PlayerControls from './PlayerControls';
 import { usePlayerPlacement } from '../hooks/usePlayerPlacement';
-import { DeviceStrip } from './DeviceStrip';
 
 /**
  * Wraps PlayerControls in the floating / docked chrome and renders the
@@ -64,7 +63,6 @@ const PlayerShellInner: React.FC = () => {
       <div className="player-shell-inner">
         <PlayerControls />
       </div>
-      <DeviceStrip variant="bar" />
     </div>
   );
 };
