@@ -1796,7 +1796,49 @@
         return segment;
       };
 
+      // A device with a screen can hide this page behind its screensaver.
+      // Chrome then runs timers once a minute, and Shaka, which by default
+      // buffers only a few segments ahead, runs dry between wake-ups: the
+      // music stops and starts while the state says PLAYING (Stue TV,
+      // 2026-10-20). With a screen, buffer about a whole song ahead (~3 MB at
+      // 128k). Audio-only devices, the oldest receivers among them, keep the
+      // defaults that already play well there.
+      var DISPLAY_BUFFERING_GOAL_SEC = 180;
+      var bufferProfile = '';
+      var bufferProfileLogged = false;
+
+      function applyBufferProfile() {
+        var display = false;
+        try {
+          var caps = context.getDeviceCapabilities() || {};
+          var displayKey = (cast.framework.system.DeviceCapabilities
+            && cast.framework.system.DeviceCapabilities.DISPLAY_SUPPORTED) || 'display_supported';
+          display = caps[displayKey] === true;
+        } catch (capsError) {
+          display = false;
+        }
+        if (!display) {
+          bufferProfile = 'display=false bufferingGoal=default';
+          return;
+        }
+        try {
+          playbackConfig.shakaConfig = { streaming: { bufferingGoal: DISPLAY_BUFFERING_GOAL_SEC } };
+          playerManager.setPlaybackConfig(playbackConfig);
+          bufferProfile = 'display=true bufferingGoal=' + DISPLAY_BUFFERING_GOAL_SEC;
+        } catch (configError) {
+          bufferProfile = 'display=true bufferingGoal=default error=' + safeLogValue(configError && configError.message);
+        }
+      }
+
+      // Logs need the media token, which arrives with the first LOAD.
+      function logBufferProfileOnce() {
+        if (bufferProfileLogged || !bufferProfile || !currentAuthToken) return;
+        bufferProfileLogged = true;
+        postDiagnosticMarker('receiver-buffer-profile', bufferProfile);
+      }
+
       context.addEventListener(cast.framework.system.EventType.READY, function() {
+        applyBufferProfile();
         suppressDefaultCastUi();
         logAndPost('ok', LOG_TAG, 'Receiver started, forced codec: ' + FORCED_CAST_CODEC);
         // Post the device's own claims about lossless progressive support, so
@@ -1899,6 +1941,7 @@
           lastRender.queueKey = '';
           suppressDefaultCastUi();
           postReceiverHeartbeat('load');
+          logBufferProfileOnce();
           syncUi(true);
           return loadRequestData;
         }
