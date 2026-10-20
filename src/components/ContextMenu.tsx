@@ -5,6 +5,8 @@ export function useIsMobile(breakpoint = 640) {
     const [isMobile, setIsMobile] = useState(() => window.innerWidth < breakpoint);
 
     useEffect(() => {
+        // Not every environment has matchMedia (jsdom in tests): keep the width read at mount.
+        if (typeof window.matchMedia !== 'function') return;
         const mq = window.matchMedia(`(max-width: ${breakpoint - 1}px)`);
         const handler = (event: MediaQueryListEvent) => setIsMobile(event.matches);
         mq.addEventListener('change', handler);

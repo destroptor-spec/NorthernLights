@@ -11,6 +11,7 @@ import { Infinity, FileText, Waypoints } from 'lucide-react';
 import { LyricsPanel } from './LyricsPanel';
 import { LoveButton } from './LoveButton';
 import { CastButton } from './cast/CastButton';
+import { ConnectButton } from './ConnectMenu';
 import { WaveformProgressBar } from './WaveformProgressBar';
 import { castManager } from '../utils/CastManager';
 import { formatTime } from '../utils/formatTime';
@@ -623,6 +624,7 @@ export const PlayerControls: React.FC = () => {
           </button>
         )}
 
+        <ConnectButton className={auxBtnClass} iconSize={17} />
         <CastButton showDeviceName={false} showIntro showStopAction={false} size="sm" />
 
         {showLyrics && currentTrack && (

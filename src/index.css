@@ -8998,7 +8998,8 @@ a:focus-visible > .genre-card .genre-card__label {
 
 /* "Playing on <device>" (DeviceStrip): another device plays the session and
    this one follows it. One slim full-width band under the top bar, where the
-   offline notice goes (offline replaces it); tapping it opens "Play where?". */
+   offline notice goes (offline replaces it). It only says where; choosing is
+   in the Connect menu. */
 .device-strip {
   display: flex;
   align-items: center;
@@ -9014,16 +9015,6 @@ a:focus-visible > .genre-card .genre-card__label {
   font: inherit;
   font-size: 0.8rem;
   font-weight: 500;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  transition: background 150ms var(--ease-out);
-}
-.device-strip:hover,
-.device-strip:focus-visible {
-  background: color-mix(in srgb, var(--color-primary) 20%, transparent);
-}
-.device-strip:active {
-  background: color-mix(in srgb, var(--color-primary) 26%, transparent);
 }
 .device-strip-label {
   min-width: 0;
@@ -9035,26 +9026,14 @@ a:focus-visible > .genre-card .genre-card__label {
   opacity: 0.7;
 }
 /* The device stopped answering: the offline notice's warning tint. */
-/* Tappable on touch screens: 44px (DESIGN.md). */
-@media (max-width: 767px) {
-  .device-strip {
-    min-height: 44px;
-  }
-}
 .device-strip.is-silent {
   color: var(--color-warning);
   border-bottom-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
   background: color-mix(in srgb, var(--color-warning) 12%, transparent);
 }
-.mobile-now-heading-device-button {
-  background: none;
-  border: 0;
-  padding: 0;
-  font: inherit;
-  letter-spacing: inherit;
-  text-transform: inherit;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
+/* Connect (ConnectMenu): green while the music plays on another device. */
+.connect-button.is-elsewhere {
+  color: var(--color-primary);
 }
 .mobile-now-heading-device.is-silent {
   color: var(--color-warning);
