@@ -28,3 +28,9 @@ test('never removes the track that plays, or an entry that is already gone', () 
   expect(usePlayerStore.getState().playlist).toHaveLength(3);
   expect(usePlayerStore.getState().toasts).toHaveLength(0);
 });
+
+test('a dragged queue row moves up and down only', () => {
+  const { verticalOnly } = jest.requireActual('../QueueList') as typeof import('../QueueList');
+  const moved = verticalOnly({ transform: { x: 48, y: -120, scaleX: 1, scaleY: 1 } } as never);
+  expect(moved).toEqual({ x: 0, y: -120, scaleX: 1, scaleY: 1 });
+});

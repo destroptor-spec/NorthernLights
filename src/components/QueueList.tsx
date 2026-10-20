@@ -8,6 +8,7 @@ import {
   useSensor,
   useSensors,
   DragEndEvent,
+  type Modifier,
 } from '@dnd-kit/core';
 import {
   SortableContext,
@@ -65,6 +66,10 @@ export function useRemoveFromQueueWithUndo() {
     });
   }, [addToast]);
 }
+
+// A queue is a vertical list: a dragged row moves up and down only, never
+// sideways off the list (the touch queue in Now Playing let it wander).
+export const verticalOnly: Modifier = ({ transform }) => ({ ...transform, x: 0 });
 
 export interface QueueListHandle {
   scrollToIndex: (
@@ -157,6 +162,7 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
+        modifiers={[verticalOnly]}
         onDragEnd={handleDragEnd}
       >
         <SortableContext
