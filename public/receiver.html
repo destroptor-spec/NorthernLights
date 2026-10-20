@@ -1836,6 +1836,49 @@
         syncUi(true);
       });
 
+      // Diagnostics only. A TV screensaver hides this page; Chrome then runs
+      // its timers once a minute, Shaka fetches segments too late and the
+      // music stops and starts while the state still says PLAYING (Stue TV,
+      // 2026-10-20). Record what the platform and the page report, and when
+      // the timers slow down, so a stall can be matched to its cause.
+      function visibilityDetail() {
+        var parts = ['page=' + (document.visibilityState || 'unknown')];
+        try { parts.push('cast=' + context.getVisibilityState()); } catch (e) { /* older CAF */ }
+        try { parts.push('standby=' + context.getStandbyState()); } catch (e) { /* older CAF */ }
+        return parts.join(' ');
+      }
+
+      try {
+        context.addEventListener(cast.framework.system.EventType.VISIBILITY_CHANGED, function(e) {
+          postDiagnosticMarker('receiver-visibility', 'event=visibility isVisible=' + (e && e.isVisible) + ' ' + visibilityDetail());
+        });
+        context.addEventListener(cast.framework.system.EventType.STANDBY_CHANGED, function(e) {
+          postDiagnosticMarker('receiver-visibility', 'event=standby isStandby=' + (e && e.isStandby) + ' ' + visibilityDetail());
+        });
+        document.addEventListener('visibilitychange', function() {
+          postDiagnosticMarker('receiver-visibility', 'event=page ' + visibilityDetail());
+        });
+      } catch (visibilityListenerError) {
+        log('warn', LOG_TAG, 'visibility listeners failed: ' + safeStringify(visibilityListenerError));
+      }
+
+      var TIMER_CHECK_MS = 5000;
+      var TIMER_THROTTLED_GAP_MS = 15000;
+      var lastTimerCheckAt = Date.now();
+      var timersThrottled = false;
+      setInterval(function() {
+        var now = Date.now();
+        var gapMs = now - lastTimerCheckAt;
+        lastTimerCheckAt = now;
+        var throttled = gapMs > TIMER_THROTTLED_GAP_MS;
+        if (throttled === timersThrottled) return;
+        timersThrottled = throttled;
+        postDiagnosticMarker(
+          throttled ? 'receiver-timers-throttled' : 'receiver-timers-recovered',
+          'gapMs=' + gapMs + ' state=' + currentPlayerState + ' ' + visibilityDetail()
+        );
+      }, TIMER_CHECK_MS);
+
       playerManager.setMessageInterceptor(
         cast.framework.messages.MessageType.LOAD,
         function(loadRequestData) {
