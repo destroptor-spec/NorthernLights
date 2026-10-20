@@ -1822,7 +1822,10 @@
           return;
         }
         try {
-          playbackConfig.shakaConfig = { streaming: { bufferingGoal: DISPLAY_BUFFERING_GOAL_SEC } };
+          // Keep any Shaka settings already on the config; only raise the goal.
+          var shakaConfig = Object.assign({}, playbackConfig.shakaConfig);
+          shakaConfig.streaming = Object.assign({}, shakaConfig.streaming, { bufferingGoal: DISPLAY_BUFFERING_GOAL_SEC });
+          playbackConfig.shakaConfig = shakaConfig;
           playerManager.setPlaybackConfig(playbackConfig);
           bufferProfile = 'display=true bufferingGoal=' + DISPLAY_BUFFERING_GOAL_SEC;
         } catch (configError) {

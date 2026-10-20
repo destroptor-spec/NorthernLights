@@ -8,7 +8,7 @@ import vm from 'vm';
  * dry (Stue TV, 2026-10-20). With a screen the receiver buffers about a song
  * ahead; audio-only devices keep the defaults.
  */
-function startReceiver(capabilities: Record<string, unknown> | null) {
+function startReceiver(capabilities: Record<string, unknown> | null, initialShakaConfig?: Record<string, unknown>) {
   const html = fs.readFileSync(path.join(process.cwd(), 'public/receiver.html'), 'utf8');
   const receiverDoc = new DOMParser().parseFromString(html, 'text/html');
   const inlineScript = receiverDoc.body.querySelector('script:not([src])')!;
@@ -32,7 +32,7 @@ function startReceiver(capabilities: Record<string, unknown> | null) {
   };
   const cast = { framework: {
     CastReceiverContext: { getInstance: () => context },
-    PlaybackConfig: class {}, CastReceiverOptions: class {},
+    PlaybackConfig: class { shakaConfig = initialShakaConfig; }, CastReceiverOptions: class {},
     system: {
       EventType: { READY: 'READY', ERROR: 'ERROR' }, MessageType: { JSON: 'JSON' },
       DeviceCapabilities: { DISPLAY_SUPPORTED: 'display_supported' },
@@ -70,6 +70,14 @@ test('a device with a screen buffers about a song ahead and logs it once', () =>
   loadTrack();
   loadTrack();
   expect(profileLines(fetch)).toEqual(['display=true bufferingGoal=180']);
+});
+
+test('keeps Shaka settings already on the config', () => {
+  const { ready, player } = startReceiver({ display_supported: true }, { abr: { enabled: true }, streaming: { bufferBehind: 30 } });
+  ready();
+  expect(player.setPlaybackConfig.mock.calls[0][0].shakaConfig).toEqual({
+    abr: { enabled: true }, streaming: { bufferBehind: 30, bufferingGoal: 180 },
+  });
 });
 
 test('an audio-only device keeps the default buffer', () => {
