@@ -131,7 +131,10 @@ Phase 1's leftover "session-bound receiver tokens".
 - A receiver without the capability gets exactly today's LOAD and messages.
 - The second-sender rules (#119/#123: a device joining a Cast session another
   device casts leaves it again) also recognise a `receiver` output: its
-  `castSessionId` is the Cast session the receiver runs in. The device that
+  `castSessionId` is the Cast session the receiver runs in. The server reads
+  it from the stored output ID (`receiver:<castSessionId>`), so unlike a
+  `cast` output's it survives a server restart (prod 2026-10-20: a desktop
+  joining right after a deploy reloaded its queue over the TV). The device that
   claimed it (the session's `ownerClientId`) rejoining that Cast session is
   not a second sender. A take-over by a
   `receiver` output on the same Cast device leaves the music alone, and a

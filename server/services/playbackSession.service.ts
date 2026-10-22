@@ -144,11 +144,24 @@ const TERMINAL_OUTPUT_STATES = new Set(['stopped', 'idle', 'error']);
  * so itself, and a new claim replaces it.
  */
 /**
- * The Cast session each `cast` output sends to (or each `receiver` output runs
- * in), by playback session, for the grant that named it. Only a hint, so it is not stored: after a restart it
- * is unknown, and clients then act as if no other device casts there.
+ * The Cast session each `cast` output sends to, by playback session, for the
+ * grant that named it. Only a hint, so it is not stored: after a restart it
+ * is unknown, and clients then act as if no other device casts there. A
+ * `receiver` output needs no hint: its id names its Cast session.
  */
 const castSessionIds = new Map<string, { generation: number; castSessionId: string }>();
+
+const RECEIVER_OUTPUT_PREFIX = 'receiver:';
+
+/**
+ * The Cast session a receiver output runs in, read from its stored id
+ * (claimedOutputId), so a restart does not forget it. Prod 2026-10-20: right
+ * after a deploy the desktop joined the TV's Cast session, could not tell it
+ * was the session's output, and reloaded its own queue over it from 0:00.
+ */
+function receiverCastSessionId(outputId: string): string | null {
+  return outputId.startsWith(RECEIVER_OUTPUT_PREFIX) ? outputId.slice(RECEIVER_OUTPUT_PREFIX.length) || null : null;
+}
 
 function serializeOutput(row: SessionRow, now = Date.now()): PlaybackOutput | null {
   if (!row.output_id || !row.output_kind || !row.output_claimed_at) return null;
@@ -165,7 +178,9 @@ function serializeOutput(row: SessionRow, now = Date.now()): PlaybackOutput | nu
     ? 'ended'
     : now - lastHeard > OUTPUT_UNREACHABLE_AFTER_MS ? 'unreachable' : 'active';
   const cast = castSessionIds.get(row.id);
-  const castSessionId = cast && cast.generation === Number(row.output_generation) ? cast.castSessionId : null;
+  const castSessionId = row.output_kind === 'receiver'
+    ? receiverCastSessionId(row.output_id)
+    : cast && cast.generation === Number(row.output_generation) ? cast.castSessionId : null;
   return {
     id: row.output_id,
     kind: row.output_kind,
@@ -501,7 +516,7 @@ export async function patchPlaybackSession(input: {
  * Cast receiver in the named Cast session (docs/cast-receiver-output.md, PR B).
  */
 export function claimedOutputId(clientId: string, output: PlaybackOutputClaim): string {
-  return output.kind === 'receiver' ? `receiver:${output.castSessionId}` : clientId;
+  return output.kind === 'receiver' ? `${RECEIVER_OUTPUT_PREFIX}${output.castSessionId}` : clientId;
 }
 
 /**

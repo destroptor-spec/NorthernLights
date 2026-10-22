@@ -355,6 +355,20 @@ describeDb('playback sessions', () => {
         await expect(grantOf(claimed)).rejects.toBeInstanceOf(sessions.PlaybackOutputGrantReplacedError);
       });
 
+      it('still names its Cast session after a server restart', async () => {
+        const claimed = await forReceiver(await create(trackIds(0, 1)), 'cast-77');
+        // A restarted server: a fresh copy of the service, so nothing is
+        // remembered in memory; the database is the same.
+        const db = await import('../index');
+        let restarted: typeof sessions | undefined;
+        await jest.isolateModulesAsync(async () => {
+          jest.doMock('../index', () => db);
+          restarted = await import('../../services/playbackSession.service');
+        });
+        expect((await restarted!.getPlaybackSession(userId, claimed.id))!.output)
+          .toMatchObject({ id: 'receiver:cast-77', kind: 'receiver', castSessionId: 'cast-77' });
+      });
+
       it('is a new output in a new Cast session', async () => {
         const first = await forReceiver(await create(trackIds(0, 1)), 'cast-77');
         const second = await forReceiver(first, 'cast-88');
