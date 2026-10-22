@@ -64,13 +64,15 @@ export function explodeListCredit(part: string): string[] {
 /**
  * Split an ID3/Vorbis artist string into individual artist names. Handles
  * `feat.`/`ft.`/`featuring` markers and comma-list patterns ("A, B & C").
+ * With its dot, `feat.`/`ft.` needs no space after it ("Brooke Candy
+ * feat.Sia"); the bare words do, so names that merely contain them stay whole.
  * Deliberately does NOT split on a bare "&" or "and" — names like "Nick & Jay"
  * or "Florence and the Machine" are a single artist.
  */
 export function splitArtistNames(artistStr: string | null | undefined): string[] {
   if (!artistStr) return [];
   const featuredParts = artistStr
-    .split(/\s*(?:[\(\[\{]\s*)?\b(?:feat\.?|ft\.?|featuring)\b\.?\s+(?!$)/i)
+    .split(/\s*(?:[\(\[\{]\s*)?\b(?:(?:feat|ft)\.\s*|(?:feat|ft|featuring)\b\.?\s+)(?!$)/i)
     .map(cleanCreditPart)
     .filter(Boolean);
   const exploded = featuredParts.flatMap(explodeListCredit);
