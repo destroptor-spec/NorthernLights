@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useMemo, useId } from 'react';
 import { usePlayerStore } from '../../store/index';
 import { useToast } from '../../hooks/useToast';
-import { Loader2, GitMerge, EyeOff, RefreshCw, AlertCircle, Users2, Layers, Wand2, ArrowLeft, ArrowLeftRight, CheckCircle2, Trash2 } from 'lucide-react';
+import { Loader2, GitMerge, EyeOff, RefreshCw, AlertCircle, Users2, Layers, Wand2, ArrowLeft, ArrowLeftRight, CheckCircle2, Trash2, Fingerprint } from 'lucide-react';
 import { ConfirmModal } from '../ConfirmModal';
 
 interface ArtistDuplicateCandidate {
@@ -20,12 +20,22 @@ interface ArtistDuplicateCandidate {
     }>;
 }
 
-type CandidateKind = 'same-identity' | 'compound-credit';
+type CandidateKind = 'same-identity' | 'compound-credit' | 'same-musicbrainz';
 
 const candidateKind = (candidate: ArtistDuplicateCandidate): CandidateKind =>
-    candidate.candidateKey.startsWith('artist-amp-compound:') ? 'compound-credit' : 'same-identity';
+    candidate.candidateKey.startsWith('artist-amp-compound:') ? 'compound-credit'
+        : candidate.candidateKey.startsWith('artist-mbid:') ? 'same-musicbrainz'
+            : 'same-identity';
 
 const KindBadge: React.FC<{ kind: CandidateKind }> = ({ kind }) => {
+    if (kind === 'same-musicbrainz') {
+        return (
+            <span className="artist-entity-badge artist-entity-badge--mbid">
+                <Fingerprint size={11} aria-hidden="true" />
+                Same MusicBrainz artist
+            </span>
+        );
+    }
     if (kind === 'compound-credit') {
         return (
             <span className="artist-entity-badge artist-entity-badge--compound">
@@ -222,6 +232,8 @@ export const ArtistEntitiesTab: React.FC = () => {
 
         const message = kind === 'compound-credit'
             ? `Merge the credit row${duplicateArtistIds.length === 1 ? '' : 's'} into "${canonicalArtist.name}"? Tracks, subscriptions, dismissed-auto state, and concert events will be moved. Metadata (MBID, image, bio) will not be copied across because the credit row's MBID belongs to the credit string, not to ${canonicalArtist.name}.`
+            : kind === 'same-musicbrainz'
+            ? `Fold the other spelling${duplicateArtistIds.length === 1 ? '' : 's'} into "${canonicalArtist.name}"? Tracks, subscriptions, dismissed-auto state, and concert events will be moved. Files tagged with ${duplicateArtistIds.length === 1 ? 'that spelling' : 'those spellings'} keep landing on "${canonicalArtist.name}" in later scans. Picture and bio are not copied.`
             : `Merge ${duplicateArtistIds.length} artist entr${duplicateArtistIds.length === 1 ? 'y' : 'ies'} into "${canonicalArtist.name}"? Track links, subscriptions, dismissed-auto state, concert events, and any missing metadata will be copied to the canonical artist.`;
 
         setConfirmDialog({
@@ -368,6 +380,7 @@ export const ArtistEntitiesTab: React.FC = () => {
 
     const sameIdentityCount = candidates.filter(c => candidateKind(c) === 'same-identity').length;
     const compoundCount = candidates.filter(c => candidateKind(c) === 'compound-credit').length;
+    const musicBrainzCount = candidates.filter(c => candidateKind(c) === 'same-musicbrainz').length;
 
     return (
         <div className="settings-section artist-entities-settings">
@@ -401,6 +414,10 @@ export const ArtistEntitiesTab: React.FC = () => {
                     <span>Compound</span>
                     <strong>{compoundCount}</strong>
                 </div>
+                <div className="artist-entities-overview__item">
+                    <span>MusicBrainz</span>
+                    <strong>{musicBrainzCount}</strong>
+                </div>
             </section>
 
             <section className="artist-entities-guide">
@@ -421,6 +438,17 @@ export const ArtistEntitiesTab: React.FC = () => {
                         <p>
                             Credits such as <code>Tony Bennett &amp; Lady Gaga</code> or <code>The Chainsmokers + Kygo</code>
                             can be folded into the canonical artist row. Tracks move across, but credit-string metadata stays behind.
+                        </p>
+                    </div>
+                </div>
+                <div className="artist-entities-guide__item">
+                    <KindBadge kind="same-musicbrainz" />
+                    <div>
+                        <h4>Same MusicBrainz artist</h4>
+                        <p>
+                            Artist names follow your files, so when files credit one MusicBrainz artist under different
+                            names, for example <code>Sabrina</code> and <code>Sabrina Salerno</code>, each name gets its own row.
+                            Keep them apart, or fold them into the name you want; later scans respect your choice.
                         </p>
                     </div>
                 </div>

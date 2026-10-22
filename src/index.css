@@ -3315,7 +3315,7 @@ a:focus-visible > .genre-card .genre-card__label {
 
 .artist-entities-overview {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--spacing-sm);
 }
 
@@ -3715,6 +3715,12 @@ a:focus-visible > .genre-card .genre-card__label {
   border-color: color-mix(in srgb, var(--aurora-pink) 34%, var(--glass-border));
   color: color-mix(in srgb, var(--aurora-pink) 78%, var(--color-text-primary));
   background: color-mix(in srgb, var(--aurora-pink) 10%, transparent);
+}
+
+.artist-entity-badge--mbid {
+  border-color: color-mix(in srgb, var(--aurora-teal) 38%, var(--glass-border));
+  color: color-mix(in srgb, var(--aurora-teal) 72%, var(--color-text-primary));
+  background: color-mix(in srgb, var(--aurora-teal) 10%, transparent);
 }
 
 .artist-entities-queue__header {

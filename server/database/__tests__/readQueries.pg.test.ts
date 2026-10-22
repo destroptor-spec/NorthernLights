@@ -245,6 +245,73 @@ describeDb('database read queries', () => {
     }
   });
 
+  describe('artist names follow the files, merges hold', () => {
+    const SABRINA_MBID = '00000000-0000-4000-8000-00000000aaaa';
+    const KANJI_MBID = '00000000-0000-4000-8000-00000000bbbb';
+    const GLUED_MBID = '00000000-0000-4000-8000-00000000cccc';
+    const created = new Set<string>();
+    const artist = async (name: string, mbid: string | null) => {
+      const id = await db.getOrCreateArtist(name, mbid);
+      created.add(id);
+      return id;
+    };
+    const row = async (id: string) => (await pool.query('SELECT name, mbid, merged_into FROM artists WHERE id = $1', [id])).rows[0];
+    const mbidCandidate = async (mbid: string) =>
+      (await db.getArtistDuplicateCandidates()).find(c => c.candidateKey === `artist-mbid:${mbid}`);
+
+    afterAll(async () => {
+      await pool.query("DELETE FROM artist_duplicate_reviews WHERE candidate_key LIKE 'artist-mbid:00000000-%' OR artist_ids::text LIKE ANY($1)",
+        [[...created].map(id => `%${id}%`)]);
+      await pool.query('UPDATE artists SET merged_into = NULL WHERE id = ANY($1::uuid[])', [[...created]]);
+      await pool.query('DELETE FROM artists WHERE id = ANY($1::uuid[])', [[...created]]);
+    });
+
+    it('gives a different spelling of the same MusicBrainz artist its own row, and reuses the row for the same spelling', async () => {
+      const salerno = await artist('ZZ Sabrina Salerno', SABRINA_MBID);
+      const sabrina = await artist('ZZ Sabrina', SABRINA_MBID);
+
+      expect(sabrina).not.toBe(salerno);
+      expect(await row(sabrina)).toMatchObject({ name: 'ZZ Sabrina', mbid: SABRINA_MBID });
+      expect(await artist('zz sabrina', SABRINA_MBID)).toBe(sabrina);
+      expect(await artist('ZZ Sabrina Salerno', SABRINA_MBID)).toBe(salerno);
+    });
+
+    it('applies the same rule to names without Latin letters', async () => {
+      const kanji = await artist('植松伸夫', KANJI_MBID);
+      expect(await artist('植松伸夫', KANJI_MBID)).toBe(kanji);
+      expect(await artist('ZZ Nobuo Uematsu', KANJI_MBID)).not.toBe(kanji);
+    });
+
+    it('lists the spellings for review, hides them once kept apart, and keeps a fold after it', async () => {
+      const salerno = await artist('ZZ Sabrina Salerno', SABRINA_MBID);
+      const sabrina = await artist('ZZ Sabrina', SABRINA_MBID);
+      const candidate = await mbidCandidate(SABRINA_MBID);
+      expect(candidate?.artists.map(a => a.id).sort()).toEqual([salerno, sabrina].sort());
+
+      await db.dismissArtistDuplicateCandidate({ candidateKey: candidate!.candidateKey, signature: candidate!.signature, artistIds: [salerno, sabrina] });
+      expect(await mbidCandidate(SABRINA_MBID)).toBeUndefined();
+
+      await db.mergeArtistsManually({ canonicalArtistId: salerno, duplicateArtistIds: [sabrina] });
+      expect(await artist('ZZ Sabrina', SABRINA_MBID)).toBe(salerno);
+      expect(await artist('ZZ Sabrina', null)).toBe(salerno);
+      expect((await row(sabrina)).merged_into).toBe(salerno);
+    });
+
+    it('counts a merged row\'s MusicBrainz id for the artist it was folded into', async () => {
+      const glued = await artist('ZZ CleanZZ CleanZZ Other', GLUED_MBID);
+      const clean = await artist('ZZ Clean', null);
+      await db.mergeArtistsManually({ canonicalArtistId: clean, duplicateArtistIds: [glued] });
+
+      // The fold holds for the clean spelling, found through the merged row's MBID.
+      expect(await artist('ZZ Clean', GLUED_MBID)).toBe(clean);
+      // A new spelling of that MusicBrainz artist gets its own row and is listed next to it.
+      const duo = await artist('ZZ Clean vs. ZZ Other', GLUED_MBID);
+      expect(duo).not.toBe(clean);
+      const candidate = await mbidCandidate(GLUED_MBID);
+      expect(candidate?.artists.map(a => a.id).sort()).toEqual([clean, duo].sort());
+    });
+  });
+
   it('reports the same missing and outdated backlog that incremental analysis selects', async () => {
     const directory = "/coverage/Blå — O'Brien";
     const ids = ['missing', 'loudness', 'embedding-only', 'legacy', 'current', 'future', 'simulated']
