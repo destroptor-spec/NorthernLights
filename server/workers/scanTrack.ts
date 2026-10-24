@@ -1,5 +1,6 @@
 import { workerLog } from './workerLog';
 import { firstTagValue, joinTagValues, splitTagValues } from '../utils/tagValues';
+import { albumArtistPeople, trackArtistPeople } from '../utils/tagPeople';
 import * as mm from 'music-metadata';
 import sharp from 'sharp';
 import { hashArt, resolveArtwork, encodeArt, artExists, ART_SIZES, ARTWORK_EXTRACTION_VERSION } from '../services/artCache';
@@ -185,14 +186,18 @@ function splitNameAndDetail(raw: string): { name: string; detail?: string } {
   return { name: raw.trim() };
 }
 
-function extractCredits(metadata: mm.IAudioMetadata): ExtractedCredit[] {
+// `performers` are the track's own artists (from ARTISTS): a credit naming one of
+// them is kept whole, so PRODUCER "Tyler, The Creator" isn't split at the comma.
+function extractCredits(metadata: mm.IAudioMetadata, performers: string[] = []): ExtractedCredit[] {
+  const knownPeople = new Set(performers.map(name => name.trim().toLowerCase()));
   const out: ExtractedCredit[] = [];
   const seen = new Set<string>();
 
   const push = (role: string | null, rawName: string, detail?: string) => {
     if (!role) return;
     if (typeof rawName !== 'string') return;
-    for (const piece of splitNames(rawName)) {
+    const pieces = knownPeople.has(rawName.trim().toLowerCase()) ? [rawName.trim()] : splitNames(rawName);
+    for (const piece of pieces) {
       const { name, detail: nameDetail } = splitNameAndDetail(piece);
       if (!name) continue;
       const finalDetail = (detail || nameDetail || '').trim();
@@ -390,9 +395,14 @@ process.stdin.on('data', async (chunk: string) => {
         }
       }
 
+      const artistPeople = trackArtistPeople(metadata);
       process.stdout.write(JSON.stringify({
         id: msg.id,
         metadata: {
+            // Per-person credits from ARTISTS / album-artist tags, each with its
+            // MusicBrainz id; null when the file doesn't list the people.
+            artistPeople,
+            albumArtistPeople: albumArtistPeople(metadata, artistPeople),
             artHash,
             artworkVersion,
             artist: joinTagValues(metadata.common.artist) || joinTagValues(metadata.common.albumartist),
@@ -421,7 +431,7 @@ process.stdin.on('data', async (chunk: string) => {
             mbReleaseGroupId: metadata.common.musicbrainz_releasegroupid || null,
             mbWorkId: metadata.common.musicbrainz_workid || null,
             rawUrls: rawUrls.length > 0 ? rawUrls : null,
-            credits: extractCredits(metadata),
+            credits: extractCredits(metadata, (artistPeople || []).map(person => person.name)),
         }
       }) + '\n');
     } catch (err: any) {
