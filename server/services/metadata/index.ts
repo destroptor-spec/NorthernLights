@@ -193,8 +193,9 @@ export async function getArtistData(
   let data: ArtistData = {};
   const communityTagMap = new Map<string, CommunityTag>();
 
-  if (settings.musicBrainzEnabled && (mbArtistId || cached?.mbid)) {
-    const mbid = mbArtistId || cached?.mbid;
+  // The stored id (from the files) wins over one the caller derived.
+  if (settings.musicBrainzEnabled && (cached?.mbid || mbArtistId)) {
+    const mbid = cached?.mbid || mbArtistId;
     if (mbid) {
       try {
         const mbArtist = await mbGetArtist(mbid);
@@ -435,7 +436,7 @@ export async function getArtistData(
       name,
       data.imageUrl || null,
       data.bio || null,
-      mbArtistId || cached?.mbid || null,
+      cached?.mbid || mbArtistId || null,
       !wasRateLimited && !(imageLookupFailed && !data.imageUrl),
       extras
     );

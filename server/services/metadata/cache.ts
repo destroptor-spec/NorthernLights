@@ -27,6 +27,10 @@ export interface ArtistCacheExtras {
   members?: string | null; // JSON
 }
 
+// An artist's MusicBrainz id comes from the files (the scanner). Provider
+// lookups only fill an empty one: an artist page used to send the id of one of
+// the artist's tracks, and on a joint album that was a co-artist's (Tony
+// Bennett got Diana Krall's id from her solo song on their album).
 export async function upsertArtistCache(
   name: string,
   imageUrl: string | null,
@@ -45,7 +49,7 @@ export async function upsertArtistCache(
          image_url = COALESCE($2, artists.image_url),
          artwork_url = COALESCE($3, artists.artwork_url),
          bio = COALESCE($4, artists.bio),
-         mbid = COALESCE($5, artists.mbid),
+         mbid = COALESCE(artists.mbid, $5),
          last_updated = $6,
          disambiguation = COALESCE($7, artists.disambiguation),
          area = COALESCE($8, artists.area),
@@ -77,7 +81,7 @@ export async function upsertArtistCache(
          image_url = COALESCE($2, artists.image_url),
          artwork_url = COALESCE($3, artists.artwork_url),
          bio = COALESCE($4, artists.bio),
-         mbid = COALESCE($5, artists.mbid)`,
+         mbid = COALESCE(artists.mbid, $5)`,
       [name, imageUrl, extras.artworkUrl ?? null, bio, mbid]
     );
   }

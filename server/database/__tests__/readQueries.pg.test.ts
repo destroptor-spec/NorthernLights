@@ -245,6 +245,70 @@ describeDb('database read queries', () => {
     }
   });
 
+  describe('artist MusicBrainz ids come from the files', () => {
+    const TONY = '00000000-0000-4000-8000-0000000000a1';
+    const DIANA = '00000000-0000-4000-8000-0000000000a2';
+    const OTHER = '00000000-0000-4000-8000-0000000000a3';
+    const ids: string[] = [];
+    let trackNo = 0;
+    const artistRow = async (name: string, mbid: string | null) => {
+      const id = (await pool.query('INSERT INTO artists (name, mbid) VALUES ($1, $2) RETURNING id', [name, mbid])).rows[0].id;
+      ids.push(id);
+      return id;
+    };
+    const track = async (artistId: string, artists: string[], mbArtistId: string | null) => {
+      const id = `bWJpZA==${trackNo++}`;
+      await pool.query(
+        `INSERT INTO tracks (id, title, artist, album, path, artist_id, album_id, duration, artists, mb_artist_id)
+         VALUES ($1, 'Track', $2, 'Test Album', $1, $3, $4, 180, $5, $6)`,
+        [id, artists.join(' & '), artistId, seeded.albumId, JSON.stringify(artists), mbArtistId],
+      );
+    };
+    const mbidOf = async (id: string) => (await pool.query('SELECT mbid FROM artists WHERE id = $1', [id])).rows[0].mbid;
+
+    afterAll(async () => {
+      await pool.query('DELETE FROM tracks WHERE artist_id = ANY($1::uuid[])', [ids]);
+      await pool.query('DELETE FROM artists WHERE id = ANY($1::uuid[])', [ids]);
+    });
+
+    it('lets an artist page fill an empty id but never replace one', async () => {
+      const { upsertArtistCache } = await import('../../services/metadata/cache');
+      const kept = await artistRow('ZZ Keeps Id', TONY);
+      const filled = await artistRow('ZZ Gets Id', null);
+      await upsertArtistCache('ZZ Keeps Id', null, null, DIANA);
+      await upsertArtistCache('ZZ Gets Id', null, null, DIANA, false);
+      expect(await mbidOf(kept)).toBe(TONY);
+      expect(await mbidOf(filled)).toBe(DIANA);
+    });
+
+    it("takes the id the artist's own tracks agree on when none of them carry the stored one", async () => {
+      const tony = await artistRow('ZZ Tiësto "Tony"', DIANA);
+      await track(tony, ['ZZ Tiësto "Tony"', 'ZZ Diana'], TONY);
+      await track(tony, ['ZZ Tiësto "Tony"'], TONY);
+
+      const backed = await artistRow('ZZ Backed', DIANA);
+      await track(backed, ['ZZ Backed'], DIANA);
+      await track(backed, ['ZZ Backed'], TONY);
+
+      const disagreeing = await artistRow('ZZ Disagreeing', DIANA);
+      await track(disagreeing, ['ZZ Disagreeing'], TONY);
+      await track(disagreeing, ['ZZ Disagreeing'], OTHER);
+
+      const notFirst = await artistRow('ZZ Not First', DIANA);
+      await track(notFirst, ['ZZ Someone Else', 'ZZ Not First'], TONY);
+
+      const missing = await artistRow('ZZ Missing Id', DIANA);
+      await track(missing, ['ZZ Missing Id'], TONY);
+      await track(missing, ['ZZ Missing Id'], null);
+
+      const changed = await db.alignArtistMbidsWithTracks();
+
+      expect(changed.filter(c => c.name.startsWith('ZZ '))).toEqual([{ name: 'ZZ Tiësto "Tony"', from: DIANA, to: TONY }]);
+      expect(await mbidOf(tony)).toBe(TONY);
+      for (const id of [backed, disagreeing, notFirst, missing]) expect(await mbidOf(id)).toBe(DIANA);
+    });
+  });
+
   describe('artist names follow the files, merges hold', () => {
     const SABRINA_MBID = '00000000-0000-4000-8000-00000000aaaa';
     const KANJI_MBID = '00000000-0000-4000-8000-00000000bbbb';

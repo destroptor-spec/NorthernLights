@@ -3403,6 +3403,48 @@ export async function getArtistsPage(options: EntityListPageOptions) {
   return res.rows;
 }
 
+// The files decide an artist's MusicBrainz id. A row whose id none of its own
+// tracks carry, while those tracks all agree on another, takes the files' id.
+// Only tracks whose first listed performer is the row count: on those the
+// track's first MusicBrainz artist id is that performer's (scanner, #170).
+// Tracks still holding the old album-owner assignment, or disagreeing, leave
+// the row alone. Fixes ids an artist page wrote from a co-artist's track
+// (Tony Bennett had Diana Krall's) or from an album-artist id (Various Artists).
+export async function alignArtistMbidsWithTracks(): Promise<Array<{ name: string; from: string; to: string }>> {
+  const db = await initDB();
+  const res = await db.query(`
+    WITH first_performer AS (
+      SELECT a.id,
+             COUNT(*) FILTER (WHERE t.mb_artist_id = a.mbid) AS backing,
+             COUNT(DISTINCT t.mb_artist_id) AS ids,
+             COUNT(*) FILTER (WHERE t.mb_artist_id IS NULL OR t.mb_artist_id = '') AS missing,
+             MIN(t.mb_artist_id) AS files_id
+      FROM artists a
+      JOIN tracks t ON t.artist_id = a.id
+      WHERE a.merged_into IS NULL
+        AND a.mbid IS NOT NULL
+        AND t.artists IS NOT NULL
+        AND lower(left(t.artists, length(to_json(a.name)::text) + 2))
+            IN (lower('[' || to_json(a.name)::text || ','), lower('[' || to_json(a.name)::text || ']'))
+      GROUP BY a.id
+    ),
+    changed AS (
+      SELECT a.id, a.mbid AS old_mbid, f.files_id
+      FROM artists a JOIN first_performer f ON f.id = a.id
+      WHERE f.backing = 0 AND f.ids = 1 AND f.missing = 0
+    )
+    UPDATE artists a SET mbid = c.files_id
+    FROM changed c
+    WHERE a.id = c.id
+    RETURNING a.name, c.old_mbid AS "from", c.files_id AS "to"
+  `);
+  if (res.rows.length > 0) {
+    clearEntityCaches();
+    console.log(`[Artists] Took the files' MusicBrainz id for ${res.rows.length} artist(s): ${res.rows.slice(0, 10).map((r: any) => r.name).join(', ')}${res.rows.length > 10 ? ', …' : ''}`);
+  }
+  return res.rows;
+}
+
 // Artists that have never been enriched and still have no image. Used by the
 // bounded artist-image batch job (server/services/artistImageEnrichment.service.ts).
 // `last_updated = 0` means getArtistData has never written a cache row for this
@@ -4518,6 +4560,7 @@ export async function migrateEntityIds() {
   await canonicalizeArtistEntities(db);
   await migrateCompoundArtistCredits(db);
   await syncAlbumArtistNames(db);
+  await alignArtistMbidsWithTracks();
 
   // Legacy album deduplication. Genre variants are now admin-reviewed and
   // therefore must remain as redirectable rows instead of being deleted here.
