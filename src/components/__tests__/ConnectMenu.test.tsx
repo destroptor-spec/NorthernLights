@@ -15,7 +15,7 @@ const setup = (state: Record<string, unknown>) => {
   act(() => {
     usePlayerStore.setState({
       sessionFollow: null, remoteControlOutputId: null, castConnected: false,
-      audioOutputActive: false, audioOutputDeviceLabel: '', audioOutputDevices: [],
+      audioOutputSupported: true, audioOutputActive: false, audioOutputDeviceLabel: '', audioOutputDevices: [],
       syncPlaybackAcrossDevices: true, connectedDevices: [],
       resolvePlayWhere, openSettingsAt, ...state,
     } as never);
@@ -89,6 +89,11 @@ test("names this device's output and opens Settings → Playback → Output", ()
 test('names the system default output when none is chosen', () => {
   setup({ audioOutputDevices: [{ deviceId: 'default', label: 'Built-in Audio', isDefault: true }] });
   expect(screen.getByRole('button', { name: /Output Built-in Audio/ })).toBeTruthy();
+});
+
+test('has no output row where this browser cannot choose an output (the phone PWA)', () => {
+  setup({ audioOutputSupported: false });
+  expect(screen.queryByRole('button', { name: /^Output/ })).toBeNull();
 });
 
 test('while casting, says where, and leaves the output to the Cast device', () => {

@@ -122,6 +122,7 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
   const follow = usePlayerStore((s) => s.sessionFollow);
   const remoteControlOutputId = usePlayerStore((s) => s.remoteControlOutputId);
   const castConnected = usePlayerStore((s) => s.castConnected);
+  const audioOutputSupported = usePlayerStore((s) => s.audioOutputSupported);
   const audioOutputActive = usePlayerStore((s) => s.audioOutputActive);
   const audioOutputDeviceLabel = usePlayerStore((s) => s.audioOutputDeviceLabel);
   const defaultOutputLabel = usePlayerStore((s) => s.audioOutputDevices.find((device) => device.isDefault)?.label);
@@ -227,7 +228,9 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
         </div>
       )}
 
-      {!castConnected && (
+      {/* Only where this browser can choose an output (not mobile browsers or
+          the phone PWA), like Settings → Playback → Output. */}
+      {audioOutputSupported && !castConnected && (
         <button
           type="button"
           className="connect-output"
