@@ -4,7 +4,7 @@ import { useDisplayedPlaying } from '../hooks/useDisplayedPlaying';
 import { hasNextTrack } from '../utils/queue';
 import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { X, Infinity as InfinityIcon, ListMusic, ListX, ChevronUp, FileText, Speaker } from 'lucide-react';
+import { X, Infinity as InfinityIcon, ListMusic, ListX, ChevronUp, FileText } from 'lucide-react';
 import ProgressBar from './ProgressBar';
 import { useSwipe } from '../hooks/useSwipe';
 import { castManager } from '../utils/CastManager';
@@ -17,6 +17,7 @@ import { buildBloomGradient } from '../utils/coverGradient';
 import { useTrackMusicVideo } from '../hooks/useTrackMusicVideo';
 import MobileNowPlayingVideo, { type VideoPhase } from './MobileNowPlayingVideo';
 import { QueueList, useClearQueueWithUndo, type QueueListHandle } from './QueueList';
+import { ConnectButton } from './ConnectMenu';
 import { hardwareKeysControlCastVolume } from '../utils/castVolumeKeys';
 
 interface MobileNowPlayingProps {
@@ -123,11 +124,8 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
   const cycleRepeat = usePlayerStore((s) => s.cycleRepeat);
   const isInfinityMode = usePlayerStore((s) => s.isInfinityMode);
   const toggleInfinityMode = usePlayerStore((s) => s.toggleInfinityMode);
-  const audioOutputSupported = usePlayerStore((s) => s.audioOutputSupported);
   const audioOutputActive = usePlayerStore((s) => s.audioOutputActive);
   const audioOutputDeviceLabel = usePlayerStore((s) => s.audioOutputDeviceLabel);
-  const audioOutputSelecting = usePlayerStore((s) => s.audioOutputSelecting);
-  const selectAudioOutput = usePlayerStore((s) => s.selectAudioOutput);
   const volume = usePlayerStore((s) => s.volume);
   const followedDeviceLabel = useFollowedDeviceLabel();
   const followedSilent = usePlayerStore((s) => !!s.sessionFollow?.silent);
@@ -310,18 +308,13 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
           <X size={18} />
         </button>
         {/* The heading says where the music plays, and nothing when it
-            plays right here: another device this one follows (tap: "Play
-            where?"), the Cast device, or a selected output. */}
+            plays right here: another device this one follows, the Cast
+            device, or a selected output. Choosing is in Connect. */}
         <div className="mobile-now-playing-heading">
           {!castConnected && followedDeviceLabel ? (
-            <button
-              type="button"
-              className={`mobile-now-heading-line mobile-now-heading-device mobile-now-heading-device-button${followedSilent ? ' is-silent' : ''}`}
-              onClick={() => usePlayerStore.getState().openPlayWhere()}
-              aria-label={`${followedDeviceLabel}. Choose where to play`}
-            >
+            <span className={`mobile-now-heading-line mobile-now-heading-device${followedSilent ? ' is-silent' : ''}`}>
               {followedDeviceLabel}
-            </button>
+            </span>
           ) : castConnected && castDeviceName ? (
             <span className="mobile-now-heading-line mobile-now-heading-device">
               Playing on {castDeviceName}
@@ -505,18 +498,7 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
             Infinity
           </button>
 
-          {audioOutputSupported && (
-            <button
-              type="button"
-              onClick={() => { void selectAudioOutput(); }}
-              disabled={castConnected || audioOutputSelecting}
-              aria-label={audioOutputActive ? `Playing on ${audioOutputDeviceLabel || 'selected output'}` : 'Choose audio output'}
-              className={`mobile-player-control-btn mobile-player-control-btn-sm ${audioOutputActive ? 'is-active' : ''}`}
-              title={audioOutputActive ? `Playing on ${audioOutputDeviceLabel || 'selected output'}` : 'Choose audio output'}
-            >
-              <Speaker size={22} />
-            </button>
-          )}
+          <ConnectButton className="mobile-player-control-btn mobile-player-control-btn-sm" iconSize={22} />
 
           <CastButton size="sm" showIntro={false} className="mobile-now-cast-control" />
         </div>

@@ -79,7 +79,10 @@ export const PlaybackTab: React.FC = () => {
     const ensureAudioOutputAccess = usePlayerStore(state => state.ensureAudioOutputAccess);
     const networkInfo = useNetworkInfo();
     
-    const [playbackTab, setPlaybackTab] = useState<'streaming' | 'output' | 'infinity' | 'llm'>('streaming');
+    const [playbackTab, setPlaybackTab] = useState<'streaming' | 'output' | 'infinity' | 'llm'>(() => {
+        const section = usePlayerStore.getState().settingsTarget?.section;
+        return section === 'output' || section === 'infinity' || section === 'llm' ? section : 'streaming';
+    });
     const [showLlmAdvanced, setShowLlmAdvanced] = useState(false);
 
     // Opening the Output tab triggers the one-time device-access prompt (if

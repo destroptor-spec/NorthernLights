@@ -8,6 +8,7 @@ jest.mock('../services/playbackSession.service', () => ({
   reportPlaybackOutput: jest.fn(),
   issuePlaybackCommand: jest.fn(),
   patchPlaybackSession: jest.fn(),
+  getPlaybackSession: jest.fn(),
 }));
 jest.mock('../services/sessionInfinity.service', () => ({ topUpSessionInfinity: jest.fn(async () => 0) }));
 jest.mock('../services/sessionListens.service', () => ({ noteSessionReport: jest.fn(async () => undefined), forgetSessionListen: jest.fn() }));
@@ -33,15 +34,16 @@ import {
   PlaybackOutputUnreachableError,
   patchPlaybackSession,
   PlaybackSessionCurrentEntryError,
+  getPlaybackSession,
 } from '../services/playbackSession.service';
 import { generateEphemeralScopedToken, generateOutputCredential, generateReceiverCredential } from '../services/scopedToken.service';
-import { isClientListening, publishApiV1Event } from '../services/apiV1Events.service';
+import { isClientListening, noteClientListening, publishApiV1Event, subscribeApiV1Events } from '../services/apiV1Events.service';
 import { topUpSessionInfinity } from '../services/sessionInfinity.service';
 import { noteSessionReport } from '../services/sessionListens.service';
 
 const principal = { userId: 'user-1', username: 'andreas', role: 'admin', authKind: 'jwt', clientId: 'laptop-5678', clientName: 'Aurora Web' };
 
-async function call(method: 'post' | 'patch', path: string, body: unknown, params: Record<string, string> = {}, apiV1: Record<string, unknown> = principal) {
+async function call(method: 'get' | 'post' | 'patch', path: string, body: unknown, params: Record<string, string> = {}, apiV1: Record<string, unknown> = principal) {
   const layer = router.stack.find((l) => l.route?.path === path && l.route.stack.some((h) => h.method === method))!;
   const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis(), end: jest.fn() };
   const req = { apiV1, requestId: 'r1', body, params, headers: {} } as unknown as Request;
@@ -362,4 +364,46 @@ it('refuses removing the entry that plays with 409 CURRENT_ENTRY_PLAYING and the
   }, { id: 's-1' });
   expect(status).toBe(409);
   expect(body.error).toMatchObject({ code: 'CURRENT_ENTRY_PLAYING', details: { entryId: '22222222-2222-4222-8222-222222222222', current: { revision: 4 } } });
+});
+
+describe('the device list and transfers (Connect)', () => {
+  const sessionId = '11111111-1111-4111-8111-111111111111';
+  const watch = () => {
+    const heard: Array<{ type: string; data: Record<string, unknown> }> = [];
+    const unsubscribe = subscribeApiV1Events('user-1', (event) => heard.push(event));
+    return { heard, unsubscribe };
+  };
+
+  it("lists the user's devices with Aurora open", async () => {
+    const closePhone = noteClientListening('user-1', 'phone-0002', { name: 'Chrome on Android', kind: 'browser' });
+    const listed = await call('get', '/devices', undefined);
+    expect(listed.body.data).toContainEqual({ clientId: 'phone-0002', name: 'Chrome on Android', kind: 'browser' });
+    closePhone();
+  });
+
+  it('asks the chosen device, and only that one, to take the session over', async () => {
+    const closePhone = noteClientListening('user-1', 'phone-0002', { name: 'Chrome on Android', kind: 'browser' });
+    (getPlaybackSession as jest.Mock).mockResolvedValue(session(output));
+    const { heard, unsubscribe } = watch();
+    const sent = await call('post', '/playback-sessions/:id/transfer', { targetClientId: 'phone-0002' }, { id: sessionId });
+    expect(sent.status).toBe(202);
+    expect(heard).toContainEqual(expect.objectContaining({
+      type: 'playbackSession.transferRequested',
+      data: { sessionId, revision: 4, targetClientId: 'phone-0002', requestedBy: 'laptop-5678' },
+    }));
+    unsubscribe();
+    closePhone();
+  });
+
+  it('refuses a device that does not have Aurora open, a Cast receiver, and an unknown session', async () => {
+    (getPlaybackSession as jest.Mock).mockResolvedValue(session(output));
+    expect((await call('post', '/playback-sessions/:id/transfer', { targetClientId: 'tablet-0003' }, { id: sessionId })).body.error.code).toBe('DEVICE_NOT_CONNECTED');
+
+    const closeReceiver = noteClientListening('user-1', 'receiver:cast-77', { name: null, kind: 'receiver' });
+    expect((await call('post', '/playback-sessions/:id/transfer', { targetClientId: 'receiver:cast-77' }, { id: sessionId })).body.error.code).toBe('DEVICE_NOT_CONNECTED');
+    closeReceiver();
+
+    (getPlaybackSession as jest.Mock).mockResolvedValue(null);
+    expect((await call('post', '/playback-sessions/:id/transfer', { targetClientId: 'phone-0002' }, { id: sessionId })).status).toBe(404);
+  });
 });

@@ -1239,6 +1239,36 @@
           "accepted"
         ]
       },
+      "ConnectedDevice": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "The device's client ID (X-Aurora-Client-Id, or the event stream's clientId)."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The name the device gave itself (\"Chrome on Linux\"), when it gave one."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "browser",
+              "receiver",
+              "app"
+            ],
+            "description": "browser: the web app. receiver: a Cast receiver following a session. app: another API v1 client."
+          }
+        },
+        "required": [
+          "clientId",
+          "name",
+          "kind"
+        ]
+      },
       "PlaybackOutputReportResult": {
         "type": "object",
         "properties": {
@@ -2225,6 +2255,21 @@
             "additionalProperties": false
           }
         ]
+      },
+      "PlaybackTransferRequest": {
+        "type": "object",
+        "properties": {
+          "targetClientId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 128,
+            "description": "A device from GET /devices: it takes the session over and plays it from where it is."
+          }
+        },
+        "required": [
+          "targetClientId"
+        ],
+        "additionalProperties": false
       },
       "PlaybackSessionDelete": {
         "type": "object",
@@ -9293,6 +9338,193 @@
         }
       }
     },
+    "/devices": {
+      "get": {
+        "summary": "The user's devices with Aurora open now",
+        "description": "One entry per device with an event stream open (GET /events). The list changes live: every stream hears devices.changed with the new list.",
+        "tags": [
+          "Sessions"
+        ],
+        "security": [
+          {
+            "listenerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ConnectedDevice"
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "properties": {
+                        "requestId": {
+                          "type": "string",
+                          "description": "Request ID echoed in the X-Request-Id response header."
+                        }
+                      },
+                      "required": [
+                        "requestId"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Revision or state conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/playback-sessions/{id}/transfer": {
+      "post": {
+        "summary": "Move the session to another of the user's devices",
+        "description": "The target hears playbackSession.transferRequested (`{sessionId, revision, targetClientId, requestedBy}`, live only) on /events, takes the output over and plays from where the session is; the device that played is displaced as for any claim. A browser may need a tap before it can start sound.",
+        "tags": [
+          "Sessions"
+        ],
+        "security": [
+          {
+            "listenerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybackTransferRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Sent to the device",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaybackCommandResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PLAYBACK_SYNC_DISABLED: playback sync across devices is turned off for this account (the server admin's choice, or the user's where the admin lets each user decide)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "PLAYBACK_SESSION_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "DEVICE_NOT_CONNECTED: that device has no event stream open, or is a Cast receiver",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/playback-sessions/{id}/handoff": {
       "post": {
         "summary": "Legacy alias: claim the output for the calling browser at an expected revision",
@@ -9435,7 +9667,7 @@
         "tags": [
           "Events"
         ],
-        "description": "Use a short-lived sse token (or a receiver credential, which hears only its own session) in the query string because EventSource cannot set Authorization headers; a full session token is refused. Each event's data is JSON `{id, type, occurredAt, data}`. Types: playbackSession.created / updated / handedOff / deleted (fetch the session when its revision is newer), playbackSession.progress (every accepted output report: `{sessionId, revision, outputId, generation, report}`; live only, never replayed), playlist.changed, annotation.changed, playbackSession.command (to the output: `{sessionId, outputId, generation, requestId, issuedBy, command}`; live only), library.revision, playbackSync.changed (`{enabled}`: whether the playback-session API works for this account now), and resync.required (the replay window was lost: re-fetch everything).",
+        "description": "Use a short-lived sse token (or a receiver credential, which hears only its own session) in the query string because EventSource cannot set Authorization headers; a full session token is refused. Each event's data is JSON `{id, type, occurredAt, data}`. Types: playbackSession.created / updated / handedOff / deleted (fetch the session when its revision is newer), playbackSession.progress (every accepted output report: `{sessionId, revision, outputId, generation, report}`; live only, never replayed), playlist.changed, annotation.changed, playbackSession.command (to the output: `{sessionId, outputId, generation, requestId, issuedBy, command}`; live only), playbackSession.transferRequested (to the device asked to take over: `{sessionId, revision, targetClientId, requestedBy}`; live only), devices.changed (`{devices}`: every device of this user with Aurora open, whenever one opens or closes; live only), library.revision, playbackSync.changed (`{enabled}`: whether the playback-session API works for this account now), and resync.required (the replay window was lost: re-fetch everything).",
         "security": [
           {
             "listenerAuth": []
@@ -9458,6 +9690,16 @@
             "required": false,
             "description": "With an sse token: the device this stream belongs to, so remote commands can reach it.",
             "name": "clientId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "With an sse token: what to call this device in GET /devices (\"Chrome on Linux\")."
+            },
+            "required": false,
+            "description": "With an sse token: what to call this device in GET /devices (\"Chrome on Linux\").",
+            "name": "clientName",
             "in": "query"
           },
           {

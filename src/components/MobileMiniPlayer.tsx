@@ -4,10 +4,11 @@ import { usePlayerStore } from '../store/index';
 
 import { useDisplayedPlaying } from '../hooks/useDisplayedPlaying';
 import { hasNextTrack } from '../utils/queue';
-import { Play, Speaker } from 'lucide-react';
+import { Play } from 'lucide-react';
 import { useSwipe } from '../hooks/useSwipe';
 import MobileNowPlaying from './MobileNowPlaying';
 import { CastButton } from './cast/CastButton';
+import { ConnectButton } from './ConnectMenu';
 import { castManager } from '../utils/CastManager';
 import { prefetchPalette, NOW_PLAYING_PALETTE_QUALITY } from '../hooks/useDominantColor';
 import { IconNext, IconPause, IconPlay } from './icons/PlayerIcons';
@@ -24,11 +25,6 @@ const MobileMiniPlayer = () => {
   const prevTrack = usePlayerStore((s) => s.prevTrack);
   const castConnected = usePlayerStore((s) => s.castConnected);
   const castPlaybackStatus = usePlayerStore((s) => s.castPlaybackStatus);
-  const audioOutputSupported = usePlayerStore((s) => s.audioOutputSupported);
-  const audioOutputActive = usePlayerStore((s) => s.audioOutputActive);
-  const audioOutputDeviceLabel = usePlayerStore((s) => s.audioOutputDeviceLabel);
-  const audioOutputSelecting = usePlayerStore((s) => s.audioOutputSelecting);
-  const selectAudioOutput = usePlayerStore((s) => s.selectAudioOutput);
 
   const currentTrack = currentIndex !== null ? playlist[currentIndex] : null;
   const isPlaying = useDisplayedPlaying();
@@ -83,11 +79,6 @@ const MobileMiniPlayer = () => {
   const handleNext = (e: React.MouseEvent) => {
     e.stopPropagation();
     nextTrack();
-  };
-
-  const handleAudioOutput = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    void selectAudioOutput();
   };
 
   const handleExpandKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -170,21 +161,6 @@ const MobileMiniPlayer = () => {
               <span className="mobile-mini-title">
                 {currentTrack.title || currentTrack.path.split(/[\\/]/).pop()}
               </span>
-              {!castConnected && audioOutputSupported && (
-                <button
-                  onClick={handleAudioOutput}
-                  disabled={audioOutputSelecting}
-                  className="flex-shrink-0 transition-colors disabled:opacity-50"
-                  style={{
-                    color: audioOutputActive ? 'var(--color-primary)' : 'var(--color-text-muted)',
-                    filter: audioOutputActive ? 'drop-shadow(0 0 3px var(--color-primary))' : 'none',
-                  }}
-                  title={audioOutputActive ? `Playing on ${audioOutputDeviceLabel || 'selected output'}` : 'Choose audio output'}
-                  aria-label={audioOutputActive ? `Playing on ${audioOutputDeviceLabel || 'selected output'}` : 'Choose audio output'}
-                >
-                  <Speaker size={14} />
-                </button>
-              )}
             </div>
             <div
               className={`text-xs truncate leading-tight mt-0.5 ${
@@ -198,6 +174,7 @@ const MobileMiniPlayer = () => {
 
           {/* Controls — stop propagation so they don't trigger expand */}
           <div className="flex items-center gap-1.5 flex-shrink-0">
+            <ConnectButton className="mobile-player-control-btn mobile-player-control-btn-sm" />
             <div onClick={(event) => event.stopPropagation()}>
               <CastButton size="sm" showIntro={false} className="mobile-mini-cast-control" />
             </div>

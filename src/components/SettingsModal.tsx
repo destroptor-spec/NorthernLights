@@ -55,8 +55,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             ? window.matchMedia(COMPACT_LAYOUT_QUERY).matches
             : false
     ));
-    const [activeTab, setActiveTab] = useState('My Account');
-    const [sectionOpen, setSectionOpen] = useState(false);
+    // Opened at a tab from elsewhere (the Connect menu's output row), or the first one.
+    const [activeTab, setActiveTab] = useState(() => usePlayerStore.getState().settingsTarget?.tab ?? 'My Account');
+    const [sectionOpen, setSectionOpen] = useState(() => !!usePlayerStore.getState().settingsTarget);
     const [sectionVisited, setSectionVisited] = useState(false);
     const backRef = useRef<HTMLButtonElement>(null);
     const sectionScrollRef = useRef<HTMLDivElement>(null);

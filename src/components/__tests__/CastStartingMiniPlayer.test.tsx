@@ -16,6 +16,7 @@ jest.mock('../../store/index', () => ({ usePlayerStore: Object.assign(
 jest.mock('../../hooks/useSwipe', () => ({ useSwipe: () => ({ current: null }) }));
 jest.mock('../MobileNowPlaying', () => () => null);
 jest.mock('../cast/CastButton', () => ({ CastButton: () => null }));
+jest.mock('../ConnectMenu', () => ({ ConnectButton: () => null }));
 jest.mock('../../hooks/useDominantColor', () => ({ prefetchPalette: jest.fn(), NOW_PLAYING_PALETTE_QUALITY: 1 }));
 jest.mock('../../utils/CastManager', () => ({ castManager: { getCastDeviceName: () => 'NAD Forstærker', addStateChangeListener: () => () => {} } }));
 

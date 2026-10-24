@@ -9038,7 +9038,8 @@ a:focus-visible > .genre-card .genre-card__label {
 
 /* "Playing on <device>" (DeviceStrip): another device plays the session and
    this one follows it. One slim full-width band under the top bar, where the
-   offline notice goes (offline replaces it); tapping it opens "Play where?". */
+   offline notice goes (offline replaces it). It only says where; choosing is
+   in the Connect menu. */
 .device-strip {
   display: flex;
   align-items: center;
@@ -9054,16 +9055,6 @@ a:focus-visible > .genre-card .genre-card__label {
   font: inherit;
   font-size: 0.8rem;
   font-weight: 500;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  transition: background 150ms var(--ease-out);
-}
-.device-strip:hover,
-.device-strip:focus-visible {
-  background: color-mix(in srgb, var(--color-primary) 20%, transparent);
-}
-.device-strip:active {
-  background: color-mix(in srgb, var(--color-primary) 26%, transparent);
 }
 .device-strip-label {
   min-width: 0;
@@ -9075,26 +9066,179 @@ a:focus-visible > .genre-card .genre-card__label {
   opacity: 0.7;
 }
 /* The device stopped answering: the offline notice's warning tint. */
-/* Tappable on touch screens: 44px (DESIGN.md). */
-@media (max-width: 767px) {
-  .device-strip {
-    min-height: 44px;
-  }
-}
 .device-strip.is-silent {
   color: var(--color-warning);
   border-bottom-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
   background: color-mix(in srgb, var(--color-warning) 12%, transparent);
 }
-.mobile-now-heading-device-button {
-  background: none;
-  border: 0;
-  padding: 0;
+/* Connect (ConnectMenu): green while the music plays on another device. */
+.connect-button.is-elsewhere {
+  color: var(--color-primary);
+}
+
+/* The Connect card: one full-width button per choice, the chosen one lit. */
+.connect-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+.connect-card-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.connect-card-title {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  color: var(--color-text-primary);
+}
+.connect-card-where {
+  font-size: 0.8rem;
+  color: var(--color-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.connect-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.connect-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--glass-border);
+  background: color-mix(in srgb, var(--color-text-primary) 4%, transparent);
+  color: var(--color-text-primary);
   font: inherit;
-  letter-spacing: inherit;
-  text-transform: inherit;
+  text-align: left;
   cursor: pointer;
+  transition: background 150ms var(--ease-out), border-color 150ms var(--ease-out);
   -webkit-tap-highlight-color: transparent;
+}
+.connect-option:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+}
+.connect-option:disabled {
+  cursor: default;
+}
+.connect-option.is-selected {
+  border-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+/* Just chosen: a short glow while the card stays to confirm it; the other
+   choices step back. */
+.connect-option.is-chosen {
+  animation: connect-option-chosen 600ms var(--ease-out);
+}
+@keyframes connect-option-chosen {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-primary) 45%, transparent); }
+  100% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--color-primary) 0%, transparent); }
+}
+.has-choice .connect-option:not(.is-chosen) {
+  opacity: 0.45;
+  transition: opacity 200ms var(--ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  .connect-option.is-chosen { animation: none; }
+}
+.connect-option-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+}
+.connect-option.is-selected .connect-option-icon,
+.connect-option-check {
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+.connect-option-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.connect-option-title {
+  font-size: 0.9rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.connect-option-detail {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+.connect-devices {
+  display: flex;
+  flex-direction: column;
+  margin-top: -12px; /* the rows carry their own 8px spacing, so it folds away with them */
+}
+/* A device row folds open or closed (grid rows 0fr <-> 1fr) as it fades, so
+   the card's height follows smoothly when a device comes or goes. */
+.connect-device {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition: grid-template-rows 220ms var(--ease-out), opacity 220ms var(--ease-out);
+}
+.connect-device-inner {
+  min-height: 0;
+  overflow: hidden;
+  padding-top: 8px;
+}
+.connect-device.is-entering {
+  animation: connect-device-in 220ms var(--ease-out);
+}
+.connect-device.is-leaving {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+}
+@keyframes connect-device-in {
+  from { grid-template-rows: 0fr; opacity: 0; }
+  to { grid-template-rows: 1fr; opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .connect-device { transition: none; }
+  .connect-device.is-entering { animation: none; }
+}
+
+.connect-output {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 4px 0;
+  border: 0;
+  border-top: 1px solid var(--glass-border);
+  background: none;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.connect-output:hover .connect-output-name {
+  color: var(--color-text-primary);
+}
+.connect-output-label {
+  color: var(--color-text-muted);
+}
+.connect-output-name {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .mobile-now-heading-device.is-silent {
   color: var(--color-warning);

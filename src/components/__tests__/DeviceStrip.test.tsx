@@ -16,12 +16,11 @@ test('shows nothing while this device plays, or nothing plays elsewhere', () => 
   expect(container.firstChild).toBeNull();
 });
 
-test('names the device that plays, and opens "Play where?"', () => {
-  const openPlayWhere = jest.fn();
-  usePlayerStore.setState({ sessionFollow: follow(), openPlayWhere } as never);
+test('names the device that plays, and only says so: choosing is in Connect', () => {
+  usePlayerStore.setState({ sessionFollow: follow() } as never);
   render(<DeviceStrip />);
-  screen.getByRole('button', { name: 'Playing on NAD Forstærker. Choose where to play' }).click();
-  expect(openPlayWhere).toHaveBeenCalled();
+  expect(screen.getByRole('status').textContent).toBe('Playing on NAD Forstærker');
+  expect(screen.queryByRole('button')).toBeNull();
 });
 
 test('says paused, and warns when the device stops answering', () => {
@@ -30,5 +29,5 @@ test('says paused, and warns when the device stops answering', () => {
   expect(screen.getByText('Paused on NAD Forstærker')).toBeTruthy();
   act(() => { usePlayerStore.setState({ sessionFollow: follow({ silent: true } as Partial<FollowedOutput>) } as never); });
   rerender(<DeviceStrip />);
-  expect(screen.getByText("NAD Forstærker isn't responding").closest('button')!.className).toContain('is-silent');
+  expect(screen.getByRole('status').className).toContain('is-silent');
 });

@@ -148,6 +148,13 @@ const App: React.FC = () => {
   // Stable callbacks so the memoized headers don't re-render when App re-renders
   // for unrelated reasons (scan state, playlist changes, etc.).
   const openSettings = React.useCallback(() => setIsSettingsOpen(true), []);
+  // Settings opened at a tab from elsewhere (the Connect menu's output row).
+  const settingsTarget = usePlayerStore((s) => s.settingsTarget);
+  React.useEffect(() => { if (settingsTarget) setIsSettingsOpen(true); }, [settingsTarget]);
+  const closeSettings = React.useCallback(() => {
+    setIsSettingsOpen(false);
+    usePlayerStore.getState().clearSettingsTarget();
+  }, []);
   const toggleScanner = React.useCallback(() => setIsScannerVisibleLocally(v => !v), []);
 
   // Auto-show scanner toast when a scan starts
@@ -679,7 +686,7 @@ const App: React.FC = () => {
 
         {isSettingsOpen && (
           <React.Suspense fallback={null}>
-            <SettingsModal onClose={() => setIsSettingsOpen(false)} />
+            <SettingsModal onClose={closeSettings} />
           </React.Suspense>
         )}
 

@@ -78,6 +78,7 @@ import {
   playbackSessionPatchSchema,
   playbackOutputClaimSchema,
   playbackCommandRequestSchema,
+  playbackTransferRequestSchema,
   playbackOutputRefreshSchema,
   playbackOutputReportSchema,
   OPAQUE_ID,
@@ -129,7 +130,7 @@ import {
   PlaybackOutputUnreachableError,
 } from '../services/playbackSession.service';
 import { isPlaybackSyncEnabledFor } from '../services/playbackSync.service';
-import { publishApiV1Event, replayApiV1Events, subscribeApiV1Events, noteClientListening } from '../services/apiV1Events.service';
+import { publishApiV1Event, replayApiV1Events, subscribeApiV1Events, noteClientListening, listConnectedDevices, isClientListening as isDeviceConnected } from '../services/apiV1Events.service';
 import { topUpSessionInfinity } from '../services/sessionInfinity.service';
 import { forgetSessionListen, noteSessionReport } from '../services/sessionListens.service';
 import {
@@ -1155,6 +1156,35 @@ router.post('/playback-sessions/:id/reports', async (req, res) => {
   }
 });
 
+// The user's devices with Aurora open now (an event stream open). The list
+// changes live through devices.changed on /events.
+router.get('/devices', (req, res) => {
+  dataResponse(req, res, listConnectedDevices(req.apiV1!.userId));
+});
+
+// Move the session to another of the user's devices: that device takes the
+// output over and plays from where the session is (it hears
+// playbackSession.transferRequested on /events). Only a device with Aurora
+// open can be asked; a Cast receiver is reached by casting instead.
+router.post('/playback-sessions/:id/transfer', async (req, res) => {
+  const input = parseBody(playbackTransferRequestSchema, req, res);
+  if (!input) return;
+  const userId = req.apiV1!.userId;
+  const session = await getPlaybackSession(userId, req.params.id);
+  if (!session) return sendApiV1Error(req, res, 404, 'PLAYBACK_SESSION_NOT_FOUND', 'Playback session not found.');
+  const target = listConnectedDevices(userId).find((device) => device.clientId === input.targetClientId);
+  if (!target || target.kind === 'receiver' || !isDeviceConnected(userId, input.targetClientId)) {
+    return sendApiV1Error(req, res, 409, 'DEVICE_NOT_CONNECTED', 'That device does not have Aurora open.');
+  }
+  publishApiV1Event(userId, 'playbackSession.transferRequested', {
+    sessionId: session.id,
+    revision: session.revision,
+    targetClientId: input.targetClientId,
+    requestedBy: req.apiV1!.clientId,
+  }, { transient: true });
+  dataResponse(req, res, { accepted: true }, 202);
+});
+
 // Legacy alias for claiming the output as a browser, at an expected revision.
 router.post('/playback-sessions/:id/commands', async (req, res) => {
   const request = parseBody(playbackCommandRequestSchema, req, res);
@@ -1255,7 +1285,14 @@ router.get('/events', async (req, res) => {
   const queryClientId = typeof req.query.clientId === 'string' && /^[A-Za-z0-9._:-]{8,128}$/.test(req.query.clientId)
     ? req.query.clientId : null;
   const streamClientId = req.apiV1!.scope === 'sse' ? queryClientId : req.apiV1!.clientId;
-  const stopListening = streamClientId ? noteClientListening(req.apiV1!.userId, streamClientId) : () => undefined;
+  // And what to call it in the user's device list (GET /devices).
+  const queryClientName = typeof req.query.clientName === 'string'
+    ? req.query.clientName.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 80) || null
+    : null;
+  const device = req.apiV1!.scope === 'sse' ? { kind: 'browser' as const, name: queryClientName }
+    : req.apiV1!.scope === 'receiver' ? { kind: 'receiver' as const, name: null }
+      : { kind: 'app' as const, name: req.apiV1!.clientName || null };
+  const stopListening = streamClientId ? noteClientListening(req.apiV1!.userId, streamClientId, device) : () => undefined;
   const keepalive = setInterval(() => res.write(': keepalive\n\n'), 20_000);
   req.on('close', () => {
     clearInterval(keepalive);

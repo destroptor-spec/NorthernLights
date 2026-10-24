@@ -1,4 +1,4 @@
-import { isClientListening, noteClientListening, publishApiV1Event, replayApiV1Events, subscribeApiV1Events } from './apiV1Events.service';
+import { isClientListening, listConnectedDevices, noteClientListening, publishApiV1Event, replayApiV1Events, subscribeApiV1Events } from './apiV1Events.service';
 
 describe('Aurora API v1 event stream', () => {
   it('isolates listeners and replay history by user', () => {
@@ -39,5 +39,29 @@ describe('Aurora API v1 event stream', () => {
     second();
     expect(isClientListening('user-l', 'phone-1234')).toBe(false);
   });
-});
 
+  it('lists the devices with Aurora open by name, and tells every stream when one comes or goes', () => {
+    const heard = jest.fn();
+    const unsubscribe = subscribeApiV1Events('user-d', heard);
+    const closeLaptop = noteClientListening('user-d', 'laptop-0001', { name: 'Chrome on Linux', kind: 'browser' });
+    const closePhone = noteClientListening('user-d', 'phone-0002', { name: 'Chrome on Android', kind: 'browser' });
+    const closeLaptopAgain = noteClientListening('user-d', 'laptop-0001', { name: 'Chrome on Linux', kind: 'browser' });
+    expect(listConnectedDevices('user-d')).toEqual([
+      { clientId: 'laptop-0001', name: 'Chrome on Linux', kind: 'browser' },
+      { clientId: 'phone-0002', name: 'Chrome on Android', kind: 'browser' },
+    ]);
+    // A second tab of the same device is no news; only arrivals and departures are.
+    expect(heard.mock.calls.map(([event]) => event.type)).toEqual(['devices.changed', 'devices.changed']);
+
+    closePhone();
+    expect(heard).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: 'devices.changed', data: { devices: [{ clientId: 'laptop-0001', name: 'Chrome on Linux', kind: 'browser' }] },
+    }));
+    closeLaptop();
+    expect(heard).toHaveBeenCalledTimes(3);
+    closeLaptopAgain();
+    expect(listConnectedDevices('user-d')).toEqual([]);
+    expect(heard).toHaveBeenCalledTimes(4);
+    unsubscribe();
+  });
+});

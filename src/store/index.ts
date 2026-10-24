@@ -23,6 +23,8 @@ import {
 import { clearExternalCache } from '../utils/externalImagery';
 import { readSessionAuth, writeSessionAuth, clearSessionAuth } from '../utils/sessionAuth';
 import { sessionMirror } from '../utils/SessionMirror';
+import { requestPlaybackTransfer } from '../api/playbackSessions';
+import type { ConnectedDevice } from '../../shared/api/v1';
 import { followedPositionMs, type FollowedOutput } from '../utils/sessionFollow';
 import { sendRemoteAction, startOnFollowingReceiver, type RemoteAction } from '../utils/sessionRemote';
 import { sessionFollower } from '../utils/SessionFollower';
@@ -937,6 +939,17 @@ export interface PlayerState {
   resolvePlayWhere: (choice: 'remote' | 'here' | null) => Promise<void>;
   /** The device chip by "Playing on …": choose again where actions go. */
   openPlayWhere: () => void;
+  /** The user's devices with Aurora open now, kept live from the event stream (Connect menu). */
+  connectedDevices: ConnectedDevice[];
+  setConnectedDevices: (devices: ConnectedDevice[]) => void;
+  /** Connect → another device: it takes the session over and plays it from where it is. */
+  transferPlaybackTo: (device: ConnectedDevice) => Promise<void>;
+  /** Another device asked this one to take the session over. */
+  playHereOnTransfer: () => Promise<void>;
+  /** Settings to open at a tab and section (the Connect menu's output row). Not persisted. */
+  settingsTarget: { tab: string; section?: string } | null;
+  openSettingsAt: (tab: string, section?: string) => void;
+  clearSettingsTarget: () => void;
   /** A queue row tapped here (routes to the playing device when chosen). */
   playQueueEntry: (index: number) => Promise<void>;
   /** A seek from the progress bar here (routes like playQueueEntry). */
@@ -1524,6 +1537,33 @@ export const usePlayerStore = create<PlayerState>()(
         sessionFollow: null as FollowedOutput | null,
         remoteControlOutputId: null as string | null,
         playWherePrompt: null as { outputName: string; silent?: boolean } | null,
+        settingsTarget: null as { tab: string; section?: string } | null,
+        connectedDevices: [] as ConnectedDevice[],
+        setConnectedDevices: (devices: ConnectedDevice[]) => set({ connectedDevices: devices }),
+        transferPlaybackTo: async (device: ConnectedDevice) => {
+          const state = get();
+          const sessionId = state.sessionFollow?.sessionId ?? sessionMirror.currentGrant()?.sessionId ?? null;
+          const name = device.name || 'that device';
+          if (!sessionId) {
+            state.addToast(`Nothing to move to ${name} yet.`, 'info');
+            return;
+          }
+          castManager.logSyncEvent('ok', 'sync-transfer-requested', `to=${device.name ?? device.clientId}`);
+          try {
+            await requestPlaybackTransfer(state.getAuthHeader(), sessionId, device.clientId);
+          } catch {
+            get().addToast(`${name} isn't reachable.`, 'error');
+          }
+        },
+        playHereOnTransfer: async () => {
+          // The same as "Play on this device" in the Connect menu: take the
+          // output over and play from where the session is. A browser that
+          // may not start sound by itself asks for a tap (autoplay).
+          if (!get().sessionFollow) return;
+          await get().resolvePlayWhere('here');
+        },
+        openSettingsAt: (tab: string, section?: string) => set({ settingsTarget: { tab, ...(section ? { section } : {}) } }),
+        clearSettingsTarget: () => set({ settingsTarget: null }),
         prebufferPolicy: 'conservative' as PrebufferPolicy,
         currentUser: null as { id: string; username: string; role: string } | null,
 
