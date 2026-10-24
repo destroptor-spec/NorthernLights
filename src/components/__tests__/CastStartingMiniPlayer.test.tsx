@@ -1,5 +1,6 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import MobileMiniPlayer from '../MobileMiniPlayer';
 
 let mockStatus: 'starting' | 'unconfirmed' | null = 'starting';
@@ -20,7 +21,7 @@ jest.mock('../../utils/CastManager', () => ({ castManager: { getCastDeviceName: 
 
 // The phone PWA is the prod case: its always-visible surface must say a start is pending.
 test('the mobile mini player keeps its device line while starting and flags only a failed start', () => {
-    const { rerender } = render(<MobileMiniPlayer />);
+    const { rerender } = render(<MobileMiniPlayer />, { wrapper: MemoryRouter });
     expect(screen.getByRole('status').textContent).toBe('NAD Forstærker');
     mockStatus = 'unconfirmed';
     rerender(<MobileMiniPlayer key="failed" />);
