@@ -7,13 +7,14 @@
 import { Pool } from 'pg';
 import * as dotenv from 'dotenv';
 import path from 'path';
+import { databaseHost } from '../server/database/dbHost';
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const pool = new Pool({
   user: process.env.DB_USER || 'musicuser',
   password: process.env.DB_PASSWORD || 'musicpass',
-  host: process.env.DB_HOST || 'localhost',
+  host: databaseHost(),
   port: parseInt(process.env.DB_PORT || '5432', 10),
   database: process.env.DB_NAME || 'musicdb',
   connectionTimeoutMillis: 5000,

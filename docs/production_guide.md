@@ -100,6 +100,8 @@ SERVER_URL=https://music.example.com
 
 DB_USER=musicuser
 DB_PASSWORD=change-this
+# Your own database server's host name or IP address, used as is. localhost
+# (the default) connects to 127.0.0.1; set ::1 for IPv6 loopback.
 DB_HOST=localhost
 DB_PORT=5432
 DB_NAME=musicdb
