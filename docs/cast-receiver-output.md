@@ -1,13 +1,17 @@
 # Cast receiver as its own output (Phase 5 spec)
 
-Status: **built** (updated 2026-10-18). PR A shipped (#113–#115, with #118
+Status: **built** (updated 2026-10-19). PR A shipped (#113–#115, with #118
 and #122). PRs B–E, the probe and #137 merged as one stack in #138
 (2026-10-16), followed by #141 (wait for CAF queue batches to land). Server
 Infinity for receivers came with #140. Verified on the NAD (checklist rows
-22–26) and a speaker group; the Beoplay A9 (row 27) is untested. Of the
-[verification](#verification-phase-5-done-when-from-the-design) list, the
-1-hour run with the phone asleep and token expiry with no phone are not yet
-confirmed. Background and the full design: [playback_sessions.md](playback_sessions.md)
+22–26) and a speaker group. The Beoplay A9 (row 27) followed the session
+itself and played for about 2.5 hours without issue with the phone locked
+and no other device running Aurora, so with only the receiver and the server
+at work (2026-10-19, `receiver-session-follow :: started`, credential renewed while
+playing), and its plays were scrobbled to Last.fm by the server (#158);
+remote commands and queue edits (rows 24–25) were not run on it separately. Of the
+[verification](#verification-phase-5-done-when-from-the-design) list, only
+token expiry with no phone is not yet confirmed. Background and the full design: [playback_sessions.md](playback_sessions.md)
 (Cast receiver as an output, Receiver authentication, Phase 5). Care rules:
 [cast-design-checklist.md](cast-design-checklist.md) and the receiver
 regression caution (one issue per PR, sender-side first, receiver only when
