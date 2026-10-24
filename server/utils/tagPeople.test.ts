@@ -128,6 +128,13 @@ describe('per-person credits from tags', () => {
     }).track?.map((p) => p.name)).toEqual(['Michael Jackson', 'The Jackson 5']);
   });
 
+  it('drops a first entry naming the people after it when the ids line up with them', () => {
+    const credit = 'María De Medeiros and Bruce Willis / the Centurions';
+    expect(people({
+      common: { artist: 'María De Medeiros and Bruce Willis', artists: [credit, 'María De Medeiros', 'Bruce Willis', 'The Centurions'], musicbrainz_artistid: [TONY, DIANA, GAGA] },
+    }).track?.map((p) => p.name)).toEqual(['María De Medeiros', 'Bruce Willis', 'The Centurions']);
+  });
+
   it('drops a mangled copy of the people and keeps a real act that shares the list', () => {
     const credit = '植松伸夫 & 河盛慶次';
     expect(people({ common: { artist: credit, artists: [credit, '植松伸夫', '河盛慶次', '???? & ????'] } }).track?.map((p) => p.name))
@@ -136,6 +143,62 @@ describe('per-person credits from tags', () => {
       .toEqual(['Riggi & Piros', 'Dani Poppitt']);
     expect(people({ common: { artist: 'Above & Beyond', artists: ['Above & Beyond'] } }).track?.map((p) => p.name))
       .toEqual(['Above & Beyond']);
+  });
+
+  it('splits an ARTISTS tag that only copies a featuring credit at the marker', () => {
+    const credit = 'Wale feat. Major Lazer, WizKid & Dua Lipa';
+    expect(people({ common: { artist: credit, artists: [credit] } }).track?.map((p) => p.name)).toEqual(['Wale', 'Major Lazer', 'WizKid', 'Dua Lipa']);
+    // The main act stays whole, comma and all; a lone id isn't trusted for anyone.
+    const ecstasy = 'Ecstasy, Passion and Pain featuring Barbara Roy';
+    expect(people({ common: { artist: ecstasy, artists: [ecstasy], musicbrainz_artistid: ['3a257121-867a-47cf-bc4f-ee7b835adddb'] } }).track).toEqual([
+      { name: 'Ecstasy, Passion and Pain', mbid: null },
+      { name: 'Barbara Roy', mbid: null },
+    ]);
+    // One act, or a featuring credit the tag doesn't merely copy, is still read.
+    expect(people({ common: { artist: 'Above & Beyond', artists: ['Above & Beyond'] } }).track?.map((p) => p.name)).toEqual(['Above & Beyond']);
+    expect(people({ common: { artist: 'Timbaland Feat. Magoo', artists: ['Timbaland', 'Magoo'] } }).track?.map((p) => p.name)).toEqual(['Timbaland', 'Magoo']);
+  });
+
+  it("puts back the album's own act when ARTISTS leaves it out but keeps its id first", () => {
+    const shm = '99075985-0d80-4692-a15e-b16f78831792';
+    const connie = '278161b3-eb37-45cc-b62e-8d124055c374';
+    const ty = '7bd66c18-cb33-49aa-9279-140acedbdb49';
+    const shake = '741dbc8e-1cd5-4a66-b2b8-43bbad87ae12';
+    const album = { albumartist: 'Swedish House Mafia', musicbrainz_albumartistid: [shm] };
+    expect(people({
+      common: { ...album, artist: 'Swedish House Mafia & Connie Constance', artists: ['Connie Constance'], musicbrainz_artistid: [shm, connie] },
+    }).track).toEqual([{ name: 'Swedish House Mafia', mbid: shm }, { name: 'Connie Constance', mbid: connie }]);
+    expect(people({
+      common: { ...album, artist: 'Swedish House Mafia feat. Ty Dolla $ign & 070 Shake', artists: ['Ty Dolla $ign', '070 Shake'], musicbrainz_artistid: [shm, ty, shake] },
+    }).track?.map((p) => p.name)).toEqual(['Swedish House Mafia', 'Ty Dolla $ign', '070 Shake']);
+    // The album-artist tag can be a credit itself; the act is named from the track credit.
+    const armin = '477b8c0c-c5fc-4ad2-b5b2-191f0bf2a9df';
+    expect(people({
+      common: { albumartist: 'Armin van Buuren & Olive Anguz', musicbrainz_albumartistid: [armin], artist: 'Armin van Buuren & XiJaro & Pitch', artists: ['XiJaro & Pitch'], musicbrainz_artistid: [armin, connie] },
+    }).track).toEqual([{ name: 'Armin van Buuren', mbid: armin }, { name: 'XiJaro & Pitch', mbid: connie }]);
+    // Nothing left of the credit once the listed people are out: names only.
+    expect(people({
+      common: { albumartist: 'Beyoncé featuring Slim Thug', musicbrainz_albumartistid: [shm], artist: 'Beyoncé featuring Slim Thug', artists: ['Beyoncé', 'Slim Thug'], musicbrainz_artistid: [shm, ty, shake] },
+    }).track?.map((p) => p.name)).toEqual(['Beyoncé', 'Slim Thug']);
+    // Not the album's act (a compilation): still the act the credit names first.
+    expect(people({
+      common: { albumartist: 'Various Artists', musicbrainz_albumartistid: [VA], artist: 'Need for Mirrors feat. Onallee', artists: ['Onallee'], musicbrainz_artistid: [TONY, connie] },
+    }).track).toEqual([{ name: 'Need for Mirrors', mbid: TONY }, { name: 'Onallee', mbid: connie }]);
+    // The listed person comes first in the credit: nothing to put ahead of them.
+    expect(people({
+      common: { artist: 'Onallee (Need for Mirrors Remix)', artists: ['Onallee'], musicbrainz_artistid: [TONY, connie] },
+    }).track).toEqual([{ name: 'Onallee', mbid: null }]);
+  });
+
+  it("keeps the album artist's id for them when extra ids follow (a band's members)", () => {
+    const ffdp = '7e8571b1-7c5a-4739-bc51-73d422ee9d74';
+    expect(people({
+      common: { albumartist: 'Five Finger Death Punch', musicbrainz_albumartistid: [ffdp, TONY], artist: 'Five Finger Death Punch', artists: ['Five Finger Death Punch'], musicbrainz_artistid: [ffdp, TONY, DIANA] },
+    }).track).toEqual([{ name: 'Five Finger Death Punch', mbid: ffdp }]);
+    // Not the album artist: no id.
+    expect(people({
+      common: { albumartist: 'Various Artists', musicbrainz_albumartistid: [VA], artist: 'Someone', artists: ['Someone'], musicbrainz_artistid: [VA, TONY] },
+    }).track).toEqual([{ name: 'Someone', mbid: null }]);
   });
 
   it('returns null when the file does not say who the people are', () => {

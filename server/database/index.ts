@@ -11,7 +11,7 @@ import { resolveTrackArtists } from '../utils/trackArtists';
 // Canonical artist-credit splitter, shared with the client (see
 // shared/artistCredit.ts). Re-exported so existing `import('../database')`
 // consumers (e.g. library.routes) keep resolving `splitArtistNames` here.
-import { splitArtistNames, uniqueArtistNames } from '../../shared/artistCredit';
+import { joinedCreditSplits, splitArtistNames, splitJoinedCredit, uniqueArtistNames } from '../../shared/artistCredit';
 import { accountProtection, type AccountProtection } from '../../shared/accountProtection';
 export { splitArtistNames };
 export { getArtistVideoUploads, saveArtistVideoCatalog, noteArtistVideoFailure } from './musicVideos';
@@ -2750,8 +2750,21 @@ export async function getOrCreateArtist(name?: string | null, mbid?: string | nu
   );
   if (existing.rows.length > 0) {
     const id = await resolveMergedArtist(db, existing.rows[0].id);
+    // The file's id fills an empty one, and replaces one that another artist
+    // row holds: a featured artist could pick up the album act's id from a
+    // file that left the act out of ARTISTS (Connie Constance held Swedish
+    // House Mafia's). An id no other row has is left alone, so one spelling
+    // can't flip between two ids.
     await db.query(
-      'UPDATE artists SET normalized_key = COALESCE(normalized_key, $2), mbid = COALESCE(mbid, $3) WHERE id = $1',
+      `UPDATE artists a SET normalized_key = COALESCE(a.normalized_key, $2),
+         mbid = CASE
+           WHEN a.mbid IS NULL THEN $3
+           WHEN $3::text IS NOT NULL AND a.mbid <> $3 AND EXISTS (
+             SELECT 1 FROM artists o WHERE o.mbid = a.mbid AND o.id <> a.id AND o.merged_into IS NULL
+           ) THEN $3
+           ELSE a.mbid
+         END
+       WHERE a.id = $1`,
       [id, normalizedKey || null, safeMbid]
     );
     artistCache.set(cacheKey, id);
@@ -3442,7 +3455,110 @@ export async function alignArtistMbidsWithTracks(): Promise<Array<{ name: string
     clearEntityCaches();
     console.log(`[Artists] Took the files' MusicBrainz id for ${res.rows.length} artist(s): ${res.rows.slice(0, 10).map((r: any) => r.name).join(', ')}${res.rows.length > 10 ? ', …' : ''}`);
   }
+
   return res.rows;
+}
+
+// Of these lower-cased joined names, the ones left whole: the files give the
+// name a MusicBrainz id, so it is one act (Matrix & Futurebound, Bob Marley &
+// The Wailers); the user merged other rows into it; or it leads tracks of its
+// own (Grandmaster Flash & The Furious Five), where only the user can tell an
+// act from a collaboration. A merged row only redirects, so its id doesn't count.
+async function wholeActNames(db: Pool, names: string[]): Promise<Set<string>> {
+  if (names.length === 0) return new Set();
+  const keyOf = (name: string) => normalizeArtistIdentityKey(name) || name;
+  const res = await db.query(`
+    SELECT lower(a.name) AS name, a.normalized_key AS key FROM artists a
+    WHERE (lower(a.name) = ANY($1::text[]) OR a.normalized_key = ANY($2::text[])) AND a.merged_into IS NULL
+      AND (a.mbid IS NOT NULL
+        OR EXISTS (SELECT 1 FROM artists r WHERE r.merged_into = a.id)
+        OR EXISTS (SELECT 1 FROM tracks t WHERE t.artist_id = a.id))
+  `, [names, names.map(keyOf)]);
+  const whole = new Set(res.rows.flatMap((row: any) => [String(row.name), String(row.key)]));
+  return new Set(names.filter(name => whole.has(name) || whole.has(keyOf(name))));
+}
+
+// A guest credit joined with "&", "+" or "and" whose names are all artists the
+// library credits on their own, like "Justin Timberlake & Timbaland" in a
+// "50 Cent Feat. Justin Timberlake & Timbaland" file without per-person tags,
+// is split into those artists, so the track shows on each of their pages.
+// Only guests: the track's owner stays, and so does any joined name
+// wholeActNames() leaves whole. Runs after a scan or a merge
+// (runArtistCreditSplitInBackground); a rescan writes the file's credit again
+// and the next run splits it again. Returns the number of tracks changed.
+export async function splitJoinedArtistCredits(): Promise<number> {
+  const db = await initDB();
+  const credited = (await db.query(`
+    SELECT DISTINCT btrim(e.name) AS name
+    FROM tracks t
+    CROSS JOIN LATERAL jsonb_array_elements_text(
+      CASE WHEN t.artists IS NOT NULL AND btrim(t.artists) LIKE '[%' THEN t.artists::jsonb ELSE '[]'::jsonb END
+    ) AS e(name)
+  `)).rows.map((row: any) => String(row.name));
+  const creditedKeys = new Set(credited.map(name => normalizeArtistIdentityKey(name)).filter(Boolean));
+
+  const splits = new Map<string, string[]>();
+  for (const name of credited) {
+    const key = normalizeArtistIdentityKey(name);
+    const names = splitJoinedCredit(name, half => {
+      const halfKey = normalizeArtistIdentityKey(half);
+      return !!halfKey && halfKey !== key && creditedKeys.has(halfKey);
+    });
+    if (names) splits.set(name.toLowerCase(), names);
+  }
+  for (const name of await wholeActNames(db, [...splits.keys()])) splits.delete(name);
+  if (splits.size === 0) return 0;
+
+  const patterns = [...splits.keys()].map(name => `%${JSON.stringify(name)}%`);
+  const tracks = (await db.query(
+    'SELECT id, artists FROM tracks WHERE artists ILIKE ANY($1::text[])',
+    [patterns],
+  )).rows;
+  let changed = 0;
+  for (const track of tracks) {
+    let names: string[];
+    try { names = JSON.parse(track.artists); } catch { continue; }
+    if (!Array.isArray(names)) continue;
+    const next = uniqueArtistNames(names.flatMap((name, i) =>
+      (i > 0 && splits.get(String(name).trim().toLowerCase())) || [String(name)]));
+    if (next.length === names.length && next.every((name, i) => name === names[i])) continue;
+
+    for (const name of next) await getOrCreateArtist(name, null);
+    await db.query('UPDATE tracks SET artists = $1 WHERE id = $2', [JSON.stringify(next), track.id]);
+    changed++;
+  }
+
+  if (changed > 0) {
+    clearEntityCaches();
+    console.log(`[Artists] Split joined guest credits on ${changed} track(s): ${[...splits.values()].slice(0, 10).map(names => names.join(' | ')).join(', ')}${splits.size > 10 ? ', …' : ''}`);
+  }
+  return changed;
+}
+
+let creditSplitRun: Promise<void> | null = null;
+let creditSplitAgain = false;
+
+/** Runs splitJoinedArtistCredits() once in the background after a scan or a
+ * merge (then purges the joined rows it emptied). A call while it runs queues
+ * one more run. The promise settles when done and never rejects. */
+export function runArtistCreditSplitInBackground(): Promise<void> {
+  if (creditSplitRun) {
+    creditSplitAgain = true;
+    return creditSplitRun;
+  }
+  creditSplitRun = (async () => {
+    try {
+      do {
+        creditSplitAgain = false;
+        if (await splitJoinedArtistCredits() > 0) await purgeOrphanedEntities();
+      } while (creditSplitAgain);
+    } catch (err: any) {
+      console.warn('[Artists] splitting joined credits failed:', err?.message || err);
+    } finally {
+      creditSplitRun = null;
+    }
+  })();
+  return creditSplitRun;
 }
 
 // Artists that have never been enriched and still have no image. Used by the
@@ -3667,22 +3783,57 @@ export async function getArtistAppearsOnTracks(artistId: string, artistName: str
   const db = await initDB();
   // `artists` is a JSON array text like ["A","B"]; match the exact quoted
   // element so short names (e.g. "Sia") don't substring-hit "Anastasia". Also
-  // accept an exact whole-string artist match for single-artist rows.
+  // accept an exact whole-string artist match for single-artist rows. Albums
+  // the artist co-owns are their own releases, not appearances.
   const token = `%"${name}"%`;
+  const coOwned = await getCoOwnedAlbumIds(db, name);
   const lovedSelect = userId ? '(ult.track_id IS NOT NULL)' : 'FALSE';
-  const lovedJoin = userId ? 'LEFT JOIN user_loved_tracks ult ON ult.track_id = t.id AND ult.user_id = $4' : '';
+  const lovedJoin = userId ? 'LEFT JOIN user_loved_tracks ult ON ult.track_id = t.id AND ult.user_id = $5' : '';
   const sql = `
     SELECT t.*, ${lovedSelect} AS is_loved
     FROM tracks t ${lovedJoin}
     WHERE t.artist_id IS DISTINCT FROM $1
       AND (t.artists ILIKE $2 OR lower(btrim(t.artist)) = lower($3))
       AND lower(btrim(COALESCE(t.album_artist, t.artist, ''))) <> lower($3)
+      AND (t.album_id IS NULL OR NOT t.album_id = ANY($4::uuid[]))
     ORDER BY t.album, t.track_number ASC NULLS LAST
     LIMIT 300`;
   const res = userId
-    ? await db.query(sql, [artistId, token, name, userId])
-    : await db.query(sql, [artistId, token, name]);
+    ? await db.query(sql, [artistId, token, name, coOwned, userId])
+    : await db.query(sql, [artistId, token, name, coOwned]);
   return res.rows.map(mapTrackRow);
+}
+
+// Albums whose album-artist credit joins this artist with others the library
+// credits on their own ("Justin Timberlake & Timbaland", "Armin van Buuren &
+// Olive Anguz"): each of them owns the album, as the credit says. The same
+// rule splitJoinedArtistCredits applies to guest credits: a duo whose halves
+// aren't artists of their own ("Simon & Garfunkel"), or a joined name
+// wholeActNames() leaves whole ("Bob Marley & The Wailers"), owns its albums
+// alone.
+async function getCoOwnedAlbumIds(db: Pool, artistName: string): Promise<string[]> {
+  const key = normalizeArtistIdentityKey(artistName);
+  if (!key) return [];
+  const albums = (await db.query(
+    `SELECT id, artist_name FROM albums
+      WHERE strpos(lower(artist_name), lower($1)) > 0 AND lower(btrim(artist_name)) <> lower(btrim($1))`,
+    [artistName],
+  )).rows.filter((album: any) => joinedCreditSplits(album.artist_name)
+    .some(names => names.some(name => normalizeArtistIdentityKey(name) === key)));
+  const acts = await wholeActNames(db, albums.map((album: any) => String(album.artist_name).toLowerCase()));
+  const candidates = albums.filter((album: any) => !acts.has(String(album.artist_name).toLowerCase()));
+  if (candidates.length === 0) return [];
+
+  const halves = [...new Set(candidates.flatMap((album: any) => joinedCreditSplits(album.artist_name).flat()))];
+  const credited = new Set((await db.query(
+    `SELECT lower(h) AS name FROM unnest($1::text[]) AS h
+      WHERE EXISTS (SELECT 1 FROM tracks t WHERE t.artists ILIKE '%' || to_json(h)::text || '%')`,
+    [halves],
+  )).rows.map((row: any) => String(row.name)));
+  return candidates
+    .filter((album: any) => splitJoinedCredit(album.artist_name, name => credited.has(name.toLowerCase()))
+      ?.some(name => normalizeArtistIdentityKey(name) === key))
+    .map((album: any) => String(album.id));
 }
 
 export async function getTracksByArtist(artistId: string, userId: string | null = null) {
@@ -3704,7 +3855,8 @@ export async function getTracksByArtist(artistId: string, userId: string | null 
 // artist_id credits the real performer, so a pure artist_id query misses the
 // whole album — and getArtistAppearsOnTracks deliberately excludes owned
 // albums. Serves the Artist page so owned comps appear under the artist's
-// releases with their full track lists. Callers must skip VA pseudo-artists
+// releases with their full track lists, as do albums the artist co-owns
+// (getCoOwnedAlbumIds). Callers must skip VA pseudo-artists
 // (artists.is_va_pseudo), or "Various Artists" would claim every comp.
 export async function getUncreditedTracksOnOwnedAlbums(
   artistId: string,
@@ -3714,19 +3866,20 @@ export async function getUncreditedTracksOnOwnedAlbums(
   const name = (artistName || '').trim();
   if (!name) return [];
   const db = await initDB();
+  const coOwned = await getCoOwnedAlbumIds(db, name);
   const lovedSelect = userId ? '(ult.track_id IS NOT NULL)' : 'FALSE';
-  const lovedJoin = userId ? 'LEFT JOIN user_loved_tracks ult ON ult.track_id = t.id AND ult.user_id = $3' : '';
+  const lovedJoin = userId ? 'LEFT JOIN user_loved_tracks ult ON ult.track_id = t.id AND ult.user_id = $4' : '';
   const sql = `
     SELECT t.*, ${lovedSelect} AS is_loved
     FROM tracks t
     JOIN albums al ON al.id = t.album_id
     ${lovedJoin}
-    WHERE lower(btrim(al.artist_name)) = lower(btrim($2))
+    WHERE (lower(btrim(al.artist_name)) = lower(btrim($2)) OR al.id = ANY($3::uuid[]))
       AND t.artist_id IS DISTINCT FROM $1
     ORDER BY t.album ASC, t.disc_number ASC NULLS LAST, t.track_number ASC NULLS LAST`;
   const res = userId
-    ? await db.query(sql, [artistId, name, userId])
-    : await db.query(sql, [artistId, name]);
+    ? await db.query(sql, [artistId, name, coOwned, userId])
+    : await db.query(sql, [artistId, name, coOwned]);
   return res.rows.map(mapTrackRow);
 }
 

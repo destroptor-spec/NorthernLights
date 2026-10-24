@@ -249,6 +249,8 @@ describeDb('database read queries', () => {
     const TONY = '00000000-0000-4000-8000-0000000000a1';
     const DIANA = '00000000-0000-4000-8000-0000000000a2';
     const OTHER = '00000000-0000-4000-8000-0000000000a3';
+    const NOT_FIRST = '00000000-0000-4000-8000-0000000000a4';
+    const ALONE = '00000000-0000-4000-8000-0000000000a5';
     const ids: string[] = [];
     let trackNo = 0;
     const artistRow = async (name: string, mbid: string | null) => {
@@ -294,7 +296,7 @@ describeDb('database read queries', () => {
       await track(disagreeing, ['ZZ Disagreeing'], TONY);
       await track(disagreeing, ['ZZ Disagreeing'], OTHER);
 
-      const notFirst = await artistRow('ZZ Not First', DIANA);
+      const notFirst = await artistRow('ZZ Not First', NOT_FIRST);
       await track(notFirst, ['ZZ Someone Else', 'ZZ Not First'], TONY);
 
       const missing = await artistRow('ZZ Missing Id', DIANA);
@@ -305,7 +307,25 @@ describeDb('database read queries', () => {
 
       expect(changed.filter(c => c.name.startsWith('ZZ '))).toEqual([{ name: 'ZZ Tiësto "Tony"', from: DIANA, to: TONY }]);
       expect(await mbidOf(tony)).toBe(TONY);
-      for (const id of [backed, disagreeing, notFirst, missing]) expect(await mbidOf(id)).toBe(DIANA);
+      for (const id of [backed, disagreeing, missing]) expect(await mbidOf(id)).toBe(DIANA);
+      expect(await mbidOf(notFirst)).toBe(NOT_FIRST);
+    });
+
+    it("takes the file's id for a person whose row holds another artist's id", async () => {
+      const shm = await artistRow('ZZ Swedish House Mafia', TONY);
+      const connie = await artistRow('ZZ Connie', TONY);
+      // Two spellings of one artist share the id; neither is changed by a file giving it.
+      const spelling = await artistRow('ZZ Swedish House Mafia (spelling)', TONY);
+      // An id no other row holds stays, whatever a file says.
+      const alone = await artistRow('ZZ Alone', ALONE);
+
+      expect(await db.getOrCreateArtist('ZZ Connie', DIANA)).toBe(connie);
+      expect(await db.getOrCreateArtist('ZZ Swedish House Mafia (spelling)', TONY)).toBe(spelling);
+      expect(await db.getOrCreateArtist('ZZ Alone', OTHER)).toBe(alone);
+
+      expect(await mbidOf(connie)).toBe(DIANA);
+      for (const id of [shm, spelling]) expect(await mbidOf(id)).toBe(TONY);
+      expect(await mbidOf(alone)).toBe(ALONE);
     });
   });
 
@@ -373,6 +393,109 @@ describeDb('database read queries', () => {
       expect(duo).not.toBe(clean);
       const candidate = await mbidCandidate(GLUED_MBID);
       expect(candidate?.artists.map(a => a.id).sort()).toEqual([clean, duo].sort());
+    });
+  });
+
+  describe('joined credits of two library artists count for both', () => {
+    const DUO_MBID = '00000000-0000-4000-8000-00000000dddd';
+    const artistIds = new Set<string>();
+    const albumIds: string[] = [];
+    let trackNo = 0;
+    const artist = async (name: string, mbid: string | null = null) => {
+      const id = await db.getOrCreateArtist(name, mbid);
+      artistIds.add(id);
+      return id;
+    };
+    const album = async (title: string, owner: string) => {
+      const id = (await pool.query('INSERT INTO albums (title, artist_name) VALUES ($1, $2) RETURNING id', [title, owner])).rows[0].id;
+      albumIds.push(id);
+      return id;
+    };
+    const track = async (artistId: string, artists: string[], albumId = seeded.albumId, albumArtist: string | null = null) => {
+      const id = `am9pbmVk${trackNo++}`;
+      await pool.query(
+        `INSERT INTO tracks (id, title, artist, album_artist, album, path, artist_id, album_id, duration, artists)
+         VALUES ($1, 'Track', $2, $3, 'Album', $1, $4, $5, 180, $6)`,
+        [id, artists[0], albumArtist, artistId, albumId, JSON.stringify(artists)],
+      );
+      return id;
+    };
+    const trackRow = async (id: string) => (await pool.query('SELECT artists, artist_id FROM tracks WHERE id = $1', [id])).rows[0];
+
+    afterAll(async () => {
+      await pool.query("DELETE FROM tracks WHERE id LIKE 'am9pbmVk%'");
+      await pool.query('DELETE FROM albums WHERE id = ANY($1::uuid[])', [albumIds]);
+      await pool.query("UPDATE artists SET merged_into = NULL WHERE name LIKE 'ZZ %'");
+      await pool.query("DELETE FROM artists WHERE name LIKE 'ZZ %'");
+    });
+
+    it('splits a joined guest credit when each name is credited on its own, and leaves the rest whole', async () => {
+      const jt = await artist('ZZ JT');
+      const timba = await artist('ZZ Timba');
+      const fifty = await artist('ZZ Fifty');
+      await track(jt, ['ZZ JT']);
+      await track(timba, ['ZZ Timba']);
+      await track(await artist('ZZ Matrix'), ['ZZ Matrix']);
+      await track(await artist('ZZ Nik'), ['ZZ Nik']);
+      await track(await artist('ZZ Jay'), ['ZZ Jay']);
+
+      const guest = await track(fifty, ['ZZ Fifty', 'ZZ Timba and ZZ JT']);
+      // The scanner gives every credited name a row.
+      const guestRow = await artist('ZZ Timba and ZZ JT');
+      // Leads a track of its own: an act or a collaboration, which only the user can tell.
+      const lead = await artist('ZZ JT & ZZ Timba');
+      const owned = await track(lead, ['ZZ JT & ZZ Timba']);
+      const leadAsGuest = await track(fifty, ['ZZ Fifty', 'ZZ JT & ZZ Timba']);
+      // The files give the joined name a MusicBrainz id: one act.
+      await artist('ZZ Matrix & ZZ Timba', DUO_MBID);
+      const duo = await track(fifty, ['ZZ Fifty', 'ZZ Matrix & ZZ Timba']);
+      // Only one half is an artist of its own.
+      const simon = await track(fifty, ['ZZ Fifty', 'ZZ JT & ZZ Garfunkel']);
+      // The user merged another row into the joined one.
+      const kept = await artist('ZZ Nik & ZZ Jay');
+      await db.mergeArtistsManually({ canonicalArtistId: kept, duplicateArtistIds: [await artist('ZZ Nik und Jay (old tag)')] });
+      const merged = await track(fifty, ['ZZ Fifty', 'ZZ Nik & ZZ Jay']);
+
+      await db.runArtistCreditSplitInBackground();
+
+      expect(await trackRow(guest)).toEqual({ artists: JSON.stringify(['ZZ Fifty', 'ZZ Timba', 'ZZ JT']), artist_id: fifty });
+      expect(await trackRow(owned)).toEqual({ artists: JSON.stringify(['ZZ JT & ZZ Timba']), artist_id: lead });
+      for (const id of [leadAsGuest, duo, simon, merged]) {
+        expect(JSON.parse((await trackRow(id)).artists)).toHaveLength(2);
+      }
+      // The emptied guest row is purged.
+      expect((await pool.query('SELECT 1 FROM artists WHERE id = $1', [guestRow])).rows).toHaveLength(0);
+      expect((await db.getArtistAppearsOnTracks(timba, 'ZZ Timba')).map(t => t.id)).toEqual([guest]);
+    });
+
+    it("lists an album credited to two library artists among each one's own releases", async () => {
+      const jt = await artist('ZZ JT');
+      const timba = await artist('ZZ Timba');
+      const other = await artist('ZZ Other');
+      const joint = await album('ZZ Joint Album', 'ZZ JT + ZZ Timba');
+      const byOther = await track(other, ['ZZ Other'], joint, 'ZZ JT + ZZ Timba');
+      const withTimba = await track(other, ['ZZ Other', 'ZZ Timba'], joint, 'ZZ JT + ZZ Timba');
+      // "ZZ JT & ZZ Timba" leads a track of its own (previous test): its album waits for review.
+      const leadAlbum = await album('ZZ Lead Album', 'ZZ JT & ZZ Timba');
+      const onLeadAlbum = await track(other, ['ZZ Other'], leadAlbum, 'ZZ JT & ZZ Timba');
+      const duoAlbum = await album('ZZ Duo Album', 'ZZ Timba & ZZ Garfunkel');
+      const onDuoAlbum = await track(other, ['ZZ Other', 'ZZ Timba'], duoAlbum, 'ZZ Timba & ZZ Garfunkel');
+      // An act with its own MusicBrainz id owns its album alone.
+      await artist('ZZ JT & The ZZ Timbas', DUO_MBID.replace('dddd', 'eeee'));
+      await track(timba, ['The ZZ Timbas']);
+      const actAlbum = await album('ZZ Act Album', 'ZZ JT & The ZZ Timbas');
+      const onActAlbum = await track(other, ['ZZ Other'], actAlbum, 'ZZ JT & The ZZ Timbas');
+
+      const ownedIds = async (id: string, name: string) => (await db.getUncreditedTracksOnOwnedAlbums(id, name)).map(t => t.id).sort();
+      expect(await ownedIds(jt, 'ZZ JT')).toEqual([byOther, withTimba].sort());
+      expect(await ownedIds(timba, 'ZZ Timba')).toEqual([byOther, withTimba].sort());
+      // Its own release, not an appearance; the duo album (Garfunkel isn't an artist of their own) is one.
+      const appearances = (await db.getArtistAppearsOnTracks(timba, 'ZZ Timba')).map(t => t.id);
+      expect(appearances).not.toContain(withTimba);
+      expect(appearances).toContain(onDuoAlbum);
+      expect(await ownedIds(timba, 'ZZ Timba')).not.toContain(onDuoAlbum);
+      expect(await ownedIds(jt, 'ZZ JT')).not.toContain(onActAlbum);
+      expect(await ownedIds(jt, 'ZZ JT')).not.toContain(onLeadAlbum);
     });
   });
 

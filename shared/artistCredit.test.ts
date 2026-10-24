@@ -3,6 +3,8 @@ import {
   explodeListCredit,
   uniqueArtistNames,
   splitArtistNames,
+  joinedCreditSplits,
+  splitJoinedCredit,
 } from './artistCredit';
 
 describe('shared/artistCredit', () => {
@@ -78,6 +80,39 @@ describe('shared/artistCredit', () => {
   describe('uniqueArtistNames', () => {
     it('re-cleans and dedupes', () => {
       expect(uniqueArtistNames(['(Drake)', 'Drake', 'drake', ''])).toEqual(['Drake']);
+    });
+  });
+
+  describe('joinedCreditSplits / splitJoinedCredit', () => {
+    const known = (...names: string[]) => (name: string) => names.map(n => n.toLowerCase()).includes(name.toLowerCase());
+
+    it('lists the splits of a joined credit, most split first', () => {
+      expect(joinedCreditSplits('Justin Timberlake & Timbaland')).toEqual([['Justin Timberlake', 'Timbaland']]);
+      expect(joinedCreditSplits('Above & Beyond and Spencer Brown')).toEqual([
+        ['Above', 'Beyond', 'Spencer Brown'],
+        ['Above & Beyond', 'Spencer Brown'],
+        ['Above', 'Beyond and Spencer Brown'],
+      ]);
+      expect(joinedCreditSplits('Timbaland')).toEqual([]);
+      expect(joinedCreditSplits('Percy Faith and His Orchestra')).toEqual([]);
+      expect(joinedCreditSplits('Timbaland Feat. Justin Timberlake & Nelly Furtado')).toEqual([]);
+      expect(joinedCreditSplits(null)).toEqual([]);
+    });
+
+    it('splits only when every name is a known artist', () => {
+      expect(splitJoinedCredit('Justin Timberlake & Timbaland', known('Justin Timberlake', 'Timbaland')))
+        .toEqual(['Justin Timberlake', 'Timbaland']);
+      expect(splitJoinedCredit('Justin Timberlake And Timbaland', known('justin timberlake', 'timbaland')))
+        .toEqual(['Justin Timberlake', 'Timbaland']);
+      expect(splitJoinedCredit('The Chainsmokers + Kygo', known('The Chainsmokers', 'Kygo')))
+        .toEqual(['The Chainsmokers', 'Kygo']);
+      expect(splitJoinedCredit('Matrix & Futurebound', known('Futurebound'))).toBeNull();
+      expect(splitJoinedCredit('Florence and the Machine', known('Florence'))).toBeNull();
+    });
+
+    it('keeps a joined act whole inside a longer credit', () => {
+      expect(splitJoinedCredit('Above & Beyond and Spencer Brown', known('Above & Beyond', 'Spencer Brown')))
+        .toEqual(['Above & Beyond', 'Spencer Brown']);
     });
   });
 });

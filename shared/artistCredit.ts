@@ -69,12 +69,73 @@ export function explodeListCredit(part: string): string[] {
  * Deliberately does NOT split on a bare "&" or "and" — names like "Nick & Jay"
  * or "Florence and the Machine" are a single artist.
  */
+// A `feat.`/`ft.`/`featuring` marker with something after it.
+const FEATURING = /\s*(?:[\(\[\{]\s*)?\b(?:(?:feat|ft)\.\s*|(?:feat|ft|featuring)\b\.?\s+)(?!$)/i;
+
+/**
+ * The main act and the featured artists of a credit with a featuring marker,
+ * or null without one: "Ecstasy, Passion and Pain featuring Barbara Roy" →
+ * ["Ecstasy, Passion and Pain", "Barbara Roy"]. The main act stays whole; the
+ * featured part is split like any credit.
+ */
+export function splitAtFeaturing(artistStr: string | null | undefined): string[] | null {
+  if (!artistStr) return null;
+  const marker = FEATURING.exec(artistStr);
+  if (!marker) return null;
+  const main = cleanCreditPart(artistStr.slice(0, marker.index));
+  if (!main) return null;
+  return uniqueArtistNames([main, ...splitArtistNames(artistStr.slice(marker.index + marker[0].length))]);
+}
+
 export function splitArtistNames(artistStr: string | null | undefined): string[] {
   if (!artistStr) return [];
   const featuredParts = artistStr
-    .split(/\s*(?:[\(\[\{]\s*)?\b(?:(?:feat|ft)\.\s*|(?:feat|ft|featuring)\b\.?\s+)(?!$)/i)
+    .split(FEATURING)
     .map(cleanCreditPart)
     .filter(Boolean);
   const exploded = featuredParts.flatMap(explodeListCredit);
   return uniqueArtistNames(exploded);
+}
+
+// "&", "+" or "and" between two names. Matched on its own, then one kind at a
+// time, so "Above & Beyond and Spencer Brown" can also split as
+// "Above & Beyond" | "Spencer Brown".
+const JOINERS = [/\s+(?:&|\+|and)\s+/i, /\s+and\s+/i, /\s+&\s+/, /\s+\+\s+/];
+// "Percy Faith and His Orchestra": the band of the name before it.
+const BACKING_BAND = /^(?:his|her|their)\s/i;
+
+/**
+ * The ways a credit joined with "&", "+" or "and" can split into names, most
+ * split first: "Justin Timberlake & Timbaland" → [["Justin Timberlake",
+ * "Timbaland"]]. Empty for a credit with no joiner, a featuring credit, or
+ * one naming a backing band ("Percy Faith and His Orchestra"). Which split
+ * (if any) is
+ * right needs to know the library's artists — see `splitJoinedCredit`.
+ */
+export function joinedCreditSplits(credit: string | null | undefined): string[][] {
+  // A featuring credit is split at its marker first (splitAtFeaturing).
+  if (!credit || FEATURING.test(credit)) return [];
+  const splits: string[][] = [];
+  const seen = new Set<string>();
+  for (const joiner of JOINERS) {
+    const names = uniqueArtistNames(credit.split(joiner));
+    const key = names.join('\u0000').toLowerCase();
+    if (names.length < 2 || seen.has(key) || names.some(name => BACKING_BAND.test(name))) continue;
+    seen.add(key);
+    splits.push(names);
+  }
+  return splits;
+}
+
+/**
+ * A joined credit split into the artists it names, or null when it isn't
+ * known to name several: every name must be one the library already has on
+ * its own (`isKnown`). Keeps duos like "Simon & Garfunkel" or "Florence and
+ * the Machine" whole, since their halves aren't artists of their own.
+ */
+export function splitJoinedCredit(
+  credit: string | null | undefined,
+  isKnown: (name: string) => boolean,
+): string[] | null {
+  return joinedCreditSplits(credit).find(names => names.every(isKnown)) || null;
 }
