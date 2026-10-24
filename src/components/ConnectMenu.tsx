@@ -10,6 +10,8 @@ import { ContextMenuFrame, ContextMenuPortal } from './ContextMenu';
 const MENU_WIDTH = 304;
 /** How long a device's row takes to fade and fold away (matches the CSS). */
 export const DEVICE_LEAVE_MS = 220;
+/** How long the card shows a choice before it closes. */
+export const CHOICE_CONFIRM_MS = 1000;
 
 type ListedDevice = { device: ConnectedDevice; entering: boolean; leaving: boolean };
 
@@ -96,21 +98,23 @@ const ConnectOption: React.FC<{
   title: string;
   detail: string;
   selected?: boolean;
+  /** Just picked: lit and checked while the card confirms it. */
+  chosen?: boolean;
   onClick?: () => void;
-}> = ({ icon, title, detail, selected = false, onClick }) => (
+}> = ({ icon, title, detail, selected = false, chosen = false, onClick }) => (
   <button
     type="button"
-    className={`connect-option${selected ? ' is-selected' : ''}`}
+    className={`connect-option${selected || chosen ? ' is-selected' : ''}${chosen ? ' is-chosen' : ''}`}
     onClick={onClick}
     disabled={!onClick}
-    aria-pressed={onClick ? selected : undefined}
+    aria-pressed={onClick ? selected || chosen : undefined}
   >
     <span className="connect-option-icon" aria-hidden="true">{icon}</span>
     <span className="connect-option-text">
       <span className="connect-option-title">{title}</span>
       <span className="connect-option-detail">{detail}</span>
     </span>
-    {selected && <Check size={16} className="connect-option-check" aria-label="chosen" />}
+    {(selected || chosen) && <Check size={16} className="connect-option-check" aria-label="chosen" />}
   </button>
 );
 
@@ -145,45 +149,63 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
       : 'Playing on this device';
   const outputName = audioOutputActive ? audioOutputDeviceLabel || 'Selected output' : defaultOutputLabel || 'System default';
 
-  const choose = (choice: 'remote' | 'here') => {
-    onDone();
-    void usePlayerStore.getState().resolvePlayWhere(choice);
+  // A choice is acted on at once, but the card stays about a second, frozen
+  // as it was, with the choice lit, before it closes (Andreas, 2026-10-24:
+  // closing at once left him tapping again to make sure it took).
+  const live = { follow, controlsFollowed, castDevice, where, listedDevices };
+  const [chosen, setChosen] = useState<string | null>(null);
+  const frozen = useRef(live);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (closeTimer.current) clearTimeout(closeTimer.current); }, []);
+  if (!chosen) frozen.current = live;
+  const view = frozen.current;
+  const pick = (key: string, act: () => void) => {
+    if (chosen) return;
+    setChosen(key);
+    act();
+    closeTimer.current = setTimeout(onDone, CHOICE_CONFIRM_MS);
   };
+  const isChosen = (key: string) => chosen === key;
+  const choose = (choice: 'remote' | 'here') => pick(choice, () => {
+    void usePlayerStore.getState().resolvePlayWhere(choice);
+  });
 
   return (
     <div className="connect-card" role="dialog" aria-label="Connect">
       <div className="connect-card-header">
         <span className="connect-card-title">Connect</span>
-        <span className="connect-card-where">{where}</span>
+        <span className="connect-card-where">{view.where}</span>
       </div>
 
-      <div className="connect-options">
-        {follow ? (
+      <div className={`connect-options${chosen ? ' has-choice' : ''}`}>
+        {view.follow ? (
           <>
             <ConnectOption
               icon={<Speaker size={18} />}
-              title={follow.name}
-              detail={follow.silent ? "Isn't responding" : controlsFollowed ? 'Controlled from here' : 'Control it from here'}
-              selected={controlsFollowed}
-              onClick={follow.silent ? undefined : () => choose('remote')}
+              title={view.follow.name}
+              detail={view.follow.silent ? "Isn't responding" : view.controlsFollowed || isChosen('remote') ? 'Controlled from here' : 'Control it from here'}
+              selected={view.controlsFollowed && !chosen}
+              chosen={isChosen('remote')}
+              onClick={view.follow.silent || chosen ? undefined : () => choose('remote')}
             />
             <ConnectOption
               icon={<MonitorSmartphone size={18} />}
               title="This device"
               detail="Play here instead"
-              onClick={() => choose('here')}
+              chosen={isChosen('here')}
+              onClick={chosen ? undefined : () => choose('here')}
             />
           </>
-        ) : castDevice ? (
-          <ConnectOption icon={<Cast size={18} />} title={castDevice} detail="Casting from this device" selected />
+        ) : view.castDevice ? (
+          <ConnectOption icon={<Cast size={18} />} title={view.castDevice} detail="Casting from this device" selected={!chosen} />
         ) : (
-          <ConnectOption icon={<MonitorSmartphone size={18} />} title="This device" detail="Playing here" selected />
+          <ConnectOption icon={<MonitorSmartphone size={18} />} title="This device" detail="Playing here" selected={!chosen} />
         )}
       </div>
 
-      {listedDevices.length > 0 && (
-        <div className="connect-devices">
-          {listedDevices.map(({ device, entering, leaving }) => (
+      {view.listedDevices.length > 0 && (
+        <div className={`connect-devices${chosen ? ' has-choice' : ''}`}>
+          {view.listedDevices.map(({ device, entering, leaving }) => (
             <div
               key={device.clientId}
               className={`connect-device${entering ? ' is-entering' : ''}${leaving ? ' is-leaving' : ''}`}
@@ -194,10 +216,10 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
                   icon={<MonitorSmartphone size={18} />}
                   title={device.name || 'Another device'}
                   detail="Play there"
-                  onClick={leaving ? undefined : () => {
-                    onDone();
+                  chosen={isChosen(device.clientId)}
+                  onClick={leaving || chosen ? undefined : () => pick(device.clientId, () => {
                     void usePlayerStore.getState().transferPlaybackTo(device);
-                  }}
+                  })}
                 />
               </div>
             </div>
@@ -209,7 +231,9 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
         <button
           type="button"
           className="connect-output"
+          disabled={!!chosen}
           onClick={() => {
+            // Opens Settings: no confirmation needed, it goes somewhere.
             onDone();
             usePlayerStore.getState().openSettingsAt('Playback', 'output');
           }}

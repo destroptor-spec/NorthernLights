@@ -1,6 +1,6 @@
 import { act, render, screen } from '@testing-library/react';
 import { usePlayerStore } from '../../store';
-import { ConnectMenuContent, DEVICE_LEAVE_MS } from '../ConnectMenu';
+import { CHOICE_CONFIRM_MS, ConnectMenuContent, DEVICE_LEAVE_MS } from '../ConnectMenu';
 import type { FollowedOutput } from '../../utils/sessionFollow';
 import { getAuroraClientId } from '../../api/auroraApi';
 
@@ -36,13 +36,33 @@ test('says the music plays here, with this device chosen and nothing else to pic
 });
 
 test('while another device plays: one button to control it, one to play here', () => {
-  const { resolvePlayWhere, onDone } = setup({ sessionFollow: follow() });
+  const { resolvePlayWhere } = setup({ sessionFollow: follow() });
   expect(screen.getByText('Playing on NAD Forstærker')).toBeTruthy();
-  screen.getByRole('button', { name: /NAD Forstærker Control it from here/ }).click();
-  expect(resolvePlayWhere).toHaveBeenLastCalledWith('remote');
+  expect(screen.getByRole('button', { name: /NAD Forstærker Control it from here/ })).toBeTruthy();
   screen.getByRole('button', { name: /This device Play here instead/ }).click();
-  expect(resolvePlayWhere).toHaveBeenLastCalledWith('here');
-  expect(onDone).toHaveBeenCalledTimes(2);
+  expect(resolvePlayWhere).toHaveBeenCalledWith('here');
+});
+
+test('a choice acts at once, then stays lit about a second before the card closes', () => {
+  // Andreas, 2026-10-24: closing at once left him tapping again to be sure.
+  jest.useFakeTimers();
+  try {
+    const { resolvePlayWhere, onDone } = setup({ sessionFollow: follow() });
+    act(() => { screen.getByRole('button', { name: /NAD Forstærker Control it from here/ }).click(); });
+    expect(resolvePlayWhere).toHaveBeenCalledWith('remote');
+    const nad = screen.getByText('NAD Forstærker', { selector: '.connect-option-title' }).closest('button')!;
+    expect(nad.className).toContain('is-chosen');
+    expect(onDone).not.toHaveBeenCalled();
+
+    // A second tap meanwhile does nothing.
+    act(() => { screen.getByText('This device').closest('button')!.click(); });
+    expect(resolvePlayWhere).toHaveBeenCalledTimes(1);
+
+    act(() => { jest.advanceTimersByTime(CHOICE_CONFIRM_MS); });
+    expect(onDone).toHaveBeenCalledTimes(1);
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 test('marks the device this one controls', () => {
@@ -86,12 +106,18 @@ describe("the user's other devices", () => {
   ];
 
   test('lists each other device with Aurora open, and moves the music there', () => {
-    const transferPlaybackTo = jest.fn(async () => undefined);
-    const { onDone } = setup({ connectedDevices: devices(), transferPlaybackTo });
-    expect(screen.queryByRole('button', { name: /Chrome on Linux/ })).toBeNull(); // this device
-    screen.getByRole('button', { name: /Chrome on Android Play there/ }).click();
-    expect(transferPlaybackTo).toHaveBeenCalledWith(expect.objectContaining({ clientId: 'phone-0002' }));
-    expect(onDone).toHaveBeenCalled();
+    jest.useFakeTimers();
+    try {
+      const transferPlaybackTo = jest.fn(async () => undefined);
+      const { onDone } = setup({ connectedDevices: devices(), transferPlaybackTo });
+      expect(screen.queryByRole('button', { name: /Chrome on Linux/ })).toBeNull(); // this device
+      act(() => { screen.getByRole('button', { name: /Chrome on Android Play there/ }).click(); });
+      expect(transferPlaybackTo).toHaveBeenCalledWith(expect.objectContaining({ clientId: 'phone-0002' }));
+      act(() => { jest.advanceTimersByTime(CHOICE_CONFIRM_MS); });
+      expect(onDone).toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   test('shows the playing device once (to control it), and no Cast receivers', () => {

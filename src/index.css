@@ -9093,6 +9093,22 @@ a:focus-visible > .genre-card .genre-card__label {
   border-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
   background: color-mix(in srgb, var(--color-primary) 12%, transparent);
 }
+/* Just chosen: a short glow while the card stays to confirm it; the other
+   choices step back. */
+.connect-option.is-chosen {
+  animation: connect-option-chosen 600ms var(--ease-out);
+}
+@keyframes connect-option-chosen {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-primary) 45%, transparent); }
+  100% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--color-primary) 0%, transparent); }
+}
+.has-choice .connect-option:not(.is-chosen) {
+  opacity: 0.45;
+  transition: opacity 200ms var(--ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  .connect-option.is-chosen { animation: none; }
+}
 .connect-option-icon {
   display: inline-flex;
   flex-shrink: 0;
