@@ -54,6 +54,8 @@ export function useListedDevices(devices: ConnectedDevice[]): ListedDevice[] {
  * moves in here; Listen together and "Open your session" come with Phase 6.
  * The "Playing on" strip and the Now Playing heading only say where.
  */
+const stopBubbling = (event: React.SyntheticEvent) => event.stopPropagation();
+
 export const ConnectButton: React.FC<{ className?: string; iconSize?: number }> = ({ className = '', iconSize = 18 }) => {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLButtonElement>(null);
@@ -76,19 +78,25 @@ export const ConnectButton: React.FC<{ className?: string; iconSize?: number }> 
       >
         <MonitorSpeaker size={iconSize} aria-hidden="true" />
       </button>
-      <ContextMenuPortal
-        open={open}
-        onClose={() => setOpen(false)}
-        anchorRef={anchorRef}
-        placement="above"
-        desktopWidth={MENU_WIDTH}
-      >
-        {({ isMobile }) => (
-          <ContextMenuFrame isMobile={isMobile} widthClassName="w-[304px]">
-            <ConnectMenuContent onDone={() => setOpen(false)} />
-          </ContextMenuFrame>
-        )}
-      </ContextMenuPortal>
+      {/* The card is portalled out of the bar, but React still bubbles its
+          clicks up the component tree: into the mini player's tap-to-expand,
+          which opened Now Playing as the card closed (Andreas, 2026-10-24).
+          They stop here. */}
+      <span style={{ display: 'contents' }} onClick={stopBubbling} onKeyDown={stopBubbling}>
+        <ContextMenuPortal
+          open={open}
+          onClose={() => setOpen(false)}
+          anchorRef={anchorRef}
+          placement="above"
+          desktopWidth={MENU_WIDTH}
+        >
+          {({ isMobile }) => (
+            <ContextMenuFrame isMobile={isMobile} widthClassName="w-[304px]">
+              <ConnectMenuContent onDone={() => setOpen(false)} />
+            </ContextMenuFrame>
+          )}
+        </ContextMenuPortal>
+      </span>
     </>
   );
 };

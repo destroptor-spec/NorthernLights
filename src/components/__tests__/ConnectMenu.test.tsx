@@ -1,6 +1,6 @@
 import { act, render, screen } from '@testing-library/react';
 import { usePlayerStore } from '../../store';
-import { CHOICE_CONFIRM_MS, ConnectMenuContent, DEVICE_LEAVE_MS } from '../ConnectMenu';
+import { CHOICE_CONFIRM_MS, ConnectButton, ConnectMenuContent, DEVICE_LEAVE_MS } from '../ConnectMenu';
 import type { FollowedOutput } from '../../utils/sessionFollow';
 import { getAuroraClientId } from '../../api/auroraApi';
 
@@ -159,5 +159,36 @@ describe("the user's other devices", () => {
   test('lists none with sync off', () => {
     setup({ connectedDevices: devices(), syncPlaybackAcrossDevices: false });
     expect(screen.queryByRole('button', { name: /Chrome on Android/ })).toBeNull();
+  });
+});
+
+describe("taps inside the open card never reach what the button sits in (the mini player's tap-to-expand)", () => {
+  const openInside = () => {
+    setup({ sessionFollow: follow() }); // store state for the card; this render is not used
+    const expand = jest.fn();
+    const view = render(<div onClick={expand} onKeyDown={expand}><ConnectButton /></div>);
+    act(() => { view.getAllByRole('button', { name: 'Connect to a device' }).at(-1)!.click(); });
+    expect(expand).not.toHaveBeenCalled();
+    return expand;
+  };
+
+  test('choosing in the card (desktop popover)', () => {
+    const expand = openInside();
+    act(() => { screen.getAllByRole('button', { name: /This device Play here instead/ }).at(-1)!.click(); });
+    expect(expand).not.toHaveBeenCalled();
+  });
+
+  test("closing the phone's bottom sheet by tapping outside it", () => {
+    const width = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+    try {
+      const expand = openInside();
+      const backdrop = document.body.querySelector('.fixed.inset-0') as HTMLElement;
+      expect(backdrop).toBeTruthy();
+      act(() => { backdrop.click(); });
+      expect(expand).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+    }
   });
 });
