@@ -40,7 +40,7 @@ Do not introduce new semantic colors casually. If a warning state is needed, pre
 
 Use two families:
 
-- `Syne` for display, section emphasis, player labels, compact button labels, and editorial headings.
+- `Cal Sans` for display, section emphasis, player labels, compact button labels, and editorial headings.
 - `DM Sans` for body, metadata, settings, lists, controls, and dense product UI.
 
 Rules:
