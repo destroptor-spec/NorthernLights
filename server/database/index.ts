@@ -15,6 +15,7 @@ import { joinedCreditSplits, splitArtistNames, splitJoinedCredit, uniqueArtistNa
 import { accountProtection, type AccountProtection } from '../../shared/accountProtection';
 export { splitArtistNames };
 export { getArtistVideoUploads, saveArtistVideoCatalog, noteArtistVideoFailure } from './musicVideos';
+export { getArtistReviewEntries, getArtistReviewPreview, decideArtistReview, getRecentArtistReviewDecisions, undoArtistReviewDecision } from './artistReviews';
 export type { VideoUpload, VideoAssociation } from './musicVideos';
 
 let pool: Pool | null = null;
@@ -767,7 +768,7 @@ export async function initDB(): Promise<Pool> {
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           candidate_key TEXT NOT NULL,
           signature TEXT NOT NULL,
-          decision TEXT NOT NULL CHECK (decision IN ('dismissed', 'merged')),
+          decision TEXT NOT NULL CHECK (decision IN ('dismissed', 'merged', 'kept', 'split')),
           canonical_artist_id UUID REFERENCES artists(id) ON DELETE SET NULL,
           artist_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
           decided_by UUID REFERENCES users(id) ON DELETE SET NULL,
@@ -775,6 +776,18 @@ export async function initDB(): Promise<Pool> {
           UNIQUE(candidate_key, signature)
         );
         CREATE INDEX IF NOT EXISTS artist_duplicate_reviews_key_idx ON artist_duplicate_reviews(candidate_key, signature);
+        -- 'kept' / 'split': the user's answer for a joined credit (artistReviews.ts).
+        DO $$ BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'artist_duplicate_reviews_decision_check'
+              AND pg_get_constraintdef(oid) LIKE '%split%'
+          ) THEN
+            ALTER TABLE artist_duplicate_reviews DROP CONSTRAINT IF EXISTS artist_duplicate_reviews_decision_check;
+            ALTER TABLE artist_duplicate_reviews ADD CONSTRAINT artist_duplicate_reviews_decision_check
+              CHECK (decision IN ('dismissed', 'merged', 'kept', 'split'));
+          END IF;
+        END $$;
 
         CREATE TABLE IF NOT EXISTS genre_duplicate_reviews (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1913,6 +1926,14 @@ export async function getPathsForDirectory(dirPath: string): Promise<Buffer[]> {
   return res.rows.map((r: any) => Buffer.from(r.path, 'base64'));
 }
 
+// File paths (raw bytes) of these tracks, for re-reading their tags.
+export async function getTrackPathsByIds(trackIds: string[]): Promise<Buffer[]> {
+  if (trackIds.length === 0) return [];
+  const db = await initDB();
+  const res = await db.query('SELECT path FROM tracks WHERE id = ANY($1::text[])', [trackIds]);
+  return res.rows.map((r: any) => Buffer.from(r.path, 'base64'));
+}
+
 // Records a file whose metadata could not be parsed this pass WITHOUT
 // clobbering metadata a previous successful parse already stored. For a
 // brand-new path it inserts a minimal row (filename as title, NULL entity ids)
@@ -2649,7 +2670,7 @@ const artistCache = new Map<string, string>();   // name/normalized-key/mbid -> 
 const albumCache = new Map<string, string>();     // "title::::artist" -> UUID
 const genreCache = new Map<string, string>();     // name -> UUID
 
-function clearEntityCaches() {
+export function clearEntityCaches() {
   artistCache.clear();
   albumCache.clear();
   genreCache.clear();
@@ -3459,12 +3480,62 @@ export async function alignArtistMbidsWithTracks(): Promise<Array<{ name: string
   return res.rows;
 }
 
-// Of these lower-cased joined names, the ones left whole: the files give the
-// name a MusicBrainz id, so it is one act (Matrix & Futurebound, Bob Marley &
-// The Wailers); the user merged other rows into it; or it leads tracks of its
-// own (Grandmaster Flash & The Furious Five), where only the user can tell an
-// act from a collaboration. A merged row only redirects, so its id doesn't count.
-async function wholeActNames(db: Pool, names: string[]): Promise<Set<string>> {
+// The user's answers for joined credits (Settings → Library entities): keep
+// the name whole as one act, or split it into the stored names. Keyed by the
+// joined name's identity key; the signature is the JSON of
+// `JoinedCreditSignature`; the latest answer wins.
+export const JOINED_CREDIT_KEY_PREFIX = 'artist-joined:';
+
+export interface JoinedCreditSignature {
+  /** The joined name as the files spell it. */
+  subject: string;
+  /** The artists it splits into. */
+  names: string[];
+}
+
+export function parseJoinedCreditSignature(signature: string): JoinedCreditSignature {
+  try {
+    const parsed = JSON.parse(signature);
+    return { subject: String(parsed?.subject || ''), names: Array.isArray(parsed?.names) ? parsed.names.map(String) : [] };
+  } catch {
+    return { subject: '', names: [] };
+  }
+}
+
+export async function getJoinedCreditDecisions(db: Pool): Promise<Map<string, { decision: 'kept' | 'split'; names: string[] }>> {
+  const res = await db.query(`
+    SELECT DISTINCT ON (candidate_key) candidate_key, decision, signature
+    FROM artist_duplicate_reviews
+    WHERE candidate_key LIKE $1 AND decision IN ('kept', 'split')
+    ORDER BY candidate_key, created_at DESC
+  `, [`${JOINED_CREDIT_KEY_PREFIX}%`]);
+  const decisions = new Map<string, { decision: 'kept' | 'split'; names: string[] }>();
+  for (const row of res.rows) {
+    const { names } = parseJoinedCreditSignature(row.signature);
+    decisions.set(String(row.candidate_key).slice(JOINED_CREDIT_KEY_PREFIX.length), { decision: row.decision, names });
+  }
+  return decisions;
+}
+
+// Every performer name credited on a track, as stored.
+export async function getCreditedArtistNames(db: Pool): Promise<string[]> {
+  return (await db.query(`
+    SELECT DISTINCT btrim(e.name) AS name
+    FROM tracks t
+    CROSS JOIN LATERAL jsonb_array_elements_text(
+      CASE WHEN t.artists IS NOT NULL AND btrim(t.artists) LIKE '[%' THEN t.artists::jsonb ELSE '[]'::jsonb END
+    ) AS e(name)
+  `)).rows.map((row: any) => String(row.name));
+}
+
+// Of these lower-cased joined names, the ones left whole: the user kept it as
+// one act; the files give the name a MusicBrainz id, so it is one act (Matrix &
+// Futurebound, Bob Marley & The Wailers); the user merged other rows into it;
+// or it leads tracks of its own (Grandmaster Flash & The Furious Five), where
+// only the user can tell an act from a collaboration, so it waits for their
+// answer. A merged row only redirects, so its id doesn't count. A name the
+// user chose to split is never whole.
+export async function wholeActNames(db: Pool, names: string[]): Promise<Set<string>> {
   if (names.length === 0) return new Set();
   const keyOf = (name: string) => normalizeArtistIdentityKey(name) || name;
   const res = await db.query(`
@@ -3475,31 +3546,39 @@ async function wholeActNames(db: Pool, names: string[]): Promise<Set<string>> {
         OR EXISTS (SELECT 1 FROM tracks t WHERE t.artist_id = a.id))
   `, [names, names.map(keyOf)]);
   const whole = new Set(res.rows.flatMap((row: any) => [String(row.name), String(row.key)]));
-  return new Set(names.filter(name => whole.has(name) || whole.has(keyOf(name))));
+  const decisions = await getJoinedCreditDecisions(db);
+  return new Set(names.filter(name => {
+    const decision = decisions.get(keyOf(name))?.decision;
+    if (decision) return decision === 'kept';
+    return whole.has(name) || whole.has(keyOf(name));
+  }));
 }
 
 // A guest credit joined with "&", "+" or "and" whose names are all artists the
 // library credits on their own, like "Justin Timberlake & Timbaland" in a
 // "50 Cent Feat. Justin Timberlake & Timbaland" file without per-person tags,
 // is split into those artists, so the track shows on each of their pages.
-// Only guests: the track's owner stays, and so does any joined name
-// wholeActNames() leaves whole. Runs after a scan or a merge
-// (runArtistCreditSplitInBackground); a rescan writes the file's credit again
-// and the next run splits it again. Returns the number of tracks changed.
+// Only guests, unless the user chose to split the name: then it splits
+// everywhere and the first name takes the joined name's tracks. Any joined
+// name wholeActNames() leaves whole stays. Runs after a scan, a merge or a
+// review answer (runArtistCreditSplitInBackground); a rescan writes the file's
+// credit again and the next run splits it again. Returns the tracks changed.
 export async function splitJoinedArtistCredits(): Promise<number> {
   const db = await initDB();
-  const credited = (await db.query(`
-    SELECT DISTINCT btrim(e.name) AS name
-    FROM tracks t
-    CROSS JOIN LATERAL jsonb_array_elements_text(
-      CASE WHEN t.artists IS NOT NULL AND btrim(t.artists) LIKE '[%' THEN t.artists::jsonb ELSE '[]'::jsonb END
-    ) AS e(name)
-  `)).rows.map((row: any) => String(row.name));
+  const credited = await getCreditedArtistNames(db);
   const creditedKeys = new Set(credited.map(name => normalizeArtistIdentityKey(name)).filter(Boolean));
+  const decisions = await getJoinedCreditDecisions(db);
 
   const splits = new Map<string, string[]>();
+  const everywhere = new Set<string>();
   for (const name of credited) {
     const key = normalizeArtistIdentityKey(name);
+    const decision = decisions.get(key);
+    if (decision?.decision === 'split' && decision.names.length > 1) {
+      splits.set(name.toLowerCase(), decision.names);
+      everywhere.add(name.toLowerCase());
+      continue;
+    }
     const names = splitJoinedCredit(name, half => {
       const halfKey = normalizeArtistIdentityKey(half);
       return !!halfKey && halfKey !== key && creditedKeys.has(halfKey);
@@ -3509,28 +3588,44 @@ export async function splitJoinedArtistCredits(): Promise<number> {
   for (const name of await wholeActNames(db, [...splits.keys()])) splits.delete(name);
   if (splits.size === 0) return 0;
 
+  const joinedRowIds = new Map<string, string>((await db.query(
+    'SELECT lower(name) AS name, id FROM artists WHERE merged_into IS NULL AND lower(name) = ANY($1::text[])',
+    [[...everywhere]],
+  )).rows.map((row: any) => [String(row.id), String(row.name)]));
   const patterns = [...splits.keys()].map(name => `%${JSON.stringify(name)}%`);
   const tracks = (await db.query(
-    'SELECT id, artists FROM tracks WHERE artists ILIKE ANY($1::text[])',
+    'SELECT id, artists, artist_id FROM tracks WHERE artists ILIKE ANY($1::text[])',
     [patterns],
   )).rows;
   let changed = 0;
+  const moved = new Set<string>();
   for (const track of tracks) {
     let names: string[];
     try { names = JSON.parse(track.artists); } catch { continue; }
     if (!Array.isArray(names)) continue;
-    const next = uniqueArtistNames(names.flatMap((name, i) =>
-      (i > 0 && splits.get(String(name).trim().toLowerCase())) || [String(name)]));
+    const next = uniqueArtistNames(names.flatMap((name, i) => {
+      const lower = String(name).trim().toLowerCase();
+      return ((i > 0 || everywhere.has(lower)) && splits.get(lower)) || [String(name)];
+    }));
     if (next.length === names.length && next.every((name, i) => name === names[i])) continue;
 
+    let artistId: string | null = track.artist_id;
+    if (artistId && joinedRowIds.has(artistId)) {
+      const joinedId = artistId;
+      artistId = await getOrCreateArtist(next[0], null);
+      if (!moved.has(joinedId)) {
+        await moveArtistAttachments(db, joinedId, artistId);
+        moved.add(joinedId);
+      }
+    }
     for (const name of next) await getOrCreateArtist(name, null);
-    await db.query('UPDATE tracks SET artists = $1 WHERE id = $2', [JSON.stringify(next), track.id]);
+    await db.query('UPDATE tracks SET artists = $1, artist_id = $2 WHERE id = $3', [JSON.stringify(next), artistId, track.id]);
     changed++;
   }
 
   if (changed > 0) {
     clearEntityCaches();
-    console.log(`[Artists] Split joined guest credits on ${changed} track(s): ${[...splits.values()].slice(0, 10).map(names => names.join(' | ')).join(', ')}${splits.size > 10 ? ', …' : ''}`);
+    console.log(`[Artists] Split joined credits on ${changed} track(s): ${[...splits.values()].slice(0, 10).map(names => names.join(' | ')).join(', ')}${splits.size > 10 ? ', …' : ''}`);
   }
   return changed;
 }
@@ -3818,22 +3913,40 @@ async function getCoOwnedAlbumIds(db: Pool, artistName: string): Promise<string[
     `SELECT id, artist_name FROM albums
       WHERE strpos(lower(artist_name), lower($1)) > 0 AND lower(btrim(artist_name)) <> lower(btrim($1))`,
     [artistName],
-  )).rows.filter((album: any) => joinedCreditSplits(album.artist_name)
-    .some(names => names.some(name => normalizeArtistIdentityKey(name) === key)));
-  const acts = await wholeActNames(db, albums.map((album: any) => String(album.artist_name).toLowerCase()));
-  const candidates = albums.filter((album: any) => !acts.has(String(album.artist_name).toLowerCase()));
-  if (candidates.length === 0) return [];
+  )).rows;
+  const owners = await getAlbumCoOwners(db, albums.map((album: any) => String(album.artist_name)));
+  return albums
+    .filter((album: any) => owners.get(String(album.artist_name).toLowerCase())?.some(name => normalizeArtistIdentityKey(name) === key))
+    .map((album: any) => String(album.id));
+}
 
-  const halves = [...new Set(candidates.flatMap((album: any) => joinedCreditSplits(album.artist_name).flat()))];
+// The artists that own albums credited to each of these joined album-artist
+// credits (lower-cased credit → names); a credit owned by one act is absent.
+// Same rule as splitJoinedArtistCredits: every name credited on its own, the
+// credit not one wholeActNames() leaves whole, or split by the user.
+export async function getAlbumCoOwners(db: Pool, credits: string[]): Promise<Map<string, string[]>> {
+  const owners = new Map<string, string[]>();
+  const candidates = [...new Set(credits.map(credit => credit.toLowerCase()))]
+    .filter(credit => joinedCreditSplits(credit).length > 0);
+  if (candidates.length === 0) return owners;
+  const acts = await wholeActNames(db, candidates);
+  const open = credits.filter(credit => !acts.has(credit.toLowerCase()));
+  if (open.length === 0) return owners;
+
+  const decisions = await getJoinedCreditDecisions(db);
+  const halves = [...new Set(open.flatMap(credit => joinedCreditSplits(credit).flat()))];
   const credited = new Set((await db.query(
     `SELECT lower(h) AS name FROM unnest($1::text[]) AS h
       WHERE EXISTS (SELECT 1 FROM tracks t WHERE t.artists ILIKE '%' || to_json(h)::text || '%')`,
     [halves],
   )).rows.map((row: any) => String(row.name)));
-  return candidates
-    .filter((album: any) => splitJoinedCredit(album.artist_name, name => credited.has(name.toLowerCase()))
-      ?.some(name => normalizeArtistIdentityKey(name) === key))
-    .map((album: any) => String(album.id));
+  for (const credit of open) {
+    const decision = decisions.get(normalizeArtistIdentityKey(credit));
+    const names = decision?.decision === 'split' ? decision.names
+      : splitJoinedCredit(credit, name => credited.has(name.toLowerCase()));
+    if (names && names.length > 1) owners.set(credit.toLowerCase(), names);
+  }
+  return owners;
 }
 
 export async function getTracksByArtist(artistId: string, userId: string | null = null) {
@@ -4257,6 +4370,35 @@ async function canonicalizeArtistEntities(db: Pool) {
   }
 }
 
+// Moves user attachments (subscriptions, dismissed auto-subscriptions) from an
+// artist row about to lose its tracks to the artist that takes them, before
+// purgeOrphanedEntities() deletes the row (CASCADE would drop them).
+async function moveArtistAttachments(db: Pool, fromId: string, toId: string) {
+  await db.query(`
+    INSERT INTO user_artist_subscriptions (user_id, artist_id, created_at, source)
+    SELECT user_id, $1, created_at, source
+    FROM user_artist_subscriptions
+    WHERE artist_id = $2
+    ON CONFLICT (user_id, artist_id) DO UPDATE SET
+      created_at = LEAST(user_artist_subscriptions.created_at, EXCLUDED.created_at),
+      source = CASE
+        WHEN user_artist_subscriptions.source = 'explicit' OR EXCLUDED.source = 'explicit' THEN 'explicit'
+        ELSE user_artist_subscriptions.source
+      END
+  `, [toId, fromId]);
+  await db.query('DELETE FROM user_artist_subscriptions WHERE artist_id = $1', [fromId]);
+
+  await db.query(`
+    INSERT INTO user_dismissed_auto_artists (user_id, artist_id, dismissed_at)
+    SELECT user_id, $1, dismissed_at
+    FROM user_dismissed_auto_artists
+    WHERE artist_id = $2
+    ON CONFLICT (user_id, artist_id) DO UPDATE SET
+      dismissed_at = GREATEST(user_dismissed_auto_artists.dismissed_at, EXCLUDED.dismissed_at)
+  `, [toId, fromId]);
+  await db.query('DELETE FROM user_dismissed_auto_artists WHERE artist_id = $1', [fromId]);
+}
+
 // Compound credits like "Alok, Martin Jensen & Jason Derulo" were stored as a
 // single artist row in early scans. We can detect them now via the smarter
 // splitter and pre-move user attachments (subscriptions, dismissed-auto)
@@ -4277,29 +4419,7 @@ async function migrateCompoundArtistCredits(db: Pool) {
     const firstIndividualId = await getOrCreateArtist(split[0], null);
     if (firstIndividualId === row.id) continue;
 
-    await db.query(`
-      INSERT INTO user_artist_subscriptions (user_id, artist_id, created_at, source)
-      SELECT user_id, $1, created_at, source
-      FROM user_artist_subscriptions
-      WHERE artist_id = $2
-      ON CONFLICT (user_id, artist_id) DO UPDATE SET
-        created_at = LEAST(user_artist_subscriptions.created_at, EXCLUDED.created_at),
-        source = CASE
-          WHEN user_artist_subscriptions.source = 'explicit' OR EXCLUDED.source = 'explicit' THEN 'explicit'
-          ELSE user_artist_subscriptions.source
-        END
-    `, [firstIndividualId, row.id]);
-    await db.query('DELETE FROM user_artist_subscriptions WHERE artist_id = $1', [row.id]);
-
-    await db.query(`
-      INSERT INTO user_dismissed_auto_artists (user_id, artist_id, dismissed_at)
-      SELECT user_id, $1, dismissed_at
-      FROM user_dismissed_auto_artists
-      WHERE artist_id = $2
-      ON CONFLICT (user_id, artist_id) DO UPDATE SET
-        dismissed_at = GREATEST(user_dismissed_auto_artists.dismissed_at, EXCLUDED.dismissed_at)
-    `, [firstIndividualId, row.id]);
-    await db.query('DELETE FROM user_dismissed_auto_artists WHERE artist_id = $1', [row.id]);
+    await moveArtistAttachments(db, row.id, firstIndividualId);
 
     migratedRows++;
   }

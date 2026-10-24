@@ -499,6 +499,115 @@ describeDb('database read queries', () => {
     });
   });
 
+  describe('artist review queue', () => {
+    let trackNo = 0;
+    const artist = (name: string, mbid: string | null = null) => db.getOrCreateArtist(name, mbid);
+    const album = async (title: string, owner: string) =>
+      (await pool.query('INSERT INTO albums (title, artist_name) VALUES ($1, $2) RETURNING id', [title, owner])).rows[0].id;
+    const track = async (artistId: string, artists: string[], albumId = seeded.albumId, albumTitle = 'Album') => {
+      const id = `cmV2aWV3${trackNo++}`;
+      await pool.query(
+        `INSERT INTO tracks (id, title, artist, album, path, artist_id, album_id, duration, artists)
+         VALUES ($1, 'Track', $2, $3, $1, $4, $5, 180, $6)`,
+        [id, artists.join(' feat. '), albumTitle, artistId, albumId, JSON.stringify(artists)],
+      );
+      return id;
+    };
+    const entry = async (key: string) => (await db.getArtistReviewEntries()).find(e => e.key === key);
+
+    afterAll(async () => {
+      await pool.query("DELETE FROM tracks WHERE id LIKE 'cmV2aWV3%'");
+      await pool.query("DELETE FROM albums WHERE title LIKE 'YY %'");
+      await pool.query("DELETE FROM artist_duplicate_reviews WHERE candidate_key LIKE '%yy%'");
+      await pool.query("UPDATE artists SET merged_into = NULL WHERE name LIKE 'YY %'");
+      await pool.query("DELETE FROM artists WHERE name LIKE 'YY %'");
+    });
+
+    it('asks about a joined name that leads tracks, previews both answers, and applies and undoes a split', async () => {
+      const flash = await artist('YY Flash');
+      await track(flash, ['YY Flash']);
+      await track(await artist('YY Five'), ['YY Five']);
+      const joined = await artist('YY Flash & YY Five');
+      const message = await album('YY The Message', 'YY Flash & YY Five');
+      const lead = [await track(joined, ['YY Flash & YY Five'], message, 'YY The Message'), await track(joined, ['YY Flash & YY Five'], message, 'YY The Message')];
+
+      const key = (await db.getArtistReviewEntries()).find(e => e.subject === 'YY Flash & YY Five')?.key;
+      expect(key).toBeDefined();
+      const asked = (await entry(key!))!;
+      expect(asked).toMatchObject({ kind: 'joined-credit', splitInto: ['YY Flash', 'YY Five'], totalTracks: 2 });
+      expect(asked.outcomes.map(o => o.id)).toEqual(['keep-together', 'split']);
+
+      const preview = (await db.getArtistReviewPreview(key!))!;
+      const pages = (id: string) => Object.fromEntries(preview.outcomes.find(o => o.id === id)!.pages.map(p => [p.name, p]));
+      expect(Object.values(pages('keep-together')).map(p => p.status)).toEqual(['unchanged', 'unchanged', 'unchanged']);
+      const split = pages('split');
+      expect(split['YY Flash & YY Five'].status).toBe('removed');
+      expect(split['YY Flash']).toMatchObject({ status: 'changed', ownTracks: 3, ownTracksBefore: 1 });
+      expect(split['YY Five'].releases.find(r => r.title === 'YY The Message')).toMatchObject({ tracks: 2, change: 'added' });
+
+      await db.decideArtistReview({ key: key!, signature: asked.signature, outcomeId: 'split' });
+      expect(await entry(key!)).toBeUndefined();
+      for (const id of lead) {
+        expect((await pool.query('SELECT artists, artist_id FROM tracks WHERE id = $1', [id])).rows[0])
+          .toEqual({ artists: JSON.stringify(['YY Flash', 'YY Five']), artist_id: flash });
+      }
+      expect((await db.getAlbumCoOwners(pool, ['YY Flash & YY Five'])).get('yy flash & yy five')).toEqual(['YY Flash', 'YY Five']);
+
+      const decision = (await db.getRecentArtistReviewDecisions()).find(d => d.key === key);
+      expect(decision).toMatchObject({ decision: 'split', names: ['YY Flash & YY Five', 'YY Flash', 'YY Five'] });
+      const undone = await db.undoArtistReviewDecision(decision!.id);
+      expect(undone.trackIdsToReread.sort()).toEqual([...lead].sort());
+      expect((await db.getRecentArtistReviewDecisions()).find(d => d.key === key)).toBeUndefined();
+    });
+
+    it('keeps a joined name together, guest credits included', async () => {
+      const fifty = await artist('YY Fifty');
+      await track(fifty, ['YY Fifty']);
+      await track(await artist('YY Nik'), ['YY Nik']);
+      await track(await artist('YY Jay'), ['YY Jay']);
+      await track(await artist('YY Nik & YY Jay'), ['YY Nik & YY Jay']);
+      const asked = (await db.getArtistReviewEntries()).find(e => e.subject === 'YY Nik & YY Jay')!;
+      await db.decideArtistReview({ key: asked.key, signature: asked.signature, outcomeId: 'keep-together' });
+
+      const guest = await track(fifty, ['YY Fifty', 'YY Nik & YY Jay']);
+      await db.runArtistCreditSplitInBackground();
+      expect(await entry(asked.key)).toBeUndefined();
+      expect((await pool.query('SELECT artists FROM tracks WHERE id = $1', [guest])).rows[0].artists)
+        .toBe(JSON.stringify(['YY Fifty', 'YY Nik & YY Jay']));
+    });
+
+    it('merges two spellings from the queue and undoes the merge', async () => {
+      const MBID = '00000000-0000-4000-8000-00000000ffff';
+      const salerno = await artist('YY Sabrina Salerno', MBID);
+      const sabrina = await artist('YY Sabrina', MBID);
+      const salernoTrack = await track(salerno, ['YY Sabrina Salerno']);
+      const sabrinaTrack = await track(sabrina, ['YY Sabrina']);
+      const asked = (await entry(`artist-mbid:${MBID}`))!;
+      expect(asked.kind).toBe('same-musicbrainz');
+
+      const preview = (await db.getArtistReviewPreview(asked.key))!;
+      const keepSalerno = preview.outcomes.find(o => o.id === `merge:${salerno}`)!;
+      expect(keepSalerno.pages.find(p => p.name === 'YY Sabrina')?.status).toBe('removed');
+      expect(keepSalerno.pages.find(p => p.name === 'YY Sabrina Salerno')).toMatchObject({ ownTracks: 2, ownTracksBefore: 1 });
+
+      await db.decideArtistReview({ key: asked.key, signature: asked.signature, outcomeId: `merge:${salerno}` });
+      expect((await pool.query('SELECT merged_into FROM artists WHERE id = $1', [sabrina])).rows[0].merged_into).toBe(salerno);
+
+      const decision = (await db.getRecentArtistReviewDecisions()).find(d => d.key === asked.key)!;
+      expect(decision).toMatchObject({ decision: 'merged', names: ['YY Sabrina Salerno', 'YY Sabrina'] });
+      const undone = await db.undoArtistReviewDecision(decision.id);
+      expect((await pool.query('SELECT merged_into FROM artists WHERE id = $1', [sabrina])).rows[0].merged_into).toBeNull();
+      expect(undone.trackIdsToReread.sort()).toEqual([salernoTrack, sabrinaTrack].sort());
+    });
+
+    it('refuses to undo a decision older than 30 days', async () => {
+      const id = (await pool.query(`
+        INSERT INTO artist_duplicate_reviews (candidate_key, signature, decision, created_at)
+        VALUES ('artist-normalized:yy old', 'x', 'dismissed', NOW() - interval '31 days') RETURNING id`)).rows[0].id;
+      await expect(db.undoArtistReviewDecision(id)).rejects.toThrow('30 days');
+    });
+  });
+
   it('reports the same missing and outdated backlog that incremental analysis selects', async () => {
     const directory = "/coverage/Blå — O'Brien";
     const ids = ['missing', 'loudness', 'embedding-only', 'legacy', 'current', 'future', 'simulated']
@@ -604,6 +713,11 @@ describeDb('database read queries', () => {
         // 8-dimensional acoustic vector; the function bails on non-finite input
         // before touching SQL, so the values must be real numbers.
         getGenrePathFromKNN: [[0, 0, 0, 0, 0, 0, 0, 0]],
+        getAlbumCoOwners: [pool, ['Test Artist & Test Artist Two']],
+        getCreditedArtistNames: [pool],
+        getJoinedCreditDecisions: [pool],
+        getTrackPathsByIds: [[`${TRACK_ID}0`]],
+        getArtistReviewPreview: ['artist-joined:none'],
       });
 
       const args = argsFor();

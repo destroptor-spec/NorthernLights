@@ -143,6 +143,76 @@ router.post('/artists/manual-merge', requireAdmin, async (req, res) => {
   }
 });
 
+// The artist review queue (Settings → Library entities). See
+// server/database/artistReviews.ts.
+router.get('/artist-reviews', requireAdmin, async (_req, res) => {
+  try {
+    const { getArtistReviewEntries } = await import('../database');
+    res.json({ entries: await getArtistReviewEntries() });
+  } catch (error: any) {
+    console.error('[ArtistReviews] list error:', error);
+    res.status(500).json({ error: error.message || 'Failed to load the artist review queue' });
+  }
+});
+
+router.get('/artist-reviews/preview', requireAdmin, async (req, res) => {
+  try {
+    const key = typeof req.query.key === 'string' ? req.query.key : '';
+    if (!key) return res.status(400).json({ error: 'key is required' });
+    const { getArtistReviewPreview } = await import('../database');
+    const preview = await getArtistReviewPreview(key);
+    if (!preview) return res.status(404).json({ error: 'This entry is no longer in the queue' });
+    res.json(preview);
+  } catch (error: any) {
+    console.error('[ArtistReviews] preview error:', error);
+    res.status(500).json({ error: error.message || 'Failed to preview the entry' });
+  }
+});
+
+router.post('/artist-reviews/decide', requireAdmin, async (req, res) => {
+  try {
+    const { key, signature, outcomeId } = req.body || {};
+    if (!key || !signature || !outcomeId) {
+      return res.status(400).json({ error: 'key, signature and outcomeId are required' });
+    }
+    const { decideArtistReview } = await import('../database');
+    await decideArtistReview({ key: String(key), signature: String(signature), outcomeId: String(outcomeId), userId: req.user?.userId || null });
+    await publishApiV1LibraryRevision({ source: 'artistReview' });
+    res.json({ status: 'decided' });
+  } catch (error: any) {
+    console.error('[ArtistReviews] decide error:', error);
+    res.status(409).json({ error: error.message || 'Failed to apply the decision' });
+  }
+});
+
+router.get('/artist-reviews/decisions', requireAdmin, async (_req, res) => {
+  try {
+    const { getRecentArtistReviewDecisions } = await import('../database');
+    res.json({ decisions: await getRecentArtistReviewDecisions() });
+  } catch (error: any) {
+    console.error('[ArtistReviews] decisions error:', error);
+    res.status(500).json({ error: error.message || 'Failed to load recent decisions' });
+  }
+});
+
+router.post('/artist-reviews/decisions/:id/undo', requireAdmin, async (req, res) => {
+  // Undoing a merge or a split re-reads files, which waits for a running scan.
+  if (scanStatus.isScanning) return res.status(409).json({ error: 'A scan is running; try again when it is done' });
+  try {
+    const { undoArtistReviewDecision } = await import('../database');
+    const { trackIdsToReread } = await undoArtistReviewDecision(String(req.params.id));
+    if (trackIdsToReread.length > 0) {
+      void refreshTrackFiles(trackIdsToReread).catch(e => console.error('[ArtistReviews] re-read after undo failed:', e));
+    } else {
+      await publishApiV1LibraryRevision({ source: 'artistReview' });
+    }
+    res.json({ status: 'undone', rereading: trackIdsToReread.length });
+  } catch (error: any) {
+    console.error('[ArtistReviews] undo error:', error);
+    res.status(409).json({ error: error.message || 'Failed to undo the decision' });
+  }
+});
+
 router.get('/genre-duplicates', requireAdmin, async (_req, res) => {
   try {
     const { getGenreReviewState } = await import('../services/genreCanonicalization.service');
@@ -1088,6 +1158,43 @@ export async function runSyncWalk(
 }
 
 // Trigger standalone analysis (no scan — analyzes tracks missing features)
+// Re-reads these tracks' files, as Refresh metadata does for a folder, with
+// the scan indicator showing it. Used when undoing a review decision, so the
+// files decide again. Callers check that no scan is running.
+export async function refreshTrackFiles(trackIds: string[]): Promise<void> {
+  const { getTrackPathsByIds } = await import('../database');
+  const fileBufs = await getTrackPathsByIds(trackIds);
+  if (fileBufs.length === 0) return;
+  scanStatus.isScanning = true;
+  scanStatus.phase = 'metadata';
+  scanStatus.scannedFiles = 0;
+  scanStatus.totalFiles = fileBufs.length;
+  scanStatus.activeFiles = [];
+  scanStatus.activeWorkers = 0;
+  scanStatus.currentFile = '';
+  scanStatus.libraryChanged = false;
+  broadcastScanStatus(true);
+  try {
+    const items: ScanItem[] = await Promise.all(fileBufs.map(async (buf) => {
+      try {
+        const st = await fs.promises.stat(buf);
+        return { buf, mtime: Math.floor(st.mtimeMs), size: st.size };
+      } catch {
+        return { buf };
+      }
+    }));
+    await processMetadataBatch(items, await getScannerConcurrency());
+    await alignArtistMbidsWithTracks();
+    await purgeOrphanedEntities();
+    await runArtistCreditSplitInBackground();
+    resetScanStatus(true);
+    await publishApiV1LibraryRevision({ source: 'metadataRefresh' });
+  } catch (error) {
+    resetScanStatus(true);
+    throw error;
+  }
+}
+
 router.post('/refresh-metadata', async (req, res) => {
   const dirPath = req.body.path;
 
