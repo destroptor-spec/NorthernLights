@@ -181,8 +181,9 @@ session never LOAD (PR E), and a second sender leaves (#119/#123). Details that 
   receiver's startup status already named it, the sender handed over before
   loading anything, PR E then blocked the sender's own first LOAD, and the
   receiver, without a media token, could neither play nor log.
-- Played/skipped history is still reported by the sender for now, to avoid
-  counting plays twice.
+- Plays, skips and scrobbles are counted by the server from the receiver's
+  reports, like any output's (2026-10-19), so they continue with the phone
+  asleep.
 - Shuffle is not applied on the receiver: the sender chooses the next track
   and sends a `load`.
 - The receiver does not tell the sender when it stops following (expiry or

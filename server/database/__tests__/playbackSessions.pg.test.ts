@@ -849,6 +849,25 @@ describeDb('playback sessions', () => {
     });
   });
 
+  describe('plays and scrobbles from output reports', () => {
+    it("counts a listen from the playing device's reports into the user's play count", async () => {
+      const listens = await import('../../services/sessionListens.service');
+      listens.resetSessionListens();
+      const session = await create(trackIds(0, 2), 0);
+      const scrobble = jest.fn(async () => undefined);
+      const deps = { ...listens.defaultSessionListenDeps, scrobble, log: () => undefined };
+      const entry = session.queue[0].queueEntryId;
+      await listens.noteSessionReport(userId, session.id, { state: 'playing', queueEntryId: entry, positionMs: 0 }, deps);
+      await listens.noteSessionReport(userId, session.id, { state: 'playing', queueEntryId: entry, positionMs: 95_000 }, deps); // past half of 180 s
+      await listens.noteSessionReport(userId, session.id, { state: 'playing', queueEntryId: entry, positionMs: 120_000 }, deps);
+      const stats = await pool.query('SELECT play_count FROM user_playback_stats WHERE user_id = $1 AND track_id = $2', [userId, trackId(0)]);
+      expect(Number(stats.rows[0].play_count)).toBe(1);
+      expect(scrobble).toHaveBeenCalledWith(userId, expect.objectContaining({ id: trackId(0), title: 'Track 0', artist: 'Artist' }), false, expect.any(Number));
+      expect(scrobble).toHaveBeenCalledWith(userId, expect.objectContaining({ id: trackId(0) }), true, expect.any(Number));
+      expect(scrobble).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it("keeps one user's sessions invisible to another", async () => {
     const session = await create(trackIds(0, 1));
     expect(await sessions.getPlaybackSession(otherUserId, session.id)).toBeNull();
