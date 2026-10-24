@@ -34,11 +34,15 @@ type SessionRow = {
   updated_at: Date | string;
 };
 
+type QueueEntryAddedBy = PlaybackSession['queue'][number]['addedBy'];
+
 type EntryRow = {
   queue_entry_id: string;
   track_id: string;
   position: number;
   added_at: Date | string;
+  /** 'infinity' for an Infinity pick; null for anything else. */
+  added_by: string | null;
 };
 
 export class PlaybackSessionNotFoundError extends Error {}
@@ -105,13 +109,14 @@ function hashPatch(patch: PlaybackSessionPatch): string {
   return crypto.createHash('sha256').update(JSON.stringify(body)).digest('hex');
 }
 
-function newEntries(trackIds: string[], entryIds?: string[]): EntryRow[] {
+function newEntries(trackIds: string[], entryIds?: string[], addedBy: QueueEntryAddedBy = 'user'): EntryRow[] {
   const addedAt = new Date();
   return trackIds.map((trackId, offset) => ({
     queue_entry_id: entryIds?.[offset] ?? crypto.randomUUID(),
     track_id: trackId,
     position: offset,
     added_at: addedAt,
+    added_by: addedBy === 'infinity' ? 'infinity' : null,
   }));
 }
 
@@ -125,7 +130,7 @@ function anchorSlot(entries: EntryRow[], afterEntryId: string | null): number {
 
 async function loadEntries(db: PoolClient | Awaited<ReturnType<typeof initDB>>, sessionId: string): Promise<EntryRow[]> {
   const result = await db.query(`
-    SELECT queue_entry_id, track_id, position, added_at
+    SELECT queue_entry_id, track_id, position, added_at, added_by
     FROM playback_session_entries
     WHERE session_id = $1
     ORDER BY position ASC
@@ -225,6 +230,7 @@ async function serializeSession(db: PoolClient | Awaited<ReturnType<typeof initD
       position,
       track,
       addedAt: new Date(entry.added_at).toISOString(),
+      addedBy: entry.added_by === 'infinity' ? 'infinity' as const : 'user' as const,
     })),
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
@@ -263,16 +269,17 @@ async function writeEntries(db: PoolClient, sessionId: string, previous: EntryRo
   }
   if (changed.length === 0) return;
   await db.query(`
-    INSERT INTO playback_session_entries (session_id, queue_entry_id, track_id, position, added_at)
-    SELECT $1, entry.queue_entry_id, entry.track_id, entry.position, entry.added_at
-    FROM unnest($2::uuid[], $3::text[], $4::int[], $5::timestamptz[])
-      AS entry(queue_entry_id, track_id, position, added_at)
+    INSERT INTO playback_session_entries (session_id, queue_entry_id, track_id, position, added_at, added_by)
+    SELECT $1, entry.queue_entry_id, entry.track_id, entry.position, entry.added_at, entry.added_by
+    FROM unnest($2::uuid[], $3::text[], $4::int[], $5::timestamptz[], $6::text[])
+      AS entry(queue_entry_id, track_id, position, added_at, added_by)
   `, [
     sessionId,
     changed.map(({ entry }) => entry.queue_entry_id),
     changed.map(({ entry }) => entry.track_id),
     changed.map(({ position }) => position),
     changed.map(({ entry }) => new Date(entry.added_at)),
+    changed.map(({ entry }) => entry.added_by),
   ]);
 }
 
@@ -295,6 +302,7 @@ export async function createPlaybackSession(input: {
       track_id: trackId,
       position,
       added_at: new Date(),
+      added_by: null,
     }));
     const current = entries[Math.min(input.currentIndex, Math.max(0, entries.length - 1))] || null;
     const result = await client.query(`
@@ -418,7 +426,7 @@ export async function patchPlaybackSession(input: {
           const at = operation.afterEntryId !== undefined
             ? anchorSlot(entries, operation.afterEntryId)
             : Math.min(operation.index ?? entries.length, entries.length);
-          entries.splice(at, 0, ...newEntries(operation.trackIds, operation.entryIds));
+          entries.splice(at, 0, ...newEntries(operation.trackIds, operation.entryIds, operation.addedBy));
           if (!currentEntryId) currentEntryId = entries[0]?.queue_entry_id || null;
           queueChanged = true;
           break;

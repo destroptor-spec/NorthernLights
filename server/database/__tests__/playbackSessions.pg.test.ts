@@ -795,6 +795,39 @@ describeDb('playback sessions', () => {
       expect(trackOrder((await sessions.getPlaybackSession(userId, session.id))!)).toHaveLength(5);
     });
 
+    // Prod 2026-10-18: once the server chose Infinity tracks (#145), no device
+    // knew which they were, so none of them showed the picks apart any more.
+    it('marks its picks as Infinity, and they stay marked when moved or kept by a replace', async () => {
+      const session = await playingOnReceiver(trackIds(0, 2), 1);
+      await infinity.topUpSessionInfinity(userId, session.id, engine().recommend);
+      let after = (await sessions.getPlaybackSession(userId, session.id))!;
+      expect(after.queue.map((entry) => entry.addedBy)).toEqual(['user', 'user', 'infinity', 'infinity', 'infinity']);
+      expect((await pool.query(
+        "SELECT count(*)::int AS n FROM playback_session_entries WHERE session_id = $1 AND added_by = 'infinity'", [session.id],
+      )).rows[0].n).toBe(3);
+
+      const pick = after.queue[3].queueEntryId;
+      after = await patch(after, [{ type: 'move', queueEntryId: pick, afterEntryId: after.queue[0].queueEntryId }]);
+      expect(after.queue[1]).toMatchObject({ queueEntryId: pick, addedBy: 'infinity' });
+
+      after = await patch(after, [{
+        type: 'replaceQueue', trackIds: after.queue.map((entry) => entry.track.id), entryIds: after.queue.map((entry) => entry.queueEntryId), currentIndex: 2,
+      }]);
+      expect(after.queue.filter((entry) => entry.addedBy === 'infinity').map((entry) => entry.queueEntryId)).toContain(pick);
+      expect(after.queue.filter((entry) => entry.addedBy === 'infinity')).toHaveLength(3);
+    });
+
+    it("takes a client's own Infinity pick as marked, and anything else as the user's", async () => {
+      const session = await create(trackIds(0, 1));
+      const after = await patch(session, [
+        { type: 'insert', afterEntryId: session.queue[0].queueEntryId, trackIds: [trackId(1)], addedBy: 'infinity' },
+        { type: 'insert', afterEntryId: null, trackIds: [trackId(2)] },
+      ]);
+      expect(after.queue.map((entry) => [entry.track.id, entry.addedBy])).toEqual([
+        [trackId(2), 'user'], [trackId(0), 'user'], [trackId(1), 'infinity'],
+      ]);
+    });
+
     it('reads the session again when another device edited it meanwhile', async () => {
       const session = await playingOnReceiver(trackIds(0, 2), 1);
       let edited = false;
