@@ -928,6 +928,10 @@ export interface PlayerState {
   resolvePlayWhere: (choice: 'remote' | 'here' | null) => Promise<void>;
   /** The device chip by "Playing on …": choose again where actions go. */
   openPlayWhere: () => void;
+  /** Settings to open at a tab and section (the Connect menu's output row). Not persisted. */
+  settingsTarget: { tab: string; section?: string } | null;
+  openSettingsAt: (tab: string, section?: string) => void;
+  clearSettingsTarget: () => void;
   /** A queue row tapped here (routes to the playing device when chosen). */
   playQueueEntry: (index: number) => Promise<void>;
   /** A seek from the progress bar here (routes like playQueueEntry). */
@@ -1490,6 +1494,9 @@ export const usePlayerStore = create<PlayerState>()(
         sessionFollow: null as FollowedOutput | null,
         remoteControlOutputId: null as string | null,
         playWherePrompt: null as { outputName: string; silent?: boolean } | null,
+        settingsTarget: null as { tab: string; section?: string } | null,
+        openSettingsAt: (tab: string, section?: string) => set({ settingsTarget: { tab, ...(section ? { section } : {}) } }),
+        clearSettingsTarget: () => set({ settingsTarget: null }),
         prebufferPolicy: 'conservative' as PrebufferPolicy,
         currentUser: null as { id: string; username: string; role: string } | null,
 

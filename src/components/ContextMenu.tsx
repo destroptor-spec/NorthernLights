@@ -132,6 +132,12 @@ export const ContextMenuPortal: React.FC<{
      *   across siblings to its left.
      */
     menuAlign?: 'left' | 'right';
+    /**
+     * 'below' (default) hangs the menu under the anchor. 'above' attaches the
+     * menu's bottom edge just above it, whatever the menu's height: for anchors
+     * at the bottom of the screen, like the player bar.
+     */
+    placement?: 'below' | 'above';
 }> = ({
     open,
     onClose,
@@ -141,6 +147,7 @@ export const ContextMenuPortal: React.FC<{
     desktopWidth = 248,
     desktopHeight = 320,
     menuAlign = 'right',
+    placement = 'below',
 }) => {
     const isMobile = useIsMobile();
     const menuRef = useRef<HTMLDivElement>(null);
@@ -218,18 +225,20 @@ export const ContextMenuPortal: React.FC<{
     const rawY = position?.y ?? (rect ? rect.bottom + 8 : 16);
     const left = Math.max(16, Math.min(rawX, window.innerWidth - desktopWidth - 16));
     const top = Math.max(16, Math.min(rawY, window.innerHeight - desktopHeight - 16));
+    const above = placement === 'above' && rect && !position;
+    const vertical = above ? { bottom: Math.max(16, window.innerHeight - rect.top + 8) } : { top };
 
     return createPortal(
         <div
             ref={menuRef}
             className="fixed z-[9999]"
             style={{
-                top,
+                ...vertical,
                 left,
                 opacity: isVisible ? 1 : 0,
-                transform: isVisible ? 'scale(1) translateY(0)' : 'scale(0.95) translateY(-4px)',
+                transform: isVisible ? 'scale(1) translateY(0)' : `scale(0.95) translateY(${above ? 4 : -4}px)`,
                 transition: 'opacity 0.15s, transform 0.15s',
-                transformOrigin: 'top left',
+                transformOrigin: above ? 'bottom right' : 'top left',
             }}
         >
             {children({ isMobile })}

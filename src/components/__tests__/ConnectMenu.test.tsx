@@ -10,57 +10,67 @@ const follow = (overrides: Partial<FollowedOutput> = {}): FollowedOutput => ({
 
 const setup = (state: Record<string, unknown>) => {
   const resolvePlayWhere = jest.fn(async () => undefined);
-  const selectAudioOutput = jest.fn(async () => undefined);
+  const openSettingsAt = jest.fn();
   act(() => {
     usePlayerStore.setState({
       sessionFollow: null, remoteControlOutputId: null, castConnected: false,
-      audioOutputSupported: false, audioOutputActive: false, audioOutputDeviceLabel: '', audioOutputSelecting: false,
-      resolvePlayWhere, selectAudioOutput, ...state,
+      audioOutputActive: false, audioOutputDeviceLabel: '', audioOutputDevices: [],
+      resolvePlayWhere, openSettingsAt, ...state,
     } as never);
   });
   const onDone = jest.fn();
   render(<ConnectMenuContent onDone={onDone} />);
-  return { resolvePlayWhere, selectAudioOutput, onDone };
+  return { resolvePlayWhere, openSettingsAt, onDone };
 };
 
 afterEach(() => act(() => { usePlayerStore.setState({ sessionFollow: null, remoteControlOutputId: null } as never); }));
 
-test('says the music plays here, with no choices to make', () => {
+test('says the music plays here, with this device chosen and nothing else to pick', () => {
   setup({});
   expect(screen.getByText('Playing on this device')).toBeTruthy();
+  const here = screen.getByRole('button', { name: /This device Playing here/ });
+  expect(here.className).toContain('is-selected');
   expect(screen.queryByRole('button', { name: /Control/ })).toBeNull();
 });
 
-test('while another device plays: control it, or play here', () => {
+test('while another device plays: one button to control it, one to play here', () => {
   const { resolvePlayWhere, onDone } = setup({ sessionFollow: follow() });
   expect(screen.getByText('Playing on NAD Forstærker')).toBeTruthy();
-  screen.getByRole('button', { name: 'Control NAD Forstærker' }).click();
+  screen.getByRole('button', { name: /NAD Forstærker Control it from here/ }).click();
   expect(resolvePlayWhere).toHaveBeenLastCalledWith('remote');
-  screen.getByRole('button', { name: 'Play on this device' }).click();
+  screen.getByRole('button', { name: /This device Play here instead/ }).click();
   expect(resolvePlayWhere).toHaveBeenLastCalledWith('here');
   expect(onDone).toHaveBeenCalledTimes(2);
 });
 
 test('marks the device this one controls', () => {
   setup({ sessionFollow: follow(), remoteControlOutputId: 'receiver:nad' });
-  expect(screen.getByRole('button', { name: /Control NAD Forstærker/ }).querySelector('[aria-label="chosen"]')).toBeTruthy();
+  const nad = screen.getByRole('button', { name: /NAD Forstærker Controlled from here/ });
+  expect(nad.className).toContain('is-selected');
+  expect(nad.getAttribute('aria-pressed')).toBe('true');
 });
 
-test('a device that stopped answering can only be replaced by playing here', () => {
+test('a device that stopped answering cannot be chosen; playing here can', () => {
   setup({ sessionFollow: follow({ silent: true } as Partial<FollowedOutput>) });
   expect(screen.getByText("NAD Forstærker isn't responding")).toBeTruthy();
-  expect(screen.queryByRole('button', { name: /Control/ })).toBeNull();
-  expect(screen.getByRole('button', { name: 'Play on this device' })).toBeTruthy();
+  expect((screen.getByRole('button', { name: /NAD Forstærker Isn't responding/ }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole('button', { name: /This device Play here instead/ }) as HTMLButtonElement).disabled).toBe(false);
 });
 
-test("chooses this device's audio output where the browser can, and not while casting", () => {
-  const { selectAudioOutput } = setup({ audioOutputSupported: true, audioOutputActive: true, audioOutputDeviceLabel: 'Headphones' });
-  screen.getByRole('button', { name: 'Output: Headphones' }).click();
-  expect(selectAudioOutput).toHaveBeenCalled();
+test("names this device's output and opens Settings → Playback → Output", () => {
+  const { openSettingsAt, onDone } = setup({ audioOutputActive: true, audioOutputDeviceLabel: 'Headphones' });
+  screen.getByRole('button', { name: /Output Headphones/ }).click();
+  expect(openSettingsAt).toHaveBeenCalledWith('Playback', 'output');
+  expect(onDone).toHaveBeenCalled();
+});
+
+test('names the system default output when none is chosen', () => {
+  setup({ audioOutputDevices: [{ deviceId: 'default', label: 'Built-in Audio', isDefault: true }] });
+  expect(screen.getByRole('button', { name: /Output Built-in Audio/ })).toBeTruthy();
 });
 
 test('while casting, says where, and leaves the output to the Cast device', () => {
-  setup({ castConnected: true, audioOutputSupported: true });
+  setup({ castConnected: true });
   expect(screen.getByText(/^Casting to /)).toBeTruthy();
-  expect(screen.queryByRole('button', { name: /output/i })).toBeNull();
+  expect(screen.queryByRole('button', { name: /^Output/ })).toBeNull();
 });

@@ -1,25 +1,18 @@
 import React, { useRef, useState } from 'react';
-import { Check, MonitorSmartphone, MonitorSpeaker, Speaker } from 'lucide-react';
+import { Cast, Check, ChevronRight, MonitorSmartphone, MonitorSpeaker, Speaker } from 'lucide-react';
 import { usePlayerStore } from '../store/index';
 import { castManager } from '../utils/CastManager';
 import { isFollowedOutputPlaying } from '../utils/sessionFollow';
-import {
-  ContextMenuButton,
-  ContextMenuDivider,
-  ContextMenuFrame,
-  ContextMenuHeader,
-  ContextMenuList,
-  ContextMenuPortal,
-} from './ContextMenu';
+import { ContextMenuFrame, ContextMenuPortal } from './ContextMenu';
 
-const MENU_WIDTH = 288;
-const MENU_HEIGHT = 300;
+const MENU_WIDTH = 304;
 
 /**
  * "Connect": where the music plays, and the choices that go with it, in one
- * menu (docs/playback_sessions.md, Phase 6 prep; Andreas, 2026-10-20). For
- * now it holds what plays where and "Play where?" (another device, or this
- * one), and this device's audio output. Cast stays its own button until it
+ * card (docs/playback_sessions.md, Phase 6 prep; Andreas, 2026-10-20). Each
+ * choice is a full-width button: the device that plays (control it from
+ * here) or this device (play here instead). This device's output is named
+ * and opens Settings → Playback → Output. Cast stays its own button until it
  * moves in here; Listen together and "Open your session" come with Phase 6.
  * The "Playing on" strip and the Now Playing heading only say where.
  */
@@ -27,10 +20,6 @@ export const ConnectButton: React.FC<{ className?: string; iconSize?: number }> 
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLButtonElement>(null);
   const followed = usePlayerStore((s) => !!s.sessionFollow);
-
-  // The bars sit at the bottom of the screen: open above the button.
-  const rect = open ? anchorRef.current?.getBoundingClientRect() : undefined;
-  const position = rect ? { x: rect.right - MENU_WIDTH, y: rect.top - MENU_HEIGHT - 8 } : undefined;
 
   return (
     <>
@@ -43,7 +32,7 @@ export const ConnectButton: React.FC<{ className?: string; iconSize?: number }> 
           setOpen((value) => !value);
         }}
         aria-label="Connect to a device"
-        aria-haspopup="menu"
+        aria-haspopup="dialog"
         aria-expanded={open}
         title="Connect to a device"
       >
@@ -53,12 +42,11 @@ export const ConnectButton: React.FC<{ className?: string; iconSize?: number }> 
         open={open}
         onClose={() => setOpen(false)}
         anchorRef={anchorRef}
-        position={position}
+        placement="above"
         desktopWidth={MENU_WIDTH}
-        desktopHeight={MENU_HEIGHT}
       >
         {({ isMobile }) => (
-          <ContextMenuFrame isMobile={isMobile} widthClassName="w-[288px]">
+          <ContextMenuFrame isMobile={isMobile} widthClassName="w-[304px]">
             <ConnectMenuContent onDone={() => setOpen(false)} />
           </ContextMenuFrame>
         )}
@@ -67,14 +55,36 @@ export const ConnectButton: React.FC<{ className?: string; iconSize?: number }> 
   );
 };
 
+const ConnectOption: React.FC<{
+  icon: React.ReactNode;
+  title: string;
+  detail: string;
+  selected?: boolean;
+  onClick?: () => void;
+}> = ({ icon, title, detail, selected = false, onClick }) => (
+  <button
+    type="button"
+    className={`connect-option${selected ? ' is-selected' : ''}`}
+    onClick={onClick}
+    disabled={!onClick}
+    aria-pressed={onClick ? selected : undefined}
+  >
+    <span className="connect-option-icon" aria-hidden="true">{icon}</span>
+    <span className="connect-option-text">
+      <span className="connect-option-title">{title}</span>
+      <span className="connect-option-detail">{detail}</span>
+    </span>
+    {selected && <Check size={16} className="connect-option-check" aria-label="chosen" />}
+  </button>
+);
+
 export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone }) => {
   const follow = usePlayerStore((s) => s.sessionFollow);
   const remoteControlOutputId = usePlayerStore((s) => s.remoteControlOutputId);
   const castConnected = usePlayerStore((s) => s.castConnected);
-  const audioOutputSupported = usePlayerStore((s) => s.audioOutputSupported);
   const audioOutputActive = usePlayerStore((s) => s.audioOutputActive);
   const audioOutputDeviceLabel = usePlayerStore((s) => s.audioOutputDeviceLabel);
-  const audioOutputSelecting = usePlayerStore((s) => s.audioOutputSelecting);
+  const defaultOutputLabel = usePlayerStore((s) => s.audioOutputDevices.find((device) => device.isDefault)?.label);
 
   const controlsFollowed = !!follow && remoteControlOutputId === follow.outputId;
   const castDevice = castConnected ? castManager.getCastDeviceName() || 'Cast device' : null;
@@ -85,6 +95,7 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
     : castDevice
       ? `Casting to ${castDevice}`
       : 'Playing on this device';
+  const outputName = audioOutputActive ? audioOutputDeviceLabel || 'Selected output' : defaultOutputLabel || 'System default';
 
   const choose = (choice: 'remote' | 'here') => {
     onDone();
@@ -92,43 +103,52 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
   };
 
   return (
-    <>
-      <ContextMenuHeader title="Connect" subtitle={where} />
-      {follow && (
-        <ContextMenuList>
-          {/* "Play where?": what this device's Play, Pause and Next act on. */}
-          {!follow.silent && (
-            <ContextMenuButton
-              icon={<Speaker size={15} />}
-              label={`Control ${follow.name}`}
-              trailingIcon={controlsFollowed ? <Check size={15} aria-label="chosen" /> : undefined}
-              onClick={() => choose('remote')}
+    <div className="connect-card" role="dialog" aria-label="Connect">
+      <div className="connect-card-header">
+        <span className="connect-card-title">Connect</span>
+        <span className="connect-card-where">{where}</span>
+      </div>
+
+      <div className="connect-options">
+        {follow ? (
+          <>
+            <ConnectOption
+              icon={<Speaker size={18} />}
+              title={follow.name}
+              detail={follow.silent ? "Isn't responding" : controlsFollowed ? 'Controlled from here' : 'Control it from here'}
+              selected={controlsFollowed}
+              onClick={follow.silent ? undefined : () => choose('remote')}
             />
-          )}
-          <ContextMenuButton
-            icon={<MonitorSmartphone size={15} />}
-            label="Play on this device"
-            onClick={() => choose('here')}
-          />
-        </ContextMenuList>
-      )}
-      {audioOutputSupported && !castConnected && (
-        <>
-          {follow && <ContextMenuDivider />}
-          <ContextMenuList>
-            <ContextMenuButton
-              icon={<Speaker size={15} />}
-              label={audioOutputActive ? `Output: ${audioOutputDeviceLabel || 'selected output'}` : "Choose this device's output"}
-              onClick={() => {
-                if (audioOutputSelecting) return;
-                onDone();
-                void usePlayerStore.getState().selectAudioOutput();
-              }}
+            <ConnectOption
+              icon={<MonitorSmartphone size={18} />}
+              title="This device"
+              detail="Play here instead"
+              onClick={() => choose('here')}
             />
-          </ContextMenuList>
-        </>
+          </>
+        ) : castDevice ? (
+          <ConnectOption icon={<Cast size={18} />} title={castDevice} detail="Casting from this device" selected />
+        ) : (
+          <ConnectOption icon={<MonitorSmartphone size={18} />} title="This device" detail="Playing here" selected />
+        )}
+      </div>
+
+      {!castConnected && (
+        <button
+          type="button"
+          className="connect-output"
+          onClick={() => {
+            onDone();
+            usePlayerStore.getState().openSettingsAt('Playback', 'output');
+          }}
+        >
+          <Speaker size={15} aria-hidden="true" className="shrink-0" />
+          <span className="connect-output-label">Output</span>
+          <span className="connect-output-name">{outputName}</span>
+          <ChevronRight size={15} aria-hidden="true" className="shrink-0" />
+        </button>
       )}
-    </>
+    </div>
   );
 };
 

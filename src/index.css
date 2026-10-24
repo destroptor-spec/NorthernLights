@@ -9035,6 +9035,120 @@ a:focus-visible > .genre-card .genre-card__label {
 .connect-button.is-elsewhere {
   color: var(--color-primary);
 }
+
+/* The Connect card: one full-width button per choice, the chosen one lit. */
+.connect-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+.connect-card-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.connect-card-title {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  color: var(--color-text-primary);
+}
+.connect-card-where {
+  font-size: 0.8rem;
+  color: var(--color-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.connect-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.connect-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--glass-border);
+  background: color-mix(in srgb, var(--color-text-primary) 4%, transparent);
+  color: var(--color-text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 150ms var(--ease-out), border-color 150ms var(--ease-out);
+  -webkit-tap-highlight-color: transparent;
+}
+.connect-option:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+}
+.connect-option:disabled {
+  cursor: default;
+}
+.connect-option.is-selected {
+  border-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+.connect-option-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+}
+.connect-option.is-selected .connect-option-icon,
+.connect-option-check {
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+.connect-option-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.connect-option-title {
+  font-size: 0.9rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.connect-option-detail {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+.connect-output {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 4px 0;
+  border: 0;
+  border-top: 1px solid var(--glass-border);
+  background: none;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.connect-output:hover .connect-output-name {
+  color: var(--color-text-primary);
+}
+.connect-output-label {
+  color: var(--color-text-muted);
+}
+.connect-output-name {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .mobile-now-heading-device.is-silent {
   color: var(--color-warning);
 }
