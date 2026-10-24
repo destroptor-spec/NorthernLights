@@ -590,10 +590,11 @@ describeDb('database read queries', () => {
       expect(keepSalerno.pages.find(p => p.name === 'YY Sabrina')?.status).toBe('removed');
       expect(keepSalerno.pages.find(p => p.name === 'YY Sabrina Salerno')).toMatchObject({ ownTracks: 2, ownTracksBefore: 1 });
 
-      await db.decideArtistReview({ key: asked.key, signature: asked.signature, outcomeId: `merge:${salerno}` });
+      const { decisionId } = await db.decideArtistReview({ key: asked.key, signature: asked.signature, outcomeId: `merge:${salerno}` });
       expect((await pool.query('SELECT merged_into FROM artists WHERE id = $1', [sabrina])).rows[0].merged_into).toBe(salerno);
 
       const decision = (await db.getRecentArtistReviewDecisions()).find(d => d.key === asked.key)!;
+      expect(decision.id).toBe(decisionId);
       expect(decision).toMatchObject({ decision: 'merged', names: ['YY Sabrina Salerno', 'YY Sabrina'] });
       const undone = await db.undoArtistReviewDecision(decision.id);
       expect((await pool.query('SELECT merged_into FROM artists WHERE id = $1', [sabrina])).rows[0].merged_into).toBeNull();

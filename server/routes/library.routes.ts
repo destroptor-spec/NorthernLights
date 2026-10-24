@@ -176,9 +176,9 @@ router.post('/artist-reviews/decide', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'key, signature and outcomeId are required' });
     }
     const { decideArtistReview } = await import('../database');
-    await decideArtistReview({ key: String(key), signature: String(signature), outcomeId: String(outcomeId), userId: req.user?.userId || null });
+    const { decisionId } = await decideArtistReview({ key: String(key), signature: String(signature), outcomeId: String(outcomeId), userId: req.user?.userId || null });
     await publishApiV1LibraryRevision({ source: 'artistReview' });
-    res.json({ status: 'decided' });
+    res.json({ status: 'decided', decisionId });
   } catch (error: any) {
     console.error('[ArtistReviews] decide error:', error);
     res.status(409).json({ error: error.message || 'Failed to apply the decision' });

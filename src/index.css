@@ -3643,8 +3643,7 @@ a:focus-visible > .genre-card .genre-card__label {
 }
 
 .artist-entities-guide__item h4,
-.artist-entities-queue__header h4,
-.artist-candidate__title h5 {
+.artist-entities-queue__header h4 {
   margin: 0;
   color: var(--color-text-primary);
   font-size: 0.98rem;
@@ -3666,8 +3665,7 @@ a:focus-visible > .genre-card .genre-card__label {
   gap: 5px;
 }
 
-.artist-entities-guide code,
-.artist-choice__meta code {
+.artist-entities-guide code {
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--color-bg-primary) 54%, transparent);
@@ -3687,40 +3685,6 @@ a:focus-visible > .genre-card .genre-card__label {
 .artist-entities-guide__note svg {
   margin-top: 3px;
   color: var(--color-text-muted);
-}
-
-.artist-entity-badge {
-  width: max-content;
-  min-height: 24px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--color-surface) 78%, transparent);
-  padding: 0 10px;
-  color: var(--color-text-secondary);
-  font-size: 0.72rem;
-  font-weight: 750;
-  white-space: nowrap;
-}
-
-.artist-entity-badge--same {
-  border-color: color-mix(in srgb, var(--aurora-blue) 38%, var(--glass-border));
-  color: color-mix(in srgb, var(--aurora-blue) 72%, var(--color-text-primary));
-  background: color-mix(in srgb, var(--aurora-blue) 10%, transparent);
-}
-
-.artist-entity-badge--compound {
-  border-color: color-mix(in srgb, var(--aurora-pink) 34%, var(--glass-border));
-  color: color-mix(in srgb, var(--aurora-pink) 78%, var(--color-text-primary));
-  background: color-mix(in srgb, var(--aurora-pink) 10%, transparent);
-}
-
-.artist-entity-badge--mbid {
-  border-color: color-mix(in srgb, var(--aurora-teal) 38%, var(--glass-border));
-  color: color-mix(in srgb, var(--aurora-teal) 72%, var(--color-text-primary));
-  background: color-mix(in srgb, var(--aurora-teal) 10%, transparent);
 }
 
 .artist-entities-queue__header {
@@ -3750,128 +3714,523 @@ a:focus-visible > .genre-card .genre-card__label {
   text-align: center;
 }
 
-.artist-candidate-list {
-  display: grid;
-  gap: var(--spacing-sm);
-}
-
-.artist-candidate {
+/* Settings → Library entities → Artists: the review queue. Each entry is a
+   row; the open one shows its outcomes side by side with artist page previews. */
+.artist-review {
   display: grid;
   gap: var(--spacing-md);
-  border: 1px solid color-mix(in srgb, var(--glass-border) 76%, transparent);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--color-bg-primary) 34%, transparent);
-  padding: var(--spacing-md);
+  margin-bottom: 0;
+  container-type: inline-size;
 }
 
-.artist-candidate__head {
+.artist-review__header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: var(--spacing-md);
 }
 
-.artist-candidate__title {
-  min-width: 0;
-  display: grid;
-  gap: var(--spacing-sm);
-}
-
-.artist-candidate__title h5 {
-  overflow-wrap: anywhere;
-}
-
-.artist-candidate__meta {
-  flex: 0 0 auto;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--spacing-sm);
-}
-
-.artist-candidate__meta span {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--color-surface) 78%, transparent);
-  padding: 0 10px;
-  color: var(--color-text-muted);
-  font-size: 0.72rem;
-  font-weight: 750;
-}
-
-.artist-candidate__body {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 160px;
-  gap: var(--spacing-md);
-  align-items: start;
-}
-
-.artist-choice-list {
-  display: grid;
-  gap: var(--spacing-sm);
-}
-
-.artist-choice {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: var(--spacing-sm);
-  align-items: start;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--color-surface) 80%, transparent);
-  padding: 10px 12px;
-  cursor: pointer;
-  transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
-}
-
-.artist-choice[data-selected="true"] {
-  border-color: color-mix(in srgb, var(--color-primary) 58%, var(--glass-border));
-  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-primary) 12%, transparent);
-}
-
-.artist-choice input {
-  margin-top: 3px;
-  accent-color: var(--color-primary);
-}
-
-.artist-choice:focus-within {
-  border-color: color-mix(in srgb, var(--color-primary) 64%, var(--glass-border));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 18%, transparent);
-}
-
-.artist-choice__copy {
-  min-width: 0;
-  display: grid;
-  gap: 4px;
-}
-
-.artist-choice__name {
+.artist-review__count {
+  margin: 0;
   color: var(--color-text-primary);
-  font-size: 0.9rem;
+  font-size: 1.05rem;
   font-weight: 700;
-  overflow-wrap: anywhere;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
 }
 
-.artist-choice__meta {
+.artist-review__filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px var(--spacing-sm);
+  gap: var(--spacing-xs);
+}
+
+.artist-review__filters .tabular-nums {
+  margin-left: 4px;
+  opacity: 0.7;
+}
+
+.artist-review__empty {
+  max-width: 60ch;
+  margin: 0;
+  padding: var(--spacing-sm) 0;
+  color: var(--color-text-muted);
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.artist-review-queue {
+  display: grid;
+  gap: var(--spacing-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.artist-review-entry {
+  border: 1px solid color-mix(in srgb, var(--glass-border) 76%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-bg-primary) 34%, transparent);
+  transition: border-color var(--transition-fast), background-color var(--transition-fast);
+}
+
+.artist-review-entry[data-open="true"] {
+  border-color: var(--glass-border-hover);
+  background: color-mix(in srgb, var(--color-bg-primary) 52%, transparent);
+}
+
+.artist-review-entry__row {
+  width: 100%;
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "question meta chevron"
+    "subject meta chevron";
+  column-gap: var(--spacing-md);
+  row-gap: 2px;
+  align-items: center;
+  padding: 12px var(--spacing-md);
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.artist-review-entry__row:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.artist-review-entry__question {
+  grid-area: question;
   color: var(--color-text-muted);
   font-size: 0.74rem;
   font-weight: 650;
 }
 
-.artist-candidate__actions {
+.artist-review-entry__subject {
+  grid-area: subject;
+  color: var(--color-text-primary);
+  font-size: 0.98rem;
+  font-weight: 700;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.artist-review-entry__meta {
+  grid-area: meta;
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.artist-review-entry__chevron {
+  grid-area: chevron;
+  color: var(--color-text-muted);
+  transition: transform var(--transition-fast);
+}
+
+.artist-review-entry[data-open="true"] .artist-review-entry__chevron {
+  transform: rotate(180deg);
+}
+
+.artist-review-entry__panel {
   display: grid;
+  gap: var(--spacing-md);
+  padding: 0 var(--spacing-md) var(--spacing-md);
+}
+
+.artist-review-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px var(--spacing-md);
+}
+
+.artist-review-evidence__artist {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: 0.8rem;
+}
+
+.artist-review-evidence__name {
+  color: var(--color-text-secondary);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.artist-review-evidence__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.artist-review-evidence__meta code {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-pill);
+  padding: 1px 7px;
+  color: var(--color-text-secondary);
+  font-size: 0.72rem;
+}
+
+.artist-review-avatar {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-surface) 90%, transparent);
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.artist-review-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.artist-review-outcomes {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--spacing-sm);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.artist-review-outcome {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-surface) 70%, transparent);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.artist-review-outcome:hover {
+  border-color: var(--glass-border-hover);
+}
+
+.artist-review-outcome[data-selected="true"] {
+  border-color: color-mix(in srgb, var(--color-primary) 58%, var(--glass-border));
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-primary) 14%, transparent);
+}
+
+.artist-review-outcome:focus-within {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 22%, transparent);
+}
+
+.artist-review-outcome__label {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  color: var(--color-text-primary);
+  font-size: 0.88rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+/* The radio itself is visually hidden; this ring shows the choice. */
+.artist-review-outcome__label::before {
+  content: '';
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border: 1.5px solid var(--color-text-muted);
+  border-radius: 50%;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.artist-review-outcome[data-selected="true"] .artist-review-outcome__label::before {
+  border-color: var(--color-primary);
+  box-shadow: inset 0 0 0 3px var(--color-bg-primary), inset 0 0 0 7px var(--color-primary);
+}
+
+.artist-review-outcome--skeleton {
+  min-height: 150px;
+  cursor: default;
+}
+
+.artist-review-outcome--skeleton span,
+.artist-review-entry--skeleton span {
+  height: 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-text-muted) 14%, transparent);
+}
+
+.artist-review-outcome--skeleton span:nth-child(1) { width: 45%; }
+.artist-review-outcome--skeleton span:nth-child(2) { width: 75%; }
+.artist-review-outcome--skeleton span:nth-child(3) { width: 60%; }
+
+.artist-review-entry--skeleton {
+  display: grid;
+  gap: var(--spacing-sm);
+  padding: 14px var(--spacing-md);
+}
+
+.artist-review-entry--skeleton span:nth-child(1) { width: 22%; }
+.artist-review-entry--skeleton span:nth-child(2) { width: 48%; height: 12px; }
+
+.artist-review-pages {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.artist-review-page {
+  min-width: 0;
+}
+
+.artist-review-page__head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
   gap: var(--spacing-sm);
 }
 
-.artist-candidate__actions .btn {
-  justify-content: center;
+.artist-review-page__name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 0.84rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artist-review-page[data-status="removed"] .artist-review-page__name {
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+}
+
+.artist-review-tag {
+  flex: none;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-pill);
+  padding: 1px 7px;
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.artist-review-page[data-status="changed"] .artist-review-page__head .artist-review-tag,
+.artist-review-tag--added {
+  border-color: color-mix(in srgb, var(--color-primary) 40%, var(--glass-border));
+  color: var(--color-primary);
+}
+
+.artist-review-page__body {
+  display: grid;
+  gap: var(--spacing-sm);
+  padding-left: 32px;
+}
+
+.artist-review-page__tracks {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+}
+
+.artist-review-releases {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  font-size: 0.78rem;
+}
+
+.artist-review-releases__label {
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.artist-review-releases ul {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.artist-review-releases li {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--color-text-secondary);
+}
+
+.artist-review-releases__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artist-review-releases li[data-change="removed"] .artist-review-releases__title {
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+}
+
+.artist-review-releases__count {
+  flex: none;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.artist-review-releases__more {
+  color: var(--color-text-muted);
+  font-size: 0.74rem;
+}
+
+.artist-review-entry__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+}
+
+.artist-review-error {
+  margin: 0;
+  color: var(--color-error);
+  font-size: 0.84rem;
+}
+
+.artist-review-section {
+  border: 1px solid color-mix(in srgb, var(--glass-border) 76%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+.artist-review-section[open] {
+  padding-bottom: var(--spacing-md);
+}
+
+.artist-review-section > summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: 0 var(--spacing-md);
+  border-radius: inherit;
+  color: var(--color-text-primary);
+  font-size: 0.9rem;
+  font-weight: 700;
+  list-style: none;
+  cursor: pointer;
+}
+
+.artist-review-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.artist-review-section > summary:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.artist-review-section > summary svg {
+  margin-left: auto;
+  color: var(--color-text-muted);
+  transition: transform var(--transition-fast);
+}
+
+.artist-review-section[open] > summary svg {
+  transform: rotate(180deg);
+}
+
+.artist-review-section > :not(summary) {
+  margin-inline: var(--spacing-md);
+}
+
+.artist-review-section__count {
+  color: var(--color-text-muted);
+  font-weight: 650;
+}
+
+.artist-review-section__hint,
+.artist-review-tool__hint {
+  margin-top: 0;
+  margin-bottom: var(--spacing-sm);
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.artist-review-decisions {
+  display: grid;
+  gap: 2px;
+  margin-top: 0;
+  margin-bottom: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.artist-review-decisions li {
+  min-height: 40px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: var(--spacing-md);
+  align-items: center;
+  font-size: 0.84rem;
+}
+
+.artist-review-decisions__what {
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.artist-review-decisions__when {
+  color: var(--color-text-muted);
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+.artist-review-tool {
+  display: grid;
+  gap: var(--spacing-md);
+}
+
+@container (max-width: 520px) {
+  .artist-review-entry__row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "question chevron"
+      "subject chevron"
+      "meta chevron";
+  }
+
+  .artist-review-decisions li {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 0;
+    padding-block: 4px;
+  }
+
+  .artist-review-decisions__when {
+    grid-row: 2;
+  }
 }
 
 .live-music-settings {
@@ -4621,9 +4980,7 @@ a:focus-visible > .genre-card .genre-card__label {
   }
 
   .artist-entities-settings__header,
-  .artist-entities-guide__item,
-  .artist-candidate__head,
-  .artist-candidate__body {
+  .artist-entities-guide__item {
     display: grid;
     align-items: stretch;
     grid-template-columns: 1fr;
@@ -4635,14 +4992,6 @@ a:focus-visible > .genre-card .genre-card__label {
 
   .artist-entities-overview {
     grid-template-columns: 1fr;
-  }
-
-  .artist-candidate__meta {
-    justify-content: flex-start;
-  }
-
-  .artist-candidate__actions {
-    justify-items: start;
   }
 
   .live-music-settings__header,
