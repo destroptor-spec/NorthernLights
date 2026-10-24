@@ -5,6 +5,7 @@ import { usePlayerStore } from '../store/index';
 import { castManager } from '../utils/CastManager';
 import { isFollowedOutputPlaying } from '../utils/sessionFollow';
 import { getAuroraClientId } from '../api/auroraApi';
+import { isPhoneOrTablet } from '../utils/deviceName';
 import { ContextMenuFrame, ContextMenuPortal } from './ContextMenu';
 
 const MENU_WIDTH = 304;
@@ -131,6 +132,13 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
   const remoteControlOutputId = usePlayerStore((s) => s.remoteControlOutputId);
   const castConnected = usePlayerStore((s) => s.castConnected);
   const audioOutputSupported = usePlayerStore((s) => s.audioOutputSupported);
+  const audioOutputPermission = usePlayerStore((s) => s.audioOutputPermission);
+  // Only where an output can really be chosen here: not on phones or tablets
+  // (the system routes audio there), and not where Settings can't name
+  // speakers. A denied permission still shows: Settings can ask again.
+  const outputChoosable = audioOutputSupported
+    && audioOutputPermission !== 'unavailable' && audioOutputPermission !== 'unsupported'
+    && !isPhoneOrTablet();
   const audioOutputActive = usePlayerStore((s) => s.audioOutputActive);
   const audioOutputDeviceLabel = usePlayerStore((s) => s.audioOutputDeviceLabel);
   const defaultOutputLabel = usePlayerStore((s) => s.audioOutputDevices.find((device) => device.isDefault)?.label);
@@ -236,9 +244,8 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
         </div>
       )}
 
-      {/* Only where this browser can choose an output (not mobile browsers or
-          the phone PWA), like Settings → Playback → Output. */}
-      {audioOutputSupported && !castConnected && (
+      {/* Only where an output can be chosen (outputChoosable). */}
+      {outputChoosable && !castConnected && (
         <button
           type="button"
           className="connect-output"
