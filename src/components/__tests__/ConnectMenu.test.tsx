@@ -15,7 +15,7 @@ const setup = (state: Record<string, unknown>) => {
   act(() => {
     usePlayerStore.setState({
       sessionFollow: null, remoteControlOutputId: null, castConnected: false,
-      audioOutputSupported: true, audioOutputActive: false, audioOutputDeviceLabel: '', audioOutputDevices: [],
+      audioOutputSupported: true, audioOutputPermission: 'granted', audioOutputActive: false, audioOutputDeviceLabel: '', audioOutputDevices: [],
       syncPlaybackAcrossDevices: true, connectedDevices: [],
       resolvePlayWhere, openSettingsAt, ...state,
     } as never);
@@ -94,6 +94,26 @@ test('names the system default output when none is chosen', () => {
 test('has no output row where this browser cannot choose an output (the phone PWA)', () => {
   setup({ audioOutputSupported: false });
   expect(screen.queryByRole('button', { name: /^Output/ })).toBeNull();
+});
+
+test('has no output row on a phone, even where the browser claims it can route (Android Chrome)', () => {
+  const ua = jest.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36');
+  try {
+    setup({ audioOutputSupported: true });
+    expect(screen.queryByRole('button', { name: /^Output/ })).toBeNull();
+  } finally {
+    ua.mockRestore();
+  }
+});
+
+test('has no output row where Settings cannot name speakers (no microphone)', () => {
+  setup({ audioOutputSupported: true, audioOutputPermission: 'unavailable' });
+  expect(screen.queryByRole('button', { name: /^Output/ })).toBeNull();
+});
+
+test('keeps the output row when access is denied: Settings can ask again', () => {
+  setup({ audioOutputSupported: true, audioOutputPermission: 'denied' });
+  expect(screen.getByRole('button', { name: /^Output/ })).toBeTruthy();
 });
 
 test('while casting, says where, and leaves the output to the Cast device', () => {
