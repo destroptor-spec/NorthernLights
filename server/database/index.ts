@@ -1,4 +1,5 @@
 import { Pool } from 'pg';
+import { databaseHost } from './dbHost';
 import path from 'path';
 import fs from 'fs';
 import { ARTWORK_EXTRACTION_VERSION } from '../services/artworkVersion';
@@ -43,7 +44,7 @@ export async function initDB(): Promise<Pool> {
       const instance = new Pool({
         user: process.env.DB_USER || 'musicuser',
         password: process.env.DB_PASSWORD || 'musicpass',
-        host: process.env.DB_HOST || 'localhost',
+        host: databaseHost(),
         port: parseInt(process.env.DB_PORT || '5432', 10),
         database: process.env.DB_NAME || 'musicdb',
         max: 20,
@@ -933,6 +934,9 @@ export async function initDB(): Promise<Pool> {
           UNIQUE (session_id, position)
         );
         CREATE INDEX IF NOT EXISTS playback_session_entries_track_idx ON playback_session_entries(track_id);
+        -- Who added the entry: 'infinity' for Infinity picks (server or client),
+        -- NULL for everything else, so every device can show them apart.
+        ALTER TABLE playback_session_entries ADD COLUMN IF NOT EXISTS added_by TEXT;
 
         -- Idempotency keys for session patches (docs/playback_sessions.md, Sync
         -- protocol). Recorded in the transaction that applies the patch, so a
@@ -2679,12 +2683,21 @@ async function resolveMergedGenre(db: Pool, id: string): Promise<string> {
   throw new Error('Genre redirect chain is invalid');
 }
 
+// Whether two artist names are the same identity: equal identity keys, or (for
+// names without Latin letters or digits, whose key is empty) equal lowercased names.
+function sameArtistIdentity(nameA: string, keyA: string | null, nameB: string, keyB: string | null): boolean {
+  const a = keyA || normalizeArtistIdentityKey(nameA);
+  const b = keyB || normalizeArtistIdentityKey(nameB);
+  if (a && b) return a === b;
+  return nameA.trim().toLowerCase() === nameB.trim().toLowerCase();
+}
+
 export async function getOrCreateArtist(name?: string | null, mbid?: string | null): Promise<string> {
   const safeName = sanitizeString(name)?.trim() || UNKNOWN_ARTIST;
   const lowerName = safeName.toLowerCase();
   const normalizedKey = normalizeArtistIdentityKey(safeName);
   const safeMbid = sanitizeString(mbid)?.trim() || null;
-  const cacheKey = safeMbid ? `mbid:${safeMbid}` : `key:${normalizedKey || lowerName}`;
+  const cacheKey = safeMbid ? `mbid:${safeMbid}:${normalizedKey || lowerName}` : `key:${normalizedKey || lowerName}`;
 
   const cached = artistCache.get(cacheKey) || artistCache.get(lowerName);
   if (cached) return cached;
@@ -2692,9 +2705,23 @@ export async function getOrCreateArtist(name?: string | null, mbid?: string | nu
   const db = await initDB();
 
   if (safeMbid) {
-    const byMbid = await db.query('SELECT id FROM artists WHERE mbid = $1 LIMIT 1', [safeMbid]);
-    if (byMbid.rows.length > 0) {
-      const id = await resolveMergedArtist(db, byMbid.rows[0].id);
+    // The files are the source of truth for the name. A MusicBrainz id match is
+    // taken only when the file names the same artist as that row, or as the row
+    // a merge folded it into. A different spelling of the same MBID falls
+    // through to the name lookup below and, if no row has that name, gets its
+    // own row carrying the MBID; Settings → Artist entities then lists the two
+    // for the user to fold together. Merges hold because both lookups follow
+    // merged_into. (Matching on MBID alone kept whatever name the row was first
+    // created with, even after the tags changed.)
+    const byMbid = await db.query('SELECT id, name, normalized_key FROM artists WHERE mbid = $1', [safeMbid]);
+    for (const row of byMbid.rows) {
+      const id = await resolveMergedArtist(db, row.id);
+      let match = sameArtistIdentity(safeName, normalizedKey, row.name, row.normalized_key);
+      if (!match && id !== row.id) {
+        const canonical = (await db.query('SELECT name, normalized_key FROM artists WHERE id = $1', [id])).rows[0];
+        match = !!canonical && sameArtistIdentity(safeName, normalizedKey, canonical.name, canonical.normalized_key);
+      }
+      if (!match) continue;
       await db.query(
         'UPDATE artists SET normalized_key = COALESCE(normalized_key, $2) WHERE id = $1',
         [id, normalizedKey || null]
@@ -4267,6 +4294,52 @@ export async function getArtistDuplicateCandidates(): Promise<ArtistDuplicateCan
       normalizedKey: firstHalfKey,
       artists: baseEntry ? [baseEntry, ...otherEntries] : built.artists,
     });
+  }
+
+  // (3) One MusicBrainz artist under different names. Scans name artist rows
+  // after the files, so a spelling that differs from the existing row's gets
+  // its own row carrying the same MBID ("Sabrina" next to "Sabrina Salerno").
+  // A merged row's MBID counts for the row it was folded into, so a new
+  // spelling of an artist the user already merged is listed next to that artist.
+  const mergedRes = await db.query('SELECT id, merged_into FROM artists WHERE merged_into IS NOT NULL');
+  const mergedInto = new Map<string, string>(mergedRes.rows.map((row: any) => [String(row.id), String(row.merged_into)]));
+  const canonicalOf = (id: string) => {
+    let current = id;
+    for (let i = 0; i < 8 && mergedInto.has(current); i++) current = mergedInto.get(current)!;
+    return current;
+  };
+  const mbidRes = await db.query('SELECT id, mbid FROM artists WHERE mbid IS NOT NULL');
+  const canonicalIdsByMbid = new Map<string, Set<string>>();
+  for (const row of mbidRes.rows) {
+    const ids = canonicalIdsByMbid.get(row.mbid) || new Set<string>();
+    ids.add(canonicalOf(String(row.id)));
+    canonicalIdsByMbid.set(row.mbid, ids);
+  }
+  const sharedMbids = [...canonicalIdsByMbid.entries()].filter(([, ids]) => ids.size > 1);
+  if (sharedMbids.length > 0) {
+    const ids = [...new Set(sharedMbids.flatMap(([, set]) => [...set]))];
+    const rowsRes = await db.query(`
+      SELECT a.id, a.name, a.mbid, COALESCE(a.normalized_key, '') AS normalized_key, a.image_url,
+             COUNT(t.id)::int AS track_count, COUNT(DISTINCT t.album_id)::int AS album_count
+      FROM artists a
+      LEFT JOIN tracks t ON t.artist_id = a.id
+      WHERE a.id = ANY($1::uuid[]) AND a.merged_into IS NULL
+      GROUP BY a.id
+    `, [ids]);
+    const rowById = new Map<string, any>(rowsRes.rows.map((row: any) => [String(row.id), row]));
+    for (const [mbid, set] of sharedMbids) {
+      const rows = [...set].map(id => rowById.get(id)).filter(Boolean);
+      if (rows.length < 2) continue;
+      // Rows that also share an identity key are already listed by (1).
+      if (new Set(rows.map(row => row.normalized_key || row.name.toLowerCase())).size < 2) continue;
+      const built = buildArtistDuplicateCandidate(rows);
+      const top = built.artists[0];
+      candidatesByKey.set(`artist-mbid:${mbid}`, {
+        ...built,
+        candidateKey: `artist-mbid:${mbid}`,
+        normalizedKey: normalizeArtistIdentityKey(top.name) || top.name.toLowerCase(),
+      });
+    }
   }
 
   const candidates: ArtistDuplicateCandidate[] = [];

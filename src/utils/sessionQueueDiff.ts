@@ -8,7 +8,7 @@ import type { PlaybackSession, PlaybackSessionPatch } from '../../shared/api/v1'
 // replaceQueue instead.
 
 export type SessionOperation = PlaybackSessionPatch['operations'][number];
-export interface QueueEntryRef { entryId: string; trackId: string }
+export interface QueueEntryRef { entryId: string; trackId: string; /** An Infinity pick (sent as `addedBy: 'infinity'`). */ infinity?: boolean }
 export interface MirroredTransport { repeatMode: PlaybackSession['repeatMode']; shuffle: boolean; infinity?: boolean }
 
 // Server limits (shared/api/v1.ts).
@@ -84,6 +84,7 @@ export function planQueueOperations(
       afterEntryId: runAnchor,
       trackIds: run.map((entry) => entry.trackId),
       entryIds: run.map((entry) => entry.entryId),
+      ...(run[0].infinity ? { addedBy: 'infinity' as const } : {}),
     });
     runAnchor = run[run.length - 1].entryId;
     run = [];
@@ -91,6 +92,8 @@ export function planQueueOperations(
   local.forEach((entry, index) => {
     const anchor = index === 0 ? null : local[index - 1].entryId;
     if (!serverTrack.has(entry.entryId)) {
+      // One insert marks all its entries alike, so an Infinity pick starts its own.
+      if (run.length && !!run[0].infinity !== !!entry.infinity) flushRun();
       if (!run.length) runAnchor = anchor;
       run.push(entry);
       if (run.length === MAX_INSERT_TRACKS) flushRun();

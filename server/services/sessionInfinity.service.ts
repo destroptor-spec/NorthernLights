@@ -101,7 +101,7 @@ async function fillGap(userId: string, sessionId: string, recommend: Recommend):
         patch: {
           expectedRevision: session.revision,
           requestId: crypto.randomUUID(),
-          operations: [{ type: 'insert', afterEntryId: last.queueEntryId, trackIds: [trackId], entryIds: [crypto.randomUUID()] }],
+          operations: [{ type: 'insert', afterEntryId: last.queueEntryId, trackIds: [trackId], entryIds: [crypto.randomUUID()], addedBy: 'infinity' }],
         },
       });
       session = result.session;

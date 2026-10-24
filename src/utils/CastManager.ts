@@ -33,6 +33,7 @@ import { applyCastStreamingQualityToHlsUrl, applyStreamingQualityToHlsUrl, resol
 import { createQueueEntryId, ensureQueueEntryIds } from './queue';
 import type { TrackInfo } from './fileSystem';
 import { castEndSnapshot, shouldContinuePlayingAfterCast, type CastEndSnapshot } from './castEndHandoff';
+import { castStartPosition, type FollowAtLaunch } from './castStartPosition';
 import { getPlaybackTimeSnapshot } from '../store/playbackTime';
 import { handOverToReceiver, ReceiverFollowAcks, RECEIVER_SESSION_FOLLOW_CAP, type ReceiverFollowAck, type ReceiverHandover } from './receiverSessionFollow';
 declare const chrome: any;
@@ -266,6 +267,8 @@ export class CastManager {
     private readonly auroraStatusFreshMs = 20000;
     private readonly remoteEvidenceWindowMs = 60000;
     private freshSessionStartedAt = 0;
+    /** The output this idle device followed when it asked for a Cast session (castStartPosition). */
+    private followAtLaunch: FollowAtLaunch | null = null;
     private readonly freshSessionWindowMs = 5000;
     private freshSessionPlaybackPromise: Promise<void> | null = null;
     // Session id that already received the fresh-session startup volume, so
@@ -1080,6 +1083,15 @@ export class CastManager {
         void usePlayerStore.getState().continueLocallyAfterCast(snapshot.index, snapshot.positionSeconds, play);
     }
 
+    /**
+     * The new Cast session may stop the output this device follows before it
+     * connects, so where that output was is taken now (castStartPosition).
+     */
+    private noteFollowAtLaunch() {
+        const { sessionFollow } = usePlayerStore.getState();
+        this.followAtLaunch = sessionFollow ? { follow: { ...sessionFollow }, at: Date.now() } : null;
+    }
+
     public noteUserCastLaunchIntent(reason: string = 'launcher') {
         if (this.isConnected()) return;
 
@@ -1094,6 +1106,7 @@ export class CastManager {
 
         this.userSessionRequestPending = true;
         this.freshSessionStartedAt = Date.now();
+        this.noteFollowAtLaunch();
         this.rejoinSessionPending = false;
         this.rejoinHydrationRunId += 1;
         this.clearRejoinHydrationTimer();
@@ -3267,11 +3280,22 @@ export class CastManager {
         }
 
         const track = playlist[currentIndex];
-        // Get current playback position before we pause local audio
-        const currentTime = playbackManager.getCurrentTime();
+        // Get current playback position before we pause local audio; an idle
+        // device following the session continues where its output is.
+        const start = castStartPosition({
+            localSeconds: playbackManager.getCurrentTime(),
+            localPlaying: state.playbackState === 'playing',
+            entryId: track.queueEntryId,
+            durationSeconds: track.duration,
+            follow: state.sessionFollow,
+            atLaunch: this.followAtLaunch,
+            now: Date.now(),
+        });
+        this.followAtLaunch = null;
+        const currentTime = start.seconds;
 
         console.log(`[Cast] Auto-casting: "${track.title}" by ${track.artist} (position: ${currentTime.toFixed(1)}s)`);
-        this.logCast('ok', 'Auto-casting current local queue', `index=${currentIndex} title=${track.title || 'Unknown Title'} position=${currentTime.toFixed(1)}`);
+        this.logCast('ok', 'Auto-casting current local queue', `index=${currentIndex} title=${track.title || 'Unknown Title'} position=${currentTime.toFixed(1)} source=${start.source}`);
 
         this.autoCastInProgress = true;
         try {
@@ -4440,6 +4464,7 @@ export class CastManager {
         }
         this.userSessionRequestPending = true;
         this.freshSessionStartedAt = Date.now();
+        this.noteFollowAtLaunch();
         try {
             this.logCast('ok', 'User requested Cast session');
             await this.castContext.requestSession();

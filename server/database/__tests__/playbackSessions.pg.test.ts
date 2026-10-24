@@ -355,6 +355,20 @@ describeDb('playback sessions', () => {
         await expect(grantOf(claimed)).rejects.toBeInstanceOf(sessions.PlaybackOutputGrantReplacedError);
       });
 
+      it('still names its Cast session after a server restart', async () => {
+        const claimed = await forReceiver(await create(trackIds(0, 1)), 'cast-77');
+        // A restarted server: a fresh copy of the service, so nothing is
+        // remembered in memory; the database is the same.
+        const db = await import('../index');
+        let restarted: typeof sessions | undefined;
+        await jest.isolateModulesAsync(async () => {
+          jest.doMock('../index', () => db);
+          restarted = await import('../../services/playbackSession.service');
+        });
+        expect((await restarted!.getPlaybackSession(userId, claimed.id))!.output)
+          .toMatchObject({ id: 'receiver:cast-77', kind: 'receiver', castSessionId: 'cast-77' });
+      });
+
       it('is a new output in a new Cast session', async () => {
         const first = await forReceiver(await create(trackIds(0, 1)), 'cast-77');
         const second = await forReceiver(first, 'cast-88');
@@ -781,6 +795,39 @@ describeDb('playback sessions', () => {
       expect(trackOrder((await sessions.getPlaybackSession(userId, session.id))!)).toHaveLength(5);
     });
 
+    // Prod 2026-10-18: once the server chose Infinity tracks (#145), no device
+    // knew which they were, so none of them showed the picks apart any more.
+    it('marks its picks as Infinity, and they stay marked when moved or kept by a replace', async () => {
+      const session = await playingOnReceiver(trackIds(0, 2), 1);
+      await infinity.topUpSessionInfinity(userId, session.id, engine().recommend);
+      let after = (await sessions.getPlaybackSession(userId, session.id))!;
+      expect(after.queue.map((entry) => entry.addedBy)).toEqual(['user', 'user', 'infinity', 'infinity', 'infinity']);
+      expect((await pool.query(
+        "SELECT count(*)::int AS n FROM playback_session_entries WHERE session_id = $1 AND added_by = 'infinity'", [session.id],
+      )).rows[0].n).toBe(3);
+
+      const pick = after.queue[3].queueEntryId;
+      after = await patch(after, [{ type: 'move', queueEntryId: pick, afterEntryId: after.queue[0].queueEntryId }]);
+      expect(after.queue[1]).toMatchObject({ queueEntryId: pick, addedBy: 'infinity' });
+
+      after = await patch(after, [{
+        type: 'replaceQueue', trackIds: after.queue.map((entry) => entry.track.id), entryIds: after.queue.map((entry) => entry.queueEntryId), currentIndex: 2,
+      }]);
+      expect(after.queue.filter((entry) => entry.addedBy === 'infinity').map((entry) => entry.queueEntryId)).toContain(pick);
+      expect(after.queue.filter((entry) => entry.addedBy === 'infinity')).toHaveLength(3);
+    });
+
+    it("takes a client's own Infinity pick as marked, and anything else as the user's", async () => {
+      const session = await create(trackIds(0, 1));
+      const after = await patch(session, [
+        { type: 'insert', afterEntryId: session.queue[0].queueEntryId, trackIds: [trackId(1)], addedBy: 'infinity' },
+        { type: 'insert', afterEntryId: null, trackIds: [trackId(2)] },
+      ]);
+      expect(after.queue.map((entry) => [entry.track.id, entry.addedBy])).toEqual([
+        [trackId(2), 'user'], [trackId(0), 'user'], [trackId(1), 'infinity'],
+      ]);
+    });
+
     it('reads the session again when another device edited it meanwhile', async () => {
       const session = await playingOnReceiver(trackIds(0, 2), 1);
       let edited = false;
@@ -799,6 +846,25 @@ describeDb('playback sessions', () => {
       expect(trackOrder(after).slice(0, 3)).toEqual([...trackIds(0, 2), trackId(900)]);
       expect(after.queue.length - 2).toBe(3); // three ahead of the current entry
       expectContiguous(after);
+    });
+  });
+
+  describe('plays and scrobbles from output reports', () => {
+    it("counts a listen from the playing device's reports into the user's play count", async () => {
+      const listens = await import('../../services/sessionListens.service');
+      listens.resetSessionListens();
+      const session = await create(trackIds(0, 2), 0);
+      const scrobble = jest.fn(async () => undefined);
+      const deps = { ...listens.defaultSessionListenDeps, scrobble, log: () => undefined };
+      const entry = session.queue[0].queueEntryId;
+      await listens.noteSessionReport(userId, session.id, { state: 'playing', queueEntryId: entry, positionMs: 0 }, deps);
+      await listens.noteSessionReport(userId, session.id, { state: 'playing', queueEntryId: entry, positionMs: 95_000 }, deps); // past half of 180 s
+      await listens.noteSessionReport(userId, session.id, { state: 'playing', queueEntryId: entry, positionMs: 120_000 }, deps);
+      const stats = await pool.query('SELECT play_count FROM user_playback_stats WHERE user_id = $1 AND track_id = $2', [userId, trackId(0)]);
+      expect(Number(stats.rows[0].play_count)).toBe(1);
+      expect(scrobble).toHaveBeenCalledWith(userId, expect.objectContaining({ id: trackId(0), title: 'Track 0', artist: 'Artist' }), false, expect.any(Number));
+      expect(scrobble).toHaveBeenCalledWith(userId, expect.objectContaining({ id: trackId(0) }), true, expect.any(Number));
+      expect(scrobble).toHaveBeenCalledTimes(2);
     });
   });
 

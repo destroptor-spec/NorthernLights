@@ -23,7 +23,12 @@ import { logPlaybackInfo } from './utils/playbackDebug';
 
 // The session's queue as playable tracks, each keeping its session entry ID.
 const sessionQueueTracks = (session: PlaybackSession) => toPlayableTracks(session.queue.map((entry) => entry.track))
-  .map((track, index) => ({ ...track, queueEntryId: session.queue[index].queueEntryId }));
+  .map((track, index) => ({
+    ...track,
+    queueEntryId: session.queue[index].queueEntryId,
+    // Infinity picks look different until they play, on every device.
+    ...(session.queue[index].addedBy === 'infinity' ? { isInfinity: true } : {}),
+  }));
 
 // "Sync playback across devices" (off unless the user turns it on here).
 castManager.addReceiverCanFollowListener(() => sessionMirror.noteReceiverCanFollow());

@@ -34,6 +34,7 @@ const sessionOf = (entries: number[], extra: Partial<PlaybackSession> = {}): Pla
     position,
     track: { id: `track-${n}`, durationMs: 200_000 } as unknown as PlaybackSession['queue'][number]['track'],
     addedAt: '2026-10-13T19:00:00.000Z',
+    addedBy: 'user' as const,
   })),
   createdAt: '2026-10-13T19:00:00.000Z',
   updatedAt: '2026-10-13T19:50:00.000Z',

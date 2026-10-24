@@ -48,6 +48,7 @@ import concertsRoutes from './routes/concerts.routes';
 import filterRoutes from './routes/filter.routes';
 import subsonicRoutes from './routes/subsonic.routes';
 import apiV1Routes from './routes/apiV1.routes';
+import { cachedLookup, probeDatabase } from './services/healthCheck.service';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -445,31 +446,26 @@ app.use('/api/filter', filterRoutes);
 // Recommend (Infinity Mode next track)
 app.use('/api', recommendRoutes);
 
-// Health check
+// Health check. Polled by every client; keep it fast (healthCheck.service).
+const healthContainerStatus = cachedLookup((name: string): Promise<{ status: string; image?: string }> =>
+  require('./services/containerControl.service').getContainerStatus(name));
 app.get('/api/health', async (req, res) => {
   const { dbConnected } = require('./state');
   const { initDB } = require('./database');
-  const { getContainerStatus, getConfiguredDatabaseInfo } = require('./services/containerControl.service');
-  
+  const { getConfiguredDatabaseInfo } = require('./services/containerControl.service');
+
   let dbLatency = -1;
   let dbLiveness = false;
   let containerStatus = null;
 
   if (dbConnected) {
-    try {
-      const start = Date.now();
-      const db = await initDB();
-      await db.query('SELECT 1');
-      dbLatency = Date.now() - start;
-      dbLiveness = true;
-    } catch (e) {
-      dbLiveness = false;
-    }
+    const probe = await probeDatabase(async () => (await initDB()).query('SELECT 1'));
+    dbLiveness = probe.ok;
+    if (probe.ok) dbLatency = probe.latencyMs;
   }
 
   try {
-    const config = getConfiguredDatabaseInfo();
-    containerStatus = await getContainerStatus(config.name);
+    containerStatus = await healthContainerStatus(getConfiguredDatabaseInfo().name);
   } catch (e) {}
 
   res.json({ 

@@ -84,6 +84,14 @@ function serverKeepsInfinity(state: { syncPlaybackAcrossDevices: boolean }): boo
   return castManager.receiverFollowsSession() || (state.syncPlaybackAcrossDevices && sessionMirror.holdsOutput());
 }
 
+/**
+ * The server counts plays, skips and scrobbles for what this device plays,
+ * from the session output's reports (sessionListens.service), on the same
+ * condition: this device would only count them twice, and could not count
+ * what a receiver plays by itself.
+ */
+const serverCountsListens = serverKeepsInfinity;
+
 /** This idle device shows another device's playback (SessionFollower). */
 function isFollowingAnotherDevice(state: { sessionFollow: FollowedOutput | null; playbackState: string }): boolean {
   return !!state.sessionFollow && state.playbackState !== 'playing' && !castManager.isConnected();
@@ -901,8 +909,9 @@ export interface PlayerState {
   restoreQueueSnapshot: (playlist: TrackInfo[], currentIndex: number | null) => void;
 
   // Global Track Context Menu
-  contextMenu: { track: TrackInfo; x: number; y: number; playlistId?: string; playlistTrackIndex?: number } | null;
-  openContextMenu: (track: TrackInfo, x: number, y: number, playlistId?: string, playlistTrackIndex?: number) => void;
+  /** `queueEntryId`: opened on that row of the play queue (offers Remove from queue). */
+  contextMenu: { track: TrackInfo; x: number; y: number; playlistId?: string; playlistTrackIndex?: number; queueEntryId?: string } | null;
+  openContextMenu: (track: TrackInfo, x: number, y: number, playlistId?: string, playlistTrackIndex?: number, queueEntryId?: string) => void;
   closeContextMenu: () => void;
 
   // Playback Actions
@@ -1017,6 +1026,69 @@ export const usePlayerStore = create<PlayerState>()(
   persist(
     (set, get) => {
       let infinityTopUp: Promise<void> | null = null;
+
+      // Scrobbling from this device, for playback the server does not count
+      // (sync off, or before this device's claim): "now playing" when a track
+      // starts, and the scrobble the moment it counts as played, together
+      // with the play count. It used to wait for the track to end on its own,
+      // so nothing was scrobbled after Next or while casting (2026-10-18).
+      const scrobbleTargets = () => {
+        const state = get();
+        return [
+          ...(state.lastFmConnected && state.lastFmScrobbleEnabled ? [{ provider: 'Last.fm', path: 'lastfm' }] : []),
+          ...(state.listenBrainzConnected && state.listenBrainzScrobbleEnabled ? [{ provider: 'ListenBrainz', path: 'listenbrainz' }] : []),
+        ];
+      };
+      const sendNowPlaying = (track: TrackInfo) => {
+        if (!track.artist || !track.title) return;
+        const body = JSON.stringify({
+          artist: track.artist,
+          track: track.title,
+          album: track.album || '',
+          albumArtist: track.albumArtist || '',
+          duration: track.duration ? Math.round(track.duration) : undefined,
+          mbid: track.mbTrackId || '',
+        });
+        for (const { path } of scrobbleTargets()) {
+          fetch(`/api/providers/${path}/now-playing`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...get().getAuthHeader() },
+            body,
+          }).catch(() => {});
+        }
+      };
+      const submitScrobble = (track: TrackInfo, startedAt: number, duration: number) => {
+        if (!track.artist || !track.title) return;
+        const body = JSON.stringify({
+          tracks: [{
+            artist: track.artist,
+            track: track.title,
+            album: track.album || '',
+            albumArtist: track.albumArtist || '',
+            duration: Math.round(duration),
+            timestamp: Math.floor(startedAt / 1000),
+            mbid: track.mbTrackId || '',
+          }],
+        });
+        // Surface scrobble failures (throttled per provider) so users notice
+        // when this otherwise-invisible feature silently breaks. Success stays
+        // quiet to avoid a toast on every track.
+        for (const { provider, path } of scrobbleTargets()) {
+          fetch(`/api/providers/${path}/scrobble`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...get().getAuthHeader() },
+            body,
+          })
+            .then((res) => { if (!res.ok) throw new Error(`HTTP ${res.status}`); })
+            .catch(() => {
+              const now = Date.now();
+              if (now - (lastScrobbleErrorAt[provider] || 0) > 60000) {
+                lastScrobbleErrorAt[provider] = now;
+                get().addToast(`Couldn't scrobble to ${provider}.`, 'error', { duration: 4000 });
+              }
+            });
+        }
+      };
       // Setup PlaybackManager callbacks to update store state
       playbackManager.setCallbacks({
         onTimeUpdate: (time) => {
@@ -1033,10 +1105,13 @@ export const usePlayerStore = create<PlayerState>()(
             const threshold = Math.min(duration * pct, 240); // 4 minutes = 240s cap
             if (time >= threshold) {
               set({ _scrobbleEligible: true });
-              // Record the play (server telemetry) exactly once, at the moment
-              // the threshold is crossed — not on track start.
+              // Record the play and scrobble exactly once, at the moment the
+              // threshold is crossed — unless the server counts this listen.
               const playedTrack = state.currentIndex !== null ? state.playlist[state.currentIndex] : null;
-              if (playedTrack) get().recordPlay(playedTrack.id);
+              if (playedTrack && !serverCountsListens(state)) {
+                get().recordPlay(playedTrack.id);
+                submitScrobble(playedTrack, state._scrobbleStartAt, duration);
+              }
             }
           }
         },
@@ -1059,49 +1134,7 @@ export const usePlayerStore = create<PlayerState>()(
           persistContinuitySnapshot(true);
         },
         onEnded: () => {
-          // Scrobble the completed track if eligible
-          const state = get();
-          const {
-            lastFmConnected, lastFmScrobbleEnabled,
-            listenBrainzConnected, listenBrainzScrobbleEnabled,
-            _scrobbleEligible, _scrobbleStartAt,
-          } = state;
-          const currentTrack = state.currentIndex !== null ? state.playlist[state.currentIndex] : null;
-          if (_scrobbleEligible && _scrobbleStartAt && currentTrack?.artist && currentTrack?.title) {
-            const authHeaders = get().getAuthHeader();
-            const { duration } = getPlaybackTimeSnapshot();
-            const payload = {
-              tracks: [{
-                artist: currentTrack.artist,
-                track: currentTrack.title,
-                album: currentTrack.album || '',
-                albumArtist: currentTrack.albumArtist || '',
-                duration: Math.round(duration),
-                timestamp: Math.floor(_scrobbleStartAt / 1000),
-                mbid: currentTrack.mbTrackId || '',
-              }],
-            };
-            // Surface scrobble failures (throttled per provider) so users notice
-            // when this otherwise-invisible feature silently breaks. Success stays
-            // quiet to avoid a toast on every finished track.
-            const scrobbleTo = (provider: string, url: string) => {
-              fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...authHeaders },
-                body: JSON.stringify(payload),
-              })
-                .then((res) => { if (!res.ok) throw new Error(`HTTP ${res.status}`); })
-                .catch(() => {
-                  const now = Date.now();
-                  if (now - (lastScrobbleErrorAt[provider] || 0) > 60000) {
-                    lastScrobbleErrorAt[provider] = now;
-                    get().addToast(`Couldn't scrobble to ${provider}.`, 'error', { duration: 4000 });
-                  }
-                });
-            };
-            if (lastFmConnected && lastFmScrobbleEnabled) scrobbleTo('Last.fm', '/api/providers/lastfm/scrobble');
-            if (listenBrainzConnected && listenBrainzScrobbleEnabled) scrobbleTo('ListenBrainz', '/api/providers/listenbrainz/scrobble');
-          }
+          // Played tracks were scrobbled when they crossed the threshold.
           set({ _scrobbleStartAt: null, _scrobbleEligible: false });
 
           // Auto-play next track based on repeat and shuffle rules
@@ -1148,6 +1181,7 @@ export const usePlayerStore = create<PlayerState>()(
               _scrobbleEligible: false,
             });
             persistContinuitySnapshot(true);
+            if (!serverCountsListens(state)) sendNowPlaying(state.playlist[index]);
             // The receiver advanced its own queue, so playAtIndex — and the
             // Infinity top-up it performs — never ran. Without this the queue
             // drains to the last prefetched track and playback simply stops.
@@ -2895,8 +2929,8 @@ export const usePlayerStore = create<PlayerState>()(
         }),
 
         // Global context menu
-        contextMenu: null as { track: TrackInfo; x: number; y: number; playlistId?: string; playlistTrackIndex?: number } | null,
-        openContextMenu: (track: TrackInfo, x: number, y: number, playlistId?: string, playlistTrackIndex?: number) => set({ contextMenu: { track, x, y, playlistId, playlistTrackIndex } }),
+        contextMenu: null as { track: TrackInfo; x: number; y: number; playlistId?: string; playlistTrackIndex?: number; queueEntryId?: string } | null,
+        openContextMenu: (track: TrackInfo, x: number, y: number, playlistId?: string, playlistTrackIndex?: number, queueEntryId?: string) => set({ contextMenu: { track, x, y, playlistId, playlistTrackIndex, queueEntryId } }),
         closeContextMenu: () => set({ contextMenu: null }),
 
         removeFromPlaylist: (index: number) => set((state: PlayerState) => {
@@ -3090,33 +3124,8 @@ export const usePlayerStore = create<PlayerState>()(
             // threshold is crossed (see onTimeUpdate → recordPlay).
             set((s: PlayerState) => ({ sessionHistoryTrackIds: [...s.sessionHistoryTrackIds, track.id].slice(-50) }));
 
-            // Send "now playing" to scrobble providers if connected
-            const state = get();
-            if (track.artist && track.title) {
-              const authHeaders = get().getAuthHeader();
-              const nowPlayingBody = JSON.stringify({
-                artist: track.artist,
-                track: track.title,
-                album: track.album || '',
-                albumArtist: track.albumArtist || '',
-                duration: track.duration ? Math.round(track.duration) : undefined,
-                mbid: track.mbTrackId || '',
-              });
-              if (state.lastFmConnected && state.lastFmScrobbleEnabled) {
-                fetch('/api/providers/lastfm/now-playing', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', ...authHeaders },
-                  body: nowPlayingBody,
-                }).catch(() => {});
-              }
-              if (state.listenBrainzConnected && state.listenBrainzScrobbleEnabled) {
-                fetch('/api/providers/listenbrainz/now-playing', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', ...authHeaders },
-                  body: nowPlayingBody,
-                }).catch(() => {});
-              }
-            }
+            // "Now playing" to scrobble providers, unless the server counts this listen.
+            if (!serverCountsListens(get())) sendNowPlaying(track);
 
             // Pre-fetch infinite track if bounds are reached
             get().ensureInfinityQueue();
@@ -3286,7 +3295,7 @@ export const usePlayerStore = create<PlayerState>()(
           // Telemetry: record a skip for the track we are leaving — but only if
           // we left before it crossed the "played" threshold. Past that point
           // the track is already counted as a play, so a skip would contradict it.
-          if (currentIndex !== null && playlist[currentIndex] && !get()._scrobbleEligible) {
+          if (currentIndex !== null && playlist[currentIndex] && !get()._scrobbleEligible && !serverCountsListens(get())) {
             get().recordSkip(playlist[currentIndex].id);
           }
 

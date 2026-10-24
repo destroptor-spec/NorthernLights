@@ -34,11 +34,15 @@ type SessionRow = {
   updated_at: Date | string;
 };
 
+type QueueEntryAddedBy = PlaybackSession['queue'][number]['addedBy'];
+
 type EntryRow = {
   queue_entry_id: string;
   track_id: string;
   position: number;
   added_at: Date | string;
+  /** 'infinity' for an Infinity pick; null for anything else. */
+  added_by: string | null;
 };
 
 export class PlaybackSessionNotFoundError extends Error {}
@@ -105,13 +109,14 @@ function hashPatch(patch: PlaybackSessionPatch): string {
   return crypto.createHash('sha256').update(JSON.stringify(body)).digest('hex');
 }
 
-function newEntries(trackIds: string[], entryIds?: string[]): EntryRow[] {
+function newEntries(trackIds: string[], entryIds?: string[], addedBy: QueueEntryAddedBy = 'user'): EntryRow[] {
   const addedAt = new Date();
   return trackIds.map((trackId, offset) => ({
     queue_entry_id: entryIds?.[offset] ?? crypto.randomUUID(),
     track_id: trackId,
     position: offset,
     added_at: addedAt,
+    added_by: addedBy === 'infinity' ? 'infinity' : null,
   }));
 }
 
@@ -125,7 +130,7 @@ function anchorSlot(entries: EntryRow[], afterEntryId: string | null): number {
 
 async function loadEntries(db: PoolClient | Awaited<ReturnType<typeof initDB>>, sessionId: string): Promise<EntryRow[]> {
   const result = await db.query(`
-    SELECT queue_entry_id, track_id, position, added_at
+    SELECT queue_entry_id, track_id, position, added_at, added_by
     FROM playback_session_entries
     WHERE session_id = $1
     ORDER BY position ASC
@@ -144,11 +149,24 @@ const TERMINAL_OUTPUT_STATES = new Set(['stopped', 'idle', 'error']);
  * so itself, and a new claim replaces it.
  */
 /**
- * The Cast session each `cast` output sends to (or each `receiver` output runs
- * in), by playback session, for the grant that named it. Only a hint, so it is not stored: after a restart it
- * is unknown, and clients then act as if no other device casts there.
+ * The Cast session each `cast` output sends to, by playback session, for the
+ * grant that named it. Only a hint, so it is not stored: after a restart it
+ * is unknown, and clients then act as if no other device casts there. A
+ * `receiver` output needs no hint: its id names its Cast session.
  */
 const castSessionIds = new Map<string, { generation: number; castSessionId: string }>();
+
+const RECEIVER_OUTPUT_PREFIX = 'receiver:';
+
+/**
+ * The Cast session a receiver output runs in, read from its stored id
+ * (claimedOutputId), so a restart does not forget it. Prod 2026-10-20: right
+ * after a deploy the desktop joined the TV's Cast session, could not tell it
+ * was the session's output, and reloaded its own queue over it from 0:00.
+ */
+function receiverCastSessionId(outputId: string): string | null {
+  return outputId.startsWith(RECEIVER_OUTPUT_PREFIX) ? outputId.slice(RECEIVER_OUTPUT_PREFIX.length) || null : null;
+}
 
 function serializeOutput(row: SessionRow, now = Date.now()): PlaybackOutput | null {
   if (!row.output_id || !row.output_kind || !row.output_claimed_at) return null;
@@ -165,7 +183,9 @@ function serializeOutput(row: SessionRow, now = Date.now()): PlaybackOutput | nu
     ? 'ended'
     : now - lastHeard > OUTPUT_UNREACHABLE_AFTER_MS ? 'unreachable' : 'active';
   const cast = castSessionIds.get(row.id);
-  const castSessionId = cast && cast.generation === Number(row.output_generation) ? cast.castSessionId : null;
+  const castSessionId = row.output_kind === 'receiver'
+    ? receiverCastSessionId(row.output_id)
+    : cast && cast.generation === Number(row.output_generation) ? cast.castSessionId : null;
   return {
     id: row.output_id,
     kind: row.output_kind,
@@ -210,6 +230,7 @@ async function serializeSession(db: PoolClient | Awaited<ReturnType<typeof initD
       position,
       track,
       addedAt: new Date(entry.added_at).toISOString(),
+      addedBy: entry.added_by === 'infinity' ? 'infinity' as const : 'user' as const,
     })),
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
@@ -248,16 +269,17 @@ async function writeEntries(db: PoolClient, sessionId: string, previous: EntryRo
   }
   if (changed.length === 0) return;
   await db.query(`
-    INSERT INTO playback_session_entries (session_id, queue_entry_id, track_id, position, added_at)
-    SELECT $1, entry.queue_entry_id, entry.track_id, entry.position, entry.added_at
-    FROM unnest($2::uuid[], $3::text[], $4::int[], $5::timestamptz[])
-      AS entry(queue_entry_id, track_id, position, added_at)
+    INSERT INTO playback_session_entries (session_id, queue_entry_id, track_id, position, added_at, added_by)
+    SELECT $1, entry.queue_entry_id, entry.track_id, entry.position, entry.added_at, entry.added_by
+    FROM unnest($2::uuid[], $3::text[], $4::int[], $5::timestamptz[], $6::text[])
+      AS entry(queue_entry_id, track_id, position, added_at, added_by)
   `, [
     sessionId,
     changed.map(({ entry }) => entry.queue_entry_id),
     changed.map(({ entry }) => entry.track_id),
     changed.map(({ position }) => position),
     changed.map(({ entry }) => new Date(entry.added_at)),
+    changed.map(({ entry }) => entry.added_by),
   ]);
 }
 
@@ -280,6 +302,7 @@ export async function createPlaybackSession(input: {
       track_id: trackId,
       position,
       added_at: new Date(),
+      added_by: null,
     }));
     const current = entries[Math.min(input.currentIndex, Math.max(0, entries.length - 1))] || null;
     const result = await client.query(`
@@ -403,7 +426,7 @@ export async function patchPlaybackSession(input: {
           const at = operation.afterEntryId !== undefined
             ? anchorSlot(entries, operation.afterEntryId)
             : Math.min(operation.index ?? entries.length, entries.length);
-          entries.splice(at, 0, ...newEntries(operation.trackIds, operation.entryIds));
+          entries.splice(at, 0, ...newEntries(operation.trackIds, operation.entryIds, operation.addedBy));
           if (!currentEntryId) currentEntryId = entries[0]?.queue_entry_id || null;
           queueChanged = true;
           break;
@@ -501,7 +524,7 @@ export async function patchPlaybackSession(input: {
  * Cast receiver in the named Cast session (docs/cast-receiver-output.md, PR B).
  */
 export function claimedOutputId(clientId: string, output: PlaybackOutputClaim): string {
-  return output.kind === 'receiver' ? `receiver:${output.castSessionId}` : clientId;
+  return output.kind === 'receiver' ? `${RECEIVER_OUTPUT_PREFIX}${output.castSessionId}` : clientId;
 }
 
 /**

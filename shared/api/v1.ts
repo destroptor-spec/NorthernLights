@@ -226,11 +226,16 @@ export const lyricsSchema = z.object({
   })),
 }).meta({ id: 'TrackLyrics' });
 
+export const QUEUE_ENTRY_ADDED_BY = ['user', 'infinity'] as const;
+const queueEntryAddedBySchema = z.enum(QUEUE_ENTRY_ADDED_BY)
+  .describe('infinity: an Infinity pick (by the server, or a client that chose it itself). user: anything else. Clients show Infinity picks apart until they play.');
+
 export const queueEntrySchema = z.object({
   queueEntryId: z.string().uuid(),
   position: z.number().int().nonnegative(),
   track: trackSchema,
   addedAt: ISO_DATE_TIME,
+  addedBy: queueEntryAddedBySchema,
 }).meta({ id: 'PlaybackQueueEntry' });
 
 export const PLAYBACK_OUTPUT_KINDS = ['browser', 'cast', 'receiver'] as const;
@@ -314,6 +319,7 @@ const queueInsertOperation = z.object({
   afterEntryId: z.string().uuid().nullable().optional().describe('Insert after this entry; null inserts at the head. Give exactly one of index or afterEntryId.'),
   trackIds: z.array(OPAQUE_ID).min(1).max(200),
   entryIds: proposedEntryIds(200),
+  addedBy: queueEntryAddedBySchema.optional().describe('Mark the inserted entries as Infinity picks (`infinity`). Default `user`.'),
 })
   .refine(oneTarget('index'), { message: 'Give exactly one of index or afterEntryId.' })
   .refine(entryIdsMatchTracks, { message: ENTRY_IDS_MESSAGE, path: ['entryIds'] });

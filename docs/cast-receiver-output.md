@@ -1,13 +1,17 @@
 # Cast receiver as its own output (Phase 5 spec)
 
-Status: **built** (updated 2026-10-18). PR A shipped (#113–#115, with #118
+Status: **built** (updated 2026-10-19). PR A shipped (#113–#115, with #118
 and #122). PRs B–E, the probe and #137 merged as one stack in #138
 (2026-10-16), followed by #141 (wait for CAF queue batches to land). Server
 Infinity for receivers came with #140. Verified on the NAD (checklist rows
-22–26) and a speaker group; the Beoplay A9 (row 27) is untested. Of the
-[verification](#verification-phase-5-done-when-from-the-design) list, the
-1-hour run with the phone asleep and token expiry with no phone are not yet
-confirmed. Background and the full design: [playback_sessions.md](playback_sessions.md)
+22–26) and a speaker group. The Beoplay A9 (row 27) followed the session
+itself and played for about 2.5 hours without issue with the phone locked
+and no other device running Aurora, so with only the receiver and the server
+at work (2026-10-19, `receiver-session-follow :: started`, credential renewed while
+playing), and its plays were scrobbled to Last.fm by the server (#158);
+remote commands and queue edits (rows 24–25) were not run on it separately. Of the
+[verification](#verification-phase-5-done-when-from-the-design) list, only
+token expiry with no phone is not yet confirmed. Background and the full design: [playback_sessions.md](playback_sessions.md)
 (Cast receiver as an output, Receiver authentication, Phase 5). Care rules:
 [cast-design-checklist.md](cast-design-checklist.md) and the receiver
 regression caution (one issue per PR, sender-side first, receiver only when
@@ -131,7 +135,10 @@ Phase 1's leftover "session-bound receiver tokens".
 - A receiver without the capability gets exactly today's LOAD and messages.
 - The second-sender rules (#119/#123: a device joining a Cast session another
   device casts leaves it again) also recognise a `receiver` output: its
-  `castSessionId` is the Cast session the receiver runs in. The device that
+  `castSessionId` is the Cast session the receiver runs in. The server reads
+  it from the stored output ID (`receiver:<castSessionId>`), so unlike a
+  `cast` output's it survives a server restart (prod 2026-10-20: a desktop
+  joining right after a deploy reloaded its queue over the TV). The device that
   claimed it (the session's `ownerClientId`) rejoining that Cast session is
   not a second sender. A take-over by a
   `receiver` output on the same Cast device leaves the music alone, and a
@@ -174,8 +181,9 @@ session never LOAD (PR E), and a second sender leaves (#119/#123). Details that 
   receiver's startup status already named it, the sender handed over before
   loading anything, PR E then blocked the sender's own first LOAD, and the
   receiver, without a media token, could neither play nor log.
-- Played/skipped history is still reported by the sender for now, to avoid
-  counting plays twice.
+- Plays, skips and scrobbles are counted by the server from the receiver's
+  reports, like any output's (2026-10-19), so they continue with the phone
+  asleep.
 - Shuffle is not applied on the receiver: the sender chooses the next track
   and sends a `load`.
 - The receiver does not tell the sender when it stops following (expiry or

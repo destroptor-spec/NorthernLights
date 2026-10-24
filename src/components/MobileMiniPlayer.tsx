@@ -1,4 +1,5 @@
 import { memo, useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { usePlayerStore } from '../store/index';
 
 import { useDisplayedPlaying } from '../hooks/useDisplayedPlaying';
@@ -32,6 +33,11 @@ const MobileMiniPlayer = () => {
   const [sheetMounted, setSheetMounted] = useState(false);
   const [swipeDir, setSwipeDir] = useState<'left' | 'right' | null>(null);
   const [castDeviceName, setCastDeviceName] = useState(castManager.getCastDeviceName());
+
+  // Any navigation (Go to Album / Go to Artist in the track menu, a link)
+  // closes Now Playing, so the page it opens is seen, not hidden behind it.
+  const { pathname } = useLocation();
+  useEffect(() => setExpanded(false), [pathname]);
 
   useEffect(() => {
     if (expanded) {

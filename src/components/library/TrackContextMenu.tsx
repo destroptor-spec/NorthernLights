@@ -7,7 +7,7 @@ import {
     Play, Plus, ListPlus, Check,
     ChevronRight, ChevronLeft,
     Search, X, Disc3, Mic2, ListMinus,
-    Heart, Users,
+    Heart, Users, ListX,
 } from 'lucide-react';
 import {
     ContextMenuButton,
@@ -17,6 +17,7 @@ import {
     ContextMenuList,
     useIsMobile,
 } from '../ContextMenu';
+import { useRemoveFromQueueWithUndo } from '../QueueList';
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -265,6 +266,9 @@ export const TrackContextMenu: React.FC = () => {
     const [trackCredits, setTrackCredits] = useState<TrackCredit[]>([]);
     const [creditsLoading, setCreditsLoading] = useState(false);
     const getAuthHeader = usePlayerStore(state => state.getAuthHeader);
+    const removeFromQueue = useRemoveFromQueueWithUndo();
+    // The track that plays is skipped, not removed, so its menu has no Remove.
+    const playingEntryId = usePlayerStore(state => state.currentIndex !== null ? state.playlist[state.currentIndex]?.queueEntryId : undefined);
 
     // ── open/close lifecycle ──────────────────────────────────────────────────
     useEffect(() => {
@@ -323,7 +327,7 @@ export const TrackContextMenu: React.FC = () => {
     }, [contextMenu, isMobile, closeContextMenu]);
 
     if (!contextMenu) return null;
-    const { track, x, y, playlistId: contextPlaylistId, playlistTrackIndex } = contextMenu;
+    const { track, x, y, playlistId: contextPlaylistId, playlistTrackIndex, queueEntryId } = contextMenu;
 
     // ── desktop position ──────────────────────────────────────────────────────
     const menuW = 248, menuH = 340;
@@ -487,6 +491,19 @@ export const TrackContextMenu: React.FC = () => {
                                     label="Add to Playlist"
                                     onClick={() => nav.push('playlists')}
                                     trailingIcon={<ChevronRight size={15} />}
+                                />
+                            </>
+                        )}
+
+                        {/* Remove from queue — only when opened on a queue row that isn't playing */}
+                        {queueEntryId && queueEntryId !== playingEntryId && (
+                            <>
+                                <ContextMenuDivider />
+                                <ContextMenuButton
+                                    icon={<ListX size={15} />}
+                                    label="Remove from Queue"
+                                    onClick={() => { closeContextMenu(); removeFromQueue(queueEntryId); }}
+                                    danger
                                 />
                             </>
                         )}

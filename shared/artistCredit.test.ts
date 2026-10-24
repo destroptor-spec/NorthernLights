@@ -26,6 +26,20 @@ describe('shared/artistCredit', () => {
       ]);
     });
 
+    it('splits feat./ft. written without a space after the dot', () => {
+      expect(splitArtistNames('Brooke Candy feat.Sia')).toEqual(['Brooke Candy', 'Sia']);
+      expect(splitArtistNames('Eminem ft.Dido')).toEqual(['Eminem', 'Dido']);
+      expect(splitArtistNames('Calvin Harris (feat.Rihanna)')).toEqual(['Calvin Harris', 'Rihanna']);
+    });
+
+    it('keeps names that merely contain feat/ft whole', () => {
+      expect(splitArtistNames('Daft Punk')).toEqual(['Daft Punk']);
+      expect(splitArtistNames('Feather Mae')).toEqual(['Feather Mae']);
+      expect(splitArtistNames('Soft.Cell')).toEqual(['Soft.Cell']);
+      expect(splitArtistNames('Defeat.Me')).toEqual(['Defeat.Me']);
+      expect(splitArtistNames('Lady Feat.')).toEqual(['Lady Feat.']);
+    });
+
     it('splits comma lists including the final Oxford "&"', () => {
       expect(splitArtistNames('Alok, Martin Jensen & Jason Derulo')).toEqual([
         'Alok',

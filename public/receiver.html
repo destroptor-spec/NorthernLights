@@ -9,11 +9,9 @@
       --bg: #030208;
       --surface: rgba(8, 6, 22, 0.48);
       --surface-strong: rgba(8, 6, 22, 0.62);
-      --border: rgba(255, 255, 255, 0.075);
-      --border-bright: rgba(34, 201, 131, 0.18);
       --text: #edf8f4;
       --text-soft: #a8a9ba;
-      --text-muted: #66677b;
+      --text-muted: #9698aa;
       --green: #22c983;
       --teal: #2dd4bf;
       --blue: #0ea5e9;
@@ -126,8 +124,6 @@
       position: relative;
       overflow: hidden;
       background: rgba(255, 255, 255, 0.045);
-      border: 1px solid var(--border);
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
     }
 
     .brand-mark::before,
@@ -155,13 +151,13 @@
     .brand-copy {
       display: flex;
       flex-direction: column;
-      gap: 0.25vh;
+      gap: 0.6vh;
     }
 
     .brand-title {
       font-family: var(--font-display);
       font-size: 2.35vh;
-      line-height: 1;
+      line-height: 1.2;
       letter-spacing: 0;
       color: var(--text);
     }
@@ -183,8 +179,6 @@
       color: var(--text-soft);
       font-size: 1.45vh;
       background: rgba(255, 255, 255, 0.038);
-      border: 1px solid var(--border);
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.035);
     }
 
     .status-dot {
@@ -235,21 +229,15 @@
       aspect-ratio: 1;
       justify-self: end;
       border-radius: var(--radius-xl);
-      padding: 9px;
-      background:
-        linear-gradient(145deg, rgba(255,255,255,0.09), rgba(255,255,255,0.025)),
-        rgba(255, 255, 255, 0.035);
-      border: 1px solid var(--border);
-      box-shadow: var(--shadow), inset 0 1px 0 rgba(255,255,255,0.06);
+      box-shadow: var(--shadow);
     }
 
     .cover {
       width: 100%;
       height: 100%;
-      border-radius: calc(var(--radius-xl) - 12px);
+      border-radius: inherit;
       overflow: hidden;
       background: rgba(255, 255, 255, 0.035);
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.055);
     }
 
     #cover-art,
@@ -279,11 +267,7 @@
     .content {
       min-width: 0;
       max-width: 760px;
-      padding: clamp(34px, 4.2vh, 56px) clamp(34px, 3.2vw, 54px);
-      border-radius: var(--radius-xl);
-      background: linear-gradient(145deg, rgba(8, 6, 22, 0.58), rgba(8, 6, 22, 0.34));
-      border: 1px solid var(--border);
-      box-shadow: var(--shadow), inset 0 1px 0 rgba(255,255,255,0.045);
+      padding: 2vh 0;
     }
 
     .kicker {
@@ -305,11 +289,12 @@
     }
 
     #track-title {
-      margin: 0 0 1.4vh;
+      margin: 0 0 2vh;
       max-width: 100%;
       font-family: var(--font-display);
       font-size: clamp(40px, 6.2vh, 82px);
-      line-height: 0.94;
+      font-weight: 500;
+      line-height: 1.12;
       letter-spacing: 0;
       color: var(--text);
       overflow: hidden;
@@ -320,10 +305,10 @@
     }
 
     #track-artist {
-      margin: 0 0 0.6vh;
+      margin: 0 0 1vh;
       font-size: clamp(21px, 2.7vh, 34px);
       color: var(--text-soft);
-      line-height: 1.2;
+      line-height: 1.4;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -331,9 +316,10 @@
 
     #track-album {
       margin: 0;
-      font-size: 1.65vh;
+      font-size: 1.85vh;
+      font-size: clamp(16px, 1.85vh, 26px);
       color: var(--text-muted);
-      line-height: 1.35;
+      line-height: 1.5;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -350,11 +336,9 @@
       color: var(--text-soft);
       font-size: 1.35vh;
       background: rgba(255, 255, 255, 0.045);
-      border: 1px solid var(--border);
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
       opacity: 0;
       transform: translateY(-4px);
-      transition: opacity 220ms ease, transform 220ms ease, border-color 220ms ease;
+      transition: opacity 220ms ease, transform 220ms ease;
       pointer-events: none;
     }
 
@@ -380,7 +364,6 @@
 
     .state-banner[data-state="ERROR"] {
       color: #ffc4cf;
-      border-color: rgba(244, 63, 94, 0.28);
       background: rgba(244, 63, 94, 0.08);
     }
 
@@ -418,7 +401,6 @@
       overflow: hidden;
       border-radius: var(--radius-pill);
       background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(255, 255, 255, 0.045);
     }
 
     .progress-track::before {
@@ -485,23 +467,21 @@
 
     .queue-strip {
       justify-self: center;
-      width: min(940px, 82vw);
+      width: min(1420px, 90vw);
       min-height: 8vh;
-      padding: 1.25vh 1.25vw;
+      padding: 1.25vh 0;
       display: grid;
-      grid-template-columns: auto 1fr;
-      gap: 1.2vw;
+      grid-template-columns: 1fr;
+      gap: 1.6vh;
       align-items: center;
-      border-radius: var(--radius-lg);
-      background: rgba(255, 255, 255, 0.035);
-      border: 1px solid var(--border);
-      box-shadow: 0 14px 44px rgba(0, 0, 0, 0.30), inset 0 1px 0 rgba(255,255,255,0.04);
     }
 
     .queue-label {
       color: var(--text-muted);
-      font-size: 1.15vh;
-      letter-spacing: 0.22em;
+      font-size: 1.4vh;
+      font-size: clamp(13px, 1.4vh, 30px);
+      letter-spacing: 0.16em;
+      line-height: 1.4;
       text-transform: uppercase;
       white-space: nowrap;
     }
@@ -509,25 +489,31 @@
     #up-next-list {
       min-width: 0;
       display: flex;
-      align-items: center;
-      gap: 1.15vw;
+      align-items: flex-start;
+      gap: 2.5vw;
       overflow: hidden;
     }
 
     .queue-item {
       min-width: 0;
+      flex: 1 1 0;
       display: flex;
       align-items: baseline;
-      gap: 0.55vw;
+      gap: 0.8vw;
       color: var(--text-soft);
-      font-size: 1.5vh;
+      font-size: 2.2vh;
+      font-size: clamp(18px, 2.2vh, 48px);
+      line-height: 1.4;
       white-space: nowrap;
     }
 
     .queue-index {
       color: var(--green);
       font-family: var(--font-display);
-      font-size: 1.65vh;
+      font-size: 1.8vh;
+      font-size: clamp(15px, 1.8vh, 40px);
+      flex: 0 0 auto;
+      font-variant-numeric: tabular-nums;
       letter-spacing: 0;
       opacity: 0.9;
     }
@@ -535,7 +521,7 @@
     .queue-copy {
       min-width: 0;
       display: flex;
-      gap: 0.35vw;
+      flex-direction: column;
       overflow: hidden;
     }
 
@@ -548,17 +534,21 @@
 
     .queue-name {
       color: var(--text);
-      max-width: 17vw;
+      font-weight: 500;
     }
 
     .queue-artist {
-      color: var(--text-muted);
-      max-width: 11vw;
+      margin-top: 0.45vh;
+      color: var(--text-soft);
+      font-size: 2.1vh;
+      font-size: clamp(18px, 2.1vh, 48px);
     }
 
     .queue-empty {
       color: var(--text-muted);
-      font-size: 1.45vh;
+      font-size: 1.8vh;
+      font-size: clamp(16px, 1.8vh, 26px);
+      line-height: 1.4;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -574,14 +564,13 @@
       padding: 0.85vh 0.9vw;
       color: var(--text-muted);
       background: rgba(255, 255, 255, 0.032);
-      border: 1px solid var(--border);
       font-family: var(--font-body);
       font-size: 1.15vh;
       letter-spacing: 0.12em;
       text-transform: uppercase;
       opacity: 0;
       transform: translateY(6px);
-      transition: opacity 220ms ease, transform 220ms ease, border-color 220ms ease;
+      transition: opacity 220ms ease, transform 220ms ease;
       pointer-events: none;
     }
 
@@ -609,7 +598,6 @@
       border-radius: 22px;
       color: var(--text-soft);
       background: rgba(4, 2, 14, 0.76);
-      border: 1px solid var(--border);
       box-shadow: var(--shadow);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 1.2vh;
@@ -1796,7 +1784,52 @@
         return segment;
       };
 
+      // A device with a screen can hide this page behind its screensaver.
+      // Chrome then runs timers once a minute, and Shaka, which by default
+      // buffers only a few segments ahead, runs dry between wake-ups: the
+      // music stops and starts while the state says PLAYING (Stue TV,
+      // 2026-10-20). With a screen, buffer about a whole song ahead (~3 MB at
+      // 128k). Audio-only devices, the oldest receivers among them, keep the
+      // defaults that already play well there.
+      var DISPLAY_BUFFERING_GOAL_SEC = 180;
+      var bufferProfile = '';
+      var bufferProfileLogged = false;
+
+      function applyBufferProfile() {
+        var display = false;
+        try {
+          var caps = context.getDeviceCapabilities() || {};
+          var displayKey = (cast.framework.system.DeviceCapabilities
+            && cast.framework.system.DeviceCapabilities.DISPLAY_SUPPORTED) || 'display_supported';
+          display = caps[displayKey] === true;
+        } catch (capsError) {
+          display = false;
+        }
+        if (!display) {
+          bufferProfile = 'display=false bufferingGoal=default';
+          return;
+        }
+        try {
+          // Keep any Shaka settings already on the config; only raise the goal.
+          var shakaConfig = Object.assign({}, playbackConfig.shakaConfig);
+          shakaConfig.streaming = Object.assign({}, shakaConfig.streaming, { bufferingGoal: DISPLAY_BUFFERING_GOAL_SEC });
+          playbackConfig.shakaConfig = shakaConfig;
+          playerManager.setPlaybackConfig(playbackConfig);
+          bufferProfile = 'display=true bufferingGoal=' + DISPLAY_BUFFERING_GOAL_SEC;
+        } catch (configError) {
+          bufferProfile = 'display=true bufferingGoal=default error=' + safeLogValue(configError && configError.message);
+        }
+      }
+
+      // Logs need the media token, which arrives with the first LOAD.
+      function logBufferProfileOnce() {
+        if (bufferProfileLogged || !bufferProfile || !currentAuthToken) return;
+        bufferProfileLogged = true;
+        postDiagnosticMarker('receiver-buffer-profile', bufferProfile);
+      }
+
       context.addEventListener(cast.framework.system.EventType.READY, function() {
+        applyBufferProfile();
         suppressDefaultCastUi();
         logAndPost('ok', LOG_TAG, 'Receiver started, forced codec: ' + FORCED_CAST_CODEC);
         // Post the device's own claims about lossless progressive support, so
@@ -1835,6 +1868,49 @@
         logAndPost('error', LOG_TAG, 'Receiver error: ' + safeStringify(e));
         syncUi(true);
       });
+
+      // Diagnostics only. A TV screensaver hides this page; Chrome then runs
+      // its timers once a minute, Shaka fetches segments too late and the
+      // music stops and starts while the state still says PLAYING (Stue TV,
+      // 2026-10-20). Record what the platform and the page report, and when
+      // the timers slow down, so a stall can be matched to its cause.
+      function visibilityDetail() {
+        var parts = ['page=' + (document.visibilityState || 'unknown')];
+        try { parts.push('cast=' + context.getVisibilityState()); } catch (e) { /* older CAF */ }
+        try { parts.push('standby=' + context.getStandbyState()); } catch (e) { /* older CAF */ }
+        return parts.join(' ');
+      }
+
+      try {
+        context.addEventListener(cast.framework.system.EventType.VISIBILITY_CHANGED, function(e) {
+          postDiagnosticMarker('receiver-visibility', 'event=visibility isVisible=' + (e && e.isVisible) + ' ' + visibilityDetail());
+        });
+        context.addEventListener(cast.framework.system.EventType.STANDBY_CHANGED, function(e) {
+          postDiagnosticMarker('receiver-visibility', 'event=standby isStandby=' + (e && e.isStandby) + ' ' + visibilityDetail());
+        });
+        document.addEventListener('visibilitychange', function() {
+          postDiagnosticMarker('receiver-visibility', 'event=page ' + visibilityDetail());
+        });
+      } catch (visibilityListenerError) {
+        log('warn', LOG_TAG, 'visibility listeners failed: ' + safeStringify(visibilityListenerError));
+      }
+
+      var TIMER_CHECK_MS = 5000;
+      var TIMER_THROTTLED_GAP_MS = 15000;
+      var lastTimerCheckAt = Date.now();
+      var timersThrottled = false;
+      setInterval(function() {
+        var now = Date.now();
+        var gapMs = now - lastTimerCheckAt;
+        lastTimerCheckAt = now;
+        var throttled = gapMs > TIMER_THROTTLED_GAP_MS;
+        if (throttled === timersThrottled) return;
+        timersThrottled = throttled;
+        postDiagnosticMarker(
+          throttled ? 'receiver-timers-throttled' : 'receiver-timers-recovered',
+          'gapMs=' + gapMs + ' state=' + currentPlayerState + ' ' + visibilityDetail()
+        );
+      }, TIMER_CHECK_MS);
 
       playerManager.setMessageInterceptor(
         cast.framework.messages.MessageType.LOAD,
@@ -1899,6 +1975,7 @@
           lastRender.queueKey = '';
           suppressDefaultCastUi();
           postReceiverHeartbeat('load');
+          logBufferProfileOnce();
           syncUi(true);
           return loadRequestData;
         }

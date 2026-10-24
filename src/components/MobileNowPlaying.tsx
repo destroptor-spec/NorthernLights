@@ -3,6 +3,7 @@ import { useFollowedDeviceLabel } from '../hooks/useFollowedDeviceName';
 import { useDisplayedPlaying } from '../hooks/useDisplayedPlaying';
 import { hasNextTrack } from '../utils/queue';
 import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { X, Infinity as InfinityIcon, ListMusic, ListX, ChevronUp, FileText } from 'lucide-react';
 import ProgressBar from './ProgressBar';
 import { useSwipe } from '../hooks/useSwipe';
@@ -365,7 +366,12 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
             {currentTrack.title || currentTrack.path.split(/[\\/]/).pop()}
           </h2>
           <p className="mobile-now-artist">
-            {currentTrack.artist || 'Unknown Artist'}
+            {/* Opens the artist page; navigating closes Now Playing (MobileMiniPlayer). */}
+            {currentTrack.artistId ? (
+              <Link to={`/library/artist/${currentTrack.artistId}`} className="mobile-now-artist-link">
+                {currentTrack.artist || 'Unknown Artist'}
+              </Link>
+            ) : (currentTrack.artist || 'Unknown Artist')}
           </p>
           {currentTrack.album && (
             <p className="mobile-now-album">
@@ -536,6 +542,7 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
               getScrollElement={() => scrollerRef.current}
               scrollMargin={queueOffset}
               listClassName="px-3 pb-2"
+              touch
             />
           </div>
         </section>

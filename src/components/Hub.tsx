@@ -7,7 +7,7 @@ import { auroraApiRequest, type Track } from '../api/auroraApi';
 import { toPlayableTracks } from '../utils/playableTracks';
 import type { Playlist, LastOpenedAlbum } from '../store';
 import { useDominantColor } from '../hooks/useDominantColor';
-import { buildRolledCoverGradient } from '../utils/coverGradient';
+import { buildMeshCoverGradient } from '../utils/coverGradient';
 import { AuroraCover, wrappedCoverLabel, systemGenreCoverLabel, systemDecadeCoverLabel } from './library/AuroraCover';
 import { LiveConcertsHubSection } from './LiveConcertsHubSection';
 import { HorizontalScrollRail } from './HorizontalScrollRail';
@@ -352,8 +352,8 @@ const HubCard: React.FC<HubCardProps> = ({ collection, onOpen, onPlay, onPinTogg
   const { artUrls, bgColor, palette } = useDominantColor(collection.tracks);
   const hasCovers = artUrls.length > 0;
   const gradientSeed = `${collection.id || collection.title || 'hub'}:${collection.tracks.map((track) => track.id).join(',')}`;
-  const rolledGradient = useMemo(
-    () => buildRolledCoverGradient(gradientSeed, palette, bgColor),
+  const meshGradient = useMemo(
+    () => buildMeshCoverGradient(gradientSeed, palette, bgColor),
     [bgColor, gradientSeed, palette]
   );
 
@@ -374,14 +374,10 @@ const HubCard: React.FC<HubCardProps> = ({ collection, onOpen, onPlay, onPinTogg
       }}
       aria-label={`play ${collection.title || 'untitled playlist'}`}
     >
-      {/* Single decorative layer: the rolled aurora gradient. The earlier
-          stack of (gradient + white/65 wash + diagonal shimmer) was three
-          decorative layers behind the content — see design.md §4: glass max
-          two deep, never opaque-fill. The card root carries the glass
-          surface; this layer is the colour signal. */}
+      {/* Artwork-derived mesh on a single decorative layer above the glass. */}
       <div
         className="absolute inset-0 rounded-[inherit] opacity-[0.55] transition-opacity duration-300 group-hover:opacity-75 pointer-events-none"
-        style={{ background: rolledGradient }}
+        style={{ background: meshGradient }}
       />
 
       <div className="relative flex items-center mb-3">

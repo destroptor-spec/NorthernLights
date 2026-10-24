@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cal+Sans&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -148,7 +148,7 @@
   --transition-slow: 400ms var(--ease-out);
 
   /* Fonts - Keep the same families but we'll use them differently */
-  --font-display: 'Syne', sans-serif;
+  --font-display: 'Cal Sans', sans-serif;
   --font-body: 'DM Sans', sans-serif;
 
   /* Aliases used by components */
@@ -1481,7 +1481,7 @@ a:focus-visible > .genre-card .genre-card__label {
    Library filter rack: "icons floating in atmosphere".
    Facet selectors collapse to icon-only tiles; active state blooms with
    emerald aurora light; the count rides as a luminous pip; labels appear
-   on hover as a Syne micro-tooltip. The chip strip below the rack reads
+   on hover as a display-font micro-tooltip. The chip strip below the rack reads
    as a typographic line, not as form chrome.
    ──────────────────────────────────────────────────────────────────── */
 
@@ -1579,7 +1579,7 @@ a:focus-visible > .genre-card .genre-card__label {
    Coarse-pointer media query below promotes it. */
 .filter-icon-btn__label {
   display: none;
-  font-family: 'Syne', system-ui, sans-serif;
+  font-family: var(--font-display);
   font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.02em;
@@ -1660,11 +1660,11 @@ a:focus-visible > .genre-card .genre-card__label {
   transform: rotate(180deg);
 }
 
-/* Tooltip label. Syne uppercase, tracked. */
+/* Tooltip label. display-font uppercase, tracked. */
 .filter-tip {
   position: fixed;
   z-index: 9100;
-  font-family: 'Syne', system-ui, sans-serif;
+  font-family: var(--font-display);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.14em;
@@ -1704,7 +1704,7 @@ a:focus-visible > .genre-card .genre-card__label {
   align-self: center;
 }
 
-/* Sort widget: keeps the current value readable in Syne italic so users
+/* Sort widget: keeps the current value readable in display-font italic so users
    can scan ordering without opening the popover. */
 .filter-sort-btn {
   position: relative;
@@ -1722,7 +1722,7 @@ a:focus-visible > .genre-card .genre-card__label {
     color 200ms var(--ease-out),
     background-color 200ms var(--ease-out),
     border-color 200ms var(--ease-out);
-  font-family: 'Syne', system-ui, sans-serif;
+  font-family: var(--font-display);
   font-style: italic;
   font-size: 12px;
   font-weight: 500;
@@ -1750,7 +1750,7 @@ a:focus-visible > .genre-card .genre-card__label {
   row-gap: 4px;
   padding: 6px 4px 4px;
   min-height: 28px;
-  font-family: 'Syne', system-ui, sans-serif;
+  font-family: var(--font-display);
   font-style: italic;
   font-size: 12px;
   letter-spacing: 0.015em;
@@ -1825,7 +1825,7 @@ a:focus-visible > .genre-card .genre-card__label {
 .filter-strip__clear {
   margin-left: auto;
   padding: 2px 8px;
-  font-family: 'Syne', system-ui, sans-serif;
+  font-family: var(--font-display);
   font-style: normal;
   font-size: 10px;
   font-weight: 600;
@@ -3315,7 +3315,7 @@ a:focus-visible > .genre-card .genre-card__label {
 
 .artist-entities-overview {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--spacing-sm);
 }
 
@@ -3715,6 +3715,12 @@ a:focus-visible > .genre-card .genre-card__label {
   border-color: color-mix(in srgb, var(--aurora-pink) 34%, var(--glass-border));
   color: color-mix(in srgb, var(--aurora-pink) 78%, var(--color-text-primary));
   background: color-mix(in srgb, var(--aurora-pink) 10%, transparent);
+}
+
+.artist-entity-badge--mbid {
+  border-color: color-mix(in srgb, var(--aurora-teal) 38%, var(--glass-border));
+  color: color-mix(in srgb, var(--aurora-teal) 72%, var(--color-text-primary));
+  background: color-mix(in srgb, var(--aurora-teal) 10%, transparent);
 }
 
 .artist-entities-queue__header {
@@ -7341,6 +7347,31 @@ a:focus-visible > .genre-card .genre-card__label {
    below the fold, so rows stay readable and the backdrop needs no awareness
    of it. NOT positioned on purpose — the queue-list wrapper's offsetTop must
    keep resolving against .mobile-now-scroll (virtualizer scrollMargin). */
+/* Mobile Now Playing queue rows (PlaylistItem touch): 44px targets, nothing on hover. */
+.queue-row-touch-btn {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: 0.5rem;
+  color: var(--color-text-muted);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.queue-row-touch-btn:active {
+  color: var(--color-text-primary);
+  background: rgba(255, 255, 255, 0.06);
+}
+/* Dragging starts from the handle at once; the rest of the row scrolls. */
+.queue-row-drag-handle {
+  touch-action: none;
+  cursor: grab;
+}
+
 .mobile-now-queue {
   min-height: 100%;
   scroll-snap-align: start;
@@ -7638,6 +7669,15 @@ a:focus-visible > .genre-card .genre-card__label {
   color: var(--color-text-secondary);
   font-size: 0.95rem;
   font-weight: 500;
+}
+
+.mobile-now-artist-link {
+  color: inherit;
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.mobile-now-artist-link:active {
+  color: var(--color-text-primary);
 }
 
 .mobile-now-album {

@@ -40,19 +40,21 @@ function normalizePalette(seed: string, palette: string[], fallbackColor: string
   return colors;
 }
 
-// Hub feature-tile gradient. Layout rolls deterministically from the seed.
-export function buildRolledCoverGradient(seed: string, palette: string[], fallbackColor: string): string {
+// Hub mesh: soft, overlapping color fields distributed across the card.
+// Keep the geometry stable while extracted artwork colors arrive.
+export function buildMeshCoverGradient(seed: string, palette: string[], fallbackColor: string): string {
   const colors = normalizePalette(seed, palette, fallbackColor);
 
-  const roll = hashString(`${seed}:${colors.join('|')}`);
+  const roll = hashString(`${seed}:mesh`);
   const pick = (offset: number) => colors[(roll + offset) % colors.length];
-  const angle = roll % 360;
-  const x1 = 18 + (roll % 58);
-  const y1 = 14 + ((roll >> 4) % 62);
-  const x2 = 22 + ((roll >> 8) % 56);
-  const y2 = 20 + ((roll >> 12) % 58);
-  const conicX = 34 + ((roll >> 16) % 36);
-  const conicY = 28 + ((roll >> 20) % 42);
+  const x1 = 5 + (roll % 22);
+  const y1 = 4 + ((roll >>> 4) % 24);
+  const x2 = 72 + ((roll >>> 8) % 24);
+  const y2 = 8 + ((roll >>> 12) % 28);
+  const x3 = 12 + ((roll >>> 16) % 28);
+  const y3 = 76 + ((roll >>> 20) % 20);
+  const x4 = 68 + ((roll >>> 6) % 26);
+  const y4 = 70 + ((roll >>> 14) % 26);
 
   const c1 = pick(0);
   const c2 = pick(1);
@@ -60,10 +62,10 @@ export function buildRolledCoverGradient(seed: string, palette: string[], fallba
   const c4 = pick(3);
 
   return [
-    `radial-gradient(circle at ${x1}% ${y1}%, ${hexToRgba(c1, 0.70)} 0%, ${hexToRgba(c1, 0.34)} 24%, transparent 58%)`,
-    `radial-gradient(circle at ${x2}% ${y2}%, ${hexToRgba(c2, 0.62)} 0%, ${hexToRgba(c2, 0.28)} 22%, transparent 56%)`,
-    `conic-gradient(from ${angle}deg at ${conicX}% ${conicY}%, ${hexToRgba(c3, 0.58)}, ${hexToRgba(c4, 0.48)}, ${hexToRgba(c2, 0.52)}, ${hexToRgba(c1, 0.58)})`,
-    `linear-gradient(${(angle + 90) % 360}deg, ${hexToRgba(c1, 0.46)}, ${hexToRgba(c4, 0.38)})`,
+    `radial-gradient(ellipse 75% 95% at ${x1}% ${y1}%, ${hexToRgba(c1, 0.80)} 0%, ${hexToRgba(c1, 0.36)} 40%, ${hexToRgba(c1, 0)} 100%)`,
+    `radial-gradient(ellipse 70% 90% at ${x2}% ${y2}%, ${hexToRgba(c2, 0.76)} 0%, ${hexToRgba(c2, 0.32)} 42%, ${hexToRgba(c2, 0)} 100%)`,
+    `radial-gradient(ellipse 80% 85% at ${x3}% ${y3}%, ${hexToRgba(c3, 0.68)} 0%, ${hexToRgba(c3, 0.28)} 38%, ${hexToRgba(c3, 0)} 100%)`,
+    `radial-gradient(ellipse 75% 95% at ${x4}% ${y4}%, ${hexToRgba(c4, 0.72)} 0%, ${hexToRgba(c4, 0.30)} 40%, ${hexToRgba(c4, 0)} 100%)`,
   ].join(', ');
 }
 

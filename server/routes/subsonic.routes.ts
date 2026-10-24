@@ -16,10 +16,7 @@ import { generateScopedToken, verifyScopedToken } from '../services/scopedToken.
 import { writeDebugLog } from '../services/debugLogger.service';
 import { logFfmpeg } from '../services/loggingConfig';
 import { queueLlmHubRefreshForUser } from '../services/hubRefresh.service';
-import { scrobbleTracks as scrobbleLastFmTracks, updateNowPlaying as updateLastFmNowPlaying } from '../services/lastfm.service';
-import { scrobbleTracks as scrobbleListenBrainzTracks, updateNowPlaying as updateListenBrainzNowPlaying } from '../services/listenbrainz.service';
-import type { LfmTrack } from '../services/lastfm.service';
-import type { LbTrack } from '../services/listenbrainz.service';
+import { sendToScrobbleProviders, trackRowToProviderScrobble, type ProviderScrobbleTrack } from '../services/scrobbleProviders.service';
 import { resolveArtwork } from '../services/artCache';
 import { providerArtworkProxyPath, resolveProviderArtworkUrl } from '../services/artworkFallback.service';
 import { publishApiV1Event } from '../services/apiV1Events.service';
@@ -52,7 +49,6 @@ type SubsonicContext = {
 };
 
 type SubsonicErrorCode = 10 | 41 | 42 | 43 | 44 | 50 | 70;
-type ProviderScrobbleTrack = LfmTrack & LbTrack;
 export type SubsonicScrobbleEvent = {
   rawId: string;
   trackId: string;
@@ -584,26 +580,9 @@ export async function isSubsonicLoveSyncEnabled(userId: string): Promise<boolean
   return value === null || value === undefined ? true : settingEnabled(value);
 }
 
-function positiveInt(value: unknown): number | undefined {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : undefined;
-}
 
 function mapTrackToProviderScrobble(track: any, event: SubsonicScrobbleEvent): ProviderScrobbleTrack | null {
-  const artist = String(track.artist || '').trim();
-  const title = String(track.title || '').trim();
-  if (!artist || !title) return null;
-  const payload: ProviderScrobbleTrack = {
-    artist,
-    track: title,
-    album: String(track.album || '').trim() || undefined,
-    albumArtist: String(track.album_artist || '').trim() || undefined,
-    duration: positiveInt(track.duration),
-    trackNumber: positiveInt(track.track_number),
-    timestamp: event.timestamp,
-    mbid: String(track.mb_recording_id || track.mb_track_id || '').trim() || undefined,
-  };
-  return payload;
+  return trackRowToProviderScrobble(track, event.timestamp);
 }
 
 function toIso(value: unknown): string | undefined {
@@ -756,45 +735,7 @@ export async function sendProviderScrobbleReports(userId: string, tracks: Provid
   try {
     if (tracks.length === 0) return;
     if (!(await isSubsonicProviderScrobbleBridgeEnabled(userId))) return;
-    const [
-      lastFmConnected,
-      lastFmScrobbleEnabled,
-      listenBrainzConnected,
-      listenBrainzScrobbleEnabled,
-    ] = await Promise.all([
-      getUserSetting(userId, 'lastFmConnected'),
-      getUserSetting(userId, 'lastFmScrobbleEnabled'),
-      getUserSetting(userId, 'listenBrainzConnected'),
-      getUserSetting(userId, 'listenBrainzScrobbleEnabled'),
-    ]);
-
-    const jobs: Array<{ provider: string; action: string; run: () => Promise<unknown> }> = [];
-    if (settingEnabled(lastFmConnected) && settingEnabled(lastFmScrobbleEnabled)) {
-      jobs.push({
-        provider: 'lastfm',
-        action,
-        run: () => submission
-          ? scrobbleLastFmTracks(userId, tracks)
-          : updateLastFmNowPlaying(userId, tracks[tracks.length - 1]),
-      });
-    }
-    if (settingEnabled(listenBrainzConnected) && settingEnabled(listenBrainzScrobbleEnabled)) {
-      jobs.push({
-        provider: 'listenbrainz',
-        action,
-        run: () => submission
-          ? scrobbleListenBrainzTracks(userId, tracks)
-          : updateListenBrainzNowPlaying(userId, tracks[tracks.length - 1]),
-      });
-    }
-
-    const results = await Promise.allSettled(jobs.map((job) => job.run()));
-    results.forEach((result, index) => {
-      if (result.status === 'rejected') {
-        const job = jobs[index];
-        writeSubsonicLog(`provider_error provider=${job.provider} action=${job.action} count=${tracks.length} message=${String(result.reason?.message || result.reason).slice(0, 240)}`);
-      }
-    });
+    await sendToScrobbleProviders(userId, tracks, submission, writeSubsonicLog);
   } catch (error: any) {
     writeSubsonicLog(`provider_error provider=bridge action=${action} count=${tracks.length} message=${String(error?.message || error).slice(0, 240)}`);
   }

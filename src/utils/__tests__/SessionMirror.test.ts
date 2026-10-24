@@ -26,6 +26,7 @@ const sessionOf = (tracks: TrackInfo[], revision: number, extra: Partial<Playbac
     position,
     track: { id: t.id } as PlaybackSession['queue'][number]['track'],
     addedAt: '2026-10-13T10:00:00.000Z',
+    addedBy: (t.isInfinity ? 'infinity' : 'user') as 'infinity' | 'user',
   })),
   createdAt: '2026-10-13T10:00:00.000Z',
   updatedAt: '2026-10-13T10:00:00.000Z',
