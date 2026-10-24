@@ -7576,15 +7576,6 @@ a:focus-visible > .genre-card .genre-card__label {
   text-overflow: ellipsis;
 }
 
-/* Live-cast state dot in the heading (replaces the old state chip). */
-.mobile-now-heading-dot {
-  inline-size: 0.4rem;
-  block-size: 0.4rem;
-  flex: 0 0 0.4rem;
-  border-radius: var(--radius-pill);
-  background: var(--color-primary);
-  box-shadow: 0 0 0.6rem color-mix(in srgb, var(--color-primary) 60%, transparent);
-}
 
 .mobile-now-playing-content {
   flex: 1;
@@ -9045,51 +9036,69 @@ a:focus-visible > .genre-card .genre-card__label {
   color: var(--color-text-secondary);
 }
 
-/* "Playing on <device>": another device plays the session and this one
-   follows it (Sync playback across devices). Takes the signal chain's place. */
-.player-follow {
-  display: inline-flex;
+/* "Playing on <device>" (DeviceStrip): another device plays the session and
+   this one follows it. One slim full-width band under the top bar, where the
+   offline notice goes (offline replaces it); tapping it opens "Play where?". */
+.device-strip {
+  display: flex;
   align-items: center;
-  gap: 0.4rem;
+  justify-content: center;
+  gap: 0.45rem;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 16px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-primary) 22%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  color: var(--color-primary);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 150ms var(--ease-out);
+}
+.device-strip:hover,
+.device-strip:focus-visible {
+  background: color-mix(in srgb, var(--color-primary) 20%, transparent);
+}
+.device-strip:active {
+  background: color-mix(in srgb, var(--color-primary) 26%, transparent);
+}
+.device-strip-label {
   min-width: 0;
   overflow: hidden;
-  white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: 0.75rem;
-  color: var(--color-primary);
+  white-space: nowrap;
 }
-
-button.player-follow {
-  background: none;
-  border: 0;
-  padding: 0;
-  font: inherit;
-  font-size: 0.75rem;
-  cursor: pointer;
+.device-strip-chevron {
+  opacity: 0.7;
 }
-
-button.player-follow:hover {
-  text-decoration: underline;
+/* The device stopped answering: the offline notice's warning tint. */
+/* Tappable on touch screens: 44px (DESIGN.md). */
+@media (max-width: 767px) {
+  .device-strip {
+    min-height: 44px;
+  }
 }
-
+.device-strip.is-silent {
+  color: var(--color-warning);
+  border-bottom-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+}
 .mobile-now-heading-device-button {
   background: none;
   border: 0;
   padding: 0;
   font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
-
-.player-follow::before {
-  content: '';
-  inline-size: 0.4rem;
-  block-size: 0.4rem;
-  flex: 0 0 0.4rem;
-  border-radius: var(--radius-pill);
-  background: var(--color-primary);
-  box-shadow: 0 0 0.6rem color-mix(in srgb, var(--color-primary) 60%, transparent);
+.mobile-now-heading-device.is-silent {
+  color: var(--color-warning);
 }
-
 .player-artist-link {
   text-decoration: none;
   cursor: pointer;

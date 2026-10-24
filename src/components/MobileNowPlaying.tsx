@@ -1,5 +1,5 @@
 import { usePlayerStore } from '../store/index';
-import { useFollowedDeviceName } from '../hooks/useFollowedDeviceName';
+import { useFollowedDeviceLabel } from '../hooks/useFollowedDeviceName';
 import { useDisplayedPlaying } from '../hooks/useDisplayedPlaying';
 import { hasNextTrack } from '../utils/queue';
 import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
@@ -129,7 +129,8 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
   const audioOutputSelecting = usePlayerStore((s) => s.audioOutputSelecting);
   const selectAudioOutput = usePlayerStore((s) => s.selectAudioOutput);
   const volume = usePlayerStore((s) => s.volume);
-  const followedDeviceName = useFollowedDeviceName();
+  const followedDeviceLabel = useFollowedDeviceLabel();
+  const followedSilent = usePlayerStore((s) => !!s.sessionFollow?.silent);
   const setVolume = usePlayerStore((s) => s.setVolume);
 
   const [castConnected, setCastConnected] = useState(castManager.isConnected());
@@ -308,32 +309,28 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
         >
           <X size={18} />
         </button>
-        {/* The heading carries the playback target: plain "Now Playing"
-            locally, "on {device}" when casting or on a selected output. */}
+        {/* The heading says where the music plays, and nothing when it
+            plays right here: another device this one follows (tap: "Play
+            where?"), the Cast device, or a selected output. */}
         <div className="mobile-now-playing-heading">
-          <span className="mobile-now-heading-line">
-            {(castConnected || followedDeviceName) && <span className="mobile-now-heading-dot" aria-hidden="true" />}
-            Now Playing
-            {castConnected && castDeviceName && (
-              <span className="mobile-now-heading-device"> on {castDeviceName}</span>
-            )}
-            {!castConnected && followedDeviceName && (
-              <>
-                {' '}
-                <button
-                  type="button"
-                  className="mobile-now-heading-device mobile-now-heading-device-button"
-                  onClick={() => usePlayerStore.getState().openPlayWhere()}
-                  aria-label={`Music is on ${followedDeviceName}. Choose where to play`}
-                >
-                  on {followedDeviceName}
-                </button>
-              </>
-            )}
-            {!castConnected && !followedDeviceName && audioOutputActive && (
-              <span className="mobile-now-heading-device"> on {audioOutputDeviceLabel || 'selected output'}</span>
-            )}
-          </span>
+          {!castConnected && followedDeviceLabel ? (
+            <button
+              type="button"
+              className={`mobile-now-heading-line mobile-now-heading-device mobile-now-heading-device-button${followedSilent ? ' is-silent' : ''}`}
+              onClick={() => usePlayerStore.getState().openPlayWhere()}
+              aria-label={`${followedDeviceLabel}. Choose where to play`}
+            >
+              {followedDeviceLabel}
+            </button>
+          ) : castConnected && castDeviceName ? (
+            <span className="mobile-now-heading-line mobile-now-heading-device">
+              Playing on {castDeviceName}
+            </span>
+          ) : audioOutputActive ? (
+            <span className="mobile-now-heading-line mobile-now-heading-device">
+              Playing on {audioOutputDeviceLabel || 'selected output'}
+            </span>
+          ) : null}
         </div>
         {currentTrack ? (
           <LoveButton track={currentTrack} size={18} className="mobile-player-control-btn mobile-player-control-btn-sm mobile-player-love-btn" />
