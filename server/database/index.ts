@@ -7,6 +7,7 @@ import { AUDIO_FEATURE_VERSION, PENDING_AUDIO_FEATURES_SQL } from '../services/a
 import type { LibraryDirectoryStats } from '../../shared/libraryStats';
 import { normalizeGenreIdentity } from '../utils/genreIdentity';
 import { artistImageSql } from '../utils/artistImage';
+import { resolveTrackArtists } from '../utils/trackArtists';
 // Canonical artist-credit splitter, shared with the client (see
 // shared/artistCredit.ts). Re-exported so existing `import('../database')`
 // consumers (e.g. library.routes) keep resolving `splitArtistNames` here.
@@ -4595,7 +4596,6 @@ export async function migrateEntityIds() {
     const rawAlbumArtist = (row as any).album_artist;
     const albumTitle = (row as any).album;
     const rawGenre = (row as any).genre;
-    const primaryArtistMbid = (row as any).mb_album_artist_id || (row as any).mb_artist_id || null;
     
     const individualGenres = splitGenreNames(rawGenre);
     const primaryGenreName = individualGenres.length > 0 ? individualGenres[0] : null;
@@ -4609,35 +4609,25 @@ export async function migrateEntityIds() {
         rawArtistsArray = rawArtistsField;
       }
     }
-    rawArtistsArray = normalizeArtistNames(rawArtistsArray.length > 0 ? rawArtistsArray : null, rawArtist);
+    // The stored artists list is the scanner's per-person list, so it isn't
+    // split again ("Tyler, the Creator" stays one artist); without one, the
+    // display credit is split. The track belongs to its first performer, as in
+    // the scanner (resolveTrackArtists). Only the first MusicBrainz id is stored
+    // per track, so it is attached only when one person is credited.
+    const storedPeople = rawArtistsArray
+      .filter((name): name is string => typeof name === 'string' && name.trim() !== '')
+      .map((name, i, all) => ({ name: name.trim(), mbid: all.length === 1 && i === 0 ? ((row as any).mb_artist_id || null) : null }));
+    const trackArtists = resolveTrackArtists({
+      artistPeople: storedPeople,
+      artist: rawArtist,
+      mbArtistId: (row as any).mb_artist_id || null,
+    });
+    rawArtistsArray = trackArtists.people.map(person => person.name);
     const albumArtistName = getPrimaryArtistName(rawAlbumArtist, rawArtist, rawArtistsArray);
-
-    // The track's PRIMARY credit is its performer. The album-artist label only
-    // stands in for the performer on normal albums; on a compilation it is
-    // "Various Artists", and crediting the track to it would fold every
-    // performer onto one VA row. Detect the compilation context and fall back
-    // to the real performer for the track's artist_id (the *album* still keys
-    // off albumArtistName below, so the comp album groups correctly).
-    const isCompilationContext =
-      (row as any).is_compilation === true || isCompilationArtistName(albumArtistName);
-    const trackPrimaryArtistName = isCompilationContext
-      ? (rawArtistsArray[0] || (rawArtist && rawArtist.trim()) || albumArtistName)
-      : albumArtistName;
-
-    // If the primary artist was derived from a compound credit ("A, B & C"),
-    // the track's MB artist id was scanned against the compound string and
-    // doesn't belong to the first individual. Skip attaching it. On a comp the
-    // performer's id is the track-level mb_artist_id, not the album-artist id.
-    const primarySource = isCompilationContext ? rawArtist : (rawAlbumArtist || rawArtist);
-    const primaryDerivedFromCompound = splitArtistNames(primarySource).length > 1;
-    const resolvedPrimaryMbid = isCompilationContext
-      ? ((row as any).mb_artist_id || null)
-      : primaryArtistMbid;
-    const safePrimaryMbid = primaryDerivedFromCompound ? null : resolvedPrimaryMbid;
+    const primaryArtist = trackArtists.primary || { name: albumArtistName || UNKNOWN_ARTIST, mbid: null };
 
     // 2. Fetch or create canonical entities, ensuring valid strings
-    const primaryArtistKey = normalizeArtistIdentityKey(trackPrimaryArtistName);
-    const artistId = await getOrCreateArtist(trackPrimaryArtistName, safePrimaryMbid);
+    const artistId = await getOrCreateArtist(primaryArtist.name, primaryArtist.mbid);
     const albumId = await getOrCreateAlbum(albumTitle, albumArtistName, {
       mbReleaseGroupId: (row as any).mb_release_group_id || null,
       year: (row as any).year || null,
@@ -4647,11 +4637,8 @@ export async function migrateEntityIds() {
     const genreId = await getOrCreateGenre(primaryGenreName);
 
     // Create/update entities for all individual artists to ensure they exist for 'Also appears on'
-    for (const a of rawArtistsArray) {
-      if (a && a.trim() !== '') {
-         const artistMbid = normalizeArtistIdentityKey(a) === primaryArtistKey ? safePrimaryMbid : null;
-         await getOrCreateArtist(a, artistMbid);
-      }
+    for (const person of trackArtists.people) {
+      await getOrCreateArtist(person.name, person.mbid);
     }
 
     // Prepare JSON arrays
