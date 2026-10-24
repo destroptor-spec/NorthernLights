@@ -23,6 +23,7 @@ export interface PersonCredit {
 /** The parts of a music-metadata result these helpers read. */
 export interface TagSource {
   common: {
+    artist?: unknown;
     artists?: unknown;
     musicbrainz_artistid?: unknown;
     albumartist?: unknown;
@@ -63,6 +64,26 @@ function zip(names: string[], idList: string[]): PersonCredit[] {
   return people;
 }
 
+// Text that lost its characters to a bad encoding ("???? & ????"), not a name.
+const MANGLED = /^[?\s&,.\-]*\?[?\s&,.\-]*$/;
+
+/**
+ * Some taggers put the display credit first in the people list: ARTISTS =
+ * "Dua Lipa & the Blessed Madonna", "Dua Lipa", "The Blessed Madonna". The
+ * credit isn't a person, so it goes when it repeats the display credit and
+ * either the ids line up with the people after it, or at least two of those
+ * people are named in it. A real act that shares the list ("Riggi & Piros",
+ * "Dani Poppitt") stays.
+ */
+function withoutCredit(names: string[], credit: string | undefined, idCount: number): string[] {
+  const people = names.filter((name) => !MANGLED.test(name));
+  if (!credit || people.length < 2 || people[0].toLowerCase() !== credit.toLowerCase()) return people;
+  const rest = people.slice(1);
+  const lowerCredit = credit.toLowerCase();
+  const named = rest.filter((name) => lowerCredit.includes(name.toLowerCase())).length;
+  return idCount === rest.length || named >= 2 ? rest : people;
+}
+
 /**
  * The track's performers from ARTISTS (+ MUSICBRAINZ_ARTISTID), or null when the
  * file has no ARTISTS tag. music-metadata fills `common.artists` from the ARTIST
@@ -71,9 +92,10 @@ function zip(names: string[], idList: string[]): PersonCredit[] {
  */
 export function trackArtistPeople(source: TagSource): PersonCredit[] | null {
   if (nativeValues(source, ARTISTS_TAG).length === 0) return null;
-  const names = splitTagValues(source.common.artists);
+  const idList = ids(source.common.musicbrainz_artistid);
+  const names = withoutCredit(splitTagValues(source.common.artists), splitTagValues(source.common.artist)[0], idList.length);
   if (names.length === 0) return null;
-  return zip(names, ids(source.common.musicbrainz_artistid));
+  return zip(names, idList);
 }
 
 /**
@@ -85,10 +107,10 @@ export function trackArtistPeople(source: TagSource): PersonCredit[] | null {
 export function albumArtistPeople(source: TagSource, trackPeople: PersonCredit[] | null): PersonCredit[] | null {
   const albumIds = ids(source.common.musicbrainz_albumartistid);
 
-  const listed = nativeValues(source, ALBUM_ARTISTS_TAG);
+  const credit = splitTagValues(source.common.albumartist)[0];
+  const listed = withoutCredit(nativeValues(source, ALBUM_ARTISTS_TAG), credit, albumIds.length);
   if (listed.length > 0) return zip(listed, albumIds);
 
-  const credit = splitTagValues(source.common.albumartist)[0];
   const repeated = [...new Set([...splitTagValues(source.common.albumartist), ...nativeValues(source, ALBUM_ARTIST_TAG)])];
   if (albumIds.length > 1 && repeated.length === albumIds.length + 1 && repeated[0] === credit) {
     return zip(repeated.slice(1), albumIds);
