@@ -56,6 +56,9 @@ sessionMirror.start(usePlayerStore, {
 });
 sessionFollower.start(usePlayerStore, {
   clientId: getAuroraClientId,
+  clientName: describeThisDevice,
+  onDevices: (devices) => usePlayerStore.getState().setConnectedDevices(devices),
+  onTransferRequested: () => void usePlayerStore.getState().playHereOnTransfer(),
   mirror: sessionMirror,
   toTracks: sessionQueueTracks,
   adoptPlayingQueue: (session) => usePlayerStore.getState().adoptSessionQueueAsOutput(sessionQueueTracks(session), session.currentEntryId),

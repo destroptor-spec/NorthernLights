@@ -1,4 +1,4 @@
-import type { PlaybackCommand, PlaybackSession } from '../../shared/api/v1';
+import type { ConnectedDevice, PlaybackCommand, PlaybackSession } from '../../shared/api/v1';
 import { AuroraApiError } from '../api/auroraApi';
 import * as sessionApi from '../api/playbackSessions';
 import { currentSessionFromError } from '../api/playbackSessions';
@@ -51,7 +51,7 @@ export interface EventSourceLike {
 }
 
 export interface SessionFollowerOptions {
-  api?: Pick<typeof sessionApi, 'listPlaybackSessions' | 'getPlaybackSession' | 'patchPlaybackSession'>;
+  api?: Pick<typeof sessionApi, 'listPlaybackSessions' | 'getPlaybackSession' | 'patchPlaybackSession'> & Partial<Pick<typeof sessionApi, 'listConnectedDevices'>>;
   createEventSource?: (url: string) => EventSourceLike;
   /** This device's client ID, as the server knows it (X-Aurora-Client-Id). */
   clientId: () => string;
@@ -78,6 +78,12 @@ export interface SessionFollowerOptions {
   onPlaybackSyncChanged?: (enabled: boolean) => void;
   /** A remote command for the grant this device holds (`playbackSession.command`). */
   onCommand?: (sessionId: string, command: PlaybackCommand) => void;
+  /** What to call this device in the user's device list ("Chrome on Linux"). */
+  clientName?: () => string;
+  /** The user's devices with Aurora open: read when the stream opens, then live (devices.changed). */
+  onDevices?: (devices: ConnectedDevice[]) => void;
+  /** Another device asked this one to take the session over (Connect → that device). */
+  onTransferRequested?: (sessionId: string, requestedBy: string | null) => void;
   log?: (message: string, detail?: unknown) => void;
   /** Server-side diagnostics (`sync-…` markers in the Cast log). */
   diagnostic?: (level: 'ok' | 'warn' | 'error', marker: string, detail?: string) => void;
@@ -98,6 +104,8 @@ const SESSION_EVENTS = [
   'playbackSession.command',
   'playbackSync.changed',
   'resync.required',
+  'devices.changed',
+  'playbackSession.transferRequested',
 ] as const;
 
 interface ProgressData {
@@ -325,7 +333,9 @@ export class SessionFollower {
     const create = this.options!.createEventSource ?? ((url: string) => new EventSource(url) as EventSourceLike);
     // The client ID tells the server this device can hear remote commands.
     this.firstRead = new Promise<void>((resolve) => { this.resolveFirstRead = resolve; });
-    const source = create(`${EVENTS_PATH}?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(this.options!.clientId())}`);
+    // Its name lists it among the user's devices (GET /devices).
+    const name = this.options!.clientName?.();
+    const source = create(`${EVENTS_PATH}?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(this.options!.clientId())}${name ? `&clientName=${encodeURIComponent(name)}` : ''}`);
     this.source = source;
     let opened = false;
     source.onopen = () => {
@@ -335,6 +345,7 @@ export class SessionFollower {
       if (opened) return;
       opened = true;
       void this.refresh(true);
+      void this.loadDevices();
     };
     source.onerror = () => {
       if (this.source !== source || source.readyState !== EVENT_SOURCE_CLOSED) return;
@@ -383,6 +394,14 @@ export class SessionFollower {
       case 'playbackSync.changed':
         this.options!.onPlaybackSyncChanged?.(data.enabled === true);
         return;
+      case 'devices.changed':
+        if (Array.isArray(data.devices)) this.options!.onDevices?.(data.devices as ConnectedDevice[]);
+        return;
+      case 'playbackSession.transferRequested':
+        if (!sessionId || data.targetClientId !== myId) return;
+        this.options!.diagnostic?.('ok', 'sync-transfer-received', `from=${String(data.requestedBy ?? 'unknown')}`);
+        this.options!.onTransferRequested?.(sessionId, typeof data.requestedBy === 'string' ? data.requestedBy : null);
+        return;
       case 'playbackSession.deleted':
         if (sessionId && this.session?.id === sessionId) {
           this.session = null;
@@ -408,6 +427,17 @@ export class SessionFollower {
         const revision = Number(data.revision);
         if (sessionId && (this.session?.id !== sessionId || !(revision <= this.session.revision))) this.fetchSession(sessionId);
       }
+    }
+  }
+
+  /** The device list as the stream opens; devices.changed keeps it current after that. */
+  private async loadDevices() {
+    const list = this.options?.api ? this.options.api.listConnectedDevices : sessionApi.listConnectedDevices;
+    if (!list || !this.options?.onDevices || !this.store) return;
+    try {
+      this.options.onDevices(await list(this.store.getState().getAuthHeader()));
+    } catch {
+      // The list fills in with the next devices.changed.
     }
   }
 

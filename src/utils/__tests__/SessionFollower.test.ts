@@ -56,7 +56,11 @@ class FakeEventSource implements EventSourceLike {
   fail() { this.readyState = 2; this.onerror?.(new Event('error')); }
 }
 
-function setup(initial: Partial<FollowerPlayerState> = {}, latest: PlaybackSession | null = sessionOf([1, 2, 3])) {
+function setup(
+  initial: Partial<FollowerPlayerState> = {},
+  latest: PlaybackSession | null = sessionOf([1, 2, 3]),
+  extra: Partial<Parameters<SessionFollower['start']>[1]> = {},
+) {
   const sources: FakeEventSource[] = [];
   const api = {
     listPlaybackSessions: jest.fn(async () => (latest ? [latest] : [])),
@@ -107,6 +111,7 @@ function setup(initial: Partial<FollowerPlayerState> = {}, latest: PlaybackSessi
     adoptPlayingQueue,
     toTracks: (session) => session.queue.map((entry) => ({ id: entry.track.id, path: entry.track.id, duration: 200, queueEntryId: entry.queueEntryId })),
     setPlaybackTime,
+    ...extra,
   });
   const source = () => sources[sources.length - 1];
   const connect = async () => {
@@ -521,5 +526,36 @@ describe('queue edits on an idle device following a receiver (Phase 5)', () => {
     store.setState({ playlist: [] });
     await jest.advanceTimersByTimeAsync(250);
     expect(api.patchPlaybackSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('the device list and transfers (Connect)', () => {
+  const devices = [
+    { clientId: 'laptop', name: 'Chrome on Linux', kind: 'browser' as const },
+    { clientId: 'phone', name: 'Chrome on Android', kind: 'browser' as const },
+  ];
+
+  it('names this device in its stream, reads the device list as it opens, then follows it live', async () => {
+    const onDevices = jest.fn();
+    const listConnectedDevices = jest.fn(async () => devices);
+    const { source, connect, api } = setup({}, sessionOf([1, 2, 3]), { clientName: () => 'Chrome on Linux', onDevices });
+    Object.assign(api, { listConnectedDevices });
+    expect(source().url).toBe('/api/v1/events?token=sse-token&clientId=laptop&clientName=Chrome%20on%20Linux');
+    await connect();
+    expect(onDevices).toHaveBeenLastCalledWith(devices);
+
+    source().emit('devices.changed', { devices: devices.slice(0, 1) });
+    expect(onDevices).toHaveBeenLastCalledWith(devices.slice(0, 1));
+  });
+
+  it('takes over only when the transfer is meant for this device', async () => {
+    const onTransferRequested = jest.fn();
+    const { source, connect, diagnostic } = setup({}, sessionOf([1, 2, 3]), { onTransferRequested });
+    await connect();
+    source().emit('playbackSession.transferRequested', { sessionId: 'session-1', targetClientId: 'phone', requestedBy: 'laptop' });
+    expect(onTransferRequested).not.toHaveBeenCalled();
+    source().emit('playbackSession.transferRequested', { sessionId: 'session-1', targetClientId: 'laptop', requestedBy: 'phone' });
+    expect(onTransferRequested).toHaveBeenCalledWith('session-1', 'phone');
+    expect(diagnostic).toHaveBeenCalledWith('ok', 'sync-transfer-received', 'from=phone');
   });
 });

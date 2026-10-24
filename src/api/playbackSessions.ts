@@ -1,4 +1,5 @@
 import type {
+  ConnectedDevice,
   PlaybackCommandRequest,
   PlaybackOutputClaim,
   PlaybackOutputCredential,
@@ -63,6 +64,16 @@ export function reportPlaybackOutput(
     // keepalive: a last report sent as the page closes still gets out.
     { ...json('POST', report), ...(options.keepalive ? { keepalive: true } : {}) },
   );
+}
+
+/** The user's devices with Aurora open now (the list then changes live via devices.changed). */
+export function listConnectedDevices(auth: AuthHeaders): Promise<ConnectedDevice[]> {
+  return auroraApiRequest('/devices', auth);
+}
+
+/** Ask another of the user's devices to take the session over and play it from where it is. */
+export function requestPlaybackTransfer(auth: AuthHeaders, sessionId: string, targetClientId: string): Promise<{ accepted: boolean }> {
+  return auroraApiRequest(`/playback-sessions/${encodeURIComponent(sessionId)}/transfer`, auth, json('POST', { targetClientId }));
 }
 
 /** Remote control: ask the session's output to act (it confirms through its next report). */

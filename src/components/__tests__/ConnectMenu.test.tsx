@@ -2,6 +2,7 @@ import { act, render, screen } from '@testing-library/react';
 import { usePlayerStore } from '../../store';
 import { ConnectMenuContent } from '../ConnectMenu';
 import type { FollowedOutput } from '../../utils/sessionFollow';
+import { getAuroraClientId } from '../../api/auroraApi';
 
 const follow = (overrides: Partial<FollowedOutput> = {}): FollowedOutput => ({
   sessionId: 's1', outputId: 'receiver:nad', name: 'NAD Forstærker', kind: 'receiver', generation: 3,
@@ -15,6 +16,7 @@ const setup = (state: Record<string, unknown>) => {
     usePlayerStore.setState({
       sessionFollow: null, remoteControlOutputId: null, castConnected: false,
       audioOutputActive: false, audioOutputDeviceLabel: '', audioOutputDevices: [],
+      syncPlaybackAcrossDevices: true, connectedDevices: [],
       resolvePlayWhere, openSettingsAt, ...state,
     } as never);
   });
@@ -73,4 +75,41 @@ test('while casting, says where, and leaves the output to the Cast device', () =
   setup({ castConnected: true });
   expect(screen.getByText(/^Casting to /)).toBeTruthy();
   expect(screen.queryByRole('button', { name: /^Output/ })).toBeNull();
+});
+
+describe("the user's other devices", () => {
+  const me = () => getAuroraClientId();
+  const devices = () => [
+    { clientId: me(), name: 'Chrome on Linux', kind: 'browser' as const },
+    { clientId: 'phone-0002', name: 'Chrome on Android', kind: 'browser' as const },
+    { clientId: 'receiver:nad', name: null, kind: 'receiver' as const },
+  ];
+
+  test('lists each other device with Aurora open, and moves the music there', () => {
+    const transferPlaybackTo = jest.fn(async () => undefined);
+    const { onDone } = setup({ connectedDevices: devices(), transferPlaybackTo });
+    expect(screen.queryByRole('button', { name: /Chrome on Linux/ })).toBeNull(); // this device
+    screen.getByRole('button', { name: /Chrome on Android Play there/ }).click();
+    expect(transferPlaybackTo).toHaveBeenCalledWith(expect.objectContaining({ clientId: 'phone-0002' }));
+    expect(onDone).toHaveBeenCalled();
+  });
+
+  test('shows the playing device once (to control it), and no Cast receivers', () => {
+    setup({ connectedDevices: devices(), sessionFollow: follow({ outputId: 'phone-0002', name: 'Chrome on Android', kind: 'browser' }) });
+    expect(screen.getAllByRole('button', { name: /Chrome on Android/ })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: /Chrome on Android Control it from here/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Another device/ })).toBeNull();
+  });
+
+  test('updates live as devices come and go', () => {
+    setup({ connectedDevices: devices() });
+    expect(screen.getByRole('button', { name: /Chrome on Android/ })).toBeTruthy();
+    act(() => { usePlayerStore.setState({ connectedDevices: devices().slice(0, 1) } as never); });
+    expect(screen.queryByRole('button', { name: /Chrome on Android/ })).toBeNull();
+  });
+
+  test('lists none with sync off', () => {
+    setup({ connectedDevices: devices(), syncPlaybackAcrossDevices: false });
+    expect(screen.queryByRole('button', { name: /Chrome on Android/ })).toBeNull();
+  });
 });

@@ -422,6 +422,17 @@ export const playbackCommandResultSchema = z.object({
   accepted: z.boolean().describe('True when sent to the output; false for a repeated requestId.'),
 }).meta({ id: 'PlaybackCommandResult' });
 
+export const CONNECTED_DEVICE_KINDS = ['browser', 'receiver', 'app'] as const;
+export const connectedDeviceSchema = z.object({
+  clientId: z.string().describe("The device's client ID (X-Aurora-Client-Id, or the event stream's clientId)."),
+  name: z.string().nullable().describe('The name the device gave itself ("Chrome on Linux"), when it gave one.'),
+  kind: z.enum(CONNECTED_DEVICE_KINDS).describe('browser: the web app. receiver: a Cast receiver following a session. app: another API v1 client.'),
+}).meta({ id: 'ConnectedDevice' });
+
+export const playbackTransferRequestSchema = z.object({
+  targetClientId: z.string().min(8).max(128).describe('A device from GET /devices: it takes the session over and plays it from where it is.'),
+}).strict().meta({ id: 'PlaybackTransferRequest' });
+
 export const playbackSessionDeleteSchema = z.object({
   expectedRevision: z.number().int().positive(),
 }).strict().meta({ id: 'PlaybackSessionDelete' });
@@ -532,5 +543,7 @@ export type PlaybackOutputReport = z.infer<typeof playbackOutputReportSchema>;
 export type PlaybackOutputCredential = z.infer<typeof playbackOutputCredentialSchema>;
 export type PlaybackCommand = z.infer<typeof playbackCommandSchema>;
 export type PlaybackCommandRequest = z.infer<typeof playbackCommandRequestSchema>;
+export type ConnectedDevice = z.infer<typeof connectedDeviceSchema>;
+export type PlaybackTransferRequest = z.infer<typeof playbackTransferRequestSchema>;
 export type ListenerPreferences = z.infer<typeof listenerPreferencesSchema>;
 export type NextRecommendationRequest = z.input<typeof nextRecommendationSchema>;

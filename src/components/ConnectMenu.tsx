@@ -3,6 +3,7 @@ import { Cast, Check, ChevronRight, MonitorSmartphone, MonitorSpeaker, Speaker }
 import { usePlayerStore } from '../store/index';
 import { castManager } from '../utils/CastManager';
 import { isFollowedOutputPlaying } from '../utils/sessionFollow';
+import { getAuroraClientId } from '../api/auroraApi';
 import { ContextMenuFrame, ContextMenuPortal } from './ContextMenu';
 
 const MENU_WIDTH = 304;
@@ -85,6 +86,16 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
   const audioOutputActive = usePlayerStore((s) => s.audioOutputActive);
   const audioOutputDeviceLabel = usePlayerStore((s) => s.audioOutputDeviceLabel);
   const defaultOutputLabel = usePlayerStore((s) => s.audioOutputDevices.find((device) => device.isDefault)?.label);
+  const syncOn = usePlayerStore((s) => s.syncPlaybackAcrossDevices);
+  const connectedDevices = usePlayerStore((s) => s.connectedDevices);
+  // The user's other devices with Aurora open (live: devices.changed), minus
+  // the one that plays (shown above) and Cast receivers (reached by casting).
+  const myId = getAuroraClientId();
+  const otherDevices = syncOn
+    ? connectedDevices
+      .filter((device) => device.clientId !== myId && device.kind !== 'receiver' && device.clientId !== follow?.outputId)
+      .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
+    : [];
 
   const controlsFollowed = !!follow && remoteControlOutputId === follow.outputId;
   const castDevice = castConnected ? castManager.getCastDeviceName() || 'Cast device' : null;
@@ -131,6 +142,18 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
         ) : (
           <ConnectOption icon={<MonitorSmartphone size={18} />} title="This device" detail="Playing here" selected />
         )}
+        {otherDevices.map((device) => (
+          <ConnectOption
+            key={device.clientId}
+            icon={<MonitorSmartphone size={18} />}
+            title={device.name || 'Another device'}
+            detail="Play there"
+            onClick={() => {
+              onDone();
+              void usePlayerStore.getState().transferPlaybackTo(device);
+            }}
+          />
+        ))}
       </div>
 
       {!castConnected && (

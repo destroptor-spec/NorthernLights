@@ -13,7 +13,9 @@ export type ApiV1EventType =
   | 'playlist.changed'
   | 'annotation.changed'
   | 'library.revision'
-  | 'playbackSync.changed';
+  | 'playbackSync.changed'
+  | 'devices.changed'
+  | 'playbackSession.transferRequested';
 
 export interface ApiV1Event {
   id: string;
@@ -80,26 +82,57 @@ export async function publishApiV1LibraryRevision(data: Record<string, unknown> 
  * ID. Remote commands reach a device only through its stream, so one sent to
  * a device with none would go nowhere (a phone whose app was closed).
  */
-const listening = new Map<string, Map<string, number>>();
+export type ConnectedDeviceKind = 'browser' | 'receiver' | 'app';
+export type ConnectedDevice = { clientId: string; name: string | null; kind: ConnectedDeviceKind };
+
+// The user's devices with an event stream open now: those remote commands
+// and transfers can reach, and the Connect menu lists (GET /devices).
+const listening = new Map<string, Map<string, { count: number; name: string | null; kind: ConnectedDeviceKind }>>();
+
+/** The user's devices that have Aurora open now, one entry per device. */
+export function listConnectedDevices(userId: string): ConnectedDevice[] {
+  return Array.from(listening.get(userId)?.entries() ?? [], ([clientId, device]) => ({ clientId, name: device.name, kind: device.kind }));
+}
+
+// A device appeared or went away: every open stream of the user hears the
+// new list (live only), so device lists update without polling.
+function publishDevicesChanged(userId: string) {
+  publishApiV1Event(userId, 'devices.changed', { devices: listConnectedDevices(userId) }, { transient: true });
+}
 
 /** Records an open stream for `clientId`; call the returned function when it closes. */
-export function noteClientListening(userId: string, clientId: string): () => void {
-  const clients = listening.get(userId) ?? new Map<string, number>();
-  clients.set(clientId, (clients.get(clientId) ?? 0) + 1);
+export function noteClientListening(
+  userId: string,
+  clientId: string,
+  device: { name?: string | null; kind?: ConnectedDeviceKind } = {},
+): () => void {
+  const clients = listening.get(userId) ?? new Map();
+  const existing = clients.get(clientId);
+  clients.set(clientId, {
+    count: (existing?.count ?? 0) + 1,
+    name: device.name ?? existing?.name ?? null,
+    kind: device.kind ?? existing?.kind ?? 'browser',
+  });
   listening.set(userId, clients);
+  if (!existing) publishDevicesChanged(userId);
   let closed = false;
   return () => {
     if (closed) return;
     closed = true;
-    const count = (clients.get(clientId) ?? 1) - 1;
-    if (count > 0) clients.set(clientId, count);
-    else clients.delete(clientId);
-    if (!clients.size) listening.delete(userId);
+    const current = clients.get(clientId);
+    if (!current) return;
+    if (current.count > 1) {
+      clients.set(clientId, { ...current, count: current.count - 1 });
+      return;
+    }
+    clients.delete(clientId);
+    if (clients.size === 0) listening.delete(userId);
+    publishDevicesChanged(userId);
   };
 }
 
 export function isClientListening(userId: string, clientId: string): boolean {
-  return (listening.get(userId)?.get(clientId) ?? 0) > 0;
+  return (listening.get(userId)?.get(clientId)?.count ?? 0) > 0;
 }
 
 export function subscribeApiV1Events(userId: string, listener: (event: ApiV1Event) => void) {
