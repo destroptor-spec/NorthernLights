@@ -110,6 +110,34 @@ describe('per-person credits from tags', () => {
     expect(people({ common: { artists: ['A'], musicbrainz_artistid: ['not-an-id'] } }).track).toEqual([{ name: 'A', mbid: null }]);
   });
 
+  it('drops the display credit when a tagger lists it first among the people', () => {
+    const dua = '6f1a58bf-9b1b-49cf-a44a-6cefad7ae04f';
+    const tbm = '3f351696-75a2-4167-86b1-c5cd37770600';
+    const gwen = '2e41ae9c-afd2-4f20-8f1e-17281ce9b472';
+    const credit = 'Dua Lipa & the Blessed Madonna Feat. Gwen Stefani';
+    expect(people({
+      common: { artist: credit, artists: [credit, 'Dua Lipa', 'The Blessed Madonna', 'Gwen Stefani'], musicbrainz_artistid: [dua, tbm, gwen] },
+    }).track).toEqual([
+      { name: 'Dua Lipa', mbid: dua },
+      { name: 'The Blessed Madonna', mbid: tbm },
+      { name: 'Gwen Stefani', mbid: gwen },
+    ]);
+    // Without ids: the people after it are named in the credit.
+    expect(people({
+      common: { artist: 'Michael Jackson & the Jackson 5', artists: ['Michael Jackson & the Jackson 5', 'Michael Jackson', 'The Jackson 5'] },
+    }).track?.map((p) => p.name)).toEqual(['Michael Jackson', 'The Jackson 5']);
+  });
+
+  it('drops a mangled copy of the people and keeps a real act that shares the list', () => {
+    const credit = '植松伸夫 & 河盛慶次';
+    expect(people({ common: { artist: credit, artists: [credit, '植松伸夫', '河盛慶次', '???? & ????'] } }).track?.map((p) => p.name))
+      .toEqual(['植松伸夫', '河盛慶次']);
+    expect(people({ common: { artist: 'Riggi & Piros', artists: ['Riggi & Piros', 'Dani Poppitt'] } }).track?.map((p) => p.name))
+      .toEqual(['Riggi & Piros', 'Dani Poppitt']);
+    expect(people({ common: { artist: 'Above & Beyond', artists: ['Above & Beyond'] } }).track?.map((p) => p.name))
+      .toEqual(['Above & Beyond']);
+  });
+
   it('returns null when the file does not say who the people are', () => {
     const source: TagSource = { common: { artists: ['Riggi & Piros', 'Dani Poppitt'], albumartist: 'Various Artists' } };
     expect(people(source)).toEqual({
