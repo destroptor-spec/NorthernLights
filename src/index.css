@@ -9120,6 +9120,41 @@ a:focus-visible > .genre-card .genre-card__label {
   font-size: 0.75rem;
   color: var(--color-text-muted);
 }
+.connect-devices {
+  display: flex;
+  flex-direction: column;
+  margin-top: -12px; /* the rows carry their own 8px spacing, so it folds away with them */
+}
+/* A device row folds open or closed (grid rows 0fr <-> 1fr) as it fades, so
+   the card's height follows smoothly when a device comes or goes. */
+.connect-device {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition: grid-template-rows 220ms var(--ease-out), opacity 220ms var(--ease-out);
+}
+.connect-device-inner {
+  min-height: 0;
+  overflow: hidden;
+  padding-top: 8px;
+}
+.connect-device.is-entering {
+  animation: connect-device-in 220ms var(--ease-out);
+}
+.connect-device.is-leaving {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+}
+@keyframes connect-device-in {
+  from { grid-template-rows: 0fr; opacity: 0; }
+  to { grid-template-rows: 1fr; opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .connect-device { transition: none; }
+  .connect-device.is-entering { animation: none; }
+}
+
 .connect-output {
   display: flex;
   align-items: center;

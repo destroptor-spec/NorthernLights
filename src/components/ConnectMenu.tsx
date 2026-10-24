@@ -1,4 +1,5 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import type { ConnectedDevice } from '../../shared/api/v1';
 import { Cast, Check, ChevronRight, MonitorSmartphone, MonitorSpeaker, Speaker } from 'lucide-react';
 import { usePlayerStore } from '../store/index';
 import { castManager } from '../utils/CastManager';
@@ -7,6 +8,40 @@ import { getAuroraClientId } from '../api/auroraApi';
 import { ContextMenuFrame, ContextMenuPortal } from './ContextMenu';
 
 const MENU_WIDTH = 304;
+/** How long a device's row takes to fade and fold away (matches the CSS). */
+export const DEVICE_LEAVE_MS = 220;
+
+type ListedDevice = { device: ConnectedDevice; entering: boolean; leaving: boolean };
+
+/**
+ * The device list as rendered: a device that appears is marked entering (it
+ * fades and unfolds in); one that goes away stays a moment, marked leaving,
+ * while it fades and folds away, so the card's height follows smoothly.
+ * Devices already there when the card opens don't animate.
+ */
+export function useListedDevices(devices: ConnectedDevice[]): ListedDevice[] {
+  const [listed, setListed] = useState<ListedDevice[]>(() => devices.map((device) => ({ device, entering: false, leaving: false })));
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    setListed((previous) => {
+      const was = new Set(previous.filter((entry) => !entry.leaving).map((entry) => entry.device.clientId));
+      const now = new Set(devices.map((device) => device.clientId));
+      const next = devices.map((device) => ({ device, entering: !was.has(device.clientId), leaving: false }));
+      // A device that left keeps its place while it folds away.
+      previous.forEach((entry, index) => {
+        if (!now.has(entry.device.clientId)) next.splice(Math.min(index, next.length), 0, { ...entry, entering: false, leaving: true });
+      });
+      return next;
+    });
+    const timer = setTimeout(() => setListed((current) => current.filter((entry) => !entry.leaving)), DEVICE_LEAVE_MS);
+    return () => clearTimeout(timer);
+  }, [devices]);
+  return listed;
+}
 
 /**
  * "Connect": where the music plays, and the choices that go with it, in one
@@ -91,11 +126,13 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
   // The user's other devices with Aurora open (live: devices.changed), minus
   // the one that plays (shown above) and Cast receivers (reached by casting).
   const myId = getAuroraClientId();
-  const otherDevices = syncOn
+  const followedOutputId = follow?.outputId;
+  const otherDevices = useMemo(() => (syncOn
     ? connectedDevices
-      .filter((device) => device.clientId !== myId && device.kind !== 'receiver' && device.clientId !== follow?.outputId)
+      .filter((device) => device.clientId !== myId && device.kind !== 'receiver' && device.clientId !== followedOutputId)
       .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
-    : [];
+    : []), [connectedDevices, followedOutputId, myId, syncOn]);
+  const listedDevices = useListedDevices(otherDevices);
 
   const controlsFollowed = !!follow && remoteControlOutputId === follow.outputId;
   const castDevice = castConnected ? castManager.getCastDeviceName() || 'Cast device' : null;
@@ -142,19 +179,31 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
         ) : (
           <ConnectOption icon={<MonitorSmartphone size={18} />} title="This device" detail="Playing here" selected />
         )}
-        {otherDevices.map((device) => (
-          <ConnectOption
-            key={device.clientId}
-            icon={<MonitorSmartphone size={18} />}
-            title={device.name || 'Another device'}
-            detail="Play there"
-            onClick={() => {
-              onDone();
-              void usePlayerStore.getState().transferPlaybackTo(device);
-            }}
-          />
-        ))}
       </div>
+
+      {listedDevices.length > 0 && (
+        <div className="connect-devices">
+          {listedDevices.map(({ device, entering, leaving }) => (
+            <div
+              key={device.clientId}
+              className={`connect-device${entering ? ' is-entering' : ''}${leaving ? ' is-leaving' : ''}`}
+              aria-hidden={leaving || undefined}
+            >
+              <div className="connect-device-inner">
+                <ConnectOption
+                  icon={<MonitorSmartphone size={18} />}
+                  title={device.name || 'Another device'}
+                  detail="Play there"
+                  onClick={leaving ? undefined : () => {
+                    onDone();
+                    void usePlayerStore.getState().transferPlaybackTo(device);
+                  }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {!castConnected && (
         <button

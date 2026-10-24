@@ -1,6 +1,6 @@
 import { act, render, screen } from '@testing-library/react';
 import { usePlayerStore } from '../../store';
-import { ConnectMenuContent } from '../ConnectMenu';
+import { ConnectMenuContent, DEVICE_LEAVE_MS } from '../ConnectMenu';
 import type { FollowedOutput } from '../../utils/sessionFollow';
 import { getAuroraClientId } from '../../api/auroraApi';
 
@@ -101,11 +101,28 @@ describe("the user's other devices", () => {
     expect(screen.queryByRole('button', { name: /Another device/ })).toBeNull();
   });
 
-  test('updates live as devices come and go', () => {
+  test('updates live: a device that comes fades in, one that goes fades and folds away', () => {
+    jest.useFakeTimers();
+    try {
+      setup({ connectedDevices: devices().slice(0, 1) });
+      act(() => { usePlayerStore.setState({ connectedDevices: devices() } as never); });
+      const row = () => screen.getByText('Chrome on Android').closest('.connect-device')!;
+      expect(row().className).toContain('is-entering');
+
+      act(() => { usePlayerStore.setState({ connectedDevices: devices().slice(0, 1) } as never); });
+      // Still there while it folds away, but hidden and inert.
+      expect(row().className).toContain('is-leaving');
+      expect(screen.queryByRole('button', { name: /Chrome on Android/ })).toBeNull();
+      act(() => { jest.advanceTimersByTime(DEVICE_LEAVE_MS); });
+      expect(screen.queryByText('Chrome on Android')).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('devices already there when the card opens do not animate', () => {
     setup({ connectedDevices: devices() });
-    expect(screen.getByRole('button', { name: /Chrome on Android/ })).toBeTruthy();
-    act(() => { usePlayerStore.setState({ connectedDevices: devices().slice(0, 1) } as never); });
-    expect(screen.queryByRole('button', { name: /Chrome on Android/ })).toBeNull();
+    expect(screen.getByText('Chrome on Android').closest('.connect-device')!.className).toBe('connect-device');
   });
 
   test('lists none with sync off', () => {
