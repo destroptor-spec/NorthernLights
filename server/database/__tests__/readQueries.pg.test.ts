@@ -651,6 +651,25 @@ describeDb('database read queries', () => {
         .toBe(JSON.stringify(['YY Jeezy', 'YY Slick', 'YY Blood']));
     });
 
+    it('asks about a comma list without an id whose people the library does not know yet', async () => {
+      const lead = await artist('YY Dominion, YY Zumaeta (NZ)');
+      const owned = await track(lead, ['YY Dominion, YY Zumaeta (NZ)']);
+      // A name with a comma that is one artist carries an id; a suffix isn't a person.
+      await track(await artist('YY Tyler, the Creator', '00000000-0000-4000-8000-00000000cccc'), ['YY Tyler, the Creator']);
+      await track(await artist('YY Odom, Jr.'), ['YY Odom, Jr.']);
+
+      const entries = await db.getArtistReviewEntries();
+      expect(entries.find(e => e.subject === 'YY Tyler, the Creator')).toBeUndefined();
+      expect(entries.find(e => e.subject === 'YY Odom, Jr.')).toBeUndefined();
+      const asked = entries.find(e => e.subject === 'YY Dominion, YY Zumaeta (NZ)')!;
+      expect(asked).toMatchObject({ kind: 'people-credit', splitInto: ['YY Dominion', 'YY Zumaeta (NZ)'] });
+
+      await db.decideArtistReview({ key: asked.key, signature: asked.signature, outcomeId: 'split' });
+      const row = (await pool.query('SELECT artists, artist_id FROM tracks WHERE id = $1', [owned])).rows[0];
+      expect(row.artists).toBe(JSON.stringify(['YY Dominion', 'YY Zumaeta (NZ)']));
+      expect((await pool.query('SELECT name FROM artists WHERE id = $1', [row.artist_id])).rows[0].name).toBe('YY Dominion');
+    });
+
     it('merges two spellings from the queue and undoes the merge', async () => {
       const MBID = '00000000-0000-4000-8000-00000000ffff';
       const salerno = await artist('YY Sabrina Salerno', MBID);

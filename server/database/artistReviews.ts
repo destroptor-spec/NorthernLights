@@ -31,7 +31,7 @@ import {
   type ArtistDuplicateCandidate,
   type JoinedCreditSignature,
 } from './index';
-import { splitJoinedCredit, splitPeopleCredit } from '../../shared/artistCredit';
+import { listedPeople, splitJoinedCredit, splitPeopleCredit } from '../../shared/artistCredit';
 import {
   ARTIST_REVIEW_UNDO_DAYS,
   type ArtistReviewArtist,
@@ -59,7 +59,10 @@ const list = (names: string[]) => names.length <= 1 ? names.join('')
 // Names that lead tracks of their own and list artists the library credits on
 // their own: joined names without a MusicBrainz id, and comma lists stored as
 // one name, with or without one (the files give "Morten Hampenberg, Alexander
-// Brown" the duo's id). Until answered they stay whole (wholeActNames).
+// Brown" the duo's id). A comma list without an id is asked about even when
+// the library doesn't know its people yet ("Old Dominion, Hernan Zumaeta"):
+// the names with a comma that are one artist (Tyler, the Creator; Earth, Wind
+// & Fire) carry an id. Until answered they stay whole (wholeActNames).
 async function getJoinedCreditEntries(db: Pool): Promise<ArtistReviewEntry[]> {
   const credited = await getCreditedArtistNames(db);
   const creditedKeys = new Set(credited.map(keyOf));
@@ -80,7 +83,7 @@ async function getJoinedCreditEntries(db: Pool): Promise<ArtistReviewEntry[]> {
     const isKnown = (half: string) => keyOf(half) !== key && creditedKeys.has(keyOf(half));
     const joined = row.mbid ? null : splitJoinedCredit(row.name, isKnown);
     if (joined) return [{ row, names: joined, kind: 'joined-credit' }];
-    const people = splitPeopleCredit(row.name, isKnown);
+    const people = splitPeopleCredit(row.name, isKnown) || (row.mbid ? null : listedPeople(row.name));
     return people ? [{ row, names: people, kind: 'people-credit' }] : [];
   });
   if (proposals.length === 0) return [];

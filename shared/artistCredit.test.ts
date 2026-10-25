@@ -6,6 +6,7 @@ import {
   joinedCreditSplits,
   splitJoinedCredit,
   splitPeopleCredit,
+  listedPeople,
 } from './artistCredit';
 
 describe('shared/artistCredit', () => {
@@ -67,6 +68,15 @@ describe('shared/artistCredit', () => {
       expect(cleanCreditPart('  (Rihanna)  ')).toBe('Rihanna');
       expect(cleanCreditPart('[The Weeknd]')).toBe('The Weeknd');
     });
+    it('strips a bracket a split left behind', () => {
+      expect(cleanCreditPart('Rihanna)')).toBe('Rihanna');
+      expect(cleanCreditPart('(Rihanna')).toBe('Rihanna');
+    });
+    it('keeps brackets that belong to the name', () => {
+      expect(cleanCreditPart('RUBIX (NZ)')).toBe('RUBIX (NZ)');
+      expect(cleanCreditPart('Dada (Ante Portas)')).toBe('Dada (Ante Portas)');
+      expect(cleanCreditPart('(Həd) P.E.')).toBe('(Həd) P.E.');
+    });
   });
 
   describe('explodeListCredit', () => {
@@ -114,6 +124,22 @@ describe('shared/artistCredit', () => {
     it('keeps a joined act whole inside a longer credit', () => {
       expect(splitJoinedCredit('Above & Beyond and Spencer Brown', known('Above & Beyond', 'Spencer Brown')))
         .toEqual(['Above & Beyond', 'Spencer Brown']);
+    });
+  });
+
+  describe('listedPeople', () => {
+    it('lists the people of a comma list, known or not', () => {
+      expect(listedPeople('Old Dominion, Hernan Zumaeta')).toEqual(['Old Dominion', 'Hernan Zumaeta']);
+      expect(listedPeople('Riri Mestica, DTX, Patricia Schuldtz')).toEqual(['Riri Mestica', 'DTX', 'Patricia Schuldtz']);
+      expect(listedPeople('Slick Pulla, Diesel Da Don and Luke Ruger')).toEqual(['Slick Pulla', 'Diesel Da Don', 'Luke Ruger']);
+      expect(listedPeople('RUBIX (NZ), Jenna Lynn')).toEqual(['RUBIX (NZ)', 'Jenna Lynn']);
+    });
+    it('is null for a name suffix, a featuring credit or no comma', () => {
+      expect(listedPeople('Hank Williams, Jr.')).toBeNull();
+      expect(listedPeople('Lipps, Inc.')).toBeNull();
+      expect(listedPeople('Timbaland Feat. Magoo, Missy Elliott & Aaliyah')).toBeNull();
+      expect(listedPeople('Simon & Garfunkel')).toBeNull();
+      expect(listedPeople(null)).toBeNull();
     });
   });
 

@@ -8,13 +8,19 @@
 // deliberately different, more aggressive splitter (it splits on bare `&`, `/`,
 // `;`, `vs`) used for credit-role tags, and is intentionally NOT shared here.
 
-/** Trim a credit part and strip wrapping brackets/parens. */
+const OPENERS = /[([{]/g;
+const CLOSERS = /[)\]}]/g;
+const count = (value: string, pattern: RegExp) => (value.match(pattern) || []).length;
+
+/** Trim a credit part and strip the brackets a split left behind ("Y)" from
+ * "X (feat. Y)") or that wrap it whole ("(Rihanna)"). Brackets that belong to
+ * the name stay: "RUBIX (NZ)", "(Həd) P.E.". */
 export function cleanCreditPart(value: string): string {
-  return value
-    .trim()
-    .replace(/^[([{]+/, '')
-    .replace(/[)\]}]+$/, '')
-    .trim();
+  let part = value.trim();
+  while (/^[([{]/.test(part) && count(part, OPENERS) > count(part, CLOSERS)) part = part.slice(1).trim();
+  while (/[)\]}]$/.test(part) && count(part, CLOSERS) > count(part, OPENERS)) part = part.slice(0, -1).trim();
+  const wrapped = /^[([{]([^()[\]{}]*)[)\]}]$/.exec(part);
+  return wrapped ? wrapped[1].trim() : part;
 }
 
 /** Dedupe artist names case-insensitively, preserving first-seen order and
@@ -147,6 +153,27 @@ export function splitJoinedCredit(
  * the library already has on its own (`isKnown`). Keeps names like "Tyler, the
  * Creator" or "Earth, Wind & Fire" whole, since their parts aren't artists.
  */
+// What follows a comma in a single name rather than another person:
+// "Hank Williams, Jr.", "Lipps, Inc.".
+const NAME_SUFFIX = /^(?:jr|sr|inc|ltd|co|ii|iii|iv)\.?$/i;
+
+/**
+ * The people a comma list stored as one name would list, whether or not the
+ * library knows them: "Riri Mestica, DTX & Patricia Schuldtz" → [Riri
+ * Mestica, DTX, Patricia Schuldtz]; the last part also splits at "and". Null
+ * without a comma, with a featuring marker, or when a part is a name suffix
+ * ("Hank Williams, Jr."). Only a question for the user: it can't tell "Old
+ * Dominion, Hernan Zumaeta" from "Tyler, the Creator".
+ */
+export function listedPeople(credit: string | null | undefined): string[] | null {
+  if (!credit || !credit.includes(',') || FEATURING.test(credit)) return null;
+  const parts = credit.split(/\s*,\s*/).map(cleanCreditPart).filter(Boolean);
+  if (parts.length === 0 || parts.some(part => NAME_SUFFIX.test(part))) return null;
+  const last = parts.pop()!.split(/\s+(?:&|and)\s+/i).map(cleanCreditPart).filter(Boolean);
+  const names = uniqueArtistNames([...parts, ...last]);
+  return names.length > 1 ? names : null;
+}
+
 export function splitPeopleCredit(
   credit: string | null | undefined,
   isKnown: (name: string) => boolean,
