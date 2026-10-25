@@ -316,6 +316,18 @@ body {
   background-color: var(--color-background);
 }
 
+/* Cal Sans has one regular face. Keep legacy heading utilities from
+   synthesizing heavier weights or reintroducing condensed tracking. */
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  font-synthesis: none;
+  font-weight: 400 !important;
+  letter-spacing: 0.05em !important;
+}
+
 .app-backdrop {
   position: fixed;
   inset: 0;
@@ -394,7 +406,7 @@ html.share-page #root {
   font-size: 2.2rem;
   font-weight: 700;
   color: var(--color-text-primary);
-  letter-spacing: -0.03em;
+  letter-spacing: normal;
   line-height: 1.15;
   text-shadow: 0 0 60px rgba(34, 201, 131, 0.15);
 }
@@ -430,7 +442,7 @@ html.share-page #root {
   font-family: var(--font-display);
   font-size: 2.8rem;
   font-weight: 800;
-  letter-spacing: -0.04em;
+  letter-spacing: normal;
   line-height: 1.1;
   background: linear-gradient(135deg,
       var(--aurora-green) 0%,
@@ -472,9 +484,25 @@ html.share-page #root {
 }
 
 /* ─── BUTTONS ─── */
+button,
+.btn,
+.btn-tab {
+  font-family: var(--font-body);
+  font-synthesis: none;
+  /* Keep control typography consistent despite legacy weight/tracking utilities. */
+  font-weight: 400 !important;
+  letter-spacing: 0.05em !important;
+}
+
+button :where(span),
+.btn :where(span),
+.btn-tab :where(span) {
+  font-weight: 400 !important;
+  letter-spacing: 0.05em !important;
+}
+
 .btn {
-  font-family: var(--font-display);
-  font-weight: 600;
+  font-weight: 400;
   font-size: 0.875rem;
   padding: 8px 16px;
   cursor: pointer;
@@ -581,7 +609,7 @@ html.share-page #root {
 .btn-tab {
   padding: 8px 16px;
   font-size: 0.875rem;
-  font-weight: 600;
+  font-weight: 400;
   border: none;
   border-radius: 0.75rem;
   background: var(--color-surface);
@@ -610,7 +638,7 @@ html.share-page #root {
   cursor: pointer;
   border-radius: 0.75rem;
   font-size: 0.875rem;
-  font-weight: 600;
+  font-weight: 400;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1382,7 +1410,7 @@ a:focus-visible > .genre-card .genre-card__label {
   gap: 1.75rem;
 }
 
-/* Matches the Hub's section headings: DM Sans, bold, lowercase, text-xl→2xl. */
+/* Matches the Hub's Cal Sans section headings: lowercase, text-xl→2xl. */
 .genre-rail__title {
   margin-bottom: 0.9rem;
   padding-inline: 0.1rem;
@@ -1489,7 +1517,7 @@ a:focus-visible > .genre-card .genre-card__label {
    Library filter rack: "icons floating in atmosphere".
    Facet selectors collapse to icon-only tiles; active state blooms with
    emerald aurora light; the count rides as a luminous pip; labels appear
-   on hover as a display-font micro-tooltip. The chip strip below the rack reads
+   on hover as a body-font micro-tooltip. The chip strip below the rack reads
    as a typographic line, not as form chrome.
    ──────────────────────────────────────────────────────────────────── */
 
@@ -1587,9 +1615,9 @@ a:focus-visible > .genre-card .genre-card__label {
    Coarse-pointer media query below promotes it. */
 .filter-icon-btn__label {
   display: none;
-  font-family: var(--font-display);
+  font-family: var(--font-body);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 400;
   letter-spacing: 0.02em;
   white-space: nowrap;
 }
@@ -1668,13 +1696,13 @@ a:focus-visible > .genre-card .genre-card__label {
   transform: rotate(180deg);
 }
 
-/* Tooltip label. display-font uppercase, tracked. */
+/* Tooltip label. Body font, uppercase, tracked. */
 .filter-tip {
   position: fixed;
   z-index: 9100;
-  font-family: var(--font-display);
+  font-family: var(--font-body);
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 400;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--color-text-primary);
@@ -1712,7 +1740,7 @@ a:focus-visible > .genre-card .genre-card__label {
   align-self: center;
 }
 
-/* Sort widget: keeps the current value readable in display-font italic so users
+/* Sort widget: keeps the current value readable in body-font italic so users
    can scan ordering without opening the popover. */
 .filter-sort-btn {
   position: relative;
@@ -1730,10 +1758,10 @@ a:focus-visible > .genre-card .genre-card__label {
     color 200ms var(--ease-out),
     background-color 200ms var(--ease-out),
     border-color 200ms var(--ease-out);
-  font-family: var(--font-display);
+  font-family: var(--font-body);
   font-style: italic;
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 400;
   letter-spacing: 0.02em;
 }
 
@@ -1758,7 +1786,7 @@ a:focus-visible > .genre-card .genre-card__label {
   row-gap: 4px;
   padding: 6px 4px 4px;
   min-height: 28px;
-  font-family: var(--font-display);
+  font-family: var(--font-body);
   font-style: italic;
   font-size: 12px;
   letter-spacing: 0.015em;
@@ -1833,10 +1861,10 @@ a:focus-visible > .genre-card .genre-card__label {
 .filter-strip__clear {
   margin-left: auto;
   padding: 2px 8px;
-  font-family: var(--font-display);
+  font-family: var(--font-body);
   font-style: normal;
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 400;
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--color-text-muted);
@@ -5344,7 +5372,7 @@ a:focus-visible > .genre-card .genre-card__label {
   color: var(--color-text-primary);
   font-family: var(--font-display);
   font-weight: 700;
-  letter-spacing: -0.025em;
+  letter-spacing: normal;
 }
 
 .setup-wizard__header h1 {
@@ -6204,7 +6232,7 @@ a:focus-visible > .genre-card .genre-card__label {
   font-size: clamp(1.65rem, 4vw, 2.5rem);
   font-weight: 700;
   line-height: 1.12;
-  letter-spacing: -0.025em;
+  letter-spacing: normal;
 }
 
 .search-page-title span {
@@ -6932,9 +6960,9 @@ a:focus-visible > .genre-card .genre-card__label {
     background: transparent;
     box-shadow: none;
     text-align: left;
-    font-family: inherit;
+    font-family: var(--font-body);
     font-size: 0.9375rem;
-    font-weight: 500;
+    font-weight: 400;
     white-space: normal;
   }
 
@@ -7222,7 +7250,7 @@ a:focus-visible > .genre-card .genre-card__label {
   border: 1px solid rgba(16, 185, 129, 0.25);
   color: var(--color-primary);
   font-size: 0.875rem;
-  font-family: var(--font-display);
+  font-family: var(--font-body);
   letter-spacing: 0.02em;
   cursor: pointer;
   transition: background 200ms, border-color 200ms;
@@ -8646,7 +8674,7 @@ a:focus-visible > .genre-card .genre-card__label {
   font-family: var(--font-display);
   font-size: 2.8rem;
   font-weight: 800;
-  letter-spacing: -0.015em;
+  letter-spacing: normal;
   line-height: 1.02;
   text-transform: lowercase;
   text-wrap: balance;
@@ -8778,7 +8806,7 @@ a:focus-visible > .genre-card .genre-card__label {
   .hub-header-title {
     max-width: 13ch;
     font-size: 3.6rem;
-    letter-spacing: -0.02em;
+    letter-spacing: normal;
   }
 
   .hub-resume-row {
@@ -8808,7 +8836,7 @@ a:focus-visible > .genre-card .genre-card__label {
 
   .hub-header-title {
     font-size: 4.5rem;
-    letter-spacing: -0.025em;
+    letter-spacing: normal;
   }
 
   .hub-resume-art {
@@ -8829,7 +8857,7 @@ a:focus-visible > .genre-card .genre-card__label {
   .hub-header-title {
     max-width: 8ch;
     font-size: 2.35rem;
-    letter-spacing: -0.01em;
+    letter-spacing: normal;
   }
 
   .hub-resume-row {
@@ -9297,6 +9325,9 @@ a:focus-visible > .genre-card .genre-card__label {
 }
 
 .player-metadata {
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  font-synthesis: none;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -9306,8 +9337,8 @@ a:focus-visible > .genre-card .genre-card__label {
 .player-title {
   font-family: var(--font-display);
   font-size: 0.92rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-weight: 400;
+  letter-spacing: 0.05em;
   color: var(--color-text-primary);
   line-height: 1.2;
   min-width: 0;
@@ -9372,10 +9403,11 @@ a:focus-visible > .genre-card .genre-card__label {
 
 .player-title-empty {
   color: var(--color-text-muted);
-  font-weight: 500;
+  font-weight: 400;
 }
 
 .player-subline {
+  letter-spacing: 0.05em;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -9664,7 +9696,7 @@ a:focus-visible > .genre-card .genre-card__label {
   font-size: 0.72rem;
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0;
+  letter-spacing: 0.05em;
   flex-shrink: 0;
   white-space: nowrap;
 }
@@ -9923,8 +9955,8 @@ a:focus-visible > .genre-card .genre-card__label {
 }
 
 .player-chain-node-label {
-  font-weight: 600;
-  letter-spacing: 0;
+  font-weight: 400;
+  letter-spacing: 0.05em;
 }
 
 .player-chain-node-sub {

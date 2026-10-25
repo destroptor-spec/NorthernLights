@@ -262,7 +262,7 @@ export const GenreFacetMenu: React.FC<{
           <button
             onClick={() => { selected.forEach(s => onToggle(s)); }}
             className="w-full py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text-muted)] transition-colors hover:text-[var(--aurora-pink)]"
-            style={{ fontFamily: 'var(--font-display)' }}
+            style={{ fontFamily: 'var(--font-body)' }}
           >
             Clear {selected.length}
           </button>

@@ -40,12 +40,14 @@ Do not introduce new semantic colors casually. If a warning state is needed, pre
 
 Use two families:
 
-- `Cal Sans` for display, section emphasis, player labels, compact button labels, and editorial headings.
-- `DM Sans` for body, metadata, settings, lists, controls, and dense product UI.
+- `Cal Sans` for all `h1`–`h4` headings, display text, section emphasis, and player labels.
+- `DM Sans` for body, metadata, settings, lists, buttons, tabs, controls, and dense product UI.
 
 Rules:
 
-- Page and modal titles should use strong scale contrast and tight tracking.
+- Page and modal titles should use strong scale contrast. All `h1`–`h4` headings use `var(--font-display)` (Cal Sans), regular weight (`400`), `letter-spacing: 0.05em`, and no synthetic font styles; do not carry over negative tracking from Syne.
+- All button and tab labels use `var(--font-body)` (DM Sans), regular weight (`400`), and `letter-spacing: 0.05em`, including nested labels and controls inside display-font containers. Do not synthesize heavier faces.
+- PlayerControls titles and labels use regular weight (`400`) and `letter-spacing: 0.05em`; the Cal Sans title must not use synthetic bold.
 - Metadata should recede until active or hovered.
 - Time, bitrate, queue position, duration, and progress numerics must use tabular figures.
 - Do not add a third font.
