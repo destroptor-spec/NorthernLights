@@ -14,8 +14,8 @@ export type ArtistReviewKind =
    * one act, or a collaboration of two (Grandmaster Flash & The Furious Five). */
   | 'joined-credit'
   /** A comma list stored as one name, leading tracks of its own, whose names are
-   * all library artists: one artist, or several people ("Morten Hampenberg,
-   * Alexander Brown")? */
+   * all library artists, or which has no MusicBrainz id: one artist, or
+   * several people ("Morten Hampenberg, Alexander Brown")? */
   | 'people-credit';
 
 export type ArtistReviewOutcomeKind = 'merge' | 'keep-apart' | 'keep-together' | 'split';
