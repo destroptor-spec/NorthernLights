@@ -12,7 +12,11 @@ export type ArtistReviewKind =
   | 'compound-credit'
   /** A joined name leading tracks of its own whose names are all library artists:
    * one act, or a collaboration of two (Grandmaster Flash & The Furious Five). */
-  | 'joined-credit';
+  | 'joined-credit'
+  /** A comma list stored as one name, leading tracks of its own, whose names are
+   * all library artists: one artist, or several people ("Morten Hampenberg,
+   * Alexander Brown")? */
+  | 'people-credit';
 
 export type ArtistReviewOutcomeKind = 'merge' | 'keep-apart' | 'keep-together' | 'split';
 
@@ -39,7 +43,7 @@ export interface ArtistReviewEntry {
   /** The name the question is about. */
   subject: string;
   artists: ArtistReviewArtist[];
-  /** joined-credit: the artists it would split into. */
+  /** joined-credit, people-credit: the artists it would split into. */
   splitInto?: string[];
   totalTracks: number;
   outcomes: ArtistReviewOutcome[];

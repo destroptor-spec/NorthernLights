@@ -11,7 +11,7 @@ import { resolveTrackArtists } from '../utils/trackArtists';
 // Canonical artist-credit splitter, shared with the client (see
 // shared/artistCredit.ts). Re-exported so existing `import('../database')`
 // consumers (e.g. library.routes) keep resolving `splitArtistNames` here.
-import { joinedCreditSplits, splitArtistNames, splitJoinedCredit, uniqueArtistNames } from '../../shared/artistCredit';
+import { joinedCreditSplits, splitArtistNames, splitJoinedCredit, splitPeopleCredit, uniqueArtistNames } from '../../shared/artistCredit';
 import { accountProtection, type AccountProtection } from '../../shared/accountProtection';
 export { splitArtistNames };
 export { getArtistVideoUploads, saveArtistVideoCatalog, noteArtistVideoFailure } from './musicVideos';
@@ -3480,10 +3480,10 @@ export async function alignArtistMbidsWithTracks(): Promise<Array<{ name: string
   return res.rows;
 }
 
-// The user's answers for joined credits (Settings → Library entities): keep
-// the name whole as one act, or split it into the stored names. Keyed by the
-// joined name's identity key; the signature is the JSON of
-// `JoinedCreditSignature`; the latest answer wins.
+// The user's answers for joined credits and comma lists stored as one name
+// (Settings → Library entities): keep the name whole as one act, or split it
+// into the stored names. Keyed by the name's identity key; the signature is the
+// JSON of `JoinedCreditSignature`; the latest answer wins.
 export const JOINED_CREDIT_KEY_PREFIX = 'artist-joined:';
 
 export interface JoinedCreditSignature {
@@ -3528,9 +3528,10 @@ export async function getCreditedArtistNames(db: Pool): Promise<string[]> {
   `)).rows.map((row: any) => String(row.name));
 }
 
-// Of these lower-cased joined names, the ones left whole: the user kept it as
-// one act; the files give the name a MusicBrainz id, so it is one act (Matrix &
-// Futurebound, Bob Marley & The Wailers); the user merged other rows into it;
+// Of these lower-cased joined names or comma lists, the ones left whole: the
+// user kept it as one act; the files give the name a MusicBrainz id, so it is
+// one act (Matrix & Futurebound, Bob Marley & The Wailers; a comma list with an
+// id waits for the user's answer); the user merged other rows into it;
 // or it leads tracks of its own (Grandmaster Flash & The Furious Five), where
 // only the user can tell an act from a collaboration, so it waits for their
 // answer. A merged row only redirects, so its id doesn't count. A name the
@@ -3557,9 +3558,10 @@ export async function wholeActNames(db: Pool, names: string[]): Promise<Set<stri
 // A guest credit joined with "&", "+" or "and" whose names are all artists the
 // library credits on their own, like "Justin Timberlake & Timbaland" in a
 // "50 Cent Feat. Justin Timberlake & Timbaland" file without per-person tags,
-// is split into those artists, so the track shows on each of their pages.
-// Only guests, unless the user chose to split the name: then it splits
-// everywhere and the first name takes the joined name's tracks. Any joined
+// is split into those artists, so the track shows on each of their pages. So
+// is a comma list stored as one name ("Ed Sheeran, Taylor Swift" as a single
+// ARTISTS entry). Only guests, unless the user chose to split the name: then it
+// splits everywhere and the first name takes the joined name's tracks. Any
 // name wholeActNames() leaves whole stays. Runs after a scan, a merge or a
 // review answer (runArtistCreditSplitInBackground); a rescan writes the file's
 // credit again and the next run splits it again. Returns the tracks changed.
@@ -3579,10 +3581,11 @@ export async function splitJoinedArtistCredits(): Promise<number> {
       everywhere.add(name.toLowerCase());
       continue;
     }
-    const names = splitJoinedCredit(name, half => {
+    const isKnown = (half: string) => {
       const halfKey = normalizeArtistIdentityKey(half);
       return !!halfKey && halfKey !== key && creditedKeys.has(halfKey);
-    });
+    };
+    const names = splitJoinedCredit(name, isKnown) || splitPeopleCredit(name, isKnown);
     if (names) splits.set(name.toLowerCase(), names);
   }
   for (const name of await wholeActNames(db, [...splits.keys()])) splits.delete(name);
@@ -3597,25 +3600,33 @@ export async function splitJoinedArtistCredits(): Promise<number> {
     'SELECT id, artists, artist_id FROM tracks WHERE artists ILIKE ANY($1::text[])',
     [patterns],
   )).rows;
+  // A split name can list another one: "Young Jeezy, Slick Pulla and Bloodraw"
+  // → Young Jeezy | Slick Pulla and Bloodraw, a guest that splits in turn.
+  const expand = (name: string, guest: boolean, depth: number): string[] => {
+    const lower = name.trim().toLowerCase();
+    const parts = depth < 3 && (guest || everywhere.has(lower)) ? splits.get(lower) : undefined;
+    return parts ? parts.flatMap((part, j) => expand(part, guest || j > 0, depth + 1)) : [name];
+  };
   let changed = 0;
   const moved = new Set<string>();
   for (const track of tracks) {
     let names: string[];
     try { names = JSON.parse(track.artists); } catch { continue; }
     if (!Array.isArray(names)) continue;
-    const next = uniqueArtistNames(names.flatMap((name, i) => {
-      const lower = String(name).trim().toLowerCase();
-      return ((i > 0 || everywhere.has(lower)) && splits.get(lower)) || [String(name)];
-    }));
+    const next = uniqueArtistNames(names.flatMap((name, i) => expand(String(name), i > 0, 0)));
     if (next.length === names.length && next.every((name, i) => name === names[i])) continue;
 
+    // The first name takes the track from the split name, also when the scan
+    // gave it to another row through the MusicBrainz id the files attach to
+    // the whole name.
     let artistId: string | null = track.artist_id;
-    if (artistId && joinedRowIds.has(artistId)) {
-      const joinedId = artistId;
+    const leadSplit = everywhere.has(String(names[0]).trim().toLowerCase());
+    if (artistId && (joinedRowIds.has(artistId) || leadSplit)) {
+      const ownerId = artistId;
       artistId = await getOrCreateArtist(next[0], null);
-      if (!moved.has(joinedId)) {
-        await moveArtistAttachments(db, joinedId, artistId);
-        moved.add(joinedId);
+      if (joinedRowIds.has(ownerId) && !moved.has(ownerId)) {
+        await moveArtistAttachments(db, ownerId, artistId);
+        moved.add(ownerId);
       }
     }
     for (const name of next) await getOrCreateArtist(name, null);

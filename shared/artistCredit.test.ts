@@ -5,6 +5,7 @@ import {
   splitArtistNames,
   joinedCreditSplits,
   splitJoinedCredit,
+  splitPeopleCredit,
 } from './artistCredit';
 
 describe('shared/artistCredit', () => {
@@ -113,6 +114,30 @@ describe('shared/artistCredit', () => {
     it('keeps a joined act whole inside a longer credit', () => {
       expect(splitJoinedCredit('Above & Beyond and Spencer Brown', known('Above & Beyond', 'Spencer Brown')))
         .toEqual(['Above & Beyond', 'Spencer Brown']);
+    });
+  });
+
+  describe('splitPeopleCredit', () => {
+    const known = (...names: string[]) => (name: string) => names.map(n => n.toLowerCase()).includes(name.toLowerCase());
+
+    it('splits a comma list stored as one name when every name is a known artist', () => {
+      expect(splitPeopleCredit('Morten Hampenberg, Alexander Brown', known('Morten Hampenberg', 'Alexander Brown')))
+        .toEqual(['Morten Hampenberg', 'Alexander Brown']);
+      expect(splitPeopleCredit('Tim McGraw, Taylor Swift & Keith Urban', known('Tim McGraw', 'Taylor Swift', 'Keith Urban')))
+        .toEqual(['Tim McGraw', 'Taylor Swift', 'Keith Urban']);
+      // The last name may be a joined act of its own.
+      expect(splitPeopleCredit('Young Jeezy, Slick Pulla and Bloodraw', known('Young Jeezy', 'Slick Pulla and Bloodraw')))
+        .toEqual(['Young Jeezy', 'Slick Pulla and Bloodraw']);
+    });
+
+    it('keeps names whose parts are not all artists whole', () => {
+      expect(splitPeopleCredit('Tyler, the Creator', known('Tyler'))).toBeNull();
+      expect(splitPeopleCredit('Earth, Wind & Fire', known('Earth'))).toBeNull();
+      expect(splitPeopleCredit('Hank Williams, Jr.', known('Hank Williams'))).toBeNull();
+      expect(splitPeopleCredit('Dimitri Vegas, Like Mike', known('Dimitri Vegas'))).toBeNull();
+      expect(splitPeopleCredit('Justin Timberlake & Timbaland', known('Justin Timberlake', 'Timbaland'))).toBeNull();
+      expect(splitPeopleCredit('A, B feat. C', known('A', 'B', 'C'))).toBeNull();
+      expect(splitPeopleCredit(null, known())).toBeNull();
     });
   });
 });

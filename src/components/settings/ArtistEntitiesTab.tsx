@@ -9,11 +9,12 @@ import type { ArtistReviewDecision, ArtistReviewEntry as Entry, ArtistReviewKind
 
 const KIND_LABEL: Record<ArtistReviewKind, string> = {
   'joined-credit': 'One act or two',
+  'people-credit': 'Several people',
   'same-identity': 'Spellings',
   'same-musicbrainz': 'Same MusicBrainz artist',
   'compound-credit': 'Credit rows',
 };
-const KIND_ORDER: ArtistReviewKind[] = ['joined-credit', 'same-musicbrainz', 'same-identity', 'compound-credit'];
+const KIND_ORDER: ArtistReviewKind[] = ['joined-credit', 'people-credit', 'same-musicbrainz', 'same-identity', 'compound-credit'];
 
 const list = (names: string[]) => names.length <= 1 ? names.join('')
   : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
