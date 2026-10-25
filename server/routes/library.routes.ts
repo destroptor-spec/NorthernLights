@@ -8,7 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import { ChildProcessPool } from '../workers/processPool';
 import * as mm from 'music-metadata';
-import { addDirectory, addTrack, addTrackFeatures, getTracksWithoutFeatures, getTracksWithSimulatedFeatures, getSimulatedFeatureTracks, getTrackCountWithFeatures, getAllTracks, getDirectories, removeDirectory, removeTracksByDirectory, getOrCreateArtist, getOrCreateAlbum, getOrCreateGenre, getAllArtists, getAllAlbums, getAllGenres, getPathsWithMeta, countTracksByArtHash, deleteTracksByPaths, purgeOrphanedEntities, recordUnparsedTrack, purgeOrphanedTracks, getSystemSetting, getPrimaryArtistName, setTrackCredits, alignArtistMbidsWithTracks, setTrackLoudness, getTracksWithoutLoudness, getTracksWithFailedLoudness } from '../database';
+import { addDirectory, addTrack, addTrackFeatures, getTracksWithoutFeatures, getTracksWithSimulatedFeatures, getSimulatedFeatureTracks, getTrackCountWithFeatures, getAllTracks, getDirectories, removeDirectory, removeTracksByDirectory, getOrCreateArtist, getOrCreateAlbum, getOrCreateGenre, getAllArtists, getAllAlbums, getAllGenres, getPathsWithMeta, countTracksByArtHash, deleteTracksByPaths, purgeOrphanedEntities, recordUnparsedTrack, purgeOrphanedTracks, getSystemSetting, getPrimaryArtistName, setTrackCredits, alignArtistMbidsWithTracks, runArtistCreditSplitInBackground, setTrackLoudness, getTracksWithoutLoudness, getTracksWithFailedLoudness } from '../database';
 import { measureLoudness } from '../services/loudness.service';
 import { cleanupOrphanArt } from '../services/artCache';
 import { genreMatrixService } from '../services/genreMatrix.service';
@@ -106,6 +106,7 @@ router.post('/artist-duplicates/merge', requireAdmin, async (req, res) => {
       userId: req.user?.userId || null,
     });
     await purgeOrphanedEntities();
+    void runArtistCreditSplitInBackground();
     res.json({ status: 'merged' });
   } catch (error: any) {
     console.error('[ArtistDuplicates] merge error:', error);
@@ -134,6 +135,7 @@ router.post('/artists/manual-merge', requireAdmin, async (req, res) => {
       userId: req.user?.userId || null,
     });
     await purgeOrphanedEntities();
+    void runArtistCreditSplitInBackground();
     res.json({ status: 'merged' });
   } catch (error: any) {
     console.error('[ArtistDuplicates] manual merge error:', error);
@@ -483,7 +485,10 @@ async function processMetadataBatch(input: Array<Buffer | ScanItem>, concurrency
               mbRecordingId: metadata.mbRecordingId || null,
               mbTrackId: metadata.mbTrackId || null,
               mbAlbumId: metadata.mbAlbumId || null,
-              mbArtistId: metadata.mbArtistId || null,
+              // The id of the performer the track belongs to. When the file lists
+              // its people that is theirs, or none when the ids don't line up
+              // (the file's first id may be someone else's).
+              mbArtistId: (metadata.artistPeople?.length ? trackArtists.primary?.mbid : metadata.mbArtistId) || null,
               mbAlbumArtistId: metadata.mbAlbumArtistId || null,
               mbReleaseGroupId: metadata.mbReleaseGroupId || null,
               mbWorkId: metadata.mbWorkId || null,
@@ -1073,7 +1078,8 @@ export async function runSyncWalk(
   // canon, and no provider simply means initials in the Artists grid.
   if (itemsToProcess.length > 0) {
     await alignArtistMbidsWithTracks();
-    enrichArtistImagesInBackground();
+    // Pictures after the split, so joined credits it removes aren't looked up.
+    void runArtistCreditSplitInBackground().then(enrichArtistImagesInBackground);
   }
 
   const totalDuration = ((Date.now() - totalStartTime) / 1000).toFixed(1);
@@ -1149,8 +1155,9 @@ router.post('/refresh-metadata', async (req, res) => {
         genreMatrixService.runDiffAndGenerate().catch(e => console.error('[Genre Matrix]', e));
       });
 
-      // Backfill artist pictures for the whole library (no-op without a provider).
-      enrichArtistImagesInBackground();
+      // Backfill artist pictures for the whole library (no-op without a provider),
+      // after the split so joined credits it removes aren't looked up.
+      void runArtistCreditSplitInBackground().then(enrichArtistImagesInBackground);
 
     } catch (error: any) {
       resetScanStatus(processedExistingFiles);

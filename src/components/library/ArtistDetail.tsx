@@ -691,9 +691,10 @@ export const ArtistDetail: React.FC = () => {
     };
 
     // A credited track only counts toward the artist's OWN releases when the
-    // album is theirs (album artist matches). A credited track on a comp owned
-    // by someone else — a VA "Dream Dance" volume, another DJ's mix — is a
-    // guest appearance and belongs under "Also appears on" instead.
+    // album is theirs (album artist matches, or names them alongside other
+    // known artists: "Armin van Buuren & Olive Anguz"). A credited track on a
+    // comp owned by someone else — a VA "Dream Dance" volume, another DJ's
+    // mix — is a guest appearance and belongs under "Also appears on" instead.
     const { ownReleaseTracks, guestCompilationTracks } = useMemo(() => {
         const artistKey = normalizeArtistIdentityKey(artistName);
         if (!artistKey) {
@@ -704,11 +705,14 @@ export const ArtistDetail: React.FC = () => {
         for (const t of primaryTracks) {
             const isComp = !!t.isCompilation
                 || (t.releaseType || '').toLowerCase().includes('compilation');
-            const ownerKey = normalizeArtistIdentityKey(t.albumArtist || t.artist || '');
-            (isComp && ownerKey && ownerKey !== artistKey ? guest : own).push(t);
+            const owner = t.albumArtist || t.artist || '';
+            const ownerKey = normalizeArtistIdentityKey(owner);
+            const isOwner = !ownerKey || ownerKey === artistKey
+                || parseArtistsForDisplay(owner, knownArtistKeys).some(name => normalizeArtistIdentityKey(name) === artistKey);
+            (isComp && !isOwner ? guest : own).push(t);
         }
         return { ownReleaseTracks: own, guestCompilationTracks: guest };
-    }, [primaryTracks, artistName]);
+    }, [primaryTracks, artistName, knownArtistKeys]);
 
     const primaryReleaseTracks = useMemo(
         () => [...ownReleaseTracks, ...collaborationTracks],
