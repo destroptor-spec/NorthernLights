@@ -10,6 +10,7 @@ import type {
 
 export const REVIEW_QUESTION: Record<ArtistReviewKind, string> = {
   'joined-credit': 'One act, or two artists?',
+  'people-credit': 'One artist, or several people?',
   'same-identity': 'One artist, two spellings?',
   'same-musicbrainz': 'One artist under two names?',
   'compound-credit': 'A credit or an artist?',

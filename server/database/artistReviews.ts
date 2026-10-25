@@ -4,8 +4,10 @@
 //
 // Kinds: name variants and spellings of one MusicBrainz artist, and credit rows
 // (getArtistDuplicateCandidates), plus joined credits that lead tracks of their
-// own: one act or a collaboration (Grandmaster Flash & The Furious Five)? Their
-// answers are stored in artist_duplicate_reviews like merges and dismissals, and
+// own: one act or a collaboration (Grandmaster Flash & The Furious Five)? And
+// comma lists stored as one name: one artist or several people ("Morten
+// Hampenberg, Alexander Brown")? Their answers are stored in
+// artist_duplicate_reviews like merges and dismissals, and
 // splitJoinedArtistCredits() applies them after every scan.
 
 import type { Pool } from 'pg';
@@ -29,7 +31,7 @@ import {
   type ArtistDuplicateCandidate,
   type JoinedCreditSignature,
 } from './index';
-import { splitJoinedCredit } from '../../shared/artistCredit';
+import { splitJoinedCredit, splitPeopleCredit } from '../../shared/artistCredit';
 import {
   ARTIST_REVIEW_UNDO_DAYS,
   type ArtistReviewArtist,
@@ -51,9 +53,13 @@ const toArtist = (row: any): ArtistReviewArtist => ({
   albumCount: Number(row.album_count || 0),
 });
 
-// Joined names without a MusicBrainz id that lead tracks of their own, where
-// every name is an artist the library credits on its own. Until answered they
-// stay whole (wholeActNames).
+const list = (names: string[]) => names.length <= 1 ? names.join('')
+  : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+
+// Names that lead tracks of their own and list artists the library credits on
+// their own: joined names without a MusicBrainz id, and comma lists stored as
+// one name, with or without one (the files give "Morten Hampenberg, Alexander
+// Brown" the duo's id). Until answered they stay whole (wholeActNames).
 async function getJoinedCreditEntries(db: Pool): Promise<ArtistReviewEntry[]> {
   const credited = await getCreditedArtistNames(db);
   const creditedKeys = new Set(credited.map(keyOf));
@@ -62,17 +68,20 @@ async function getJoinedCreditEntries(db: Pool): Promise<ArtistReviewEntry[]> {
     SELECT a.id, a.name, a.mbid, a.image_url,
            COUNT(t.id)::int AS track_count, COUNT(DISTINCT t.album_id)::int AS album_count
     FROM artists a JOIN tracks t ON t.artist_id = a.id
-    WHERE a.merged_into IS NULL AND a.mbid IS NULL
-      AND a.name ~* '\\s(&|\\+|and)\\s'
+    WHERE a.merged_into IS NULL
+      AND ((a.mbid IS NULL AND a.name ~* '\\s(&|\\+|and)\\s') OR a.name LIKE '%,%')
       AND NOT EXISTS (SELECT 1 FROM artists r WHERE r.merged_into = a.id)
     GROUP BY a.id
   `)).rows;
 
-  const proposals = rows.flatMap((row: any) => {
+  const proposals = rows.flatMap((row: any): Array<{ row: any; names: string[]; kind: ArtistReviewKind }> => {
     const key = keyOf(row.name);
     if (decisions.has(key)) return [];
-    const names = splitJoinedCredit(row.name, half => keyOf(half) !== key && creditedKeys.has(keyOf(half)));
-    return names ? [{ row, names }] : [];
+    const isKnown = (half: string) => keyOf(half) !== key && creditedKeys.has(keyOf(half));
+    const joined = row.mbid ? null : splitJoinedCredit(row.name, isKnown);
+    if (joined) return [{ row, names: joined, kind: 'joined-credit' }];
+    const people = splitPeopleCredit(row.name, isKnown);
+    return people ? [{ row, names: people, kind: 'people-credit' }] : [];
   });
   if (proposals.length === 0) return [];
 
@@ -87,19 +96,19 @@ async function getJoinedCreditEntries(db: Pool): Promise<ArtistReviewEntry[]> {
   const halfByKey = new Map<string, any>();
   for (const row of halfRows) if (!halfByKey.has(row.normalized_key)) halfByKey.set(row.normalized_key, row);
 
-  return proposals.map(({ row, names }) => {
+  return proposals.map(({ row, names, kind }) => {
     const signature: JoinedCreditSignature = { subject: row.name, names };
     return {
       key: `${JOINED_CREDIT_KEY_PREFIX}${keyOf(row.name)}`,
       signature: JSON.stringify(signature),
-      kind: 'joined-credit' as const,
+      kind,
       subject: row.name,
       artists: [toArtist(row), ...names.map(name => halfByKey.get(keyOf(name))).filter(Boolean).map(toArtist)],
       splitInto: names,
       totalTracks: Number(row.track_count || 0),
       outcomes: [
-        { id: 'keep-together', kind: 'keep-together' as const, label: 'Keep together' },
-        { id: 'split', kind: 'split' as const, label: `Split into ${names.join(' and ')}` },
+        { id: 'keep-together', kind: 'keep-together' as const, label: kind === 'people-credit' ? 'Keep as one artist' : 'Keep together' },
+        { id: 'split', kind: 'split' as const, label: `Split into ${list(names)}` },
       ],
     };
   });
@@ -139,10 +148,11 @@ function duplicateEntry(candidate: ArtistDuplicateCandidate): ArtistReviewEntry 
 export async function getArtistReviewEntries(): Promise<ArtistReviewEntry[]> {
   const db = await initDB();
   const [duplicates, joined] = await Promise.all([getArtistDuplicateCandidates(), getJoinedCreditEntries(db)]);
-  // A joined credit is asked about once, as a joined credit.
+  // A joined credit or comma list is asked about once, as that: not also as a
+  // credit row, or as a spelling of the artist whose MusicBrainz id it carries.
   const joinedIds = new Set(joined.map(entry => entry.artists[0].id));
   const others = duplicates
-    .filter(candidate => !(duplicateKind(candidate) === 'compound-credit' && candidate.artists.some(a => joinedIds.has(a.id))))
+    .filter(candidate => duplicateKind(candidate) === 'same-identity' || !candidate.artists.some(a => joinedIds.has(a.id)))
     .map(duplicateEntry);
   return [...joined, ...others].sort((a, b) => b.totalTracks - a.totalTracks || a.subject.localeCompare(b.subject));
 }
@@ -217,7 +227,7 @@ export async function decideArtistReview(opts: {
   if (!entry.outcomes.some(outcome => outcome.id === opts.outcomeId)) throw new Error('Unknown outcome');
   const db = await initDB();
 
-  if (entry.kind === 'joined-credit') {
+  if (entry.kind === 'joined-credit' || entry.kind === 'people-credit') {
     await db.query('DELETE FROM artist_duplicate_reviews WHERE candidate_key = $1', [entry.key]);
     await db.query(`
       INSERT INTO artist_duplicate_reviews (candidate_key, signature, decision, artist_ids, decided_by)

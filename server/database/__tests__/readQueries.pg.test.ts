@@ -468,6 +468,22 @@ describeDb('database read queries', () => {
       expect((await db.getArtistAppearsOnTracks(timba, 'ZZ Timba')).map(t => t.id)).toEqual([guest]);
     });
 
+    it('splits a guest comma list stored as one name when each name is credited on its own', async () => {
+      const fifty = await artist('ZZ Fifty');
+      await track(await artist('ZZ Ed'), ['ZZ Ed']);
+      await track(await artist('ZZ Taylor'), ['ZZ Taylor']);
+      await track(await artist('ZZ Tyler'), ['ZZ Tyler']);
+      const list = await track(fifty, ['ZZ Fifty', 'ZZ Ed, ZZ Taylor']);
+      await artist('ZZ Ed, ZZ Taylor');
+      // A name whose parts aren't all artists stays whole.
+      const tyler = await track(fifty, ['ZZ Fifty', 'ZZ Tyler, the ZZ Creator']);
+
+      await db.runArtistCreditSplitInBackground();
+
+      expect(await trackRow(list)).toEqual({ artists: JSON.stringify(['ZZ Fifty', 'ZZ Ed', 'ZZ Taylor']), artist_id: fifty });
+      expect(JSON.parse((await trackRow(tyler)).artists)).toEqual(['ZZ Fifty', 'ZZ Tyler, the ZZ Creator']);
+    });
+
     it("lists an album credited to two library artists among each one's own releases", async () => {
       const jt = await artist('ZZ JT');
       const timba = await artist('ZZ Timba');
@@ -574,6 +590,65 @@ describeDb('database read queries', () => {
       expect(await entry(asked.key)).toBeUndefined();
       expect((await pool.query('SELECT artists FROM tracks WHERE id = $1', [guest])).rows[0].artists)
         .toBe(JSON.stringify(['YY Fifty', 'YY Nik & YY Jay']));
+    });
+
+    it('asks whether a comma list leading tracks is one artist or several people, and splits it', async () => {
+      // Prod's Hampenberg shape: the files give the list the duo's id, which the
+      // first person's row also holds.
+      const DUO = '00000000-0000-4000-8000-00000000aaaa';
+      const ACT = '00000000-0000-4000-8000-00000000bbbb';
+      const morten = await artist('YY Morten', DUO);
+      const brown = await artist('YY Brown');
+      await track(morten, ['YY Morten']);
+      await track(brown, ['YY Brown']);
+      await track(await artist('YY Yepha'), ['YY Yepha']);
+      const people = await artist('YY Morten, YY Brown', DUO);
+      expect(people).not.toBe(morten);
+      const chart = await album('YY Dance Chart', 'YY Various');
+      const klovn = await track(people, ['YY Morten, YY Brown', 'YY Yepha'], chart, 'YY Dance Chart');
+      // A scan can also give the list to another row through an id.
+      const act = await artist('YY Morten & YY Brown', ACT);
+      await track(act, ['YY Morten & YY Brown']);
+      const viaId = await track(act, ['YY Morten, YY Brown']);
+
+      const asked = (await db.getArtistReviewEntries()).find(e => e.subject === 'YY Morten, YY Brown')!;
+      expect(asked).toMatchObject({ kind: 'people-credit', splitInto: ['YY Morten', 'YY Brown'], totalTracks: 1 });
+      expect(asked.outcomes.map(o => o.label)).toEqual(['Keep as one artist', 'Split into YY Morten and YY Brown']);
+      // Asked once, not also as a spelling of the artist whose id it carries.
+      expect(await entry(`artist-mbid:${DUO}`)).toBeUndefined();
+      // Left whole until answered.
+      await db.runArtistCreditSplitInBackground();
+      expect((await pool.query('SELECT artists FROM tracks WHERE id = $1', [klovn])).rows[0].artists)
+        .toBe(JSON.stringify(['YY Morten, YY Brown', 'YY Yepha']));
+
+      const split = (await db.getArtistReviewPreview(asked.key))!.outcomes.find(o => o.id === 'split')!;
+      expect(split.pages.find(p => p.name === 'YY Morten, YY Brown')?.status).toBe('removed');
+      const brownPage = split.pages.find(p => p.name === 'YY Brown')!;
+      expect(brownPage.status).toBe('changed');
+      expect(brownPage.appearances.find(r => r.title === 'YY Dance Chart')).toMatchObject({ change: 'added' });
+
+      await db.decideArtistReview({ key: asked.key, signature: asked.signature, outcomeId: 'split' });
+      const row = async (id: string) => (await pool.query('SELECT artists, artist_id FROM tracks WHERE id = $1', [id])).rows[0];
+      expect(await row(klovn)).toEqual({ artists: JSON.stringify(['YY Morten', 'YY Brown', 'YY Yepha']), artist_id: morten });
+      expect(await row(viaId)).toEqual({ artists: JSON.stringify(['YY Morten', 'YY Brown']), artist_id: morten });
+      expect((await pool.query('SELECT 1 FROM artists WHERE id = $1', [people])).rows).toHaveLength(0);
+
+      const decision = (await db.getRecentArtistReviewDecisions()).find(d => d.key === asked.key)!;
+      expect(decision).toMatchObject({ decision: 'split', names: ['YY Morten, YY Brown', 'YY Morten', 'YY Brown'] });
+      expect((await db.undoArtistReviewDecision(decision.id)).trackIdsToReread.sort()).toEqual([klovn, viaId].sort());
+    });
+
+    it('splits a list whose last name is a joined guest in turn', async () => {
+      for (const name of ['YY Jeezy', 'YY Slick', 'YY Blood']) await track(await artist(name), [name]);
+      await track(await artist('YY Guru'), ['YY Guru', 'YY Slick and YY Blood']);
+      const lead = await artist('YY Jeezy, YY Slick and YY Blood');
+      const owned = await track(lead, ['YY Jeezy, YY Slick and YY Blood']);
+      const asked = (await db.getArtistReviewEntries()).find(e => e.subject === 'YY Jeezy, YY Slick and YY Blood')!;
+      expect(asked).toMatchObject({ kind: 'people-credit', splitInto: ['YY Jeezy', 'YY Slick and YY Blood'] });
+
+      await db.decideArtistReview({ key: asked.key, signature: asked.signature, outcomeId: 'split' });
+      expect((await pool.query('SELECT artists FROM tracks WHERE id = $1', [owned])).rows[0].artists)
+        .toBe(JSON.stringify(['YY Jeezy', 'YY Slick', 'YY Blood']));
     });
 
     it('merges two spellings from the queue and undoes the merge', async () => {

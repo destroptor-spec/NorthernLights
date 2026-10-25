@@ -139,3 +139,19 @@ export function splitJoinedCredit(
 ): string[] | null {
   return joinedCreditSplits(credit).find(names => names.every(isKnown)) || null;
 }
+
+/**
+ * A credit listing people with commas, stored as one name ("Morten Hampenberg,
+ * Alexander Brown" as a single ARTISTS entry), split into the artists it
+ * lists, or null when it isn't known to name several: every name must be one
+ * the library already has on its own (`isKnown`). Keeps names like "Tyler, the
+ * Creator" or "Earth, Wind & Fire" whole, since their parts aren't artists.
+ */
+export function splitPeopleCredit(
+  credit: string | null | undefined,
+  isKnown: (name: string) => boolean,
+): string[] | null {
+  if (!credit || !credit.includes(',') || FEATURING.test(credit)) return null;
+  const names = uniqueArtistNames(explodeListCredit(credit));
+  return names.length > 1 && names.every(isKnown) ? names : null;
+}
