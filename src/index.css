@@ -504,13 +504,17 @@ html.share-page #root {
   transform: scale(0.97);
 }
 
-/* Primary — filled green action */
-.btn-primary {
+/* Primary — filled green action. Each coloured variant also names `.dark`:
+   `.dark .btn` (two classes) outranks a single variant class, which left them
+   as plain glass buttons in dark mode. */
+.btn-primary,
+.dark .btn-primary {
   background: var(--color-primary);
   color: white;
   border-color: var(--color-primary);
 }
-.btn-primary:hover {
+.btn-primary:hover,
+.dark .btn-primary:hover {
   background: var(--color-primary-dark);
   border-color: var(--color-primary-dark);
   color: white;
@@ -524,24 +528,28 @@ html.share-page #root {
 }
 
 /* Danger — outlined red warning */
-.btn-danger {
+.btn-danger,
+.dark .btn-danger {
   background: rgba(255, 59, 48, 0.08);
   color: var(--color-error);
   border-color: rgba(255, 59, 48, 0.25);
 }
-.btn-danger:hover {
+.btn-danger:hover,
+.dark .btn-danger:hover {
   background: rgba(255, 59, 48, 0.16);
   border-color: rgba(255, 59, 48, 0.4);
   color: var(--color-error);
 }
 
 /* Danger — filled red destructive */
-.btn-danger-fill {
+.btn-danger-fill,
+.dark .btn-danger-fill {
   background: var(--color-error);
   color: white;
   border-color: var(--color-error);
 }
-.btn-danger-fill:hover {
+.btn-danger-fill:hover,
+.dark .btn-danger-fill:hover {
   background: #e0352b;
   color: white;
 }
