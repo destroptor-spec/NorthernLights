@@ -211,7 +211,7 @@ export async function decideArtistReview(opts: {
   signature: string;
   outcomeId: string;
   userId?: string | null;
-}): Promise<void> {
+}): Promise<{ decisionId: string }> {
   const entry = (await getArtistReviewEntries()).find(candidate => candidate.key === opts.key);
   if (!entry || entry.signature !== opts.signature) throw new Error('This entry has changed since it was loaded');
   if (!entry.outcomes.some(outcome => outcome.id === opts.outcomeId)) throw new Error('Unknown outcome');
@@ -239,6 +239,10 @@ export async function decideArtistReview(opts: {
     await purgeOrphanedEntities();
   }
   await runArtistCreditSplitInBackground();
+  const decision = await db.query(
+    'SELECT id FROM artist_duplicate_reviews WHERE candidate_key = $1 ORDER BY created_at DESC LIMIT 1', [entry.key],
+  );
+  return { decisionId: String(decision.rows[0].id) };
 }
 
 const undoableUntil = (decidedAt: Date) => new Date(decidedAt.getTime() + ARTIST_REVIEW_UNDO_DAYS * 86_400_000);
