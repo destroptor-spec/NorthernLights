@@ -214,7 +214,7 @@ export const InviteRegister: React.FC = () => {
           <div className="w-14 h-14 bg-primary/20 text-[var(--color-primary)] rounded-full flex items-center justify-center mb-4">
             <UserPlus className="w-7 h-7" />
           </div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-[var(--color-text-primary)]"
+          <h1 className="text-2xl font-extrabold tracking-normal text-[var(--color-text-primary)]"
               style={{ fontFamily: 'var(--font-display)' }}>
             You've been invited.
           </h1>
