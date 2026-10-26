@@ -2,6 +2,7 @@ import {
   CAST_MEDIA_NAMESPACE,
   LIFECYCLE_RECONCILE_DELAYS_MS,
   ReconcileBurst,
+  mediaStatusFailureNeedsRecovery,
   probeCastTransport,
 } from '../castTransportRecovery';
 
@@ -175,5 +176,44 @@ describe('probeCastTransport', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+});
+
+/**
+ * Prod 2026-10-23 11:52Z, Beoplay A9: getStatus during a LOAD came back
+ * `session_error` on a healthy transport, and the recovery it set off ended
+ * the session.
+ */
+describe('mediaStatusFailureNeedsRecovery', () => {
+  const opts = { requestId: 9, isDisconnected };
+  const sessionError = '{"code":"session_error","description":null,"details":null}';
+
+  it('leaves a session_error alone when the transport still carries messages', async () => {
+    const sendMessage = jest.fn(() => Promise.resolve());
+    await expect(mediaStatusFailureNeedsRecovery({ sendMessage }, sessionError, opts)).resolves.toBe(false);
+    expect(sendMessage).toHaveBeenCalledWith(CAST_MEDIA_NAMESPACE, { type: 'GET_STATUS', requestId: 9 });
+  });
+
+  it('recovers from a session_error when the probe finds the transport dead', async () => {
+    const session = { sendMessage: () => Promise.reject('session_error') };
+    await expect(mediaStatusFailureNeedsRecovery(session, sessionError, opts)).resolves.toBe(true);
+  });
+
+  it('recovers from a session_error when the probe cannot tell, as before', async () => {
+    await expect(mediaStatusFailureNeedsRecovery(null, sessionError, opts)).resolves.toBe(true);
+    await expect(mediaStatusFailureNeedsRecovery({ sendMessage: () => Promise.reject('timeout') }, sessionError, opts)).resolves.toBe(true);
+  });
+
+  it('recovers from a disconnected PresentationConnection without probing', async () => {
+    const sendMessage = jest.fn(() => Promise.resolve());
+    const detail = "InvalidStateError: Failed to execute 'send' on 'PresentationConnection': Presentation connection is disconnected.";
+    await expect(mediaStatusFailureNeedsRecovery({ sendMessage }, detail, opts)).resolves.toBe(true);
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('ignores errors that never meant a dead transport', async () => {
+    const sendMessage = jest.fn(() => Promise.resolve());
+    await expect(mediaStatusFailureNeedsRecovery({ sendMessage }, '{"code":"timeout"}', opts)).resolves.toBe(false);
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 });

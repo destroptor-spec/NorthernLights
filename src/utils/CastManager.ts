@@ -28,7 +28,7 @@ import {
     toReceiverQueueItem,
     transportStateFromPlayerState,
 } from './castWatchdogPolicy';
-import { CAST_MEDIA_NAMESPACE, ReconcileBurst, probeCastTransport } from './castTransportRecovery';
+import { CAST_MEDIA_NAMESPACE, ReconcileBurst, mediaStatusFailureNeedsRecovery, probeCastTransport } from './castTransportRecovery';
 import { applyCastStreamingQualityToHlsUrl, applyStreamingQualityToHlsUrl, resolveCastStreamingQuality } from './streaming';
 import { createQueueEntryId, ensureQueueEntryIds } from './queue';
 import type { TrackInfo } from './fileSystem';
@@ -1908,17 +1908,13 @@ export class CastManager {
                     },
                     (error: unknown) => {
                         this.logCast('warn', `Failed to refresh Cast media status: ${reason}`, this.describeError(error));
-                        if (this.isDisconnectedPresentationError(error)) {
-                            this.recoverStaleTransportAutomatically(`media-status:${reason}`, error);
-                        }
+                        this.handleMediaStatusFailure(session, reason, error);
                         finish(session?.getMediaSession?.() || mediaSession);
                     }
                 );
             } catch (error) {
                 this.logCast('warn', `Cast media status refresh threw: ${reason}`, this.describeError(error));
-                if (this.isDisconnectedPresentationError(error)) {
-                    this.recoverStaleTransportAutomatically(`media-status:${reason}`, error);
-                }
+                this.handleMediaStatusFailure(session, reason, error);
                 finish(session?.getMediaSession?.() || mediaSession);
             }
         }).finally(() => {
@@ -1926,6 +1922,21 @@ export class CastManager {
         });
 
         return this.mediaStatusRefreshPromise;
+    }
+
+    /** See mediaStatusFailureNeedsRecovery: a session_error alone is checked before recovering. */
+    private handleMediaStatusFailure(session: any, reason: string, error: unknown) {
+        const detail = this.describeError(error);
+        void mediaStatusFailureNeedsRecovery(session, detail, {
+            requestId: this.nextMediaRequestId(),
+            isDisconnected: (probeError) => this.isDisconnectedPresentationError(probeError),
+        }).then((recover) => {
+            if (recover) {
+                this.recoverStaleTransportAutomatically(`media-status:${reason}`, error);
+            } else if (this.isDisconnectedPresentationError(error)) {
+                this.logCast('ok', 'media-status-error-transport-alive', `reason=${reason}`);
+            }
+        });
     }
 
     private beginRejoinHydration(reason: string) {
