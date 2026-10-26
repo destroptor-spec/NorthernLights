@@ -230,10 +230,6 @@ function clearSleepTimers() {
   if (sleepFadeInterval) { clearInterval(sleepFadeInterval); sleepFadeInterval = null; }
 }
 
-// Throttle scrobble-failure toasts (per provider) so a backend outage during a
-// long session doesn't spam one toast per finished track.
-const lastScrobbleErrorAt: Record<string, number> = {};
-
 function abortInFlightLibraryFetches() {
   libraryFetchAbort?.abort();
   playlistsFetchAbort?.abort();
@@ -426,20 +422,23 @@ const mapApiV1Genre = (genre: ApiV1Genre): EntityInfo => ({
 });
 
 /**
- * Report a play or skip through API v1 — the same path any other client uses,
- * so plays are counted once, however they are recorded.
+ * Report a play, skip or "now playing" through API v1 — the same path any
+ * other client uses, so plays are counted once, however they are recorded.
+ * The server also scrobbles `nowPlaying` and `played` to the user's connected
+ * providers, so this device never talks to Last.fm or ListenBrainz itself.
  *
  * Each report carries a fresh eventId; the server ignores a repeat of the same
  * id, which makes a retried request safe. No `occurredAt`: the server stamps
  * receipt time, as the legacy route did, so a skewed client clock cannot
- * misplace plays in history or Wrapped. Fire-and-forget: telemetry must never
- * disturb playback.
+ * misplace plays in history or Wrapped. `positionMs` on a play lets the server
+ * date the scrobble from when the listen started. Fire-and-forget: telemetry
+ * must never disturb playback.
  */
-function reportPlayback(authHeaders: Record<string, string>, trackId: string, kind: 'played' | 'skipped'): void {
+function reportPlayback(authHeaders: Record<string, string>, trackId: string, kind: 'nowPlaying' | 'played' | 'skipped', positionMs?: number): void {
   auroraApiRequest('/playback/reports', authHeaders, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ eventId: createUuid(), trackId, kind }),
+    body: JSON.stringify({ eventId: createUuid(), trackId, kind, ...(positionMs !== undefined ? { positionMs } : {}) }),
   }).catch((error: unknown) => console.warn(`Playback ${kind} report failed:`, error));
 }
 
@@ -1002,7 +1001,7 @@ export interface PlayerState {
 
   // Engine session state
   sessionHistoryTrackIds: string[];
-  recordPlay: (trackId: string) => void;
+  recordPlay: (trackId: string, positionMs?: number) => void;
   recordSkip: (trackId: string) => void;
 
   // Toast state
@@ -1027,67 +1026,14 @@ export const usePlayerStore = create<PlayerState>()(
     (set, get) => {
       let infinityTopUp: Promise<void> | null = null;
 
-      // Scrobbling from this device, for playback the server does not count
-      // (sync off, or before this device's claim): "now playing" when a track
-      // starts, and the scrobble the moment it counts as played, together
-      // with the play count. It used to wait for the track to end on its own,
-      // so nothing was scrobbled after Next or while casting (2026-10-18).
-      const scrobbleTargets = () => {
-        const state = get();
-        return [
-          ...(state.lastFmConnected && state.lastFmScrobbleEnabled ? [{ provider: 'Last.fm', path: 'lastfm' }] : []),
-          ...(state.listenBrainzConnected && state.listenBrainzScrobbleEnabled ? [{ provider: 'ListenBrainz', path: 'listenbrainz' }] : []),
-        ];
-      };
+      // For playback the server does not count from session reports (sync
+      // off, or before this device's claim), this device reports "now
+      // playing" when a track starts and the play the moment it counts, and
+      // the server scrobbles both (POST /api/v1/playback/reports). It used to
+      // wait for the track to end on its own, so nothing was scrobbled after
+      // Next or while casting (2026-10-18).
       const sendNowPlaying = (track: TrackInfo) => {
-        if (!track.artist || !track.title) return;
-        const body = JSON.stringify({
-          artist: track.artist,
-          track: track.title,
-          album: track.album || '',
-          albumArtist: track.albumArtist || '',
-          duration: track.duration ? Math.round(track.duration) : undefined,
-          mbid: track.mbTrackId || '',
-        });
-        for (const { path } of scrobbleTargets()) {
-          fetch(`/api/providers/${path}/now-playing`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...get().getAuthHeader() },
-            body,
-          }).catch(() => {});
-        }
-      };
-      const submitScrobble = (track: TrackInfo, startedAt: number, duration: number) => {
-        if (!track.artist || !track.title) return;
-        const body = JSON.stringify({
-          tracks: [{
-            artist: track.artist,
-            track: track.title,
-            album: track.album || '',
-            albumArtist: track.albumArtist || '',
-            duration: Math.round(duration),
-            timestamp: Math.floor(startedAt / 1000),
-            mbid: track.mbTrackId || '',
-          }],
-        });
-        // Surface scrobble failures (throttled per provider) so users notice
-        // when this otherwise-invisible feature silently breaks. Success stays
-        // quiet to avoid a toast on every track.
-        for (const { provider, path } of scrobbleTargets()) {
-          fetch(`/api/providers/${path}/scrobble`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...get().getAuthHeader() },
-            body,
-          })
-            .then((res) => { if (!res.ok) throw new Error(`HTTP ${res.status}`); })
-            .catch(() => {
-              const now = Date.now();
-              if (now - (lastScrobbleErrorAt[provider] || 0) > 60000) {
-                lastScrobbleErrorAt[provider] = now;
-                get().addToast(`Couldn't scrobble to ${provider}.`, 'error', { duration: 4000 });
-              }
-            });
-        }
+        reportPlayback(get().getAuthHeader(), track.id, 'nowPlaying');
       };
       // Setup PlaybackManager callbacks to update store state
       playbackManager.setCallbacks({
@@ -1109,8 +1055,7 @@ export const usePlayerStore = create<PlayerState>()(
               // threshold is crossed — unless the server counts this listen.
               const playedTrack = state.currentIndex !== null ? state.playlist[state.currentIndex] : null;
               if (playedTrack && !serverCountsListens(state)) {
-                get().recordPlay(playedTrack.id);
-                submitScrobble(playedTrack, state._scrobbleStartAt, duration);
+                get().recordPlay(playedTrack.id, Math.round(time * 1000));
               }
             }
           }
@@ -3479,12 +3424,13 @@ export const usePlayerStore = create<PlayerState>()(
         setProviderAlbumArt: (provider: 'lastfm' | 'genius' | 'musicbrainz') => set({ providerAlbumArt: provider }),
         setLlmConnected: (connected: boolean) => set({ llmConnected: connected }),
 
-        recordPlay: (trackId: string) => {
-          // Backend play-count telemetry. Fired once a track crosses the
-          // configured "played" threshold (see onTimeUpdate). The rolling
-          // session history is pushed separately at playback start so
-          // Infinity-mode dedup doesn't have to wait for the threshold.
-          reportPlayback(get().getAuthHeader(), trackId, 'played');
+        recordPlay: (trackId: string, positionMs?: number) => {
+          // Backend play-count telemetry, and the scrobble the server sends
+          // from it. Fired once a track crosses the configured "played"
+          // threshold (see onTimeUpdate). The rolling session history is
+          // pushed separately at playback start so Infinity-mode dedup
+          // doesn't have to wait for the threshold.
+          reportPlayback(get().getAuthHeader(), trackId, 'played', positionMs);
         },
 
         recordSkip: (trackId: string) => {

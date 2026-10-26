@@ -59,6 +59,8 @@ const callbacks = () => mockCallbacks;
 
 describe('Infinity Mode through API v1', () => {
   const fetchMock = jest.fn();
+  // A receiver's track change also reports "now playing"; these tests are about the Infinity requests.
+  const infinityCalls = () => fetchMock.mock.calls.filter(([url]) => url !== '/api/v1/playback/reports');
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -85,7 +87,7 @@ describe('Infinity Mode through API v1', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/recommendations/next', expect.anything());
     expect(usePlayerStore.getState().playlist.map((t) => t.id)).toEqual(['a', 'b', 'next']);
-    const payload = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const payload = JSON.parse(infinityCalls()[0][1].body);
     expect(payload.sessionHistoryTrackIds).toEqual(['b']);
     expect(payload.exclude).toEqual(['a', 'b']);
   });
@@ -103,7 +105,7 @@ describe('Infinity Mode through API v1', () => {
     callbacks().onTrackChange(1);
     await new Promise((r) => setTimeout(r, 0));
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(infinityCalls()).toHaveLength(0);
   });
 
   it('does nothing when Infinity Mode is off', async () => {
@@ -111,7 +113,7 @@ describe('Infinity Mode through API v1', () => {
     callbacks().onTrackChange(1);
     await new Promise((r) => setTimeout(r, 0));
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(infinityCalls()).toHaveLength(0);
     expect(usePlayerStore.getState().playlist).toHaveLength(2);
   });
 

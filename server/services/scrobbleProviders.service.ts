@@ -1,4 +1,4 @@
-import { getUserSetting } from '../database';
+import { getUserSetting, initDB } from '../database';
 import { scrobbleTracks as scrobbleLastFmTracks, updateNowPlaying as updateLastFmNowPlaying, type LfmTrack } from './lastfm.service';
 import { scrobbleTracks as scrobbleListenBrainzTracks, updateNowPlaying as updateListenBrainzNowPlaying, type LbTrack } from './listenbrainz.service';
 
@@ -78,5 +78,44 @@ export async function sendToScrobbleProviders(
     });
   } catch (error: any) {
     log(`provider_error provider=settings action=${action} count=${tracks.length} message=${String(error?.message || error).slice(0, 240)}`);
+  }
+}
+
+/**
+ * When a reported listen started, in seconds: the report's time (the
+ * server's receipt time unless the client sent `occurredAt`) minus the
+ * position it was reported at, the way session listens are timed.
+ */
+export function reportedListenStartS(nowMs: number, occurredAt?: string, positionMs?: number): number {
+  const at = occurredAt ? Date.parse(occurredAt) : nowMs;
+  return Math.floor((at - (positionMs ?? 0)) / 1000);
+}
+
+async function loadTrackRow(trackId: string): Promise<Record<string, unknown> | null> {
+  const db = await initDB();
+  const result = await db.query('SELECT * FROM tracks WHERE id = $1', [trackId]);
+  return result.rows[0] || null;
+}
+
+/**
+ * Scrobbling for API v1 playback reports (`POST /api/v1/playback/reports`),
+ * so a client playing outside a playback session needs no provider
+ * credentials and no route of its own: `nowPlaying` sends "now playing",
+ * `played` scrobbles. Never throws.
+ */
+export async function scrobblePlaybackReport(
+  userId: string,
+  trackId: string,
+  kind: 'nowPlaying' | 'played',
+  startedAtS: number,
+  loadTrack: (trackId: string) => Promise<Record<string, unknown> | null> = loadTrackRow,
+  send: typeof sendToScrobbleProviders = sendToScrobbleProviders,
+): Promise<void> {
+  try {
+    const track = await loadTrack(trackId);
+    const payload = track ? trackRowToProviderScrobble(track, kind === 'played' ? startedAtS : undefined) : null;
+    if (payload) await send(userId, [payload], kind === 'played');
+  } catch (error: any) {
+    console.warn(`[Scrobble] provider_error provider=report action=${kind} count=1 message=${String(error?.message || error).slice(0, 240)}`);
   }
 }
