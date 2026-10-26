@@ -7,7 +7,6 @@ import { hasNextTrack } from '../utils/queue';
 import { Play } from 'lucide-react';
 import { useSwipe } from '../hooks/useSwipe';
 import MobileNowPlaying from './MobileNowPlaying';
-import { CastButton } from './cast/CastButton';
 import { ConnectButton } from './ConnectMenu';
 import { castManager } from '../utils/CastManager';
 import { prefetchPalette, NOW_PLAYING_PALETTE_QUALITY } from '../hooks/useDominantColor';
@@ -175,9 +174,6 @@ const MobileMiniPlayer = () => {
           {/* Controls — stop propagation so they don't trigger expand */}
           <div className="flex items-center gap-1.5 flex-shrink-0">
             <ConnectButton className="mobile-player-control-btn mobile-player-control-btn-sm" />
-            <div onClick={(event) => event.stopPropagation()}>
-              <CastButton size="sm" showIntro={false} className="mobile-mini-cast-control" />
-            </div>
             <button
               type="button"
               onClick={handlePlayPause}

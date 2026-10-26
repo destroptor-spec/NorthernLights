@@ -10,7 +10,6 @@ import { useVolumeSync } from '../hooks/useVolumeSync';
 import { Infinity, FileText, Waypoints } from 'lucide-react';
 import { LyricsPanel } from './LyricsPanel';
 import { LoveButton } from './LoveButton';
-import { CastButton } from './cast/CastButton';
 import { ConnectButton } from './ConnectMenu';
 import { WaveformProgressBar } from './WaveformProgressBar';
 import { castManager } from '../utils/CastManager';
@@ -625,7 +624,6 @@ export const PlayerControls: React.FC = () => {
         )}
 
         <ConnectButton className={auxBtnClass} iconSize={17} />
-        <CastButton showDeviceName={false} showIntro showStopAction={false} size="sm" />
 
         {showLyrics && currentTrack && (
           <div className="player-lyrics-popup">

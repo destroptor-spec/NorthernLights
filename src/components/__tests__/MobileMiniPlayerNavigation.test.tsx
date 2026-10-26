@@ -14,9 +14,9 @@ jest.mock('../../store/index', () => ({ usePlayerStore: Object.assign(
 ) }));
 jest.mock('../../hooks/useSwipe', () => ({ useSwipe: () => ({ current: null }) }));
 jest.mock('../MobileNowPlaying', () => ({ isOpen }: { isOpen: boolean }) => <div data-testid="now-playing" data-open={String(isOpen)} />);
-jest.mock('../cast/CastButton', () => ({ CastButton: () => null }));
 jest.mock('../../hooks/useDominantColor', () => ({ prefetchPalette: jest.fn(), NOW_PLAYING_PALETTE_QUALITY: 1 }));
 jest.mock('../../utils/CastManager', () => ({ castManager: { getCastDeviceName: () => '', addStateChangeListener: () => () => {} } }));
+jest.mock('../../hooks/useCastStatus', () => ({ useCastStatus: () => ({ available: false, connected: false, busy: false, deviceName: '' }) }));
 
 let navigate: ReturnType<typeof useNavigate>;
 const NavigateHook = () => { navigate = useNavigate(); return null; };

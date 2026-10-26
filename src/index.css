@@ -8202,34 +8202,6 @@ a:focus-visible > .genre-card .genre-card__label {
   animation: mobile-now-track-swap 260ms var(--ease-out) both, mobile-now-buffering-hold 1400ms var(--ease-in-out) infinite;
 }
 
-.mobile-now-cast-control .aurora-cast-button-shell,
-.mobile-mini-cast-control .aurora-cast-button-shell {
-  border-color: var(--glass-border);
-  background: color-mix(in srgb, var(--color-text-primary) 5%, transparent);
-  color: color-mix(in srgb, var(--color-text-primary) 62%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-}
-
-.mobile-now-cast-control .aurora-cast-button-shell:hover,
-.mobile-mini-cast-control .aurora-cast-button-shell:hover {
-  color: color-mix(in srgb, var(--color-text-primary) 88%, transparent);
-  border-color: color-mix(in srgb, var(--color-text-primary) 18%, var(--glass-border));
-  background: color-mix(in srgb, var(--color-text-primary) 9%, transparent);
-  box-shadow: 0 0.25rem 1rem color-mix(in srgb, var(--color-text-primary) 10%, transparent), inset 0 1px 0 color-mix(in srgb, var(--color-surface-variant) 72%, transparent);
-}
-
-.mobile-now-cast-control[data-cast-state="CONNECTED"] .aurora-cast-button-shell,
-.mobile-now-cast-control[data-cast-health="rejoining"] .aurora-cast-button-shell,
-.mobile-now-cast-control[data-cast-health="recovering"] .aurora-cast-button-shell,
-.mobile-mini-cast-control[data-cast-state="CONNECTED"] .aurora-cast-button-shell,
-.mobile-mini-cast-control[data-cast-health="rejoining"] .aurora-cast-button-shell,
-.mobile-mini-cast-control[data-cast-health="recovering"] .aurora-cast-button-shell {
-  color: var(--color-primary);
-  border-color: color-mix(in srgb, var(--color-primary) 30%, var(--glass-border));
-  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
-}
-
 @media (max-height: 720px) {
   /* Short screens: let the content flow past one viewport — the sheet's outer
      two-page scroller absorbs the overflow (no nested scrolling). */
@@ -8381,215 +8353,6 @@ a:focus-visible > .genre-card .genre-card__label {
 
   50% {
     opacity: 1;
-  }
-}
-
-/* ─── CAST BUTTON ─── */
-.aurora-cast-control {
-  --cast-control-size: 2.25rem;
-  --cast-icon-size: 1.125rem;
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  color: var(--color-text-muted);
-}
-
-.aurora-cast-button-shell {
-  box-sizing: border-box;
-  position: relative;
-  inline-size: var(--cast-control-size);
-  block-size: var(--cast-control-size);
-  min-inline-size: var(--cast-control-size);
-  min-block-size: var(--cast-control-size);
-  max-inline-size: var(--cast-control-size);
-  max-block-size: var(--cast-control-size);
-  aspect-ratio: 1 / 1;
-  flex: 0 0 var(--cast-control-size);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: inherit;
-  overflow: hidden;
-  vertical-align: middle;
-  transition: transform 150ms ease, border-color 150ms ease, background 150ms ease, filter 150ms ease;
-}
-
-.aurora-cast-icon {
-  inline-size: var(--cast-icon-size) !important;
-  block-size: var(--cast-icon-size) !important;
-  flex: 0 0 var(--cast-icon-size);
-  color: currentColor;
-  pointer-events: none;
-}
-
-.aurora-cast-spinner {
-  color: var(--color-primary);
-  animation: aurora-cast-spin 0.85s linear infinite;
-}
-
-.aurora-cast-button-shell google-cast-launcher,
-.aurora-cast-launcher {
-  --connected-color: var(--color-primary);
-  --disconnected-color: var(--color-text-muted);
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  display: block;
-  inline-size: 100% !important;
-  block-size: 100% !important;
-  min-inline-size: 100% !important;
-  min-block-size: 100% !important;
-  padding: 0 !important;
-  opacity: 0;
-  visibility: visible;
-  cursor: pointer;
-  color: transparent;
-  background: transparent !important;
-  border: 0 !important;
-  overflow: hidden;
-}
-
-.aurora-cast-button-shell:hover {
-  transform: scale(1.05);
-  background: rgba(0, 0, 0, 0.05);
-}
-
-.aurora-cast-button-shell:active {
-  transform: scale(0.95);
-}
-
-.aurora-cast-control-sm .aurora-cast-button-shell {
-  --cast-control-size: 2.25rem;
-  --cast-icon-size: 1rem;
-}
-
-.aurora-cast-control-lg .aurora-cast-button-shell {
-  --cast-control-size: 2.75rem;
-  --cast-icon-size: 1.25rem;
-}
-
-.aurora-cast-control[data-cast-state="CONNECTED"] {
-  color: var(--color-primary);
-  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--color-primary) 50%, transparent));
-}
-
-.aurora-cast-control[data-cast-health="rejoining"],
-.aurora-cast-control[data-cast-health="recovering"] {
-  color: var(--color-primary);
-}
-
-.dark .aurora-cast-button-shell:hover {
-  background: rgba(255, 255, 255, 0.10);
-}
-
-.aurora-cast-control[data-cast-state="CONNECTING"] .aurora-cast-button-shell {
-  animation: aurora-cast-pulse 1.2s ease-in-out infinite;
-}
-
-.aurora-cast-device {
-  max-width: 7.5rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.75rem;
-  font-weight: 650;
-  color: var(--color-primary);
-}
-
-.aurora-cast-stop {
-  padding: 0.25rem 0.5rem;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--color-primary) 26%, var(--glass-border));
-  color: var(--color-primary);
-  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
-  font-size: 0.68rem;
-  font-weight: 750;
-  line-height: 1;
-  transition: background 150ms ease, color 150ms ease, transform 150ms ease;
-}
-
-.aurora-cast-stop:hover {
-  color: var(--color-text-primary);
-  background: color-mix(in srgb, var(--color-primary) 14%, transparent);
-}
-
-.aurora-cast-stop:active {
-  transform: scale(0.95);
-}
-
-@keyframes aurora-cast-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .aurora-cast-spinner,
-  .aurora-cast-control[data-cast-state="CONNECTING"] .aurora-cast-button-shell {
-    animation: none;
-  }
-}
-
-.aurora-cast-intro {
-  position: absolute;
-  left: 0;
-  bottom: calc(100% + 0.75rem);
-  width: min(16rem, 72vw);
-  z-index: 80;
-  padding: 0.875rem;
-  border-radius: 1rem;
-  border: 1px solid color-mix(in srgb, var(--color-primary) 24%, var(--glass-border));
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 10%, transparent), transparent 55%),
-    color-mix(in srgb, var(--color-bg-secondary) 88%, transparent);
-  backdrop-filter: blur(22px);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.08);
-}
-
-.aurora-cast-intro::after {
-  content: "";
-  position: absolute;
-  left: 1rem;
-  bottom: -0.375rem;
-  width: 0.75rem;
-  height: 0.75rem;
-  transform: rotate(45deg);
-  border-right: 1px solid color-mix(in srgb, var(--color-primary) 24%, var(--glass-border));
-  border-bottom: 1px solid color-mix(in srgb, var(--color-primary) 24%, var(--glass-border));
-  background: color-mix(in srgb, var(--color-bg-secondary) 88%, transparent);
-}
-
-.aurora-cast-intro-title {
-  font-size: 0.75rem;
-  font-weight: 750;
-  color: var(--color-text-primary);
-}
-
-.aurora-cast-intro-copy {
-  margin-top: 0.25rem;
-  font-size: 0.75rem;
-  line-height: 1.35;
-  color: var(--color-text-secondary);
-}
-
-.aurora-cast-intro-action {
-  margin-top: 0.625rem;
-  font-size: 0.7rem;
-  font-weight: 700;
-  color: var(--color-primary);
-}
-
-@keyframes aurora-cast-pulse {
-  0%, 100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-primary) 26%, transparent);
-  }
-
-  50% {
-    box-shadow: 0 0 0 0.35rem color-mix(in srgb, var(--color-primary) 0%, transparent);
   }
 }
 
@@ -9460,9 +9223,19 @@ a:focus-visible > .genre-card .genre-card__label {
   border-bottom-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
   background: color-mix(in srgb, var(--color-warning) 12%, transparent);
 }
-/* Connect (ConnectMenu): green while the music plays on another device. */
+/* Connect (ConnectMenu): green while the music plays on another device, or
+   casts, or Cast connects (the spinner; no status text). */
 .connect-button.is-elsewhere {
   color: var(--color-primary);
+}
+.connect-spinner {
+  animation: connect-spin 0.85s linear infinite;
+}
+@keyframes connect-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .connect-spinner { animation: none; }
 }
 
 /* The Connect card: one full-width button per choice, the chosen one lit. */
@@ -9811,11 +9584,6 @@ a:focus-visible > .genre-card .genre-card__label {
 .player-aux-btn:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
-}
-
-/* Cast button inside the far cluster: keep size aligned with siblings */
-.player-far .aurora-cast-control {
-  flex-shrink: 0;
 }
 
 /* Lyrics popup floats above the bar */
