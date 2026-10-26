@@ -1,5 +1,5 @@
 import { geniusThrottle, fetchWithRetry } from '../rateLimiter';
-import { RateLimitError, ProviderError } from '../errors';
+import { RateLimitError, ProviderError, messageWithCause } from '../errors';
 
 export interface GeniusSearchResult {
   response?: {
@@ -44,7 +44,7 @@ export async function geniusSearch(
   }).catch((err: any) => {
     if (err instanceof RateLimitError || err instanceof ProviderError) throw err;
     console.error(`[Genius] search error for "${query}":`, err.message);
-    throw new ProviderError('genius', err.message);
+    throw new ProviderError('genius', messageWithCause(err));
   });
 }
 
@@ -83,7 +83,7 @@ export async function geniusGetSong(
   }).catch((err: any) => {
     if (err instanceof RateLimitError || err instanceof ProviderError) throw err;
     console.error(`[Genius] getSong error for ID ${songId}:`, err.message);
-    throw new ProviderError('genius', err.message);
+    throw new ProviderError('genius', messageWithCause(err));
   });
 }
 
@@ -131,6 +131,6 @@ export async function geniusGetArtist(
   }).catch((err: any) => {
     if (err instanceof RateLimitError || err instanceof ProviderError) throw err;
     console.error(`[Genius] getArtist error for ID ${artistId}:`, err.message);
-    throw new ProviderError('genius', err.message);
+    throw new ProviderError('genius', messageWithCause(err));
   });
 }

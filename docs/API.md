@@ -96,7 +96,7 @@ Pairing requests expire after ten minutes. Approval binds the request to the use
 
 `POST /recommendations/next` is the shared Infinity Mode endpoint. Its body is `{ sessionHistoryTrackIds?, exclude?, seedTrackIds?, settings? }` (all optional; history and exclusions capped at 200 IDs, seeds at 50): `sessionHistoryTrackIds` is the client's playback-start history (oldest → newest, including the playing track) and is merged after older server history for this request only — it never records plays; `exclude` lists queued/held track IDs; `seedTrackIds` is the end of the play queue (oldest → newest, ending with the track the recommendation will follow) — when present, its last 10 IDs steer the similarity centroid, energy/dance trend and genre anchor, so Infinity continues from the queue rather than from whatever played last; without it the engine seeds from history as before. Seeds are never recommended back. `settings` overrides saved `discoveryLevel`/`genreStrictness` (0–100) and `artistAmnesiaLimit` (integer 0–200; shown as "Repeat Protection" — it blocks the last N played *tracks*, not artists, and is never relaxed when the search widens). Genre strictness is skipped when the anchor track has no genre tag. Returns `data: Track | null`; `null` means no eligible track remains. The legacy `POST /api/recommend` (body uses `excludeTrackIds`) is a thin compatibility wrapper over the same request handling.
 
-`PUT /tracks/:id/loved` stores the flag and then mirrors it to connected providers — a Last.fm love/unlove and a MusicBrainz rating of 100/0 — returning `data: { trackId, loved, providers }`, where each provider entry is `{ provider, status: 'ok' | 'skipped' | 'failed', reason?, error? }`. A provider failure never undoes the local write. The web route `POST /api/library/love` and this endpoint share one implementation. `POST /playback/reports` takes `{ eventId, trackId, kind: 'played' | 'skipped' | 'nowPlaying', occurredAt?, positionMs? }`; `eventId` must be a UUID and makes the report idempotent — a repeated id is answered with `status: 'duplicate'` and counted once. The web client reports plays and skips here and omits `occurredAt`, so the server stamps receipt time, but only for playback outside a playback session (see **Plays, skips and scrobbles** under Durable playback sessions).
+`PUT /tracks/:id/loved` stores the flag and then mirrors it to connected providers — a Last.fm love/unlove and a MusicBrainz rating of 100/0 — returning `data: { trackId, loved, providers }`, where each provider entry is `{ provider, status: 'ok' | 'skipped' | 'failed', reason?, error? }`. A provider failure never undoes the local write. The web route `POST /api/library/love` and this endpoint share one implementation. `POST /playback/reports` takes `{ eventId, trackId, kind: 'played' | 'skipped' | 'nowPlaying', occurredAt?, positionMs? }`; `eventId` must be a UUID and makes the report idempotent — a repeated id is answered with `status: 'duplicate'` and counted once. The server also scrobbles these reports to the Last.fm and ListenBrainz accounts the user has connected and switched on (Settings → Scrobbling), so a client needs no provider credentials: `nowPlaying` sends "now playing", and `played` scrobbles once per `eventId`, dated from when the listen started — the report's time (`occurredAt`, else receipt) minus `positionMs`. Send `nowPlaying` when a track starts and `played` with the position at which it counted as played. The web client reports plays, skips and now playing here and omits `occurredAt`, so the server stamps receipt time, but only for playback outside a playback session; a client playing a session must not also send these reports, or the listen is counted and scrobbled twice (see **Plays, skips and scrobbles** under Durable playback sessions).
 
 `GET /me` returns `{ user: { id, username, role }, client: { id, name, authKind, scope } }` for whichever credential made the call: a web session (`jwt`), an app key (`appKey`) or a scoped token (`scoped`). The web client polls it to keep `currentUser` current.
 
@@ -204,7 +204,7 @@ Any other session is refused with `403 SCOPED_TOKEN_NOT_ALLOWED`, as is everythi
 - An entry left before that point counts as a skip.
 - Starting the same entry over from near the start is a new listen.
 
-A client that plays a session must not report the same listen through `POST /playback/reports` or its own scrobbling, or it is counted twice. The listen in progress lives in server memory; after a server restart, a listen first seen past its threshold is not counted.
+A scrobble that fails on the network (no answer, a timeout, or the provider temporarily down) is held in server memory and sent again with its original time, over about 52 minutes (`scrobble_retry_*` in the server log); a restart drops what is still waiting. This applies to every scrobble the server sends, including `/api/providers/*/scrobble` and bridged Subsonic scrobbles. A client that plays a session must not report the same listen through `POST /playback/reports` or its own scrobbling, or it is counted twice. The listen in progress lives in server memory; after a server restart, a listen first seen past its threshold is not counted.
 - The output's identity comes from the credential. `outputId`/`outputGeneration` in the body are optional and must match it (`422 OUTPUT_IDENTITY_MISMATCH`). A web session or app key is refused (`403 OUTPUT_CREDENTIAL_REQUIRED`), however much it knows about the grant. A credential for another session is refused (`403 SCOPED_TOKEN_NOT_ALLOWED`), and a replaced grant gets `409 OUTPUT_GRANT_REPLACED`.
 - `seq` increases with every report within one grant and starts afresh with each claim. A report at or below the last accepted `seq` is dropped and answered `{ accepted: false }`, which also covers a delayed report from before a seek.
 - A report that only moves the position changes no revision, so edits from other devices don't conflict with playback. A change of track (to an entry still in the queue) or of play state updates `currentEntryId`/`playbackState`, bumps the revision and publishes `playbackSession.updated`. The session's `positionMs` follows the report only while the report's entry is the current one.
@@ -1446,7 +1446,7 @@ Disconnect user.
 Check scrobble and connection status.
 
 ### [POST] `/api/providers/lastfm/scrobble`
-Scrobble track playbacks.
+Scrobble track playbacks. Kept for older clients; the web app and API v1 clients scrobble through `POST /api/v1/playback/reports`.
 - **Example Request**:
   ```json
   { "tracks": [{ "artist": "Radiohead", "track": "Creep", "timestamp": 1711968000 }] }
@@ -1474,7 +1474,7 @@ Disconnect integration.
 Check scrobble status.
 
 ### [POST] `/api/providers/listenbrainz/scrobble`
-Scrobble track playbacks.
+Scrobble track playbacks. Kept for older clients; the web app and API v1 clients scrobble through `POST /api/v1/playback/reports`.
 
 ### [POST] `/api/providers/listenbrainz/now-playing`
 Update now-playing status.

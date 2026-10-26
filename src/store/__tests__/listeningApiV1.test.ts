@@ -58,6 +58,12 @@ describe('listening writes through API v1', () => {
       expect(body).toEqual({ eventId: expect.stringMatching(UUID_V4), trackId: 'track-1', kind: 'played' });
     });
 
+    it('sends the position a play was counted at, so the server can date its scrobble', async () => {
+      usePlayerStore.getState().recordPlay('track-1', 101_000);
+      await flush();
+      expect(JSON.parse(String(lastCall()[1].body))).toMatchObject({ trackId: 'track-1', kind: 'played', positionMs: 101_000 });
+    });
+
     it('reports a skip the same way', async () => {
       usePlayerStore.getState().recordSkip('track-2');
       await flush();

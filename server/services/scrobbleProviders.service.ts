@@ -1,6 +1,8 @@
-import { getUserSetting } from '../database';
-import { scrobbleTracks as scrobbleLastFmTracks, updateNowPlaying as updateLastFmNowPlaying, type LfmTrack } from './lastfm.service';
-import { scrobbleTracks as scrobbleListenBrainzTracks, updateNowPlaying as updateListenBrainzNowPlaying, type LbTrack } from './listenbrainz.service';
+import { getUserSetting, initDB } from '../database';
+import { updateNowPlaying as updateLastFmNowPlaying, type LfmTrack } from './lastfm.service';
+import { updateNowPlaying as updateListenBrainzNowPlaying, type LbTrack } from './listenbrainz.service';
+import { messageWithCause } from './metadata/errors';
+import { scrobbleWithRetry } from './scrobbleRetry.service';
 
 /**
  * Scrobbles and now-playing updates sent by the server, to the providers a
@@ -38,7 +40,8 @@ export function trackRowToProviderScrobble(track: any, timestamp?: number): Prov
 
 /**
  * Sends to every provider the user has connected and switched on. Never
- * throws: scrobbling is best-effort, and each failure goes to `log`.
+ * throws: scrobbling is best-effort, and each failure goes to `log`. A
+ * scrobble lost to a network failure is sent again later (scrobbleRetry).
  */
 export async function sendToScrobbleProviders(
   userId: string,
@@ -60,23 +63,62 @@ export async function sendToScrobbleProviders(
     if (settingEnabled(lastFmConnected) && settingEnabled(lastFmScrobbleEnabled)) {
       jobs.push({
         provider: 'lastfm',
-        run: () => submission ? scrobbleLastFmTracks(userId, tracks) : updateLastFmNowPlaying(userId, tracks[tracks.length - 1]),
+        run: () => submission ? scrobbleWithRetry('lastfm', userId, tracks, { log }) : updateLastFmNowPlaying(userId, tracks[tracks.length - 1]),
       });
     }
     if (settingEnabled(listenBrainzConnected) && settingEnabled(listenBrainzScrobbleEnabled)) {
       jobs.push({
         provider: 'listenbrainz',
-        run: () => submission ? scrobbleListenBrainzTracks(userId, tracks) : updateListenBrainzNowPlaying(userId, tracks[tracks.length - 1]),
+        run: () => submission ? scrobbleWithRetry('listenbrainz', userId, tracks, { log }) : updateListenBrainzNowPlaying(userId, tracks[tracks.length - 1]),
       });
     }
 
     const results = await Promise.allSettled(jobs.map((job) => job.run()));
     results.forEach((result, index) => {
       if (result.status === 'rejected') {
-        log(`provider_error provider=${jobs[index].provider} action=${action} count=${tracks.length} message=${String(result.reason?.message || result.reason).slice(0, 240)}`);
+        log(`provider_error provider=${jobs[index].provider} action=${action} count=${tracks.length} message=${messageWithCause(result.reason).slice(0, 240)}`);
       }
     });
   } catch (error: any) {
-    log(`provider_error provider=settings action=${action} count=${tracks.length} message=${String(error?.message || error).slice(0, 240)}`);
+    log(`provider_error provider=settings action=${action} count=${tracks.length} message=${messageWithCause(error).slice(0, 240)}`);
+  }
+}
+
+/**
+ * When a reported listen started, in seconds: the report's time (the
+ * server's receipt time unless the client sent `occurredAt`) minus the
+ * position it was reported at, the way session listens are timed.
+ */
+export function reportedListenStartS(nowMs: number, occurredAt?: string, positionMs?: number): number {
+  const at = occurredAt ? Date.parse(occurredAt) : nowMs;
+  return Math.floor((at - (positionMs ?? 0)) / 1000);
+}
+
+async function loadTrackRow(trackId: string): Promise<Record<string, unknown> | null> {
+  const db = await initDB();
+  const result = await db.query('SELECT * FROM tracks WHERE id = $1', [trackId]);
+  return result.rows[0] || null;
+}
+
+/**
+ * Scrobbling for API v1 playback reports (`POST /api/v1/playback/reports`),
+ * so a client playing outside a playback session needs no provider
+ * credentials and no route of its own: `nowPlaying` sends "now playing",
+ * `played` scrobbles. Never throws.
+ */
+export async function scrobblePlaybackReport(
+  userId: string,
+  trackId: string,
+  kind: 'nowPlaying' | 'played',
+  startedAtS: number,
+  loadTrack: (trackId: string) => Promise<Record<string, unknown> | null> = loadTrackRow,
+  send: typeof sendToScrobbleProviders = sendToScrobbleProviders,
+): Promise<void> {
+  try {
+    const track = await loadTrack(trackId);
+    const payload = track ? trackRowToProviderScrobble(track, kind === 'played' ? startedAtS : undefined) : null;
+    if (payload) await send(userId, [payload], kind === 'played');
+  } catch (error: any) {
+    console.warn(`[Scrobble] provider_error provider=report action=${kind} count=1 message=${messageWithCause(error).slice(0, 240)}`);
   }
 }

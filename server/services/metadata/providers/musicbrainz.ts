@@ -1,5 +1,5 @@
 import { mbFetch } from '../../musicbrainz.service';
-import { ProviderError } from '../errors';
+import { ProviderError, messageWithCause } from '../errors';
 
 export interface MbArtist {
   disambiguation?: string;
@@ -48,8 +48,8 @@ export async function mbGetArtist(mbid: string, signal?: AbortSignal): Promise<M
     return artist || null;
   } catch (err: any) {
     if (err instanceof ProviderError) throw err;
-    console.error('[MusicBrainz] getArtist error:', err.message);
-    throw new ProviderError('musicbrainz', err.message);
+    console.error('[MusicBrainz] getArtist error:', messageWithCause(err));
+    throw new ProviderError('musicbrainz', messageWithCause(err));
   }
 }
 
@@ -60,7 +60,7 @@ export async function mbSearchArtist(query: string): Promise<any> {
     );
   } catch (err: any) {
     if (err instanceof ProviderError) throw err;
-    throw new ProviderError('musicbrainz', err.message);
+    throw new ProviderError('musicbrainz', messageWithCause(err));
   }
 }
 
@@ -210,8 +210,8 @@ export async function mbGetRecording(mbid: string): Promise<MbCreditRelation[]> 
     return credits;
   } catch (err: any) {
     if (err instanceof ProviderError) throw err;
-    console.error('[MusicBrainz] getRecording error:', err.message);
-    throw new ProviderError('musicbrainz', err.message);
+    console.error('[MusicBrainz] getRecording error:', messageWithCause(err));
+    throw new ProviderError('musicbrainz', messageWithCause(err));
   }
 }
 
@@ -228,7 +228,7 @@ export async function mbSearchReleaseGroup(
     }));
   } catch (err: any) {
     if (err instanceof ProviderError) throw err;
-    throw new ProviderError('musicbrainz', err.message);
+    throw new ProviderError('musicbrainz', messageWithCause(err));
   }
 }
 

@@ -133,6 +133,7 @@ import { isPlaybackSyncEnabledFor } from '../services/playbackSync.service';
 import { publishApiV1Event, replayApiV1Events, subscribeApiV1Events, noteClientListening, listConnectedDevices, isClientListening as isDeviceConnected } from '../services/apiV1Events.service';
 import { topUpSessionInfinity } from '../services/sessionInfinity.service';
 import { forgetSessionListen, noteSessionReport } from '../services/sessionListens.service';
+import { reportedListenStartS, scrobblePlaybackReport } from '../services/scrobbleProviders.service';
 import {
   generateEphemeralScopedToken,
   generateOutputCredential,
@@ -914,6 +915,10 @@ router.post('/playback/reports', async (req, res) => {
       // after reserving its idempotency key.
       await db.query('DELETE FROM api_playback_events WHERE event_id = $1 AND user_id = $2', [input.eventId, req.apiV1!.userId]);
       throw error;
+    }
+    // Once per eventId, like the play count; providers are not waited for.
+    if (input.kind !== 'skipped') {
+      void scrobblePlaybackReport(req.apiV1!.userId, input.trackId, input.kind, reportedListenStartS(Date.now(), input.occurredAt, input.positionMs));
     }
   }
   dataResponse(req, res, { status: (inserted.rowCount || 0) > 0 ? 'recorded' : 'duplicate' });
