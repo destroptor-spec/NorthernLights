@@ -158,3 +158,33 @@ export async function probeCastTransport(
     if (timer !== undefined) clearTimeout(timer);
   }
 }
+
+/** The signature of a torn-down PresentationConnection (prod 2026-10-10). */
+const PRESENTATION_DISCONNECT = /PresentationConnection.*disconnected|InvalidStateError/i;
+
+/**
+ * Whether a failed media-status refresh should start stale-transport recovery.
+ *
+ * Prod 2026-10-23 11:52Z, "Beoplay A9": the user picked a new song, and the
+ * watchdog's getStatus reached the media session that LOAD was replacing. The
+ * A9 answered `session_error`, recovery detached and rejoined a healthy
+ * session, and the A9 ended it 5s later. The same sequence had ended A9
+ * sessions six times since May.
+ *
+ * A `session_error` on its own can mean the media session moved on rather
+ * than the transport going away, so it is only acted on when a probe does not
+ * get through. A disconnected PresentationConnection still recovers at once.
+ */
+export async function mediaStatusFailureNeedsRecovery(
+  session: ProbeableSession | null | undefined,
+  detail: string,
+  options: {
+    requestId: number;
+    isDisconnected: (error: unknown) => boolean;
+    timeoutMs?: number;
+  },
+): Promise<boolean> {
+  if (!options.isDisconnected(detail)) return false;
+  if (PRESENTATION_DISCONNECT.test(detail)) return true;
+  return (await probeCastTransport(session, options)) !== 'alive';
+}
