@@ -318,7 +318,7 @@ of evidence*, so none of them, alone or combined, ends the output.
   LOAD land, then pauses the media it created.
 - **Until then** the UI shows the requested track at its start position and
   the play button's spinner. No surface shows text for a start in progress and
-  the Cast icon is left alone; only a start that fails says anything.
+  the Connect button's Cast icon is left alone; only a start that fails says anything.
 - **Bounded failure path:** if no confirmation arrives within a deadline (15 s,
   above the slowest successful start in the prod logs; tune it from those
   logs), retry once by re-requesting the same entry at the same position. If the
