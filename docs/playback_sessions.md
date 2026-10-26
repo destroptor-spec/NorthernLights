@@ -536,6 +536,42 @@ session-scoped link. Edits are already serialised by revision, so no new
 concurrency model is needed. This is invite-only and private; there are no
 public sessions or feeds.
 
+**Before building: the Cast session becomes a trust boundary.** Today everyone
+on a Cast session is the same user or their household. With Listen together,
+another account's phone can join the Cast session the session plays on. Two
+things are fine within one user and are not fine then (found in the security
+review of the receiver `following` status, 2026-10-26; both pre-existing):
+
+1. **Every sender on a Cast session sees the media token.** The sender's LOAD
+   puts the user's `media` token in each item's `contentId` (`?token=`) and
+   `customData.token` (`CastManager`). The receiver builds its own items the
+   same way (`trackUrl`, `artworkUrl` and `buildItem` in
+   `public/receiver-follow.js`). CAF sends both to every connected sender in
+   MEDIA_STATUS, and `aurora.status` repeats the `contentId`. That token has
+   the login's lifetime (`generateScopedToken('media', …, rememberMe)`: 30 days
+   when remembered, otherwise 12 h). It streams and shows artwork for any
+   track in the owner's library, not just the queue. The login response falls
+   back to the full session token when there is no `mediaToken`
+   (`mediaAccessToken: data.mediaToken || data.token` in the store); confirm
+   that no client still takes that path. Options: a short-lived media token
+   bound to the session (or to the queued tracks) and issued to the receiver,
+   renewed with its receiver credential; and headers instead of the URL, where
+   the receiver can inject them (`PlaybackConfig` request handlers already add
+   auth to manifest and segment requests).
+2. **The receiver takes a handover from any sender on the Cast session.**
+   `aurora.session.follow` is accepted from whichever sender sends a
+   well-formed one (`handleSessionFollow` in `receiver.html`, `start()` in
+   `receiver-follow.js`), with no check of whose session it is. A member's
+   phone could point the receiver at its own session, or send a bogus token,
+   which makes the receiver stop as `expired`; the owner's sender then hands a
+   fresh credential over again (at most once a minute). Because `following`
+   is only a yes/no, the owner's sender cannot tell that the receiver follows
+   someone else's session. Decide who may hand over (the session owner only,
+   or members with a role), and make the receiver answer to it: for example,
+   check the handover against the session's current output grant before it
+   switches, and let a sender see which session the receiver follows (an
+   opaque id, not the token).
+
 ## Security
 
 - **No new long-lived credentials.** The receiver gets a 12 h `receiver` token

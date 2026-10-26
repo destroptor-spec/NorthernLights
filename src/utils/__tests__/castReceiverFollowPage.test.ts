@@ -68,16 +68,16 @@ function startReceiver(withFollower: boolean, loadFirst = true) {
   const load = player.setMessageInterceptor.mock.calls.find(([type]) => type === 'LOAD')![1];
   const firstLoad = () => load({ media: { contentId: 'https://music.example.test/api/stream/track/playlist.m3u8', customData: { token: 'media-token' }, metadata: { title: 'Track' } } });
   if (loadFirst) firstLoad();
-  const caps = () => {
+  const status = () => {
     context.sendCustomMessage.mockClear();
     receive({ senderId: 'sender', data: { type: 'aurora.diagnostics', enabled: false, requestId: 99 } });
-    const status = context.sendCustomMessage.mock.calls.map(([, , payload]) => payload).find((payload) => payload.type === 'aurora.status');
-    return status.caps as string[];
+    return context.sendCustomMessage.mock.calls.map(([, , payload]) => payload).find((payload) => payload.type === 'aurora.status');
   };
+  const caps = () => status().caps as string[];
   const loggedLines = () => fetch.mock.calls
     .filter(([url]) => String(url).startsWith('/api/cast/log'))
     .map(([, init]) => JSON.parse((init as unknown as { body: string }).body) as { message: string; detail: string });
-  return { namespace, receive, context, player, fetch, streams, load, firstLoad, caps, loggedLines };
+  return { namespace, receive, context, player, fetch, streams, load, firstLoad, caps, status, session, loggedLines };
 }
 
 const handover = {
@@ -131,4 +131,22 @@ test('refuses a handover, and does not advertise following, without the module',
   r.receive({ senderId: 'sender', data: handover });
   expect(r.context.sendCustomMessage).toHaveBeenCalledWith(r.namespace, 'sender', { type: 'aurora.session.follow.ack', requestId: 5, ok: false });
   expect(r.streams).toEqual([]);
+});
+
+test('says in its status whether it follows a session, and says so at once when following ends', async () => {
+  const r = startReceiver(true);
+  expect(r.status().following).toBe(false);
+  r.receive({ senderId: 'sender', data: handover });
+  expect(r.status().following).toBe(true);
+
+  // The session moved on to a newer grant: following ends here.
+  r.session.output = { ...r.session.output, generation: 3 };
+  r.context.sendCustomMessage.mockClear();
+  for (let i = 0; i < 10; i += 1) await Promise.resolve();
+  const sent = r.context.sendCustomMessage.mock.calls.map(([, to, payload]) => ({ to, payload }));
+  const stopped = sent.find(({ payload }) => payload.type === 'aurora.status' && payload.reason === 'follow-stopped');
+  expect(stopped?.payload.following).toBe(false);
+  // Every sender gets this status: it carries no session, grant or credential.
+  expect(stopped?.to).toBeUndefined();
+  expect(JSON.stringify(stopped?.payload)).not.toMatch(/receiver-secret|session-1|receiver:cast-77/);
 });
