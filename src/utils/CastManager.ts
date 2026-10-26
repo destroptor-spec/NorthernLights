@@ -237,6 +237,13 @@ export class CastManager {
     private readonly receiverFollowStateListeners = new Set<(following: boolean) => void>();
     private readonly receiverFollowAcks = new ReceiverFollowAcks();
     private lastRemotePlayerEventAt = 0;
+    /**
+     * The Cast session the RemotePlayer's media describes: null until known
+     * (a page load), the ended session's ID from SESSION_ENDED (the player
+     * still describes it), then the current one from its next media event.
+     */
+    private remotePlayerDescribesSid: string | null = null;
+    private remotePlayerStaleLoggedSid = '';
     private lastRemotePositionAt = 0;
     private lastRemotePositionEntryId: string | null = null;
     private lastCastStateChangeAt = 0;
@@ -1663,8 +1670,26 @@ export class CastManager {
         return !!mediaSession.media || (Array.isArray(mediaSession.items) && mediaSession.items.length > 0);
     }
 
+    /** A RemotePlayer media event: what it holds now describes the current Cast session. */
+    private noteRemotePlayerMedia() {
+        const sid = this.getCurrentSessionId();
+        if (sid) this.remotePlayerDescribesSid = sid;
+    }
+
     private getRemotePlayerMediaSession(): any | null {
         if (!this.player) return null;
+        // Still the media of a Cast session that ended. A new session taking
+        // it for media already playing there hydrated from it and loaded
+        // nothing (prod 2026-10-26 22:29:44, phone: idle "Lonely" from its
+        // previous session; the desktop played on).
+        const currentSid = this.getCurrentSessionId();
+        if (this.remotePlayerDescribesSid !== null && this.remotePlayerDescribesSid !== currentSid) {
+            if (currentSid && this.remotePlayerStaleLoggedSid !== currentSid) {
+                this.remotePlayerStaleLoggedSid = currentSid;
+                this.logCast('ok', 'remote-player-stale-ignored', `describes=${this.remotePlayerDescribesSid}`);
+            }
+            return null;
+        }
 
         const mediaInfo = this.player.mediaInfo || null;
         const queueData = this.player.queueData || null;
@@ -2385,6 +2410,7 @@ export class CastManager {
                         case cast.framework.SessionState.SESSION_ENDED: {
                             console.log('[Cast] Session ended');
                             this.logCast('ok', 'SESSION_ENDED');
+                            this.remotePlayerDescribesSid = this.getSessionId(event.session || null) || this.getCurrentSessionId() || this.remotePlayerDescribesSid;
                             // Where the Cast device was, taken before the
                             // state change below drops the position anchor.
                             const endSnapshot = this.castEndSnapshotAtStop ?? this.captureCastEndSnapshot();
@@ -2481,6 +2507,7 @@ export class CastManager {
             this.playerController.addEventListener(
                 cast.framework.RemotePlayerEventType.IS_PAUSED_CHANGED,
                 () => {
+                    this.noteRemotePlayerMedia();
                     this.publishPlayState(!this.player.isPaused);
                 }
             );
@@ -2488,6 +2515,7 @@ export class CastManager {
             this.playerController.addEventListener(
                 cast.framework.RemotePlayerEventType.CURRENT_TIME_CHANGED,
                 () => {
+                    this.noteRemotePlayerMedia();
                     this.lastRemotePlayerEventAt = Date.now();
                     this.lastRemoteEvidenceAt = Date.now();
                     if (!this.mediaMatchesCurrentTrack(this.player?.mediaInfo)) return;
@@ -2501,6 +2529,7 @@ export class CastManager {
             this.playerController.addEventListener(
                 cast.framework.RemotePlayerEventType.DURATION_CHANGED,
                 () => {
+                    this.noteRemotePlayerMedia();
                     if (this.remotePositionMatchesTrack()) this.publishDuration(this.player.duration);
                 }
             );
@@ -2508,6 +2537,7 @@ export class CastManager {
             this.playerController.addEventListener(
                 cast.framework.RemotePlayerEventType.PLAYER_STATE_CHANGED,
                 () => {
+                    this.noteRemotePlayerMedia();
                     this.lastRemotePlayerEventAt = Date.now();
                     this.lastRemoteEvidenceAt = Date.now();
                     const mediaSession = this.getHydratableMediaSession();
@@ -2554,6 +2584,7 @@ export class CastManager {
             this.playerController.addEventListener(
                 cast.framework.RemotePlayerEventType.MEDIA_INFO_CHANGED,
                 () => {
+                    this.noteRemotePlayerMedia();
                     if (!this.isConnected()) return;
                     try {
                         // Track-identity sync must read the REAL media session.
@@ -2575,6 +2606,7 @@ export class CastManager {
                 this.playerController.addEventListener(
                     cast.framework.RemotePlayerEventType.MEDIA_STATUS_CHANGED,
                     () => {
+                        this.noteRemotePlayerMedia();
                         try {
                             const mediaSession = this.getMediaSession();
                             if (!mediaSession) return;
@@ -2593,6 +2625,7 @@ export class CastManager {
                 this.playerController.addEventListener(
                     cast.framework.RemotePlayerEventType.IS_MEDIA_LOADED_CHANGED,
                     () => {
+                        this.noteRemotePlayerMedia();
                         const mediaSession = this.getHydratableMediaSession();
                         this.logCast('ok', 'REMOTE_MEDIA_LOADED_CHANGED', `${this.describeRemotePlayer()} ${this.describeMediaSession(mediaSession)}`);
                         if (this.hasActiveRemoteMediaSession(mediaSession)) {
@@ -2606,6 +2639,7 @@ export class CastManager {
                 this.playerController.addEventListener(
                     cast.framework.RemotePlayerEventType.QUEUE_DATA_CHANGED,
                     () => {
+                        this.noteRemotePlayerMedia();
                         const mediaSession = this.getHydratableMediaSession();
                         this.logCast('ok', 'REMOTE_QUEUE_DATA_CHANGED', `${this.describeRemotePlayer()} ${this.describeMediaSession(mediaSession)}`);
                         if (this.hasActiveRemoteMediaSession(mediaSession)) {
