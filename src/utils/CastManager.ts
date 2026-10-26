@@ -87,6 +87,12 @@ const SESSION_STORAGE_KEY = 'cast_session_id';
 const QUEUE_WINDOW_STORAGE_KEY = 'aurora-cast-queue-window-v1';
 // A LOAD not acknowledged by then is treated as sent, never resent blindly.
 const CAST_LOAD_ACK_TIMEOUT_MS = 12000;
+/**
+ * A picker that has not answered after this long is let go, so a later tap can
+ * try again. On prod a stuck launch request ended by itself with `cancel`
+ * after about 10.5 s (#40, 2026-10-11).
+ */
+const CAST_PICKER_PENDING_MAX_MS = 30_000;
 // How long a media-channel jump may take to show up in aurora.status.
 const CAST_MEDIA_CHANNEL_JUMP_TIMEOUT_MS = 3000;
 // A live SDK answers a queue jump in well under a second.
@@ -298,6 +304,8 @@ export class CastManager {
     // button, or the Cast dialog opened from this device's Cast icon.
     private userStopRequested = false;
     private userCastDialogAt = 0;
+    /** Chrome's device picker, opened from the Connect menu, has not answered yet. */
+    private castPickerPendingSince = 0;
     private castEndSnapshotAtStop: CastEndSnapshot | null = null;
     private lastCastButtonStateKey = '';
     private lastRemotePlayerStateKey = '';
@@ -1109,6 +1117,63 @@ export class CastManager {
     private noteFollowAtLaunch() {
         const { sessionFollow } = usePlayerStore.getState();
         this.followAtLaunch = sessionFollow ? { follow: { ...sessionFollow }, at: Date.now() } : null;
+    }
+
+    /**
+     * Opens Chrome's Cast device picker from the Connect menu, in place of a
+     * tap on <google-cast-launcher>, and must run inside the tap's handler
+     * (the SDK needs the user gesture). It does what that tap did: the launch
+     * intent first, then the SDK's own requestSession(). The session then
+     * starts as after a launcher tap, from the SESSION_STARTED and CONNECTED
+     * events; it does not use this.requestSession(), which also starts
+     * playback itself once the picker answers.
+     *
+     * A tap while the picker has not answered is ignored (#40: retaps then
+     * failed with invalid_parameter, "a session request is already in
+     * progress"). A picker that never answers is let go after
+     * CAST_PICKER_PENDING_MAX_MS.
+     */
+    public openCastPicker(reason: string): 'opened' | 'pending' | 'unavailable' {
+        const context = this.castContext;
+        if (!context || typeof context.requestSession !== 'function' || this.isConnected()) {
+            this.logCast('warn', 'cast-picker', `reason=${reason} result=unavailable state=${this.state}`);
+            return 'unavailable';
+        }
+        if (this.isCastPickerPending()) {
+            this.logCast('ok', 'cast-picker', `reason=${reason} result=ignored-pending msPending=${Date.now() - this.castPickerPendingSince}`);
+            return 'pending';
+        }
+        this.noteUserCastLaunchIntent(reason);
+        const since = Date.now();
+        this.castPickerPendingSince = since;
+        this.logCast('ok', 'cast-picker', `reason=${reason} result=opened`);
+        const settle = (outcome: string) => {
+            if (this.castPickerPendingSince !== since) return;
+            this.castPickerPendingSince = 0;
+            this.logCast(outcome === 'connected' ? 'ok' : 'warn', 'cast-picker-answered', `reason=${reason} outcome=${outcome} ms=${Date.now() - since}`);
+            this.notifyStateChange();
+        };
+        let request: Promise<unknown>;
+        try {
+            request = Promise.resolve(context.requestSession());
+        } catch (error) {
+            request = Promise.reject(error);
+        }
+        // The SDK answers an error code (or rejects with one); null means a session.
+        request.then(
+            (errorCode) => settle(errorCode ? `error-${String(errorCode)}` : 'connected'),
+            (error) => settle(`error-${typeof error === 'string' ? error : this.describeError(error)}`),
+        );
+        return 'opened';
+    }
+
+    /** The Connect menu's Cast picker is open and has not answered yet. */
+    public isCastPickerPending(): boolean {
+        if (!this.castPickerPendingSince) return false;
+        if (Date.now() - this.castPickerPendingSince < CAST_PICKER_PENDING_MAX_MS) return true;
+        this.logCast('warn', 'cast-picker-answered', `outcome=never ms=${Date.now() - this.castPickerPendingSince}`);
+        this.castPickerPendingSince = 0;
+        return false;
     }
 
     public noteUserCastLaunchIntent(reason: string = 'launcher') {

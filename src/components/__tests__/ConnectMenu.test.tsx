@@ -3,6 +3,13 @@ import { usePlayerStore } from '../../store';
 import { CHOICE_CONFIRM_MS, ConnectButton, ConnectMenuContent, DEVICE_LEAVE_MS } from '../ConnectMenu';
 import type { FollowedOutput } from '../../utils/sessionFollow';
 import { getAuroraClientId } from '../../api/auroraApi';
+import { castManager } from '../../utils/CastManager';
+import { sessionMirror } from '../../utils/SessionMirror';
+import type { CastStatus } from '../../hooks/useCastStatus';
+
+const noCast: CastStatus = { available: false, connected: false, busy: false, deviceName: '' };
+let mockCast: CastStatus = noCast;
+jest.mock('../../hooks/useCastStatus', () => ({ useCastStatus: () => mockCast }));
 
 const follow = (overrides: Partial<FollowedOutput> = {}): FollowedOutput => ({
   sessionId: 's1', outputId: 'receiver:nad', name: 'NAD Forstærker', kind: 'receiver', generation: 3,
@@ -25,7 +32,11 @@ const setup = (state: Record<string, unknown>) => {
   return { resolvePlayWhere, openSettingsAt, onDone };
 };
 
-afterEach(() => act(() => { usePlayerStore.setState({ sessionFollow: null, remoteControlOutputId: null } as never); }));
+afterEach(() => {
+  mockCast = noCast;
+  jest.restoreAllMocks();
+  act(() => { usePlayerStore.setState({ sessionFollow: null, remoteControlOutputId: null } as never); });
+});
 
 test('says the music plays here, with this device chosen and nothing else to pick', () => {
   setup({});
@@ -120,6 +131,81 @@ test('while casting, says where, and leaves the output to the Cast device', () =
   setup({ castConnected: true });
   expect(screen.getByText(/^Casting to /)).toBeTruthy();
   expect(screen.queryByRole('button', { name: /^Output/ })).toBeNull();
+});
+
+describe('Cast, in the card (step 2: no Cast button of its own)', () => {
+  const castReady = (status: Partial<CastStatus> = {}) => { mockCast = { ...noCast, available: true, ...status }; };
+
+  test('opens Chrome\'s device picker in the tap, counts it as "play here", and closes the card', () => {
+    castReady();
+    const open = jest.spyOn(castManager, 'openCastPicker').mockReturnValue('opened');
+    const playIntent = jest.spyOn(sessionMirror, 'notePlayIntent').mockImplementation(() => undefined);
+    const { onDone } = setup({});
+    act(() => { screen.getByRole('button', { name: /Cast to a device/ }).click(); });
+    expect(open).toHaveBeenCalledWith('connect-menu');
+    expect(playIntent).toHaveBeenCalledTimes(1);
+    // The picker is the confirmation: no second of lit choice first.
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
+  test('a tap while the picker is still open does nothing more (#40)', () => {
+    castReady();
+    jest.spyOn(castManager, 'openCastPicker').mockReturnValue('pending');
+    const playIntent = jest.spyOn(sessionMirror, 'notePlayIntent').mockImplementation(() => undefined);
+    const { onDone } = setup({});
+    act(() => { screen.getByRole('button', { name: /Cast to a device/ }).click(); });
+    expect(playIntent).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  test('cannot be tapped while Cast connects, and shows a spinner instead of text', () => {
+    castReady({ busy: true });
+    setup({});
+    const row = screen.getByRole('button', { name: /Cast to a device/ }) as HTMLButtonElement;
+    expect(row.disabled).toBe(true);
+    expect(row.querySelector('.connect-spinner')).not.toBeNull();
+  });
+
+  test('is not offered without the Cast SDK or a device to cast to', () => {
+    setup({});
+    expect(screen.queryByRole('button', { name: /Cast to a device/ })).toBeNull();
+  });
+
+  test('is offered while another device plays too', () => {
+    castReady();
+    setup({ sessionFollow: follow() });
+    expect(screen.getByRole('button', { name: /Cast to a device/ })).toBeTruthy();
+  });
+
+  test('while casting: "This device" stops casting, lit a second like any choice', () => {
+    jest.useFakeTimers();
+    try {
+      castReady({ connected: true, deviceName: 'NAD Forstærker' });
+      const stop = jest.spyOn(castManager, 'disconnect').mockResolvedValue(undefined);
+      const { onDone } = setup({ castConnected: true });
+      expect(screen.queryByRole('button', { name: /Cast to a device/ })).toBeNull();
+      act(() => { screen.getByRole('button', { name: /This device Stop casting/ }).click(); });
+      expect(stop).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole('button', { name: /This device Stop casting/ }).className).toContain('is-chosen');
+      act(() => { jest.advanceTimersByTime(CHOICE_CONFIRM_MS); });
+      expect(onDone).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('the Connect button shows casting and connecting where the Cast button was', () => {
+    castReady({ busy: true });
+    const busy = render(<ConnectButton />);
+    const button = busy.getByRole('button', { name: 'Connect to a device' });
+    expect(button.className).toContain('is-elsewhere');
+    expect(button.querySelector('.connect-spinner')).not.toBeNull();
+    busy.unmount();
+
+    castReady({ connected: true });
+    const casting = render(<ConnectButton />);
+    expect(casting.getByRole('button', { name: 'Connect to a device' }).className).toContain('is-elsewhere');
+  });
 });
 
 describe("the user's other devices", () => {

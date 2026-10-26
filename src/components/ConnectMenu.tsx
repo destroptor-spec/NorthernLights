@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ConnectedDevice } from '../../shared/api/v1';
-import { Cast, Check, ChevronRight, MonitorSmartphone, MonitorSpeaker, Speaker } from 'lucide-react';
+import { Cast, Check, ChevronRight, Loader2, MonitorSmartphone, MonitorSpeaker, Speaker } from 'lucide-react';
 import { usePlayerStore } from '../store/index';
 import { castManager } from '../utils/CastManager';
+import { sessionMirror } from '../utils/SessionMirror';
+import { useCastStatus } from '../hooks/useCastStatus';
 import { isFollowedOutputPlaying } from '../utils/sessionFollow';
 import { getAuroraClientId } from '../api/auroraApi';
 import { isPhoneOrTablet } from '../utils/deviceName';
@@ -51,9 +53,11 @@ export function useListedDevices(devices: ConnectedDevice[]): ListedDevice[] {
  * card (docs/playback_sessions.md, Phase 6 prep; Andreas, 2026-10-20). Each
  * choice is a full-width button: the device that plays (control it from
  * here) or this device (play here instead). This device's output is named
- * and opens Settings → Playback → Output. Cast stays its own button until it
- * moves in here; Listen together and "Open your session" come with Phase 6.
- * The "Playing on" strip and the Now Playing heading only say where.
+ * and opens Settings → Playback → Output. Cast is in here too: "Cast to a
+ * device" opens Chrome's device picker (no <google-cast-launcher>: the card
+ * unmounts, #40), and while casting "This device" stops casting. Listen
+ * together and "Open your session" come with Phase 6. The "Playing on" strip
+ * and the Now Playing heading only say where.
  */
 const stopBubbling = (event: React.SyntheticEvent) => event.stopPropagation();
 
@@ -61,13 +65,20 @@ export const ConnectButton: React.FC<{ className?: string; iconSize?: number }> 
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLButtonElement>(null);
   const followed = usePlayerStore((s) => !!s.sessionFollow);
+  // Casting, connecting and recovering show here, where the Cast button was.
+  const cast = useCastStatus('connect');
+  const icon = cast.busy
+    ? <Loader2 size={iconSize} aria-hidden="true" className="connect-spinner" />
+    : cast.connected
+      ? <Cast size={iconSize} aria-hidden="true" />
+      : <MonitorSpeaker size={iconSize} aria-hidden="true" />;
 
   return (
     <>
       <button
         ref={anchorRef}
         type="button"
-        className={`connect-button${followed ? ' is-elsewhere' : ''} ${className}`}
+        className={`connect-button${followed || cast.connected || cast.busy ? ' is-elsewhere' : ''} ${className}`}
         onClick={(event) => {
           event.stopPropagation(); // inside the mini player's tap-to-expand area
           setOpen((value) => !value);
@@ -77,7 +88,7 @@ export const ConnectButton: React.FC<{ className?: string; iconSize?: number }> 
         aria-expanded={open}
         title="Connect to a device"
       >
-        <MonitorSpeaker size={iconSize} aria-hidden="true" />
+        {icon}
       </button>
       {/* The card is portalled out of the bar, but React still bubbles its
           clicks up the component tree: into the mini player's tap-to-expand,
@@ -154,6 +165,7 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
       .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
     : []), [connectedDevices, followedOutputId, myId, syncOn]);
   const listedDevices = useListedDevices(otherDevices);
+  const cast = useCastStatus('connect');
 
   const controlsFollowed = !!follow && remoteControlOutputId === follow.outputId;
   const castDevice = castConnected ? castManager.getCastDeviceName() || 'Cast device' : null;
@@ -186,6 +198,24 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
   const choose = (choice: 'remote' | 'here') => pick(choice, () => {
     void usePlayerStore.getState().resolvePlayWhere(choice);
   });
+  // Opens Chrome's picker, which is the confirmation: the card closes at once.
+  // Synchronous in the tap (the SDK needs the gesture). Starting to cast is
+  // "play here" for the session, as the Cast button's tap was.
+  const startCasting = () => {
+    if (castManager.openCastPicker('connect-menu') !== 'opened') return;
+    sessionMirror.notePlayIntent();
+    onDone();
+  };
+  // Hands the music back here (cast-ended-handoff), like the Cast dialog's Stop.
+  const stopCasting = () => pick('stop-casting', () => { void castManager.disconnect(); });
+  const castOption = cast.available && !castConnected ? (
+    <ConnectOption
+      icon={cast.busy ? <Loader2 size={18} className="connect-spinner" /> : <Cast size={18} />}
+      title="Cast to a device"
+      detail="Speakers and TVs nearby"
+      onClick={cast.busy || chosen ? undefined : startCasting}
+    />
+  ) : null;
 
   return (
     <div className="connect-card" role="dialog" aria-label="Connect">
@@ -212,11 +242,24 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
               chosen={isChosen('here')}
               onClick={chosen ? undefined : () => choose('here')}
             />
+            {castOption}
           </>
         ) : view.castDevice ? (
-          <ConnectOption icon={<Cast size={18} />} title={view.castDevice} detail="Casting from this device" selected={!chosen} />
+          <>
+            <ConnectOption icon={<Cast size={18} />} title={view.castDevice} detail="Casting from this device" selected={!chosen} />
+            <ConnectOption
+              icon={<MonitorSmartphone size={18} />}
+              title="This device"
+              detail="Stop casting"
+              chosen={isChosen('stop-casting')}
+              onClick={chosen ? undefined : stopCasting}
+            />
+          </>
         ) : (
-          <ConnectOption icon={<MonitorSmartphone size={18} />} title="This device" detail="Playing here" selected={!chosen} />
+          <>
+            <ConnectOption icon={<MonitorSmartphone size={18} />} title="This device" detail="Playing here" selected={!chosen} />
+            {castOption}
+          </>
         )}
       </div>
 

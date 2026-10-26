@@ -10,7 +10,6 @@ import { useSwipe } from '../hooks/useSwipe';
 import { castManager } from '../utils/CastManager';
 import { LyricsPanel } from './LyricsPanel';
 import { LoveButton } from './LoveButton';
-import { CastButton } from './cast/CastButton';
 import { IconNext, IconPause, IconPlay, IconPrev, IconRepeatAll, IconRepeatOne, IconShuffle } from './icons/PlayerIcons';
 import { useDominantColor, NOW_PLAYING_PALETTE_QUALITY } from '../hooks/useDominantColor';
 import { buildBloomGradient } from '../utils/coverGradient';
@@ -499,8 +498,6 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
           </button>
 
           <ConnectButton className="mobile-player-control-btn mobile-player-control-btn-sm" iconSize={22} />
-
-          <CastButton size="sm" showIntro={false} className="mobile-now-cast-control" />
         </div>
       </div>
 

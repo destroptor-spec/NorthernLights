@@ -79,16 +79,16 @@ Playback controls are their own primitives, not generic buttons:
 - The primary play button is an emerald disc with `--aurora-play-gradient` and glow.
 - Desktop and mobile should share the same visual language, with mobile sized down or up only for touch comfort.
 
-### Cast Button
+### Cast (in the Connect menu)
 
-The Cast button must live inside existing playback control surfaces.
+Cast has no button of its own: it is a choice in the Connect card (Connect menu step 2, 2026-10-26), next to the user's devices and "This device".
 
 Rules:
 
-- The Cast icon is proportionally sized and visually aligned with adjacent lyrics, favorite, and playback buttons.
-- Do not render duplicate Cast icons in the same control.
+- The Connect button stands where the Cast button was: it shows a Cast icon while casting and a spinner while Cast connects, rejoins or recovers, both in the primary colour. No status text.
+- "Cast to a device" opens Chrome's device picker; while casting, "This device · Stop casting" stops it.
+- Never put `<google-cast-launcher>` in the card: the card unmounts (#40).
 - Do not add a separate Cast mini player, Cast modal, or persistent Cast banner.
-- Connecting, rejoining, and recovering states appear as an animated icon in the Cast button slot.
 - Actionable Cast failures use the global toast system with Retry when available.
 
 ### Player Controls
@@ -185,7 +185,7 @@ Primary design files:
 - `src/components/PlayerControls.tsx`: desktop playback surface.
 - `src/components/MobileMiniPlayer.tsx`: mobile compact playback surface.
 - `src/components/MobileNowPlaying.tsx`: mobile expanded playback surface.
-- `src/components/cast/CastButton.tsx`: Cast launcher and Cast state icon behavior.
+- `src/components/ConnectMenu.tsx`: the Connect button and card, including Cast (`src/hooks/useCastStatus.ts` for its state).
 - `src/components/cast/CastHealthToasts.tsx`: Cast health bridge into global toasts.
 - `src/components/Toast.tsx`: toast item behavior.
 - `src/components/ToastContainer.tsx`: global toast stack.
