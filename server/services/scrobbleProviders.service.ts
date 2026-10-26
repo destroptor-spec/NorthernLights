@@ -63,13 +63,13 @@ export async function sendToScrobbleProviders(
     if (settingEnabled(lastFmConnected) && settingEnabled(lastFmScrobbleEnabled)) {
       jobs.push({
         provider: 'lastfm',
-        run: () => submission ? scrobbleWithRetry('lastfm', userId, tracks) : updateLastFmNowPlaying(userId, tracks[tracks.length - 1]),
+        run: () => submission ? scrobbleWithRetry('lastfm', userId, tracks, { log }) : updateLastFmNowPlaying(userId, tracks[tracks.length - 1]),
       });
     }
     if (settingEnabled(listenBrainzConnected) && settingEnabled(listenBrainzScrobbleEnabled)) {
       jobs.push({
         provider: 'listenbrainz',
-        run: () => submission ? scrobbleWithRetry('listenbrainz', userId, tracks) : updateListenBrainzNowPlaying(userId, tracks[tracks.length - 1]),
+        run: () => submission ? scrobbleWithRetry('listenbrainz', userId, tracks, { log }) : updateListenBrainzNowPlaying(userId, tracks[tracks.length - 1]),
       });
     }
 

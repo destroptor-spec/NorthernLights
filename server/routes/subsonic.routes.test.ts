@@ -82,6 +82,7 @@ import {
   subsonicSuccess,
   setSubsonicSongsStarred,
 } from './subsonic.routes';
+import { resetScrobbleRetries } from '../services/scrobbleRetry.service';
 
 const databaseMock = jest.requireMock('../database') as { getUserSetting: jest.Mock };
 const lastFmMock = jest.requireMock('../services/lastfm.service') as { scrobbleTracks: jest.Mock; updateNowPlaying: jest.Mock };
@@ -254,6 +255,22 @@ describe('subsonic route helpers', () => {
       'subsonic-api.log',
       expect.stringContaining('provider_error provider=lastfm action=scrobble count=1 message=provider offline'),
     );
+  });
+
+  it('keeps the retry of a bridged scrobble in the Subsonic log', async () => {
+    databaseMock.getUserSetting.mockImplementation(async (_userId: string, key: string) => (
+      ['subsonicProviderScrobbleEnabled', 'lastFmConnected', 'lastFmScrobbleEnabled'].includes(key)
+    ));
+    const networkFailure = Object.assign(new TypeError('fetch failed'), { cause: { code: 'ETIMEDOUT' } });
+    lastFmMock.scrobbleTracks.mockRejectedValueOnce(networkFailure);
+
+    await expect(sendProviderScrobbleReports('user-1', [{ artist: 'Artist', track: 'Title' } as any], true)).resolves.toBeUndefined();
+
+    expect(debugLoggerMock.writeDebugLog).toHaveBeenCalledWith(
+      'subsonic-api.log',
+      expect.stringContaining('scrobble_retry_queued provider=lastfm count=1 message=fetch failed (cause: ETIMEDOUT)'),
+    );
+    resetScrobbleRetries();
   });
 
   it('serializes XML response metadata and nested errors', () => {

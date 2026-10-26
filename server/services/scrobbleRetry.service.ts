@@ -95,14 +95,16 @@ async function retry(item: PendingScrobble, deps: ScrobbleRetryDeps) {
 /**
  * Submit scrobbles to one provider. A transient failure is held and sent
  * again later instead of thrown, so callers treat it as handled; any other
- * failure is thrown as before.
+ * failure is thrown as before. `overrides.log` lets a caller keep the retry
+ * lines in its own log (the Subsonic bridge writes to subsonic-api.log).
  */
 export async function scrobbleWithRetry(
   provider: ScrobbleProvider,
   userId: string,
   tracks: RetryScrobbleTrack[],
-  deps: ScrobbleRetryDeps = defaultDeps,
+  overrides: Partial<ScrobbleRetryDeps> = {},
 ): Promise<unknown> {
+  const deps: ScrobbleRetryDeps = { ...defaultDeps, ...overrides };
   // A retry must keep the time of the listen, not the time it finally got through.
   const nowS = deps.nowS();
   const stamped = tracks.map((track) => track.timestamp ? track : { ...track, timestamp: nowS });
