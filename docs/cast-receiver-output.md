@@ -144,7 +144,9 @@ Phase 1's leftover "session-bound receiver tokens".
   `receiver` output on the same Cast device leaves the music alone, and a
   silent `receiver` output stays followed, like a `cast` one.
 - Log markers: `receiver-can-follow`, `receiver-session-handover`,
-  `sync-receiver-handover-failed`, `sync-receiver-left`; checklist row 20.
+  `sync-receiver-handover-failed`, `sync-receiver-left`,
+  `sync-receiver-stopped-following`, `sync-receiver-restart-gave-up`;
+  checklist row 20.
 - No kill switch (decided): a rollback of the receiver is the way back.
 
 ### D. Receiver follows the session (`receiver.html`) — built (feat/receiver-follows)
@@ -186,8 +188,23 @@ session never LOAD (PR E), and a second sender leaves (#119/#123). Details that 
   asleep.
 - Shuffle is not applied on the receiver: the sender chooses the next track
   and sends a `load`.
-- The receiver does not tell the sender when it stops following (expiry or
-  being replaced).
+- The receiver says in every `aurora.status` whether it follows a session
+  right now (`following`, a bare boolean, since every sender in the Cast
+  session receives it), and sends a status at once when following ends. A
+  sender that handed it the session and sees `following: false` refreshes the
+  credential on the server and hands it over again, at most once a minute and
+  three times until the receiver follows again (markers
+  `sync-receiver-stopped-following`, `sync-receiver-restart-gave-up`). This
+  covers a credential that ran out while the phone slept, or a renewed one
+  that never reached the receiver. The server mints it only for the user's
+  current grant, so a replaced receiver is never revived: the refresh fails
+  and the sender lets go. Older receivers send no `following`, and senders
+  ignore it from them.
+- A sender hands a credential only to the receiver its grant names
+  (`receiver:<castSessionId>` against the current Cast session, checked right
+  before sending); otherwise `receiver-session-handover` logs
+  `result=other-cast-session`. When casting moves to another device during a
+  claim or a refresh, the credential could otherwise reach the new receiver.
 
 
 All of it only when the LOAD carries `sessionId` and `receiverToken`. Without

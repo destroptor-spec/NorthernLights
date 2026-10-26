@@ -91,6 +91,12 @@ const MAX_REBASES = 2;
 /** A wake renews a receiver's credential (and so its 24-hour cap) at most this often. */
 const WAKE_REFRESH_MIN_INTERVAL_MS = 60_000;
 /**
+ * A receiver that says it stopped following gets a fresh credential at most
+ * this often, and at most this many times until it follows again.
+ */
+const RECEIVER_RESTART_MIN_INTERVAL_MS = 60_000;
+const MAX_RECEIVER_RESTARTS = 3;
+/**
  * Casting starting or stopping changes the output's kind, but a recovered Cast
  * connection blinks off and on within a second (prod 2026-10-16 08:43:01,
  * Beoplay A9). The kind is claimed once that has settled.
@@ -167,6 +173,10 @@ export class SessionMirror {
   /** The receiver took the session for this device's current grant. */
   private receiverFollowing = false;
   private wakeRefreshAt = 0;
+  /** Fresh credentials handed to a receiver that said it stopped following, since it last followed. */
+  private receiverRestarts = 0;
+  private receiverRestartAt = 0;
+  private refreshing: Promise<void> | null = null;
   private kindTimer: ReturnType<typeof setTimeout> | null = null;
 
   start(store: MirroredStore, options: SessionMirrorOptions): void {
@@ -258,6 +268,38 @@ export class SessionMirror {
   noteWake(): void {
     if (this.grant?.kind !== 'receiver' || Date.now() - this.wakeRefreshAt < WAKE_REFRESH_MIN_INTERVAL_MS) return;
     this.wakeRefreshAt = Date.now();
+    void this.refresh();
+  }
+
+  /**
+   * The receiver this device handed the session to says whether it still
+   * follows it (each aurora.status). One that stopped (its credential ran out
+   * while this device slept, or a renewed one never reached it) gets a fresh
+   * credential, handed over again. The server mints it only for this user's
+   * current grant, so a replaced grant is never revived: that refresh fails
+   * and this device lets go. At most once a minute, and three times until the
+   * receiver follows again, so a receiver that keeps stopping is not handed
+   * credentials forever.
+   */
+  noteReceiverFollowState(following: boolean): void {
+    const grant = this.grant;
+    if (grant?.kind !== 'receiver' || !this.receiverFollowing) return;
+    if (following) {
+      this.receiverRestarts = 0;
+      return;
+    }
+    if (Date.now() - this.receiverRestartAt < RECEIVER_RESTART_MIN_INTERVAL_MS) return;
+    this.receiverRestartAt = Date.now();
+    if (this.receiverRestarts >= MAX_RECEIVER_RESTARTS) {
+      if (this.receiverRestarts === MAX_RECEIVER_RESTARTS) {
+        this.receiverRestarts += 1;
+        this.options?.diagnostic?.('warn', 'sync-receiver-restart-gave-up', `generation=${grant.credential.generation}`);
+      }
+      return;
+    }
+    this.receiverRestarts += 1;
+    this.options?.diagnostic?.('warn', 'sync-receiver-stopped-following',
+      `generation=${grant.credential.generation} attempt=${this.receiverRestarts}`);
     void this.refresh();
   }
 
@@ -364,6 +406,7 @@ export class SessionMirror {
     for (const timer of [this.flushTimer, this.reportTimer, this.refreshTimer, this.kindTimer]) if (timer) clearTimeout(timer);
     this.flushTimer = this.reportTimer = this.refreshTimer = this.kindTimer = null;
     this.setReceiverFollowing(false);
+    this.receiverRestarts = 0;
     this.grant = null;
     this.session = null;
     this.dirty = false;
@@ -687,7 +730,13 @@ export class SessionMirror {
     this.refreshTimer = setTimeout(() => void this.refresh(), delay);
   }
 
-  private async refresh(): Promise<void> {
+  /** One refresh at a time: a receiver's stop, a wake and the timer may ask together. */
+  private refresh(): Promise<void> {
+    if (!this.refreshing) this.refreshing = this.refreshOnce().finally(() => { this.refreshing = null; });
+    return this.refreshing;
+  }
+
+  private async refreshOnce(): Promise<void> {
     const grant = this.grant;
     if (!grant || !this.store) return;
     try {
@@ -705,6 +754,7 @@ export class SessionMirror {
         this.onDisplaced(currentSessionFromError(error)?.output ?? null);
         return;
       }
+      if (this.refreshTimer) clearTimeout(this.refreshTimer);
       this.refreshTimer = setTimeout(() => void this.refresh(), 60_000);
     }
   }

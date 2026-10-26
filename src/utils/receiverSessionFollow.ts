@@ -9,6 +9,8 @@
 
 /** In `aurora.status` caps: this receiver build follows a session itself. */
 export const RECEIVER_SESSION_FOLLOW_CAP = 'session-follow';
+/** A receiver output's id: this prefix and the Cast session it runs in (server: claimedOutputId). */
+export const RECEIVER_OUTPUT_PREFIX = 'receiver:';
 
 /** What the receiver needs to follow the session (the token is never logged). */
 export interface ReceiverHandover {

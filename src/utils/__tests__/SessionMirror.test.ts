@@ -719,6 +719,102 @@ describe('while the receiver follows the session (Phase 5, PR E)', () => {
   });
 });
 
+describe('a receiver that stopped following', () => {
+  const receiverCredential = (token: string) => ({
+    token, expiresAt: new Date(Date.now() + 12 * 3_600_000).toISOString(),
+    renewableUntil: new Date(Date.now() + 24 * 3_600_000).toISOString(), outputId: 'receiver:cast-77', generation: 1,
+  });
+  const stoppedSetup = () => {
+    const handOverToReceiver = jest.fn(async (..._args: unknown[]) => true);
+    const diagnostic = jest.fn();
+    const harness = setup({ castConnected: true }, [], {
+      getCastSessionId: () => 'cast-77', receiverCanFollow: () => true, handOverToReceiver, diagnostic,
+    });
+    harness.api.claimPlaybackOutput.mockImplementation(async () => ({
+      session: sessionOf(harness.store.getState().playlist, 5), credential: receiverCredential('receiver-token'),
+    }));
+    harness.api.refreshOutputCredential.mockImplementation(async () => receiverCredential('fresh-token'));
+    const following = async () => {
+      await play(harness.store);
+      await jest.advanceTimersByTimeAsync(0);
+      expect(harness.mirror.receiverFollows()).toBe(true);
+      handOverToReceiver.mockClear();
+    };
+    return { ...harness, handOverToReceiver, diagnostic, following };
+  };
+
+  it('gets a fresh credential from the server, handed over again', async () => {
+    const { api, mirror, handOverToReceiver, diagnostic, following } = stoppedSetup();
+    await following();
+    mirror.noteReceiverFollowState(true);
+    expect(api.refreshOutputCredential).not.toHaveBeenCalled();
+
+    mirror.noteReceiverFollowState(false);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(api.refreshOutputCredential).toHaveBeenCalledWith(expect.anything(), 'session-1', { outputId: 'receiver:cast-77', generation: 1 });
+    expect(handOverToReceiver).toHaveBeenCalledWith(expect.objectContaining({ token: 'fresh-token', outputId: 'receiver:cast-77' }), 'refresh');
+    expect(diagnostic).toHaveBeenCalledWith('warn', 'sync-receiver-stopped-following', 'generation=1 attempt=1');
+  });
+
+  it('at most once a minute, and three times until it follows again', async () => {
+    const { api, mirror, diagnostic, following } = stoppedSetup();
+    await following();
+    for (let status = 0; status < 12; status += 1) {
+      mirror.noteReceiverFollowState(false); // a status every 5 s
+      await jest.advanceTimersByTimeAsync(5_000);
+    }
+    expect(api.refreshOutputCredential).toHaveBeenCalledTimes(1);
+
+    for (let minute = 0; minute < 5; minute += 1) {
+      mirror.noteReceiverFollowState(false);
+      await jest.advanceTimersByTimeAsync(60_000);
+    }
+    expect(api.refreshOutputCredential).toHaveBeenCalledTimes(3);
+    expect(diagnostic.mock.calls.filter(([, marker]) => marker === 'sync-receiver-restart-gave-up')).toHaveLength(1);
+
+    // Following again: a later stop is answered again.
+    mirror.noteReceiverFollowState(true);
+    mirror.noteReceiverFollowState(false);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(api.refreshOutputCredential).toHaveBeenCalledTimes(4);
+  });
+
+  it('never revives a grant another device replaced', async () => {
+    const { api, mirror, handOverToReceiver, onDisplaced, following } = stoppedSetup();
+    await following();
+    const phone = { id: 'phone-2', kind: 'browser' as const, name: 'Chrome on Android', generation: 2 };
+    api.refreshOutputCredential.mockRejectedValueOnce(new AuroraApiError('replaced', 409, 'OUTPUT_GRANT_REPLACED', undefined,
+      { current: sessionOf([], 9, { output: phone as unknown as PlaybackSession['output'] }) }));
+    mirror.noteReceiverFollowState(false);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(handOverToReceiver).not.toHaveBeenCalled();
+    expect(onDisplaced).toHaveBeenCalled();
+    expect(mirror.holdsOutput()).toBe(false);
+    expect(api.claimPlaybackOutput).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks the server once when a wake and the receiver ask together', async () => {
+    const { api, mirror, handOverToReceiver, following } = stoppedSetup();
+    await following();
+    let answer: (value: ReturnType<typeof receiverCredential>) => void = () => undefined;
+    api.refreshOutputCredential.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+    mirror.noteReceiverFollowState(false);
+    mirror.noteWake();
+    answer(receiverCredential('fresh-token'));
+    await jest.advanceTimersByTimeAsync(0);
+    expect(api.refreshOutputCredential).toHaveBeenCalledTimes(1);
+    expect(handOverToReceiver).toHaveBeenCalledTimes(1);
+  });
+
+  it('does nothing for a cast or browser output', async () => {
+    const { api, store, mirror } = setup();
+    await play(store);
+    mirror.noteReceiverFollowState(false);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(api.refreshOutputCredential).not.toHaveBeenCalled();
+  });
+});
+
 it('mirrors the Infinity toggle into the session with repeat and shuffle (Phase 4)', async () => {
   const { api, store } = setup({ isInfinityMode: false });
   await play(store);

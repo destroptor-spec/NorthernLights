@@ -8,6 +8,8 @@ type Internals = {
     attachAuroraStatusListener(session: unknown, sessionId: string): void;
     receiverCanFollowSession(): boolean;
     addReceiverCanFollowListener(listener: () => void): () => void;
+    addReceiverFollowStateListener(listener: (following: boolean) => void): () => void;
+    setReceiverFollowsSession(following: boolean): void;
     handOverSessionToReceiver(handover: Record<string, unknown>, reason: string): Promise<boolean>;
     runReceiverProbe(sseToken: string): Promise<string>;
     logCast: jest.Mock;
@@ -44,6 +46,7 @@ function harness(options: { answer?: (message: { requestId: number }) => unknown
         auroraControlCapLoggedSid: null,
         sessionFollowCapSid: '',
         receiverFollowListeners: new Set(),
+        receiverFollowStateListeners: new Set(),
         receiverFollowAcks: new ReceiverFollowAcks(),
         probeAcks: new Map(),
         logCast: jest.fn(),
@@ -53,7 +56,8 @@ function harness(options: { answer?: (message: { requestId: number }) => unknown
     });
     manager.attachAuroraStatusListener(session, 'cast-77');
     const status = (caps: string[], queueEntryId: string | null = 'entry-1') => onMessage(NS, JSON.stringify({ type: 'aurora.status', caps, queueEntryId }));
-    return { manager, session, sent, status, disconnect: () => { connected = false; } };
+    const raw = (payload: Record<string, unknown>) => onMessage(NS, JSON.stringify(payload));
+    return { manager, session, sent, status, raw, disconnect: () => { connected = false; } };
 }
 
 it('knows a receiver can follow only once its status says so, and tells listeners once per Cast session', () => {
@@ -106,11 +110,42 @@ it('sends nothing to a receiver that has not said it can follow, or once disconn
     expect(gone.session.sendMessage).not.toHaveBeenCalled();
 });
 
+it("never hands a credential to a receiver other than the one its grant names", async () => {
+    // Casting moved to another device while the claim was on its way: the
+    // grant names the old receiver's Cast session.
+    const { manager, session, status } = harness({ answer: (message) => ({ type: 'aurora.session.follow.ack', requestId: message.requestId, ok: true }) });
+    status(['session-follow']);
+    await expect(manager.handOverSessionToReceiver({ ...handover, outputId: 'receiver:cast-66' }, 'claim')).resolves.toBe(false);
+    expect(session.sendMessage).not.toHaveBeenCalled();
+    expect(manager.logCast).toHaveBeenLastCalledWith('warn', 'receiver-session-handover', 'sid=cast-77 reason=claim generation=3 result=other-cast-session');
+});
+
 it('reports a refusal', async () => {
     const { manager, status } = harness({ answer: (message) => ({ type: 'aurora.session.follow.ack', requestId: message.requestId, ok: false }) });
     status(['session-follow']);
     await expect(manager.handOverSessionToReceiver(handover, 'claim')).resolves.toBe(false);
     expect(manager.logCast).toHaveBeenLastCalledWith('warn', 'receiver-session-handover', 'sid=cast-77 reason=claim generation=3 result=refused attempts=1');
+});
+
+it('passes on whether the receiver still follows, only while this sender handed it the session', () => {
+    const { manager, raw, disconnect } = harness();
+    const listener = jest.fn();
+    manager.addReceiverFollowStateListener(listener);
+    const followingStatus = (following?: boolean) => raw({ type: 'aurora.status', caps: ['session-follow'], queueEntryId: 'entry-1', ...(following === undefined ? {} : { following }) });
+
+    followingStatus(false); // not handed over by this sender
+    expect(listener).not.toHaveBeenCalled();
+
+    manager.setReceiverFollowsSession(true);
+    followingStatus(true);
+    followingStatus(false);
+    followingStatus(); // an older receiver says nothing
+    raw({ type: 'aurora.status', caps: ['session-follow'], queueEntryId: 'entry-1', following: 'no' });
+    expect(listener.mock.calls).toEqual([[true], [false]]);
+
+    disconnect();
+    followingStatus(false);
+    expect(listener).toHaveBeenCalledTimes(2);
 });
 
 describe('the receiver probe', () => {
