@@ -578,21 +578,21 @@ describe('plays and scrobbles counted here or by the server', () => {
       _scrobbleStartAt: 1_000_000, _scrobbleEligible: false, playedThresholdPercent: 50,
       lastFmConnected: true, lastFmScrobbleEnabled: true, listenBrainzConnected: false, listenBrainzScrobbleEnabled: false,
     } as never);
-    const scrobbles = () => fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/scrobble'));
+    // The server scrobbles from the play report; this device never calls a provider route.
+    const scrobbles = () => fetchMock.mock.calls.filter(([url]) => String(url).includes('/api/providers/'));
     return { recordPlay, scrobbles };
   };
 
-  it('with sync off, scrobbles the moment the track counts as played, not only when it ends by itself', () => {
+  it('with sync off, reports the play the moment the track counts as played, not only when it ends by itself', () => {
     // Prod 2026-10-18: nothing was scrobbled after Next, or while casting.
     const { recordPlay, scrobbles } = prepare(false, false);
     listenUntil(90);
-    expect(scrobbles()).toHaveLength(0);
+    expect(recordPlay).not.toHaveBeenCalled();
     listenUntil(101);
-    expect(recordPlay).toHaveBeenCalledWith('t1');
-    expect(scrobbles()).toHaveLength(1);
-    expect(JSON.parse(scrobbles()[0][1]!.body).tracks[0]).toMatchObject({ artist: 'A', track: 'One', timestamp: 1000 });
+    expect(recordPlay).toHaveBeenCalledWith('t1', 101_000);
     listenUntil(150);
-    expect(scrobbles()).toHaveLength(1);
+    expect(recordPlay).toHaveBeenCalledTimes(1);
+    expect(scrobbles()).toHaveLength(0);
   });
 
   it('leaves plays and scrobbles to the server while this device plays the session', () => {

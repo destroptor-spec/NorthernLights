@@ -69,6 +69,8 @@ const userSessionHistory = new Map<string, string[]>();
 
 export function addToSessionHistory(userId: string, trackId: string) {
   const history = userSessionHistory.get(userId) || [];
+  // One listen can be reported twice (nowPlaying, then played).
+  if (history[history.length - 1] === trackId) return;
   history.push(trackId);
   if (history.length > 50) history.shift();
   userSessionHistory.set(userId, history);
