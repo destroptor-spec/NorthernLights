@@ -87,6 +87,7 @@ Rules:
 
 - The Connect button stands where the Cast button was: it shows a Cast icon while casting and a spinner while Cast connects, rejoins or recovers, both in the primary colour. No status text.
 - "Cast to a device" opens Chrome's device picker; while casting, "This device · Stop casting" stops it.
+- The card's order is fixed: Cast first ("Cast to a device", then a Cast device that plays), then "This device", then the user's other devices. The device that plays is always the one marked (checked), whether or not it is controlled from here; the card has no "Playing on …" line under its title.
 - Never put `<google-cast-launcher>` in the card: the card unmounts (#40).
 - Do not add a separate Cast mini player, Cast modal, or persistent Cast banner.
 - Actionable Cast failures use the global toast system with Retry when available.

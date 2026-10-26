@@ -9256,13 +9256,6 @@ a:focus-visible > .genre-card .genre-card__label {
   font-size: 1rem;
   color: var(--color-text-primary);
 }
-.connect-card-where {
-  font-size: 0.8rem;
-  color: var(--color-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .connect-options {
   display: flex;
   flex-direction: column;
