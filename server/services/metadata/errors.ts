@@ -19,3 +19,14 @@ export function isRateLimitError(error: unknown): error is RateLimitError {
 export function isProviderError(error: unknown): error is ProviderError {
   return error instanceof ProviderError;
 }
+
+/**
+ * A caught error's message plus its underlying cause. Node's fetch reports
+ * every network failure as "fetch failed" and keeps the reason (ETIMEDOUT,
+ * ECONNRESET, ...) in `cause`, which the logs used to drop.
+ */
+export function messageWithCause(error: any): string {
+  const message = String(error?.message || error || 'unknown error');
+  const cause = error?.cause?.code || error?.cause?.message;
+  return cause ? `${message} (cause: ${cause})` : message;
+}

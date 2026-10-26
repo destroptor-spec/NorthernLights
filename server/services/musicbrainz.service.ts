@@ -68,6 +68,8 @@ async function processMbQueue() {
   mbQueueRunning = false;
 }
 
+const MB_FETCH_TIMEOUT_MS = 15_000;
+
 export async function mbFetch(url: string, signal?: AbortSignal): Promise<any> {
   signal?.throwIfAborted();
   let parsed: URL;
@@ -101,7 +103,10 @@ export async function mbFetch(url: string, signal?: AbortSignal): Promise<any> {
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
-        const res = await fetch(parsed.toString(), { headers, ...(signal ? { signal } : {}) });
+        // Requests run one at a time, so a connection that never answers
+        // would hold up every MusicBrainz lookup behind it.
+        const timeout = AbortSignal.timeout(MB_FETCH_TIMEOUT_MS);
+        const res = await fetch(parsed.toString(), { headers, signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
         if (!res.ok) throw new Error(`MusicBrainz HTTP ${res.status}`);
         return res.json();
       },

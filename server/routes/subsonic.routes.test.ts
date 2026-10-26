@@ -234,7 +234,8 @@ describe('subsonic route helpers', () => {
     expect(queueProviderScrobbleReports('user-1', [{ artist: 'Artist', track: 'Title' } as any], true)).toBeUndefined();
     await flushPromises();
 
-    expect(lastFmMock.scrobbleTracks).toHaveBeenCalledWith('user-1', [{ artist: 'Artist', track: 'Title' }]);
+    // Stamped on the way out, so a retry after a network failure keeps the time of the listen.
+    expect(lastFmMock.scrobbleTracks).toHaveBeenCalledWith('user-1', [{ artist: 'Artist', track: 'Title', timestamp: expect.any(Number) }]);
     expect(listenBrainzMock.scrobbleTracks).not.toHaveBeenCalled();
 
     resolveProvider({ status: 'ok' });
