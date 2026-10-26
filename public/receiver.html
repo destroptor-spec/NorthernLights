@@ -1085,6 +1085,12 @@
           caps: sessionFollower && currentAuthToken
             ? ['control', 'queue-insert', 'diagnostics', 'session-follow']
             : ['control', 'queue-insert', 'diagnostics'],
+          // Whether it follows a session right now. A sender that handed one
+          // over learns here that following ended (a credential that ran out
+          // while the phone slept) and hands over a fresh one. Only a yes or
+          // no: never the session, the grant or its credential, since every
+          // sender in this Cast session receives this.
+          following: !!(sessionFollower && sessionFollower.following()),
           diagnosticsVerbose: receiverDiagnosticsVerbose,
           ts: Date.now()
         };
@@ -1441,6 +1447,7 @@
             onStopped: function(reason) {
               if (reason === 'expired') followEndedTip = 'Open Aurora to keep playing.';
               syncUi(true);
+              broadcastAuroraStatus('follow-stopped');
             }
           });
         }

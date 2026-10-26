@@ -32,6 +32,7 @@ const sessionQueueTracks = (session: PlaybackSession) => toPlayableTracks(sessio
 
 // "Sync playback across devices" (off unless the user turns it on here).
 castManager.addReceiverCanFollowListener(() => sessionMirror.noteReceiverCanFollow());
+castManager.addReceiverFollowStateListener((following) => sessionMirror.noteReceiverFollowState(following));
 sessionMirror.start(usePlayerStore, {
   getPositionSeconds: () => getPlaybackTimeSnapshot().currentTime,
   getOutputName: () => (usePlayerStore.getState().castConnected && castManager.getCastDeviceName()) || describeThisDevice(),

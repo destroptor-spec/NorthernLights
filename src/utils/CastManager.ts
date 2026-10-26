@@ -35,7 +35,7 @@ import type { TrackInfo } from './fileSystem';
 import { castEndSnapshot, shouldContinuePlayingAfterCast, type CastEndSnapshot } from './castEndHandoff';
 import { castStartPosition, type FollowAtLaunch } from './castStartPosition';
 import { getPlaybackTimeSnapshot } from '../store/playbackTime';
-import { handOverToReceiver, ReceiverFollowAcks, RECEIVER_SESSION_FOLLOW_CAP, type ReceiverFollowAck, type ReceiverHandover } from './receiverSessionFollow';
+import { handOverToReceiver, ReceiverFollowAcks, RECEIVER_OUTPUT_PREFIX, RECEIVER_SESSION_FOLLOW_CAP, type ReceiverFollowAck, type ReceiverHandover } from './receiverSessionFollow';
 declare const chrome: any;
 declare const cast: any;
 
@@ -68,6 +68,8 @@ export interface AuroraReceiverStatus {
   duration?: number;
   /** Capabilities of the receiver build; 'control' means it accepts aurora.control. */
   caps?: string[];
+  /** Phase 5: it follows a playback session right now (absent from older receivers). */
+  following?: boolean;
   ts?: number;
 }
 
@@ -226,6 +228,7 @@ export class CastManager {
     /** The Cast session whose receiver took the playback session (PR E): its queue is the receiver's. */
     private receiverFollowingSid = '';
     private readonly receiverFollowListeners = new Set<() => void>();
+    private readonly receiverFollowStateListeners = new Set<(following: boolean) => void>();
     private readonly receiverFollowAcks = new ReceiverFollowAcks();
     private lastRemotePlayerEventAt = 0;
     private lastRemotePositionAt = 0;
@@ -972,6 +975,15 @@ export class CastManager {
     }
 
     /**
+     * Called with each status from the receiver this sender handed the session
+     * to, while it believes that receiver follows it: whether it still does.
+     */
+    public addReceiverFollowStateListener(listener: (following: boolean) => void): () => void {
+        this.receiverFollowStateListeners.add(listener);
+        return () => this.receiverFollowStateListeners.delete(listener);
+    }
+
+    /**
      * Gives the receiver the playback session and its receiver credential
      * (aurora.session.follow, acknowledged). True once the receiver took it.
      * The token is never logged.
@@ -982,6 +994,13 @@ export class CastManager {
         const detail = `sid=${sid || 'none'} reason=${reason} generation=${handover.generation}`;
         if (!session || typeof session.sendMessage !== 'function' || !this.receiverCanFollowSession()) {
             this.logCast('warn', 'receiver-session-handover', `${detail} result=not-connected`);
+            return false;
+        }
+        // Only to the receiver the grant names (receiver:<Cast session>): the
+        // Cast session may have moved to another device since the claim. Every
+        // try below goes to this same session.
+        if (handover.outputId !== `${RECEIVER_OUTPUT_PREFIX}${sid}`) {
+            this.logCast('warn', 'receiver-session-handover', `${detail} result=other-cast-session`);
             return false;
         }
         const result = await handOverToReceiver({
@@ -1449,6 +1468,10 @@ export class CastManager {
                         this.sessionFollowCapSid = sessionId;
                         this.logCast('ok', 'receiver-can-follow', `sid=${sessionId}`);
                         this.receiverFollowListeners.forEach((listener) => listener());
+                    }
+                    const following = status.following;
+                    if (typeof following === 'boolean' && this.receiverFollowsSession()) {
+                        this.receiverFollowStateListeners.forEach((listener) => listener(following));
                     }
                     this.applyAuroraStatus(status);
                     this.syncReceiverDiagnostics();
