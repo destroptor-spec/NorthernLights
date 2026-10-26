@@ -114,6 +114,13 @@ export const ContextMenuLink: React.FC<{
     </a>
 );
 
+/** How long closing takes: the popover fades back (as it opened), the phone's sheet slides down. */
+export const POPOVER_CLOSE_MS = 150;
+export const SHEET_CLOSE_MS = 300;
+
+const prefersReducedMotion = () =>
+    typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 export const ContextMenuPortal: React.FC<{
     open: boolean;
     onClose: () => void;
@@ -152,11 +159,25 @@ export const ContextMenuPortal: React.FC<{
     const isMobile = useIsMobile();
     const menuRef = useRef<HTMLDivElement>(null);
     const [isVisible, setIsVisible] = useState(false);
+    // Closing fades (or slides) away before it unmounts, showing what it
+    // showed when it closed (lastContent), and takes no taps meanwhile.
+    const lastContent = useRef<React.ReactNode>(null);
+    const [, setClosed] = useState(0);
+    const reduceMotion = prefersReducedMotion();
 
     useEffect(() => {
-        if (open) requestAnimationFrame(() => setIsVisible(true));
-        else setIsVisible(false);
-    }, [open]);
+        if (open) {
+            const frame = requestAnimationFrame(() => setIsVisible(true));
+            return () => cancelAnimationFrame(frame);
+        }
+        setIsVisible(false);
+        if (!lastContent.current) return;
+        const timer = setTimeout(() => {
+            lastContent.current = null;
+            setClosed((count) => count + 1);
+        }, prefersReducedMotion() ? 0 : isMobile ? SHEET_CLOSE_MS : POPOVER_CLOSE_MS);
+        return () => clearTimeout(timer);
+    }, [open]); // eslint-disable-line react-hooks/exhaustive-deps -- isMobile is read as it closes
 
     useEffect(() => {
         if (!open) return;
@@ -188,27 +209,31 @@ export const ContextMenuPortal: React.FC<{
         };
     }, [anchorRef, isMobile, onClose, open]);
 
-    if (!open) return null;
+    if (open) lastContent.current = children({ isMobile });
+    if (!lastContent.current) return null;
+    const content = lastContent.current;
+    const blockWhileClosing: React.CSSProperties | undefined = open ? undefined : { pointerEvents: 'none' };
 
     if (isMobile) {
         return createPortal(
             <>
                 <div
-                    className="fixed inset-0 z-[9998] transition-opacity duration-200"
+                    className="fixed inset-0 z-[9998] transition-opacity duration-200 motion-reduce:transition-none"
                     style={{
                         background: 'rgba(0,0,0,0.55)',
                         opacity: isVisible ? 1 : 0,
                         backdropFilter: 'blur(4px)',
                         WebkitBackdropFilter: 'blur(4px)',
+                        ...blockWhileClosing,
                     }}
                     onClick={onClose}
                 />
                 <div
-                    className="fixed bottom-0 left-0 right-0 z-[9999] transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]"
-                    style={{ transform: isVisible ? 'translateY(0)' : 'translateY(100%)' }}
+                    className="fixed bottom-0 left-0 right-0 z-[9999] transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] motion-reduce:transition-none"
+                    style={{ transform: isVisible ? 'translateY(0)' : 'translateY(100%)', ...blockWhileClosing }}
                 >
                     <div ref={menuRef}>
-                        {children({ isMobile })}
+                        {content}
                     </div>
                     <div className="h-[env(safe-area-inset-bottom,0px)] bg-[var(--glass-bg)] border-x border-[var(--glass-border)]" />
                 </div>
@@ -237,11 +262,12 @@ export const ContextMenuPortal: React.FC<{
                 left,
                 opacity: isVisible ? 1 : 0,
                 transform: isVisible ? 'scale(1) translateY(0)' : `scale(0.95) translateY(${above ? 4 : -4}px)`,
-                transition: 'opacity 0.15s, transform 0.15s',
+                transition: reduceMotion ? 'none' : `opacity ${POPOVER_CLOSE_MS}ms, transform ${POPOVER_CLOSE_MS}ms`,
                 transformOrigin: above ? 'bottom right' : 'top left',
+                ...blockWhileClosing,
             }}
         >
-            {children({ isMobile })}
+            {content}
         </div>,
         document.body
     );
