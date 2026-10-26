@@ -1,5 +1,5 @@
 import { lastFmThrottle, fetchWithRetry } from '../rateLimiter';
-import { RateLimitError, ProviderError } from '../errors';
+import { RateLimitError, ProviderError, messageWithCause } from '../errors';
 
 const LASTFM_API = 'https://ws.audioscrobbler.com/2.0/';
 
@@ -86,7 +86,7 @@ export async function lastFmArtistInfo(
   }).catch((err: any) => {
     if (err instanceof RateLimitError || err instanceof ProviderError) throw err;
     console.error(`[Last.fm] fetch error for "${artist}":`, err.message);
-    throw new ProviderError('lastfm', err.message);
+    throw new ProviderError('lastfm', messageWithCause(err));
   });
 }
 
@@ -109,7 +109,7 @@ export async function lastFmAlbumInfo(
     return json.album || null;
   }).catch((err: any) => {
     if (err instanceof RateLimitError || err instanceof ProviderError) throw err;
-    throw new ProviderError('lastfm', err.message);
+    throw new ProviderError('lastfm', messageWithCause(err));
   });
 }
 
@@ -131,7 +131,7 @@ export async function lastFmArtistTopTags(
     return json.toptags || null;
   }).catch((err: any) => {
     if (err instanceof RateLimitError || err instanceof ProviderError) throw err;
-    throw new ProviderError('lastfm', err.message);
+    throw new ProviderError('lastfm', messageWithCause(err));
   });
 }
 
@@ -157,7 +157,7 @@ export async function lastFmArtistTopTracks(
     return Array.isArray(rawTracks) ? rawTracks : [rawTracks];
   }).catch((err: any) => {
     if (err instanceof RateLimitError || err instanceof ProviderError) throw err;
-    throw new ProviderError('lastfm', err.message);
+    throw new ProviderError('lastfm', messageWithCause(err));
   });
 }
 
@@ -179,7 +179,7 @@ export async function lastFmTagTopAlbums(
     return json.albums || null;
   }).catch((err: any) => {
     if (err instanceof RateLimitError || err instanceof ProviderError) throw err;
-    throw new ProviderError('lastfm', err.message);
+    throw new ProviderError('lastfm', messageWithCause(err));
   });
 }
 
@@ -201,7 +201,7 @@ export async function lastFmTagInfo(
     return json.tag || null;
   }).catch((err: any) => {
     if (err instanceof RateLimitError || err instanceof ProviderError) throw err;
-    throw new ProviderError('lastfm', err.message);
+    throw new ProviderError('lastfm', messageWithCause(err));
   });
 }
 
