@@ -38,9 +38,9 @@ afterEach(() => {
   act(() => { usePlayerStore.setState({ sessionFollow: null, remoteControlOutputId: null } as never); });
 });
 
-test('says the music plays here, with this device chosen and nothing else to pick', () => {
+test('marks this device when the music plays here, with no line saying so', () => {
   setup({});
-  expect(screen.getByText('Playing on this device')).toBeTruthy();
+  expect(screen.queryByText(/^Playing on/)).toBeNull();
   const here = screen.getByRole('button', { name: /This device Playing here/ });
   expect(here.className).toContain('is-selected');
   expect(screen.queryByRole('button', { name: /Control/ })).toBeNull();
@@ -48,8 +48,8 @@ test('says the music plays here, with this device chosen and nothing else to pic
 
 test('while another device plays: one button to control it, one to play here', () => {
   const { resolvePlayWhere } = setup({ sessionFollow: follow() });
-  expect(screen.getByText('Playing on NAD Forstærker')).toBeTruthy();
-  expect(screen.getByRole('button', { name: /NAD Forstærker Control it from here/ })).toBeTruthy();
+  // Marked as the one that plays, though not controlled from here.
+  expect(screen.getByRole('button', { name: /NAD Forstærker Control it from here/ }).className).toContain('is-selected');
   screen.getByRole('button', { name: /This device Play here instead/ }).click();
   expect(resolvePlayWhere).toHaveBeenCalledWith('here');
 });
@@ -85,7 +85,6 @@ test('marks the device this one controls', () => {
 
 test('a device that stopped answering cannot be chosen; playing here can', () => {
   setup({ sessionFollow: follow({ silent: true } as Partial<FollowedOutput>) });
-  expect(screen.getByText("NAD Forstærker isn't responding")).toBeTruthy();
   expect((screen.getByRole('button', { name: /NAD Forstærker Isn't responding/ }) as HTMLButtonElement).disabled).toBe(true);
   expect((screen.getByRole('button', { name: /This device Play here instead/ }) as HTMLButtonElement).disabled).toBe(false);
 });
@@ -127,10 +126,15 @@ test('keeps the output row when access is denied: Settings can ask again', () =>
   expect(screen.getByRole('button', { name: /^Output/ })).toBeTruthy();
 });
 
-test('while casting, says where, and leaves the output to the Cast device', () => {
+test('while casting, marks the Cast device, and leaves the output to it', () => {
   setup({ castConnected: true });
-  expect(screen.getByText(/^Casting to /)).toBeTruthy();
+  expect(screen.getByRole('button', { name: /Casting from this device/ }).className).toContain('is-selected');
   expect(screen.queryByRole('button', { name: /^Output/ })).toBeNull();
+});
+
+test('says when the device that plays is paused', () => {
+  setup({ sessionFollow: follow({ state: 'paused' }) });
+  expect(screen.getByRole('button', { name: /NAD Forstærker Paused · Control it from here/ })).toBeTruthy();
 });
 
 describe('Cast, in the card (step 2: no Cast button of its own)', () => {
@@ -229,6 +233,34 @@ describe("the user's other devices", () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  // Andreas, 2026-10-26: Cast at the top, always; then this device; other devices last.
+  const order = () => Array.from(document.querySelectorAll('.connect-card .connect-option-title')).map((title) => title.textContent);
+
+  test('in a fixed order: Cast, this device, then the other devices', () => {
+    mockCast = { ...noCast, available: true };
+    setup({ connectedDevices: devices() });
+    expect(order()).toEqual(['Cast to a device', 'This device', 'Chrome on Android']);
+  });
+
+  test('a Cast device that plays sits with Cast at the top', () => {
+    mockCast = { ...noCast, available: true };
+    setup({ connectedDevices: devices(), sessionFollow: follow() });
+    expect(order()).toEqual(['Cast to a device', 'NAD Forstærker', 'This device', 'Chrome on Android']);
+  });
+
+  test('another device that plays stays in the list, marked, after "Play there" (no remote control chosen)', () => {
+    // Andreas, 2026-10-26: "Play there" lit it, but reopened it was no longer marked.
+    mockCast = { ...noCast, available: true };
+    setup({ connectedDevices: devices(), sessionFollow: follow({ outputId: 'phone-0002', name: 'Chrome on Android', kind: 'browser' }) });
+    expect(order()).toEqual(['Cast to a device', 'This device', 'Chrome on Android']);
+    expect(screen.getByRole('button', { name: /Chrome on Android Control it from here/ }).className).toContain('is-selected');
+  });
+
+  test('lists the device that plays even with no event stream of its own open', () => {
+    setup({ connectedDevices: [], sessionFollow: follow({ outputId: 'phone-0002', name: 'Chrome on Android', kind: 'browser' }) });
+    expect(screen.getByRole('button', { name: /Chrome on Android Control it from here/ }).className).toContain('is-selected');
   });
 
   test('shows the playing device once (to control it), and no Cast receivers', () => {

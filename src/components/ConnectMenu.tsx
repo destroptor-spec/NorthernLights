@@ -51,13 +51,14 @@ export function useListedDevices(devices: ConnectedDevice[]): ListedDevice[] {
 /**
  * "Connect": where the music plays, and the choices that go with it, in one
  * card (docs/playback_sessions.md, Phase 6 prep; Andreas, 2026-10-20). Each
- * choice is a full-width button: the device that plays (control it from
- * here) or this device (play here instead). This device's output is named
- * and opens Settings → Playback → Output. Cast is in here too: "Cast to a
- * device" opens Chrome's device picker (no <google-cast-launcher>: the card
- * unmounts, #40), and while casting "This device" stops casting. Listen
- * together and "Open your session" come with Phase 6. The "Playing on" strip
- * and the Now Playing heading only say where.
+ * choice is a full-width button, in a fixed order (Andreas, 2026-10-26):
+ * Cast first ("Cast to a device" opens Chrome's device picker; no
+ * <google-cast-launcher>, the card unmounts, #40), then this device, then the
+ * user's other devices. The device that plays is always the one marked;
+ * there is no "Playing on" line. This device's output is named and opens
+ * Settings → Playback → Output. Listen together and "Open your session" come
+ * with Phase 6. The "Playing on" strip and the Now Playing heading only say
+ * where.
  */
 const stopBubbling = (event: React.SyntheticEvent) => event.stopPropagation();
 
@@ -155,33 +156,33 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
   const defaultOutputLabel = usePlayerStore((s) => s.audioOutputDevices.find((device) => device.isDefault)?.label);
   const syncOn = usePlayerStore((s) => s.syncPlaybackAcrossDevices);
   const connectedDevices = usePlayerStore((s) => s.connectedDevices);
+  // A Cast device that plays the session (another device casts to it, or it
+  // follows the session itself) belongs with Cast at the top; any other
+  // device that plays is listed with the user's devices.
+  const followedCast = !!follow && (follow.kind === 'cast' || follow.kind === 'receiver');
   // The user's other devices with Aurora open (live: devices.changed), minus
-  // the one that plays (shown above) and Cast receivers (reached by casting).
+  // Cast receivers (reached by casting), plus the one that plays even when it
+  // has no event stream open right now.
   const myId = getAuroraClientId();
-  const followedOutputId = follow?.outputId;
-  const otherDevices = useMemo(() => (syncOn
-    ? connectedDevices
-      .filter((device) => device.clientId !== myId && device.kind !== 'receiver' && device.clientId !== followedOutputId)
-      .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
-    : []), [connectedDevices, followedOutputId, myId, syncOn]);
+  const otherDevices = useMemo(() => {
+    if (!syncOn) return [];
+    const devices = connectedDevices.filter((device) => device.clientId !== myId && device.kind !== 'receiver');
+    if (follow && !followedCast && !devices.some((device) => device.clientId === follow.outputId)) {
+      devices.push({ clientId: follow.outputId, name: follow.name, kind: 'browser' });
+    }
+    return devices.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
+  }, [connectedDevices, follow, followedCast, myId, syncOn]);
   const listedDevices = useListedDevices(otherDevices);
   const cast = useCastStatus('connect');
 
   const controlsFollowed = !!follow && remoteControlOutputId === follow.outputId;
   const castDevice = castConnected ? castManager.getCastDeviceName() || 'Cast device' : null;
-  const where = follow
-    ? follow.silent
-      ? `${follow.name} isn't responding`
-      : `${isFollowedOutputPlaying(follow) ? 'Playing' : 'Paused'} on ${follow.name}`
-    : castDevice
-      ? `Casting to ${castDevice}`
-      : 'Playing on this device';
   const outputName = audioOutputActive ? audioOutputDeviceLabel || 'Selected output' : defaultOutputLabel || 'System default';
 
   // A choice is acted on at once, but the card stays about a second, frozen
   // as it was, with the choice lit, before it closes (Andreas, 2026-10-24:
   // closing at once left him tapping again to make sure it took).
-  const live = { follow, controlsFollowed, castDevice, where, listedDevices };
+  const live = { follow, followedCast, controlsFollowed, castDevice, listedDevices };
   const [chosen, setChosen] = useState<string | null>(null);
   const frozen = useRef(live);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -208,61 +209,70 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
   };
   // Hands the music back here (cast-ended-handoff), like the Cast dialog's Stop.
   const stopCasting = () => pick('stop-casting', () => { void castManager.disconnect(); });
-  const castOption = cast.available && !castConnected ? (
-    <ConnectOption
-      icon={cast.busy ? <Loader2 size={18} className="connect-spinner" /> : <Cast size={18} />}
-      title="Cast to a device"
-      detail="Speakers and TVs nearby"
-      onClick={cast.busy || chosen ? undefined : startCasting}
-    />
-  ) : null;
+
+  // The device that plays is always the one marked (Andreas, 2026-10-26: after
+  // "Play there" it lost its mark), whether or not it is controlled from here.
+  const followedOption = (icon: React.ReactNode) => {
+    const f = view.follow!;
+    const state = f.silent ? "Isn't responding"
+      : view.controlsFollowed || isChosen('remote') ? 'Controlled from here' : 'Control it from here';
+    return (
+      <ConnectOption
+        key={f.outputId}
+        icon={icon}
+        title={f.name}
+        detail={!f.silent && !isFollowedOutputPlaying(f) ? `Paused · ${state}` : state}
+        selected={!chosen}
+        chosen={isChosen('remote')}
+        onClick={f.silent || chosen ? undefined : () => choose('remote')}
+      />
+    );
+  };
 
   return (
     <div className="connect-card" role="dialog" aria-label="Connect">
       <div className="connect-card-header">
         <span className="connect-card-title">Connect</span>
-        <span className="connect-card-where">{view.where}</span>
       </div>
 
       <div className={`connect-options${chosen ? ' has-choice' : ''}`}>
-        {view.follow ? (
-          <>
-            <ConnectOption
-              icon={<Speaker size={18} />}
-              title={view.follow.name}
-              detail={view.follow.silent ? "Isn't responding" : view.controlsFollowed || isChosen('remote') ? 'Controlled from here' : 'Control it from here'}
-              selected={view.controlsFollowed && !chosen}
-              chosen={isChosen('remote')}
-              onClick={view.follow.silent || chosen ? undefined : () => choose('remote')}
-            />
-            <ConnectOption
-              icon={<MonitorSmartphone size={18} />}
-              title="This device"
-              detail="Play here instead"
-              chosen={isChosen('here')}
-              onClick={chosen ? undefined : () => choose('here')}
-            />
-            {castOption}
-          </>
-        ) : view.castDevice ? (
-          <>
-            <ConnectOption icon={<Cast size={18} />} title={view.castDevice} detail="Casting from this device" selected={!chosen} />
-            <ConnectOption
-              icon={<MonitorSmartphone size={18} />}
-              title="This device"
-              detail="Stop casting"
-              chosen={isChosen('stop-casting')}
-              onClick={chosen ? undefined : stopCasting}
-            />
-          </>
+        {/* Cast first, always: casting from here, or a Cast device that plays. */}
+        {cast.available && !view.castDevice && (
+          <ConnectOption
+            icon={cast.busy ? <Loader2 size={18} className="connect-spinner" /> : <Cast size={18} />}
+            title="Cast to a device"
+            detail="Speakers and TVs nearby"
+            onClick={cast.busy || chosen ? undefined : startCasting}
+          />
+        )}
+        {view.castDevice && (
+          <ConnectOption icon={<Cast size={18} />} title={view.castDevice} detail="Casting from this device" selected={!chosen} />
+        )}
+        {view.follow && view.followedCast && followedOption(<Speaker size={18} />)}
+
+        {/* Then this device. */}
+        {view.castDevice ? (
+          <ConnectOption
+            icon={<MonitorSmartphone size={18} />}
+            title="This device"
+            detail="Stop casting"
+            chosen={isChosen('stop-casting')}
+            onClick={chosen ? undefined : stopCasting}
+          />
+        ) : view.follow ? (
+          <ConnectOption
+            icon={<MonitorSmartphone size={18} />}
+            title="This device"
+            detail="Play here instead"
+            chosen={isChosen('here')}
+            onClick={chosen ? undefined : () => choose('here')}
+          />
         ) : (
-          <>
-            <ConnectOption icon={<MonitorSmartphone size={18} />} title="This device" detail="Playing here" selected={!chosen} />
-            {castOption}
-          </>
+          <ConnectOption icon={<MonitorSmartphone size={18} />} title="This device" detail="Playing here" selected={!chosen} />
         )}
       </div>
 
+      {/* Last, the user's other devices; the one that plays is marked. */}
       {view.listedDevices.length > 0 && (
         <div className={`connect-devices${chosen ? ' has-choice' : ''}`}>
           {view.listedDevices.map(({ device, entering, leaving }) => (
@@ -272,15 +282,19 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
               aria-hidden={leaving || undefined}
             >
               <div className="connect-device-inner">
-                <ConnectOption
-                  icon={<MonitorSmartphone size={18} />}
-                  title={device.name || 'Another device'}
-                  detail="Play there"
-                  chosen={isChosen(device.clientId)}
-                  onClick={leaving || chosen ? undefined : () => pick(device.clientId, () => {
-                    void usePlayerStore.getState().transferPlaybackTo(device);
-                  })}
-                />
+                {view.follow && !view.followedCast && device.clientId === view.follow.outputId && !leaving
+                  ? followedOption(<MonitorSmartphone size={18} />)
+                  : (
+                    <ConnectOption
+                      icon={<MonitorSmartphone size={18} />}
+                      title={device.name || 'Another device'}
+                      detail="Play there"
+                      chosen={isChosen(device.clientId)}
+                      onClick={leaving || chosen ? undefined : () => pick(device.clientId, () => {
+                        void usePlayerStore.getState().transferPlaybackTo(device);
+                      })}
+                    />
+                  )}
               </div>
             </div>
           ))}
