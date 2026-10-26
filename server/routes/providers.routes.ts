@@ -3,13 +3,13 @@ import { createRateLimiter } from '../middleware/rateLimit';
 import { randomBytes } from 'crypto';
 import { getSystemSetting, setSystemSetting, getUserSetting, setUserSetting, getRepresentativeReleaseMbid, getArtistVideosCache } from '../database';
 import { caaGetReleaseImages, pickMediumImage, pickFrontImage } from '../services/metadata/providers/musicbrainz';
-import { lfmFetch, scrobbleTracks, updateNowPlaying, loveTrack, unloveTrack } from '../services/lastfm.service';
+import { lfmFetch, updateNowPlaying, loveTrack, unloveTrack } from '../services/lastfm.service';
 import {
   validateToken as validateLbToken,
-  scrobbleTracks as lbScrobbleTracks,
   updateNowPlaying as lbUpdateNowPlaying,
 } from '../services/listenbrainz.service';
 import { requireAuth, requireAdmin } from '../middleware/auth';
+import { scrobbleWithRetry } from '../services/scrobbleRetry.service';
 import { mbFetch, checkMbEnabled, refreshMbToken } from '../services/musicbrainz.service';
 import { writeDebugLog } from '../services/debugLogger.service';
 import { enrichArtistImagesInBackground } from '../services/artistImageEnrichment.service';
@@ -765,7 +765,7 @@ router.post('/providers/lastfm/scrobble', async (req, res) => {
       return res.status(400).json({ error: 'Missing tracks array' });
     }
 
-    const result = await scrobbleTracks(userId, tracks);
+    const result = await scrobbleWithRetry('lastfm', userId, tracks);
     res.json(result);
   } catch (err: any) {
     scrobbleSoftFail(res, '[Last.fm] scrobble', err);
@@ -927,7 +927,7 @@ router.post('/providers/listenbrainz/scrobble', async (req, res) => {
       return res.status(400).json({ error: 'Missing tracks array' });
     }
 
-    const result = await lbScrobbleTracks(userId, tracks);
+    const result = await scrobbleWithRetry('listenbrainz', userId, tracks);
     res.json(result);
   } catch (err: any) {
     scrobbleSoftFail(res, '[ListenBrainz] scrobble', err);

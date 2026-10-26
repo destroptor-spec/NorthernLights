@@ -1,6 +1,8 @@
 import { getUserSetting } from '../database';
-import { scrobbleTracks as scrobbleLastFmTracks, updateNowPlaying as updateLastFmNowPlaying, type LfmTrack } from './lastfm.service';
-import { scrobbleTracks as scrobbleListenBrainzTracks, updateNowPlaying as updateListenBrainzNowPlaying, type LbTrack } from './listenbrainz.service';
+import { updateNowPlaying as updateLastFmNowPlaying, type LfmTrack } from './lastfm.service';
+import { updateNowPlaying as updateListenBrainzNowPlaying, type LbTrack } from './listenbrainz.service';
+import { messageWithCause } from './metadata/errors';
+import { scrobbleWithRetry } from './scrobbleRetry.service';
 
 /**
  * Scrobbles and now-playing updates sent by the server, to the providers a
@@ -38,7 +40,8 @@ export function trackRowToProviderScrobble(track: any, timestamp?: number): Prov
 
 /**
  * Sends to every provider the user has connected and switched on. Never
- * throws: scrobbling is best-effort, and each failure goes to `log`.
+ * throws: scrobbling is best-effort, and each failure goes to `log`. A
+ * scrobble lost to a network failure is sent again later (scrobbleRetry).
  */
 export async function sendToScrobbleProviders(
   userId: string,
@@ -60,23 +63,23 @@ export async function sendToScrobbleProviders(
     if (settingEnabled(lastFmConnected) && settingEnabled(lastFmScrobbleEnabled)) {
       jobs.push({
         provider: 'lastfm',
-        run: () => submission ? scrobbleLastFmTracks(userId, tracks) : updateLastFmNowPlaying(userId, tracks[tracks.length - 1]),
+        run: () => submission ? scrobbleWithRetry('lastfm', userId, tracks, { log }) : updateLastFmNowPlaying(userId, tracks[tracks.length - 1]),
       });
     }
     if (settingEnabled(listenBrainzConnected) && settingEnabled(listenBrainzScrobbleEnabled)) {
       jobs.push({
         provider: 'listenbrainz',
-        run: () => submission ? scrobbleListenBrainzTracks(userId, tracks) : updateListenBrainzNowPlaying(userId, tracks[tracks.length - 1]),
+        run: () => submission ? scrobbleWithRetry('listenbrainz', userId, tracks, { log }) : updateListenBrainzNowPlaying(userId, tracks[tracks.length - 1]),
       });
     }
 
     const results = await Promise.allSettled(jobs.map((job) => job.run()));
     results.forEach((result, index) => {
       if (result.status === 'rejected') {
-        log(`provider_error provider=${jobs[index].provider} action=${action} count=${tracks.length} message=${String(result.reason?.message || result.reason).slice(0, 240)}`);
+        log(`provider_error provider=${jobs[index].provider} action=${action} count=${tracks.length} message=${messageWithCause(result.reason).slice(0, 240)}`);
       }
     });
   } catch (error: any) {
-    log(`provider_error provider=settings action=${action} count=${tracks.length} message=${String(error?.message || error).slice(0, 240)}`);
+    log(`provider_error provider=settings action=${action} count=${tracks.length} message=${messageWithCause(error).slice(0, 240)}`);
   }
 }
