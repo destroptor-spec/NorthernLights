@@ -187,6 +187,15 @@ export function toLegacyPlaylist(playlist: Playlist, mediaToken: string, quality
 
 export type { AlbumSummary, ArtistSummary, AuroraClient, Genre, PlaybackDescriptor, PlaybackSession, PlaybackSessionPatch, Playlist, Track };
 
+/** Signed links (each opens its one image) for artwork IDs held unsigned. */
+export function signArtworkLinks(authHeaders: Record<string, string>, ids: string[]): Promise<{ links: Record<string, string> }> {
+  return auroraApiRequest('/artwork/links', authHeaders, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+}
+
 /** A short-lived scoped token (never a session) for a transport that cannot send headers. */
 export function mintScopedToken(authHeaders: Record<string, string>, scope: 'media' | 'sse', expiresIn: '5m' | '15m' | '1h' | '12h' = '15m'): Promise<{ token: string; expiresAt: string }> {
   return auroraApiRequest('/auth/scoped-token', authHeaders, {

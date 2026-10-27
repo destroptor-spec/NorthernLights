@@ -1498,6 +1498,40 @@
           "client"
         ]
       },
+      "ArtworkLinks": {
+        "type": "object",
+        "properties": {
+          "links": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Each artwork ID with its signed link (`/api/v1/artwork/<id>?sig=…`), which opens that one image with no credential."
+          }
+        },
+        "required": [
+          "links"
+        ]
+      },
+      "ArtworkLinksRequest": {
+        "type": "object",
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{1,64}$"
+            },
+            "minItems": 1,
+            "maxItems": 500,
+            "description": "Artwork IDs (a track's artworkId) to sign links for."
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "additionalProperties": false
+      },
       "AppKeyCreate": {
         "type": "object",
         "properties": {
@@ -2853,6 +2887,60 @@
           },
           "500": {
             "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/artwork/links": {
+      "post": {
+        "summary": "Signed links for artwork IDs",
+        "description": "For artwork a client holds without a signature (a track list saved before links were signed). Each link opens its one image with no credential; it opens nothing the caller could not open with its own token.",
+        "tags": [
+          "Library"
+        ],
+        "security": [
+          {
+            "listenerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArtworkLinksRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signed links by ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ArtworkLinks"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid IDs",
             "content": {
               "application/json": {
                 "schema": {

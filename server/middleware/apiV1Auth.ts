@@ -92,7 +92,8 @@ function receiverSessionInPath(method: string, path: string): string | null {
 }
 
 const SCOPE_ALLOWED_ENDPOINTS: Record<string, (method: string, path: string) => boolean> = {
-  media: (_method, path) => path.startsWith('/artwork/'),
+  // Reading artwork only: not asking for signed links (POST /artwork/links).
+  media: (method, path) => method === 'GET' && path.startsWith('/artwork/'),
   sse: (_method, path) => path === '/events',
   // A receiver credential (docs/cast-receiver-output.md, PR B): a Cast
   // receiver playing one session on its own. It follows that session (read it,

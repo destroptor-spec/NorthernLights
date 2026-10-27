@@ -184,7 +184,10 @@ session never LOAD (PR E), and a second sender leaves (#119/#123). Details that 
       which opens that one image with no credential, so neither the sender
       nor the receiver adds a token to it. That suits the phones' media
       notifications too, which fetch artwork without signing in.
-    - An unsigned link, from an older server, still gets the token.
+    - Artwork a queue holds unsigned (saved before links were signed) gets
+      signed links from `POST /artwork/links` before a load, in one request
+      (`cast-artwork-links result=signed`). If that request fails, or the link
+      comes from an older server, the artwork keeps the token.
     - The sender puts it in the LOAD request's own `customData`, which isn't
       part of the media status, and sends HLS URLs without it.
     - The receiver's LOAD interceptor takes it from there (or, from an older
