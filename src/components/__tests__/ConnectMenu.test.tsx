@@ -263,6 +263,44 @@ describe("the user's other devices", () => {
     expect(screen.getByRole('button', { name: /Chrome on Android Control it from here/ }).className).toContain('is-selected');
   });
 
+  describe('"Play there" that ends a cast asks first (Andreas, 2026-10-27)', () => {
+    const desktopCasts = () => follow({ outputId: 'receiver:nad', kind: 'receiver', castingClientId: 'phone-0002' } as Partial<FollowedOutput>);
+
+    test('the first tap arms the row in warning colours; the second moves the music', () => {
+      jest.useFakeTimers();
+      try {
+        const transferPlaybackTo = jest.fn(async () => undefined);
+        setup({ connectedDevices: devices(), sessionFollow: desktopCasts(), transferPlaybackTo });
+        const row = () => screen.getByRole('button', { name: /^Chrome on Android/ });
+        act(() => { row().click(); });
+        expect(transferPlaybackTo).not.toHaveBeenCalled();
+        expect(row().className).toContain('is-warning');
+        expect(row().textContent).toContain('End cast? Tap to confirm');
+
+        act(() => { row().click(); });
+        expect(transferPlaybackTo).toHaveBeenCalledWith(expect.objectContaining({ clientId: 'phone-0002' }));
+        expect(row().className).not.toContain('is-warning');
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    test('also when this device casts: moving the music away ends its cast', () => {
+      const transferPlaybackTo = jest.fn(async () => undefined);
+      setup({ connectedDevices: devices(), castConnected: true, transferPlaybackTo });
+      act(() => { screen.getByRole('button', { name: /^Chrome on Android/ }).click(); });
+      expect(transferPlaybackTo).not.toHaveBeenCalled();
+      expect(screen.getByRole('button', { name: /^Chrome on Android/ }).textContent).toContain('End cast?');
+    });
+
+    test('a device that does not cast moves the music at once', () => {
+      const transferPlaybackTo = jest.fn(async () => undefined);
+      setup({ connectedDevices: devices(), sessionFollow: { ...desktopCasts(), castingClientId: 'someone-else' }, transferPlaybackTo });
+      act(() => { screen.getByRole('button', { name: /Chrome on Android Play there/ }).click(); });
+      expect(transferPlaybackTo).toHaveBeenCalledTimes(1);
+    });
+  });
+
   test('shows the playing device once (to control it), and no Cast receivers', () => {
     setup({ connectedDevices: devices(), sessionFollow: follow({ outputId: 'phone-0002', name: 'Chrome on Android', kind: 'browser' }) });
     expect(screen.getAllByRole('button', { name: /Chrome on Android/ })).toHaveLength(1);
