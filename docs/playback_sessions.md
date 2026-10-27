@@ -530,11 +530,11 @@ The server cannot be the source of truth for a client that cannot reach it:
 
 ### Listen together (later)
 
-A session gains **members** (user ids) with a role (`editor` or `listener`).
-Invited household members join through the existing invite system or a
-session-scoped link. Edits are already serialised by revision, so no new
-concurrency model is needed. This is invite-only and private; there are no
-public sessions or feeds.
+Specified in [listen-together.md](listen-together.md) (Phase 6, Andreas's
+direction 2026-10-27). In short: one owner, who alone chooses where it plays
+and manages guests; guests on the same server control what plays (with
+scopes); sessions are private, invite only or discoverable nearby. Edits are
+already serialised by revision, so no new concurrency model is needed.
 
 **Before building: the Cast session becomes a trust boundary.** Today everyone
 on a Cast session is the same user or their household. With Listen together,
@@ -603,7 +603,7 @@ Every phase ships on its own and leaves the app working.
 | **3. Authoritative** (built 2026-10-17: #142 the playing track can't be removed, #143 the playing device takes in other devices' edits and rebases its own, #144 an idle device's edits reach whichever device plays. Prod checks passed 2026-10-17; the Oct 10 17:31 scenario has not been re-run as such) | Client edits go to the session (optimistic plus rebase); joining clients read before writing; auto-cast only without an active output. | No | Oct 10 17:31 scenario no longer reproducible; conflict test across two devices |
 | **4. Server Infinity** (built 2026-10-17: #140 for receiver outputs, #145 for every output. Verified on the NAD with Chrome closed, and in browser playback across a reload and a device switch) | Server keeps K upcoming entries and is the only component choosing Infinity tracks; clients stop calling `/recommendations/next`. **Cast senders keep forwarding** upcoming entries to receivers without the session-follow capability (see [Infinity](#infinity-owned-by-the-server)). | No | No duplicate appends across two devices; Infinity continues in browser playback across a reload or device switch; Cast behaviour unchanged |
 | **5. Receiver follows the session** (built 2026-10-16: #138, which merged PRs B–E and #137 as one stack, then #141. Verified on the NAD, a speaker group and the Beoplay A9, which followed the session for 2.5 h with the phone locked and no device running Aurora (2026-10-19), its plays scrobbled by the server (#158). Not yet confirmed: token expiry with no phone. See [cast-receiver-output.md](cast-receiver-output.md)) | #56 PRs D/E/F reframed: windowed load, session-bound receiver token, window reconciliation (insert, remove, reorder, current-entry deletion, refill, repeat-all wrap), receiver reports, playback confirmation from the receiver. Additive and capability-gated, so older receivers keep today's behaviour. Sender forwarding retires per session once the receiver advertises the capability and has reported. | **Yes** | Device matrix (NAD, Stue TV, Beoplay A9, a speaker group): playback, *including Infinity*, continues ≥ 1 hour with the phone asleep; a queue edit from a second device reaches the receiver; a takeover leaves the queue preserved; token expiry with no phone ends in the idle state, not mid-track |
-| **6. Listen together** | Members, roles, invites, UI. | No (built on 5) | Two accounts edit one queue playing on the NAD |
+| **6. Listen together** ([listen-together.md](listen-together.md)) | Members, roles, invites, UI. | No (built on 5) | Two accounts edit one queue playing on the NAD |
 
 **Phase 4 depends on Phase 5 for Cast.** Server Infinity cannot keep a Cast
 device going with the phone closed until the receiver receives queue changes

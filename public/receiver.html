@@ -1461,19 +1461,28 @@
       }
 
       function handleSessionFollow(event, data) {
-        var ok = false;
+        var answered = false;
+        function answer(taken) {
+          if (answered) return;
+          answered = true;
+          var ok = !!taken;
+          if (ok) followEndedTip = '';
+          try {
+            context.sendCustomMessage(AURORA_STATUS_NS, event.senderId, {
+              type: 'aurora.session.follow.ack', requestId: data.requestId || null, ok: ok
+            });
+          } catch (ackError) { /* the sender retries, then casts as before */ }
+        }
         try {
           // Without a media token nothing it builds would play: let the sender cast as before.
-          ok = !!(sessionFollower && currentAuthToken && sessionFollower.start(data));
+          if (!sessionFollower || !currentAuthToken) answer(false);
+          // Another session while this one still plays here waits for a check
+          // with the server (takeHandover); everything else answers at once.
+          else sessionFollower.takeHandover(data, answer);
         } catch (startError) {
           postServerLog('warn', '[' + LOG_TAG + '] receiver-session-follow failed', safeStringify(startError));
+          answer(false);
         }
-        if (ok) followEndedTip = '';
-        try {
-          context.sendCustomMessage(AURORA_STATUS_NS, event.senderId, {
-            type: 'aurora.session.follow.ack', requestId: data.requestId || null, ok: ok
-          });
-        } catch (ackError) { /* the sender retries, then casts as before */ }
       }
 
       function handleAuroraMessage(event) {

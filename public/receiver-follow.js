@@ -255,6 +255,32 @@
       return true;
     }
 
+    /**
+     * A handover, answered through done(taken). One for another session
+     * while this one still plays here is taken only once this session's
+     * output is no longer this receiver (another device took it, or the
+     * session was deleted): otherwise any sender in this Cast session, such
+     * as a guest's phone (docs/listen-together.md, 6a), could point the
+     * receiver at its own session. The server decides, so the answer waits
+     * for a check of this session; a check that fails refuses.
+     */
+    function takeHandover(handover, done) {
+      if (!state || !handover || handover.sessionId === state.sessionId) {
+        done(start(handover));
+        return;
+      }
+      var grant = state;
+      marker('receiver-handover-check', 'reason=other-session generation=' + grant.generation);
+      fetchSession('handover-check').then(function () {
+        if (state === grant) {
+          marker('receiver-handover-refused', 'reason=following-another-session generation=' + grant.generation);
+          done(false);
+          return;
+        }
+        done(start(handover));
+      });
+    }
+
     function stop(reason) {
       if (!state) return;
       var wasReplaced = reason === 'replaced';
@@ -778,6 +804,7 @@
 
     return {
       start: start,
+      takeHandover: takeHandover,
       stop: stop,
       following: following,
       notePlayerChanged: notePlayerChanged
