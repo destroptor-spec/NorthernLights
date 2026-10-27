@@ -89,6 +89,7 @@ Rules:
 - "Cast to a device" opens Chrome's device picker; while casting, "This device · Stop casting" stops it.
 - The card's order is fixed: Cast first ("Cast to a device", then a Cast device that plays), then "This device", then the user's other devices. The device that plays is always the one marked (checked), whether or not it is controlled from here; the card has no "Playing on …" line under its title.
 - Never put `<google-cast-launcher>` in the card: the card unmounts (#40).
+- "Play there" that would end a cast (the target device casts, or this one does) asks first: the first tap turns the row to the warning colour with "End cast? Tap to confirm", the second moves the music (Andreas, 2026-10-27). The only text a working choice shows, because it asks for an action.
 - Do not add a separate Cast mini player, Cast modal, or persistent Cast banner.
 - Actionable Cast failures use the global toast system with Retry when available.
 
