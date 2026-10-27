@@ -307,20 +307,29 @@ commands just take effect, with text only when they fail.
   receiver tokens.
 - **Before guests can join (prerequisites from playback_sessions.md, "Before
   building"):**
-  1. **Media tokens on the Cast session.** Every sender on it can read the
-     owner's 30-day media token from item URLs. With guests in the room, their
-     phones can join the Cast session (Chrome's picker, Android's media
-     controls).
-     - **Fix:** the receiver streams with a short-lived media token bound to
-       the session, renewed with its receiver credential, never the owner's
-       login token.
-     - Also confirm no client still falls back to the full session token for
-       media (`mediaAccessToken: data.mediaToken || data.token`).
+  1. **Media tokens on the Cast session.** Every sender on it, and anything on
+     the network that can see the Cast session (Android's Cast media controls
+     on a visitor's phone), can read the owner's 30-day media token from item
+     URLs, `customData` and artwork URLs.
+     - **What the token opens:** only streams, artwork and the Cast log, since
+       scoped tokens are enforced per endpoint.
+     - **Guests gain nothing from it:** they are users of the server and
+       already stream the whole library with their own token.
+     - **The real exposure:** people who are not users.
+     - **Fix**, done before Phase 6 anyway (Andreas, 2026-10-27):
+       - 6a-2: a short-lived Cast media token, renewed with the receiver's
+         credential, and no fallback to the login token anywhere
+         (`mediaAccessToken: data.mediaToken || data.token`);
+       - 6a-3: no token in anything Cast broadcasts; the receiver adds it to
+         each request itself;
+       - 6a-4: signed per-image artwork links.
   2. **Handover from any sender.** A guest's phone on the Cast session could
-     point the receiver at its own session.
-     - **Fix:** the receiver checks a handover against the session's current
-       output grant before it switches, and says which session it follows (an
-       opaque ID) in `aurora.status`.
+     point the receiver at its own session. Cast itself lets anyone on the
+     network take the speaker over; this was a quieter way, where the owner's
+     session still believed the receiver played for it.
+     - **Fix (6a-1):** a handover for another session waits for a check with
+       the server, and is taken only once the receiver's own session no
+       longer plays there.
 - **Before joining,** discovery and links show only the preview: the
   owner's name and initials.
 - **A join link is a bearer link within the server** (decided): anyone on the
@@ -333,9 +342,13 @@ commands just take effect, with text only when they fail.
 
 One PR each, in this order:
 
-1. **6a: Cast trust boundary.** The two security prerequisites. Sender and
-   receiver, one issue per PR with the usual Cast care (sender-side where
-   possible); verify on the NAD and the A9.
+1. **6a: Cast trust boundary**, four PRs, each verified on the NAD and the A9
+   before the next:
+   - 6a-1, the handover check;
+   - 6a-2, the short-lived Cast media token, with no login-token fallback;
+   - 6a-3, no token in anything broadcast (capability-gated, so receivers
+     already running during a deploy keep working);
+   - 6a-4, signed artwork links.
 2. **6b: Members and permissions on the server.**
    - Schema (needs sign-off), `authorizeSession`, `sessionOperationScope` and
      the guest refusals;
