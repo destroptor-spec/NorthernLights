@@ -9,6 +9,7 @@ import DesktopTabBar from './components/DesktopTabBar';
 import MainContent, { InviteRegister } from './components/MainContent';
 import CastHealthToasts from './components/cast/CastHealthToasts';
 import { PlayWherePrompt } from './components/PlayWherePrompt';
+import { InvitePrompt } from './components/InvitePrompt';
 import KeyboardHint from './components/KeyboardHint';
 import { usePlayerStore } from './store/index';
 import { castManager } from './utils/CastManager';
@@ -666,6 +667,7 @@ const App: React.FC = () => {
 
           <CastHealthToasts />
           <PlayWherePrompt />
+          <InvitePrompt />
 
           {/* Desktop Playback Surface — floats or docks based on user preference */}
           {playlist.length > 0 && (

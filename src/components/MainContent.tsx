@@ -3,6 +3,7 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { usePlayerStore } from '../store/index';
 import { usePlayerPlacement } from '../hooks/usePlayerPlacement';
 import { useScrollRestoration } from '../hooks/useScrollRestoration';
+import { ListenLink } from './ListenLink';
 import { AlbumDetail, ArtistDetail, PlaylistDetail, LibraryHome, Hub, Playlists, SearchResultsPage } from '../utils/routePrefetch';
 
 const GenreDetail = React.lazy(() => import('./library/GenreDetail').then(module => ({ default: module.GenreDetail })));
@@ -105,6 +106,7 @@ export const MainContent: React.FC = () => {
             <Routes>
               <Route path="/" element={<Navigate to="/library" replace />} />
               <Route path="/invite/:token" element={<InviteRegister />} />
+              <Route path="/listen/:token" element={<ListenLink />} />
               <Route path="/library" element={<Hub />} />
               <Route path="/library/artists" element={<LibraryHome section="artists" />} />
               <Route path="/library/artist/:artistId" element={<ArtistDetail />} />

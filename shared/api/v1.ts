@@ -624,6 +624,7 @@ export type TrackLyrics = z.infer<typeof lyricsSchema>;
 export type PlaybackSession = z.infer<typeof playbackSessionSchema>;
 export type UserAvatar = z.infer<typeof userAvatarSchema>;
 export type SessionMembers = z.infer<typeof sessionMembersSchema>;
+export type SessionMember = z.infer<typeof sessionMemberSchema>;
 export type SessionInvite = z.infer<typeof sessionInviteSchema>;
 export type SessionInvitePreview = z.infer<typeof sessionInvitePreviewSchema>;
 export type OnlineUser = z.infer<typeof onlineUserSchema>;

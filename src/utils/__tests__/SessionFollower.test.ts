@@ -560,3 +560,73 @@ describe('the device list and transfers (Connect)', () => {
     expect(diagnostic).toHaveBeenCalledWith('ok', 'sync-transfer-received', 'from=phone');
   });
 });
+
+describe('a session this user is a guest in (Listen together)', () => {
+  const guestAccess = { role: 'guest' as const, permissions: ['transport' as const, 'queue' as const, 'replace' as const] };
+  const sharedSession = () => sessionOf([7, 8], { id: 'shared-1', access: guestAccess });
+
+  it('follows the own session even when the shared one is listed first, and reports both', async () => {
+    const own = sessionOf([1, 2, 3]);
+    const onOwnSession = jest.fn();
+    const onSharedSession = jest.fn();
+    const { api, store, connect } = setup({}, own, { onOwnSession, onSharedSession });
+    api.listPlaybackSessions.mockResolvedValue([sharedSession(), own]);
+    await connect();
+    expect(store.getState().sessionFollow?.sessionId).toBe('session-1');
+    expect(onOwnSession).toHaveBeenLastCalledWith(own);
+    expect(onSharedSession).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'shared-1' }));
+  });
+
+  it("does not take the owner's claims for its own, or follow the owner's session", async () => {
+    const onSharedSession = jest.fn();
+    const { api, mirror, store, source, connect } = setup({}, sessionOf([1, 2, 3]), {
+      isSharedSession: (id) => id === 'shared-1',
+      onSharedSession,
+    });
+    await connect();
+    api.getPlaybackSession.mockClear();
+    source().emit('playbackSession.handedOff', { sessionId: 'shared-1', outputId: 'owner-phone', generation: 3, revision: 2 });
+    source().emit('playbackSession.progress', { sessionId: 'shared-1', revision: 2, outputId: 'owner-phone', generation: 3, report: { state: 'playing', queueEntryId: uuid(7), positionMs: 1_000 } });
+    source().emit('playbackSession.updated', { sessionId: 'shared-1', revision: 3 });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(mirror.noteReplaced).not.toHaveBeenCalled();
+    expect(api.getPlaybackSession).not.toHaveBeenCalled();
+    expect(store.getState().sessionFollow?.sessionId).toBe('session-1');
+
+    source().emit('playbackSession.deleted', { sessionId: 'shared-1' });
+    expect(onSharedSession).toHaveBeenLastCalledWith(null);
+  });
+
+  it('passes a shared session it reads on, rather than following it', async () => {
+    const onSharedSession = jest.fn();
+    const { api, mirror, store, source, connect } = setup({}, sessionOf([1, 2, 3]), { onSharedSession });
+    await connect();
+    const shared = sharedSession();
+    shared.output!.generation = 9;
+    api.getPlaybackSession.mockResolvedValueOnce(shared);
+    source().emit('playbackSession.updated', { sessionId: 'shared-1', revision: 13 });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(onSharedSession).toHaveBeenLastCalledWith(shared);
+    expect(mirror.noteReplaced).not.toHaveBeenCalled();
+    expect(store.getState().sessionFollow?.sessionId).toBe('session-1');
+  });
+
+  it("passes Listen together's events on, and reads nothing for them", async () => {
+    const onTogetherEvent = jest.fn();
+    const { api, source, connect } = setup({}, sessionOf([1, 2, 3]), { onTogetherEvent });
+    await connect();
+    api.getPlaybackSession.mockClear();
+    for (const type of ['memberJoined', 'memberLeft', 'visibilityChanged', 'togetherEnded', 'invitePrompt']) {
+      source().emit(`playbackSession.${type}`, { sessionId: 'session-1' });
+    }
+    await jest.advanceTimersByTimeAsync(0);
+    expect(onTogetherEvent.mock.calls.map(([type]) => type)).toEqual([
+      'playbackSession.memberJoined',
+      'playbackSession.memberLeft',
+      'playbackSession.visibilityChanged',
+      'playbackSession.togetherEnded',
+      'playbackSession.invitePrompt',
+    ]);
+    expect(api.getPlaybackSession).not.toHaveBeenCalled();
+  });
+});
