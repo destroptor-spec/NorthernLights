@@ -423,11 +423,11 @@
       return (info && info.customData && info.customData.queueEntryId) || null;
     }
 
+    // No token: the receiver's request handlers add it, so the contentId
+    // every sender sees carries none (6a-3).
     function trackUrl(track) {
-      var url = env.origin + '/api/stream/' + encodeURIComponent(track.id) + '/playlist.m3u8'
+      return env.origin + '/api/stream/' + encodeURIComponent(track.id) + '/playlist.m3u8'
         + '?quality=' + encodeURIComponent(state.quality) + '&codec=' + FORCED_CODEC;
-      var token = env.mediaToken();
-      return token ? url + '&token=' + encodeURIComponent(token) : url;
     }
 
     function artworkUrl(track) {
@@ -455,7 +455,7 @@
       if (image) metadata.images = [new m.Image(image)];
       media.metadata = metadata;
       if (track.durationSeconds > 0) media.duration = track.durationSeconds;
-      media.customData = { queueEntryId: entry.queueEntryId, token: env.mediaToken(), codec: FORCED_CODEC, auroraFollow: true };
+      media.customData = { queueEntryId: entry.queueEntryId, codec: FORCED_CODEC, auroraFollow: true };
       var item = new m.QueueItem();
       item.media = media;
       item.autoplay = true;
