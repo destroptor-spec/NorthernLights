@@ -5,6 +5,7 @@ import { currentSessionFromError } from '../api/playbackSessions';
 import type { TrackInfo } from './fileSystem';
 import { planSessionPatch, MAX_SESSION_QUEUE, type QueueEntryRef } from './sessionQueueDiff';
 import type { ReceiverHandover } from './receiverSessionFollow';
+import { isOwnSession } from './sessionFollow';
 import { createUuid, isUuid } from './uuid';
 
 // The playing side of "Sync playback across devices" (docs/playback_sessions.md,
@@ -451,7 +452,8 @@ export class SessionMirror {
       try {
         let sessionId = this.sessionId;
         if (!sessionId) {
-          const [latest] = await this.api.listPlaybackSessions(auth);
+          // Never a session this user is a guest in: only its owner plays it.
+          const latest = (await this.api.listPlaybackSessions(auth)).find(isOwnSession);
           sessionId = latest?.id ?? (await this.api.createPlaybackSession(auth, SESSION_NAME)).id;
         }
         const castSessionId = state.castConnected ? this.options!.getCastSessionId?.() || undefined : undefined;

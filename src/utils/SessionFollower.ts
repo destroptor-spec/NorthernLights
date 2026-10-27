@@ -5,7 +5,7 @@ import { currentSessionFromError } from '../api/playbackSessions';
 import type { TrackInfo } from './fileSystem';
 import { MAX_SESSION_QUEUE, planQueueOperations } from './sessionQueueDiff';
 import { createUuid, isUuid } from './uuid';
-import { FOLLOW_STALE_MS, followFromSession, followedPositionMs, isCastOutput, isFollowedOutputPlaying, type FollowedOutput } from './sessionFollow';
+import { FOLLOW_STALE_MS, followFromSession, followedPositionMs, isCastOutput, isFollowedOutputPlaying, isOwnSession, type FollowedOutput } from './sessionFollow';
 
 // The following side of "Sync playback across devices" (docs/playback_sessions.md,
 // Phase 2). While another device plays the user's session, an idle device
@@ -82,6 +82,17 @@ export interface SessionFollowerOptions {
   clientName?: () => string;
   /** The user's devices with Aurora open: read when the stream opens, then live (devices.changed). */
   onDevices?: (devices: ConnectedDevice[]) => void;
+  /** The user's own session as last read, or none (Listen together: the owner's sheet). */
+  onOwnSession?: (session: PlaybackSession | null) => void;
+  /**
+   * A session this user is a guest in, as listed or read, or none when the
+   * list has none (Listen together). Its events are not the user's own: they
+   * neither follow nor displace anything here.
+   */
+  onSharedSession?: (session: PlaybackSession | null) => void;
+  isSharedSession?: (sessionId: string) => boolean;
+  /** Listen together's member, visibility and invite events. */
+  onTogetherEvent?: (type: string, data: Record<string, unknown>) => void;
   /** Another device asked this one to take the session over (Connect → that device). */
   onTransferRequested?: (sessionId: string, requestedBy: string | null) => void;
   log?: (message: string, detail?: unknown) => void;
@@ -106,7 +117,19 @@ const SESSION_EVENTS = [
   'resync.required',
   'devices.changed',
   'playbackSession.transferRequested',
+  'playbackSession.memberJoined',
+  'playbackSession.memberLeft',
+  'playbackSession.visibilityChanged',
+  'playbackSession.togetherEnded',
+  'playbackSession.invitePrompt',
 ] as const;
+const TOGETHER_EVENTS: ReadonlySet<string> = new Set([
+  'playbackSession.memberJoined',
+  'playbackSession.memberLeft',
+  'playbackSession.visibilityChanged',
+  'playbackSession.togetherEnded',
+  'playbackSession.invitePrompt',
+]);
 
 interface ProgressData {
   sessionId: string;
@@ -376,6 +399,16 @@ export class SessionFollower {
   private async onEvent(type: typeof SESSION_EVENTS[number], data: Record<string, unknown>) {
     const sessionId = typeof data.sessionId === 'string' ? data.sessionId : null;
     const myId = this.options!.clientId();
+    if (TOGETHER_EVENTS.has(type)) {
+      this.options!.onTogetherEvent?.(type, data);
+      return;
+    }
+    // The session this user is a guest in: its owner's claims and changes
+    // are not this user's (6d shows it).
+    if (sessionId && this.options!.isSharedSession?.(sessionId)) {
+      if (type === 'playbackSession.deleted') this.options!.onSharedSession?.(null);
+      return;
+    }
     switch (type) {
       case 'resync.required':
         await this.refresh(false);
@@ -484,11 +517,14 @@ export class SessionFollower {
     const state = this.store?.getState();
     if (!state) return;
     try {
-      const [latest] = await this.api.listPlaybackSessions(state.getAuthHeader());
+      const sessions = await this.api.listPlaybackSessions(state.getAuthHeader());
       if (!this.source) return;
+      const latest = sessions.find(isOwnSession);
+      this.options!.onSharedSession?.(sessions.find((session) => !isOwnSession(session)) ?? null);
       if (!latest) {
         this.session = null;
         this.follow = null;
+        this.options!.onOwnSession?.(null);
         this.render();
         return;
       }
@@ -528,6 +564,10 @@ export class SessionFollower {
   }
 
   private async apply(session: PlaybackSession, initial: boolean) {
+    if (!isOwnSession(session)) {
+      this.options!.onSharedSession?.(session);
+      return;
+    }
     const output = session.output;
     if (output && output.id !== this.options!.clientId()) {
       if (initial) {
@@ -540,6 +580,7 @@ export class SessionFollower {
       }
     }
     this.session = session;
+    this.options!.onOwnSession?.(session);
     if (this.options!.mirror.noteSessionChanged?.(session)) {
       this.options!.diagnostic?.('ok', 'sync-queue-adopted', `revision=${session.revision} entries=${session.queue.length}`);
       this.options!.adoptPlayingQueue?.(session);

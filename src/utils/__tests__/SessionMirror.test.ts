@@ -125,6 +125,18 @@ it("reuses the user's latest session instead of creating one", async () => {
   expect(api.claimPlaybackOutput).toHaveBeenCalledWith(expect.anything(), 'latest', expect.anything());
 });
 
+it('never claims a session this user is a guest in, listed first or not (Listen together)', async () => {
+  const shared = sessionOf([], 9, { id: 'shared', access: { role: 'guest', permissions: ['transport', 'queue', 'replace'] } });
+  const { api, store } = setup({}, [shared, sessionOf([], 7, { id: 'mine', access: { role: 'owner', permissions: ['transport', 'queue', 'replace'] } })]);
+  await play(store);
+  expect(api.claimPlaybackOutput).toHaveBeenCalledWith(expect.anything(), 'mine', expect.anything());
+
+  const onlyShared = setup({}, [shared]);
+  await play(onlyShared.store);
+  expect(onlyShared.api.createPlaybackSession).toHaveBeenCalledTimes(1);
+  expect(onlyShared.api.claimPlaybackOutput).not.toHaveBeenCalledWith(expect.anything(), 'shared', expect.anything());
+});
+
 it('sends later queue edits as one anchored patch per burst', async () => {
   const { api, store } = setup();
   await play(store);

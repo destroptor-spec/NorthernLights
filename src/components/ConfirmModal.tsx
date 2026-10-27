@@ -16,6 +16,8 @@ interface ConfirmModalProps {
    * it, only Escape, the backdrop and the close button cancel.
    */
   onCancelButton?: () => void;
+  /** A wide dialog; by default, when there is a body. */
+  wide?: boolean;
 }
 
 export const ConfirmModal: React.FC<ConfirmModalProps> = ({
@@ -28,6 +30,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   onConfirm,
   onCancel,
   onCancelButton,
+  wide = !!body,
 }) => {
   const titleId = useId();
   const descriptionId = useId();
@@ -86,7 +89,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={descriptionId}
-        className={`relative z-10 w-full ${body ? 'max-w-2xl' : 'max-w-md'} bg-[var(--color-background)] border border-[var(--glass-border)] rounded-2xl p-6 shadow-2xl space-y-4 animate-slide-up`}
+        className={`relative z-10 w-full ${wide ? 'max-w-2xl' : 'max-w-md'} bg-[var(--color-background)] border border-[var(--glass-border)] rounded-2xl p-6 shadow-2xl space-y-4 animate-slide-up`}
         onClick={e => e.stopPropagation()}
       >
         <button

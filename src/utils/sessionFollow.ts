@@ -42,6 +42,15 @@ const MAX_REPORT_AGE_MS = 60_000;
 export const FOLLOW_STALE_MS = 65_000;
 
 /** A Cast device plays there: silence may mean only that nobody relays for it. */
+/**
+ * The user's own session, not one it is a guest in (Listen together): only
+ * an own session is followed, mirrored and claimed. A server before 6b sends
+ * no access, and every session it lists is the user's own.
+ */
+export function isOwnSession(session: Pick<PlaybackSession, 'access'>): boolean {
+  return session.access?.role !== 'guest';
+}
+
 export function isCastOutput(output: Pick<PlaybackOutput, 'kind'>): boolean {
   return output.kind === 'cast' || output.kind === 'receiver';
 }
