@@ -79,6 +79,7 @@ import {
   playbackOutputClaimSchema,
   playbackCommandRequestSchema,
   playbackTransferRequestSchema,
+  artworkLinksRequestSchema,
   playbackOutputRefreshSchema,
   playbackOutputReportSchema,
   OPAQUE_ID,
@@ -143,6 +144,7 @@ import {
 } from '../services/scopedToken.service';
 import { generateAuroraApiDocument } from '../api/v1/openapi';
 import { signedArtworkLinks } from '../middleware/signedArtwork';
+import { artworkUrlFor } from '../services/artworkLink.service';
 import { artCachePath, DEFAULT_ART_SIZE, isValidArtSize } from '../services/artCache';
 
 const router = Router();
@@ -400,6 +402,17 @@ router.use('/playback-sessions', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+// Signed links for artwork a client holds unsigned (a queue saved before
+// links were signed): Cast puts them where every sender sees them (6a-4).
+// Nothing new is opened: the caller can open any artwork with its own token.
+router.post('/artwork/links', (req, res) => {
+  const input = parseBody(artworkLinksRequestSchema, req, res);
+  if (!input) return;
+  const links: Record<string, string> = {};
+  for (const id of new Set(input.ids)) links[id] = artworkUrlFor(id);
+  dataResponse(req, res, { links });
 });
 
 router.get('/artwork/:hash', (req, res) => {
