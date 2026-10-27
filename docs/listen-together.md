@@ -367,7 +367,12 @@ One PR each, in this order:
    - 6a-3, no token in anything broadcast (capability-gated, so receivers
      already running during a deploy keep working);
    - 6a-4, signed artwork links.
-2. **6b: Members and permissions on the server.**
+2. **6b: Members and permissions on the server.** Built 2026-10-27. The schema was signed off by Andreas the same day:
+   - `visibility`;
+   - `playback_session_members`, one session per guest;
+   - `playback_session_invites`.
+
+   He also decided that guests see their own loves, and that a guest's sync follows the owner's setting.
    - Schema (needs sign-off), `authorizeSession`, `sessionOperationScope` and
      the guest refusals;
    - event fan-out to members, and the matrix tests.

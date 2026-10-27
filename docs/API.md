@@ -183,6 +183,20 @@ Playback sessions are server-backed queue snapshots with transport state:
 
 **Ownership.** A session belongs to its user, never to a device. Any of the user's devices (a web session or an app key) may read, change or delete it; there is no device-level owner check and no handoff step. `ownerClientId` is deprecated and only records the client that last created or claimed the session.
 
+**Owner and guests** (Listen together, [listen-together.md](./listen-together.md); built 2026-10-27, nobody can join yet):
+- **The owner** is the user who started a session. The owner may do everything, and alone chooses where it plays.
+- **A guest** may do what its scopes allow:
+  - `transport`: play, pause, seek, next, previous, jump;
+  - `queue`: insert, move, remove, repeat, shuffle;
+  - `replace`: start something new, Infinity.
+- **Every session** carries the caller's `access` (`{ role: owner | guest, permissions }`) and its `visibility` (`private | invite | discoverable`). A guest sees the queue with its own loves and ratings.
+- **Refusals:**
+  - outside a guest's scopes: `403 SESSION_SCOPE_DENIED` (`details.need`);
+  - claiming the output, transfer, credential refresh, or delete by a guest: `403 SESSION_OWNER_ONLY`;
+  - anyone else: `404 PLAYBACK_SESSION_NOT_FOUND`, so a session ID never confirms a session exists.
+- **Events:** a session's events reach its owner and its guests. Remote commands go only to the owner's devices.
+- **Sync for a guest** follows the owner's setting, not the guest's own; with sync off server-wide it is off for everyone.
+
 **Availability.** Playback sessions exist for "Sync playback across devices", which the server admin turns off, on, or over to each user (a server setting, outside v1). While it is off for the account, every `/playback-sessions` route answers `403 PLAYBACK_SYNC_DISABLED`, to the web app, the PWA and every other client alike, and `playbackSync.changed` on `/events` announces each change. Stored sessions are kept and come back when sync is turned on again.
 
 **The output** is the one device playing the session (`output: { id, kind, name, generation, claimedAt } | null`). A new session has none. `POST /playback-sessions/:id/output` with `{ "kind": "browser" | "cast", "name"?: string }` makes the calling device (its `X-Aurora-Client-Id`) the output at any time, with no revision check, so moving playback between devices is seamless. `kind` is `browser` when the device plays the session itself, and `cast` when it sends it to a Cast device it controls (then `name` is the Cast device's, and `castSessionId` may name the Cast session; the server returns it as `output.castSessionId` while it knows it, which it does not across a restart). Each claim raises `output.generation` and publishes `playbackSession.handedOff` with `{ outputId, outputKind, outputName, generation }`. The response is `{ session, credential }`, where `credential` is `{ token, expiresAt, outputId, generation }`: a one-hour **output credential** whose claims name the session, the output and the generation. Keep it in memory only. It authenticates exactly one thing: reports for its own session. `POST /auth/scoped-token` never mints one.

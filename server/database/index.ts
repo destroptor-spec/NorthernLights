@@ -965,6 +965,34 @@ export async function initDB(): Promise<Pool> {
         );
         CREATE INDEX IF NOT EXISTS playback_session_requests_age_idx ON playback_session_requests(session_id, created_at DESC);
 
+        -- Listen together (docs/listen-together.md, 6b). Who may join a
+        -- session: 'private' (nobody, as before), 'invite' (with a join link),
+        -- 'discoverable' (nearby users too).
+        ALTER TABLE playback_sessions ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'private'
+          CHECK (visibility IN ('private', 'invite', 'discoverable'));
+        -- Guests. The owner stays playback_sessions.user_id and is never a row
+        -- here; permissions are scopes (transport, queue, replace).
+        CREATE TABLE IF NOT EXISTS playback_session_members (
+          session_id UUID NOT NULL REFERENCES playback_sessions(id) ON DELETE CASCADE,
+          user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          permissions TEXT[] NOT NULL DEFAULT '{transport,queue,replace}',
+          invite_token TEXT,
+          joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (session_id, user_id)
+        );
+        -- A user is a guest in at most one session at a time.
+        CREATE UNIQUE INDEX IF NOT EXISTS playback_session_members_one_per_user ON playback_session_members(user_id);
+        -- Join links: anyone on the server who has one may join, with its scopes (6c).
+        CREATE TABLE IF NOT EXISTS playback_session_invites (
+          token TEXT PRIMARY KEY DEFAULT encode(gen_random_bytes(32), 'hex'),
+          session_id UUID NOT NULL REFERENCES playback_sessions(id) ON DELETE CASCADE,
+          permissions TEXT[] NOT NULL DEFAULT '{transport,queue,replace}',
+          created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          revoked_at TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS playback_session_invites_session_idx ON playback_session_invites(session_id);
+
         CREATE TABLE IF NOT EXISTS api_playback_events (
           event_id UUID PRIMARY KEY,
           user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

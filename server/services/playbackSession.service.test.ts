@@ -12,7 +12,7 @@ describe('playback-session deletion', () => {
     const pool = {
       query: jest.fn(async (sql: string) => {
         if (sql.startsWith('DELETE FROM playback_sessions')) return { rows: [], rowCount: 0 };
-        if (sql.startsWith('SELECT * FROM playback_sessions')) return { rows: [{
+        if (sql.trim().startsWith('SELECT s.*') || sql.startsWith('SELECT * FROM playback_sessions')) return { rows: [{
           id: 'session-1', user_id: 'user-1', name: 'Listening', owner_client_id: 'client-a',
           current_entry_id: null, position_ms: 0, playback_state: 'paused', repeat_mode: 'none',
           shuffle: false, source_kind: null, source_id: null, revision: 3,
