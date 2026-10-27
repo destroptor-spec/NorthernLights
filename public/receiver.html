@@ -1950,9 +1950,17 @@
       playerManager.setMessageInterceptor(
         cast.framework.messages.MessageType.LOAD,
         function(loadRequestData) {
-          function normalizeMedia(media) {
+          // Nothing the session broadcasts carries the media token (6a-3,
+          // docs/listen-together.md): every sender in the Cast session, and
+          // anything on the network that sees it, receives the media status.
+          // The token comes in the LOAD request's own customData (not
+          // broadcast), or from an older sender in the media's; it is taken
+          // out of the media here, and requests get it from applyAuth.
+          function normalizeMedia(media, requestToken) {
             if (!media) return;
-            currentAuthToken = (media.customData && media.customData.token) || currentAuthToken || '';
+            var mediaToken = media.customData && media.customData.token;
+            currentAuthToken = requestToken || mediaToken || currentAuthToken || '';
+            if (media.customData && 'token' in media.customData) delete media.customData.token;
             if (media.customData && typeof media.customData.diagnosticsVerbose === 'boolean') {
               var nextDiagnosticsVerbose = liveDiagnosticsOverride === null
                 ? media.customData.diagnosticsVerbose : liveDiagnosticsOverride;
@@ -1971,9 +1979,13 @@
                 if (isHls) {
                   urlObj.searchParams.set('codec', FORCED_CAST_CODEC);
                 }
-                // Token must ride in the URL: the platform <audio> element fetches
-                // contentId directly (Shaka request handlers don't apply to progressive).
-                if (currentAuthToken) {
+                // HLS: the manifest and segment request handlers add the token
+                // (applyAuth), so the contentId everyone sees has none. A
+                // progressive load keeps it: the platform <audio> element fetches
+                // contentId itself, past those handlers.
+                if (isHls) {
+                  urlObj.searchParams.delete('token');
+                } else if (currentAuthToken) {
                   urlObj.searchParams.set('token', currentAuthToken);
                 }
                 media.contentId = urlObj.toString();
@@ -1991,8 +2003,11 @@
 
           // Something plays again: the "Open Aurora" idle hint no longer applies.
           followEndedTip = '';
+          var requestToken = loadRequestData.customData && typeof loadRequestData.customData.token === 'string'
+            ? loadRequestData.customData.token : '';
+          if (loadRequestData.customData && 'token' in loadRequestData.customData) delete loadRequestData.customData.token;
           if (loadRequestData.media) {
-            normalizeMedia(loadRequestData.media);
+            normalizeMedia(loadRequestData.media, requestToken);
             pendingMediaInfo = loadRequestData.media;
             logAndPost('ok', LOG_TAG, 'Prepared media for playback');
             logAndPost('ok', LOG_TAG, 'LOAD contentId: ' + safeLogValue(loadRequestData.media.contentId));
@@ -2001,7 +2016,7 @@
 
           if (loadRequestData.queueData && loadRequestData.queueData.items) {
             loadRequestData.queueData.items.forEach(function(item) {
-              if (item && item.media) normalizeMedia(item.media);
+              if (item && item.media) normalizeMedia(item.media, requestToken);
             });
             logAndPost('ok', LOG_TAG, 'LOAD queue items: ' + loadRequestData.queueData.items.length);
           }

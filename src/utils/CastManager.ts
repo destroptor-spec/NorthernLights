@@ -326,6 +326,9 @@ export class CastManager {
         });
     }
     private castMediaTokenTimer: ReturnType<typeof setTimeout> | null = null;
+    /** What noteBroadcastTokens has logged for this Cast session. */
+    private broadcastTokenSid = '';
+    private broadcastTokenLogged = new Set<string>();
     /** Chrome's device picker, opened from the Connect menu, has not answered yet. */
     private castPickerPendingSince = 0;
     private castEndSnapshotAtStop: CastEndSnapshot | null = null;
@@ -2632,6 +2635,7 @@ export class CastManager {
                         const mediaSession = this.getMediaSession();
                         if (!mediaSession) return;
                         this.logCast('ok', 'REMOTE_MEDIA_INFO_CHANGED', this.describeMediaSession(mediaSession));
+                        this.noteBroadcastTokens(mediaSession);
                         this.syncCurrentTrackFromSession(mediaSession);
                     } catch { /* ignore */ }
                 }
@@ -2728,15 +2732,11 @@ export class CastManager {
         duration?: number;
         startTime?: number;
     }, options?: {
-        includeAuthTokenInCustomData?: boolean;
         includeArtwork?: boolean;
         includeDuration?: boolean;
-        compactHlsUrl?: boolean;
     }) {
-        const includeAuthTokenInCustomData = options?.includeAuthTokenInCustomData ?? true;
         const includeArtwork = options?.includeArtwork ?? true;
         const includeDuration = options?.includeDuration ?? true;
-        const compactHlsUrl = options?.compactHlsUrl ?? false;
         const streamingQuality = usePlayerStore.getState().streamingQuality;
         // The custom receiver stays on the proven fixed AAC HLS path. Browser
         // Auto ABR and Source passthrough are intentionally local-only.
@@ -2745,18 +2745,19 @@ export class CastManager {
             ? applyCastStreamingQualityToHlsUrl(track.url || '', streamingQuality)
             : applyStreamingQualityToHlsUrl(track.url || '', streamingQuality);
         let mediaUrl = useHls ? (effectiveHlsUrl || track.rawUrl || '') : (track.rawUrl || effectiveHlsUrl || '');
-        const castToken = this.castTokenFor(mediaUrl);
-        mediaUrl = withCastToken(mediaUrl, castToken);
         if (useHls) {
-            if (compactHlsUrl) {
-                mediaUrl = stripQueryParam(mediaUrl, 'token');
-            }
+            // Our receiver adds the token to each request itself, so nothing
+            // the Cast session broadcasts carries it (6a-3): the token goes in
+            // a LOAD request's own customData (loadRequestCustomData).
+            mediaUrl = stripQueryParam(mediaUrl, 'token');
             try {
                 const url = new URL(mediaUrl);
                 url.searchParams.set('codec', CUSTOM_RECEIVER_HLS_CODEC);
                 mediaUrl = url.toString();
             } catch { /* ignore */ }
         }
+        // The default receiver fetches the URL as given: it keeps a token, the Cast one.
+        if (!useHls) mediaUrl = withCastToken(mediaUrl, this.castTokenFor(mediaUrl));
         const contentType = useHls ? 'application/vnd.apple.mpegurl' : inferContentType(mediaUrl, track.format);
         const mediaInfo = new chrome.cast.media.MediaInfo(mediaUrl, contentType);
         mediaInfo.streamType = chrome.cast.media.StreamType.BUFFERED;
@@ -2778,7 +2779,6 @@ export class CastManager {
             customData.queueEntryId = track.queueEntryId;
         }
         if (useHls) {
-            if (includeAuthTokenInCustomData && castToken) customData.token = castToken;
             customData.codec = CUSTOM_RECEIVER_HLS_CODEC;
         }
         customData.diagnosticsVerbose = this.diagnosticsVerbose;
@@ -2800,10 +2800,8 @@ export class CastManager {
         duration?: number;
         startTime?: number;
     }, options?: {
-        includeAuthTokenInCustomData?: boolean;
         includeArtwork?: boolean;
         includeDuration?: boolean;
-        compactHlsUrl?: boolean;
     }) {
         const item = new chrome.cast.media.QueueItem(this.buildMediaInfo(track, options));
         item.autoplay = true;
@@ -3549,6 +3547,49 @@ export class CastManager {
         return '';
     }
 
+    /**
+     * A LOAD request's own customData: the media token for our receiver. Unlike
+     * the media's customData it is not part of the media status every sender
+     * receives (6a-3); the receiver takes it, and its request handlers add it.
+     */
+    private loadRequestCustomData(url: string): Record<string, string> | undefined {
+        const token = this.customAppId ? this.castTokenFor(url) : '';
+        return token ? { token } : undefined;
+    }
+
+    /**
+     * Checks that what the Cast session broadcasts carries no media token
+     * (6a-3), on every media status: logs `seen=none` once per Cast session,
+     * and each place a token turns up once. Artwork is left out until it has
+     * signed links of its own (6a-4).
+     */
+    private noteBroadcastTokens(mediaSession: any | null) {
+        const sid = this.getCurrentSessionId();
+        if (!mediaSession || !sid) return;
+        if (this.broadcastTokenSid !== sid) {
+            this.broadcastTokenSid = sid;
+            this.broadcastTokenLogged = new Set();
+        }
+        const media = [mediaSession.media, ...(Array.isArray(mediaSession.items) ? mediaSession.items.map((item: any) => item?.media) : [])]
+            .filter(Boolean);
+        if (media.length === 0) return;
+        const places = new Set<string>();
+        for (const m of media) {
+            if (typeof m.contentId === 'string' && /[?&]token=/.test(m.contentId)) places.add('contentId');
+            if (m.customData && typeof m.customData === 'object' && 'token' in m.customData) places.add('customData');
+        }
+        const logged = this.broadcastTokenLogged;
+        if (places.size === 0) {
+            if (!logged.has('none')) this.logCast('ok', 'cast-broadcast-token', 'seen=none');
+            logged.add('none');
+            return;
+        }
+        for (const place of places) {
+            if (!logged.has(place)) this.logCast('warn', 'cast-broadcast-token', `seen=${place}`);
+            logged.add(place);
+        }
+    }
+
     /** The token a Cast URL carries: the Cast media token, or the URL's own when there is none. */
     private castTokenFor(url: string): string {
         return this.castMediaToken.current() || this.extractTokenFromUrl(url);
@@ -3642,7 +3683,9 @@ export class CastManager {
         const useHls = !!(this.customAppId && effectiveHlsUrl);
         let mediaUrl = useHls ? effectiveHlsUrl : (rawUrl || effectiveHlsUrl);
         const authToken = this.castMediaToken.current() || token || this.extractTokenFromUrl(mediaUrl);
-        mediaUrl = withCastToken(mediaUrl, authToken);
+        // Our receiver adds the token to each request; the default one fetches
+        // the URL as given (6a-3).
+        mediaUrl = useHls ? stripQueryParam(mediaUrl, 'token') : withCastToken(mediaUrl, authToken);
 
         if (useHls) {
             try {
@@ -3680,10 +3723,9 @@ export class CastManager {
             mediaInfo.metadata.images = [new chrome.cast.Image(castImageUrl)];
         }
 
-        // Pass auth token to custom receiver via customData for Bearer header injection
+        // The token goes in the request's own customData, never the media's (6a-3).
         if (useHls || this.diagnosticsVerbose) {
             mediaInfo.customData = {
-                ...(useHls && authToken ? { token: authToken } : {}),
                 ...(useHls ? { codec: CUSTOM_RECEIVER_HLS_CODEC } : {}),
                 diagnosticsVerbose: this.diagnosticsVerbose,
             };
@@ -3699,6 +3741,7 @@ export class CastManager {
 
         const request = new chrome.cast.media.LoadRequest(mediaInfo);
         request.autoplay = true;
+        if (useHls && authToken) request.customData = { token: authToken };
 
         try {
             this.logCast('ok', 'Loading single media on Cast device', `title=${title} useHls=${useHls} url=${mediaUrl}`);
@@ -3787,13 +3830,12 @@ export class CastManager {
                 // when only the start item had one). The byte budget pays for it
                 // with fewer items per load, and refill tops up the rest.
                 const items = all.map((track, i) => this.buildQueueItem(track, {
-                    includeAuthTokenInCustomData: false, includeArtwork: true,
-                    includeDuration: i === start, compactHlsUrl: true,
+                    includeArtwork: true, includeDuration: i === start,
                 }));
-                const token = this.castTokenFor(tracks[index].url || tracks[index].rawUrl || '');
-                items[start].media.customData = { ...items[start].media.customData, ...(token ? { token } : {}), diagnosticsVerbose: this.diagnosticsVerbose };
+                items[start].media.customData = { ...items[start].media.customData, diagnosticsVerbose: this.diagnosticsVerbose };
                 const request = new chrome.cast.media.LoadRequest(items[start].media);
                 request.autoplay = true;
+                request.customData = this.loadRequestCustomData(tracks[index].url || tracks[index].rawUrl || '');
                 request.queueData = new chrome.cast.media.QueueData();
                 request.queueData.items = items;
                 request.queueData.startIndex = start;
@@ -4022,7 +4064,7 @@ export class CastManager {
             const requestId = ++this.auroraControlRequestId;
             const capable = status.caps?.includes(RECEIVER_QUEUE_INSERT_CAP);
             const bounded = boundedQueueRequest(candidates, selected => {
-                const items = selected.map(track => this.buildQueueItem(track, { includeAuthTokenInCustomData: false, includeArtwork: true, compactHlsUrl: true }));
+                const items = selected.map(track => this.buildQueueItem(track, { includeArtwork: true }));
                 return capable ? { type: 'aurora.queue.insert', requestId, position: 'end', items: items.map(toReceiverQueueItem) }
                     : new chrome.cast.media.QueueInsertItemsRequest(items);
             }, available);
@@ -4073,7 +4115,7 @@ export class CastManager {
             const playlist = usePlayerStore.getState().playlist;
             const tracks = edit.ids.map(id => playlist.find(track => track.queueEntryId === id));
             if (tracks.length > CAST_QUEUE_INSERT_MAX_ITEMS || tracks.some(track => !track)) return 'reload';
-            const items = (tracks as CastQueueTrack[]).map(track => this.buildQueueItem(track, { includeAuthTokenInCustomData: false, includeArtwork: true, compactHlsUrl: true }));
+            const items = (tracks as CastQueueTrack[]).map(track => this.buildQueueItem(track, { includeArtwork: true }));
             const next = edit.before === remaining[1];
             if (next && status.caps?.includes(RECEIVER_QUEUE_INSERT_CAP)) {
                 // The receiver channel inserts after its current item (#56 Stage 0).
