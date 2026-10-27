@@ -735,7 +735,7 @@ export const ArtistDetail: React.FC = () => {
     const compilationReleases = useMemo(() => {
         const owned = artistMeta?.ownedAlbums || [];
         if (owned.length === 0) return releaseGroups.compilations;
-        const token = mediaAccessToken || authToken || '';
+        const token = mediaAccessToken || '';
         const artHashUrl = (al: AlbumSummary) =>
             al.artworkId ? `/api/art?hash=${al.artworkId}${token ? `&token=${token}` : ''}` : undefined;
         const seen = new Set(releaseGroups.compilations.map(a => a.albumId).filter(Boolean));

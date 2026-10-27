@@ -151,6 +151,36 @@ test('says in its status whether it follows a session, and says so at once when 
   expect(JSON.stringify(stopped?.payload)).not.toMatch(/receiver-secret|session-1|receiver:cast-77/);
 });
 
+describe('the Cast media token (6a-2)', () => {
+  const manifestUrl = (r: ReturnType<typeof startReceiver>) => {
+    const config = r.context.start.mock.calls[0][0].playbackConfig;
+    const request = { url: 'https://music.example.test/api/stream/t/playlist.m3u8?token=older', headers: {} as Record<string, string> };
+    config.manifestRequestHandler(request);
+    return { url: request.url, auth: request.headers.Authorization };
+  };
+
+  test('every request carries the newest token, also over an older one in the URL', () => {
+    const r = startReceiver(true);
+    expect(manifestUrl(r)).toEqual({ url: expect.stringContaining('token=media-token'), auth: 'Bearer media-token' });
+  });
+
+  test("takes a connected sender's renewed token while it follows no session", () => {
+    const r = startReceiver(true);
+    r.receive({ senderId: 'sender', data: { type: 'aurora.media-token', token: 'cast-renewed' } });
+    expect(manifestUrl(r).url).toContain('token=cast-renewed');
+    expect(r.loggedLines().some((line) => line.message.includes('receiver-media-token') && line.detail.includes('result=taken'))).toBe(true);
+    expect(JSON.stringify(r.loggedLines())).not.toContain('cast-renewed');
+  });
+
+  test('while it follows a session, only the handover and its own renewals set the token', () => {
+    const r = startReceiver(true);
+    r.receive({ senderId: 'owner', data: { ...handover, mediaToken: 'cast-from-owner' } });
+    expect(manifestUrl(r).url).toContain('token=cast-from-owner');
+    r.receive({ senderId: 'guest', data: { type: 'aurora.media-token', token: 'guest-token' } });
+    expect(manifestUrl(r).url).toContain('token=cast-from-owner');
+  });
+});
+
 test("refuses another session's handover while its own still plays here (6a)", async () => {
   // Listen together: a guest's phone in this Cast session must not point the
   // receiver at its own session.

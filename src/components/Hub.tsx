@@ -1151,7 +1151,7 @@ export const Hub: React.FC = () => {
       // uses. Fall back to a track's artUrl when the library happens to be loaded.
       const album = albums.find((a) => a.id === tile.id);
       if (album?.art_hash) {
-        const token = mediaAccessToken || authToken || '';
+        const token = mediaAccessToken || '';
         return `/api/art?hash=${album.art_hash}${token ? `&token=${token}` : ''}`;
       }
       const t = library.find((lt) => (lt as any).albumId === tile.id);

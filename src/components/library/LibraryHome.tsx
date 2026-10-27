@@ -200,7 +200,7 @@ export const LibraryHome: React.FC<{ section?: 'artists' | 'albums' | 'genres' }
     // so they don't fall back to the rate-limited external art proxy.
     const artHashUrl = useCallback((album: { art_hash?: string | null }) => {
         if (!album.art_hash) return undefined;
-        const token = mediaAccessToken || authToken || '';
+        const token = mediaAccessToken || '';
         return `/api/art?hash=${album.art_hash}${token ? `&token=${token}` : ''}`;
     }, [mediaAccessToken, authToken]);
 

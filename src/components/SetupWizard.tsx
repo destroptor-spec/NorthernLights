@@ -114,7 +114,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
     useEffect(() => {
         if (step !== 'analysis' || !modelDownloading) return;
         const state = usePlayerStore.getState();
-        const token = state.sseAccessToken || state.authToken;
+        const token = state.sseAccessToken;
         if (!token) return;
 
         const events = new ServerEventStream(`/api/settings/models/progress?token=${encodeURIComponent(token)}`);

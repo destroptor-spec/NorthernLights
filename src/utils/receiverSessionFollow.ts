@@ -22,6 +22,8 @@ export interface ReceiverHandover {
   renewableUntil?: string;
   /** The Cast stream quality the receiver builds its items with (the sender's, resolved for Cast). */
   quality?: string;
+  /** The sender's 12-hour Cast media token, for the items the receiver builds (6a-2). */
+  mediaToken?: string;
 }
 
 export interface ReceiverFollowMessage extends ReceiverHandover {

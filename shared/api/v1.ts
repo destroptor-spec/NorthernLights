@@ -394,6 +394,8 @@ export const playbackOutputCredentialSchema = z.object({
   generation: z.number().int().positive(),
   renewableUntil: ISO_DATE_TIME.optional()
     .describe('Receiver credentials only: the receiver may renew its own credential (POST …/output/renew) until then, 24 hours after a controller issued it.'),
+  mediaToken: z.string().optional()
+    .describe('Renewals only (POST …/output/renew): a fresh 12-hour media token for the receiver\'s stream and artwork URLs, so it never needs the owner\'s login media token.'),
 }).meta({ id: 'PlaybackOutputCredential' });
 
 export const playbackOutputClaimResultSchema = z.object({

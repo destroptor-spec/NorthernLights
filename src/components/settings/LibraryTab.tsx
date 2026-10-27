@@ -126,7 +126,7 @@ export const LibraryTab: React.FC = () => {
 
             // Open SSE stream for live progress
             if (modelSseRef.current) modelSseRef.current.close();
-            const token = sseAccessToken || authToken;
+            const token = sseAccessToken;
             if (!token) return;
             const sse = new ServerEventStream('/api/settings/models/progress?token=' + encodeURIComponent(token));
             modelSseRef.current = sse;

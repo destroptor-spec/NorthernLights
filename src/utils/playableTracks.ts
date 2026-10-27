@@ -9,6 +9,6 @@ import type { TrackInfo } from './fileSystem';
  */
 export function toPlayableTracks(tracks: Track[]): TrackInfo[] {
   const { mediaAccessToken, authToken, streamingQuality } = usePlayerStore.getState();
-  const token = mediaAccessToken || authToken || '';
+  const token = mediaAccessToken || '';
   return tracks.map((track) => toLegacyTrack(track, token, streamingQuality));
 }
