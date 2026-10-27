@@ -335,6 +335,8 @@ With "Sync playback across devices" on, the same log carries `sync-…` lines, t
 - `sync-play-where` (the listener's choice), `sync-command-sent` (with its result) and `sync-command-received`, then `session-command` when a casting device carried it out;
 - `sync-disabled-by-server`.
 
+Ending a Cast session from this device (Stop casting, or another device taking over) logs `cast-end-requested reason=user-stop|replaced`, then `SESSION_ENDED`. When Chrome stays silent for 4 s it logs `cast-end-unconfirmed` (with Chrome's cast and session state), tries once more, and ends the session on this device anyway: the usual handoff, and nothing rejoins or hydrates that session (prod 2026-10-27: the desktop kept showing a cast it could not stop). A `SESSION_ENDED` that comes later logs `cast-end-confirmed-late`.
+
 ### Automated Log Verification
 
 Run after the manual cases:
