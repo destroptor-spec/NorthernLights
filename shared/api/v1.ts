@@ -299,6 +299,60 @@ export const playbackSessionSchema = z.object({
   updatedAt: ISO_DATE_TIME,
 }).meta({ id: 'PlaybackSession' });
 
+// ── Listen together (docs/listen-together.md, 6c) ─────────────────────
+
+/** How a user is shown wherever one appears. Pictures come later: pictureUrl is null until then, and clients draw the initial. */
+export const userAvatarSchema = z.object({
+  userId: z.string().uuid(),
+  initial: z.string().min(1).max(2),
+  pictureUrl: z.string().nullable().describe('Always null for now; when set, a URL on this server.'),
+}).meta({ id: 'UserAvatar' });
+
+export const sessionSharingSchema = z.object({
+  visibility: z.enum(['private', 'invite']).describe('private: nobody can join (guests already in stay); invite: anyone with a join link can. "discoverable" comes later.'),
+}).strict().meta({ id: 'SessionSharing' });
+
+export const sessionMemberSchema = z.object({
+  username: z.string(),
+  avatar: userAvatarSchema,
+  role: z.enum(['owner', 'guest']),
+  permissions: z.array(z.enum(SESSION_SCOPES)),
+  joinedAt: ISO_DATE_TIME.nullable().describe('null for the owner.'),
+}).meta({ id: 'SessionMember' });
+
+export const sessionMembersSchema = z.object({
+  owner: sessionMemberSchema,
+  guests: z.array(sessionMemberSchema),
+}).meta({ id: 'SessionMembers' });
+
+export const sessionInviteCreateSchema = z.object({
+  permissions: z.array(z.enum(SESSION_SCOPES)).min(1).optional().describe('What joining through the link grants; all scopes when left out.'),
+}).strict().meta({ id: 'SessionInviteCreate' });
+
+export const sessionInviteSchema = z.object({
+  token: z.string(),
+  path: z.string().describe('The join page on this server: /listen/<token>. Anyone signed in on this server who opens it can join.'),
+  permissions: z.array(z.enum(SESSION_SCOPES)),
+  createdAt: ISO_DATE_TIME,
+}).meta({ id: 'SessionInvite' });
+
+export const sessionInvitePromptSchema = z.object({
+  userIds: z.array(z.string().uuid()).min(1).max(20).describe('Users of this server to prompt; each hears playbackSession.invitePrompt on /events.'),
+}).strict().meta({ id: 'SessionInvitePrompt' });
+
+export const sessionInvitePreviewSchema = z.object({
+  ownerName: z.string().describe("Shown as \"{ownerName}'s session\"."),
+  owner: userAvatarSchema,
+  guests: z.array(userAvatarSchema).describe("The guests' avatars only: no names, and nothing about what plays, before joining."),
+  sessionId: z.string().uuid(),
+  joined: z.boolean().describe('The caller is already in this session (its owner, or a guest).'),
+}).meta({ id: 'SessionInvitePreview' });
+
+export const onlineUserSchema = z.object({
+  username: z.string(),
+  avatar: userAvatarSchema,
+}).meta({ id: 'OnlineUser' });
+
 export const playbackSessionCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
   trackIds: z.array(OPAQUE_ID).max(2000).default([]),
@@ -568,6 +622,11 @@ export type Playlist = z.infer<typeof playlistSchema>;
 export type PlaybackDescriptor = z.infer<typeof playbackDescriptorSchema>;
 export type TrackLyrics = z.infer<typeof lyricsSchema>;
 export type PlaybackSession = z.infer<typeof playbackSessionSchema>;
+export type UserAvatar = z.infer<typeof userAvatarSchema>;
+export type SessionMembers = z.infer<typeof sessionMembersSchema>;
+export type SessionInvite = z.infer<typeof sessionInviteSchema>;
+export type SessionInvitePreview = z.infer<typeof sessionInvitePreviewSchema>;
+export type OnlineUser = z.infer<typeof onlineUserSchema>;
 export type PlaybackSessionPatch = z.infer<typeof playbackSessionPatchSchema>;
 export type PlaybackOutput = z.infer<typeof playbackOutputSchema>;
 export type PlaybackOutputClaim = z.infer<typeof playbackOutputClaimSchema>;
