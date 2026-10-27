@@ -100,12 +100,14 @@ function harness(options: { caf?: number[]; current?: number; session?: ReturnTy
   });
   const markers: string[] = [];
   const onStopped = jest.fn();
+  const setMediaToken = jest.fn();
   const follower = follow.createFollower({
     playerManager: player, queueManager: queue, messages, fetch, EventSource: FakeEventSource,
     setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms),
     clearTimeout: (timer: ReturnType<typeof setTimeout>) => clearTimeout(timer),
     now: () => Date.now(),
     mediaToken: () => (options.mediaToken === undefined ? 'media-token' : options.mediaToken),
+    setMediaToken,
     origin: 'https://aurora.example',
     marker: (name: string, detail: string) => markers.push(`${name} ${detail}`),
     onStopped,
@@ -116,7 +118,7 @@ function harness(options: { caf?: number[]; current?: number; session?: ReturnTy
   };
   const settle = async () => { for (let i = 0; i < 10; i += 1) await Promise.resolve(); };
   return {
-    follower, queue, player, fetch, routes, markers, onStopped, handover, settle,
+    follower, queue, player, fetch, routes, markers, onStopped, handover, settle, setMediaToken,
     stream: () => FakeEventSource.instances[FakeEventSource.instances.length - 1],
     setSession: (next: ReturnType<typeof sessionOf>) => { session = next; },
     setPlayerState: (next: string) => { playerState = next; },
@@ -437,6 +439,32 @@ describe('when the session moves on', () => {
     expect(states().at(-1)).not.toBe('idle');
     await jest.advanceTimersByTimeAsync(3_300);
     expect(states().at(-1)).toBe('idle');
+  });
+});
+
+describe('the Cast media token (docs/listen-together.md, 6a-2)', () => {
+  it('takes the sender\'s Cast token with the handover', () => {
+    const h = harness();
+    h.follower.start({ ...h.handover, mediaToken: 'cast-12h' });
+    expect(h.setMediaToken).toHaveBeenCalledWith('cast-12h');
+  });
+
+  it('renews it with its credential', async () => {
+    const h = harness();
+    h.routes['POST /api/v1/playback-sessions/session-1/output/renew'] = () => ({
+      status: 200, body: { data: { token: 'renewed-token', expiresAt: new Date(Date.now() + 12 * 3600_000).toISOString(), mediaToken: 'cast-renewed' } },
+    });
+    h.follower.start({ ...h.handover, expiresAt: new Date(NOW + 20 * 60_000).toISOString() });
+    await jest.advanceTimersByTimeAsync(10 * 60_000);
+    await h.settle();
+    expect(h.setMediaToken).toHaveBeenCalledWith('cast-renewed');
+    expect(h.markers.join('\n')).toContain('credential=self-renewed generation=3 mediaToken=renewed');
+  });
+
+  it('keeps its token when a handover brings none (an older sender)', () => {
+    const h = harness();
+    h.follower.start(h.handover);
+    expect(h.setMediaToken).not.toHaveBeenCalled();
   });
 });
 

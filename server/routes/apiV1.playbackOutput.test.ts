@@ -241,6 +241,10 @@ describe('a Cast receiver as the output', () => {
     expect(getCurrentOutputGrant).toHaveBeenCalledWith({ userId: 'user-1', sessionId: 's-1', outputId: 'receiver:cast-77', generation: 3 });
     expect(generateReceiverCredential).toHaveBeenCalledWith(receiverPrincipal, { sid: 's-1', oid: 'receiver:cast-77', gen: 3 }, 1_900_000_000);
     expect(playbackOutputCredentialSchema.safeParse(body.data).success).toBe(true);
+    // A fresh 12-hour media token with it, so the receiver never streams with
+    // the owner's login one (docs/listen-together.md, 6a-2).
+    expect(generateEphemeralScopedToken).toHaveBeenCalledWith('media', expect.objectContaining({ userId: 'user-1' }), '12h');
+    expect(body.data.mediaToken).toBe('scoped-token');
   });
 
   it('cannot renew a replaced grant, or past its cap', async () => {

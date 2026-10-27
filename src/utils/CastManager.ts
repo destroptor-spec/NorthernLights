@@ -8,7 +8,8 @@ import { getAuroraStatusNamespace } from './castNamespace';
 import { CastDiagnosticsSync } from './castDiagnostics';
 import { playbackManager } from './PlaybackManager';
 import { usePlayerStore } from '../store';
-import { getAuroraClientId } from '../api/auroraApi';
+import { getAuroraClientId, mintScopedToken } from '../api/auroraApi';
+import { CastMediaToken, withCastToken } from './castMediaToken';
 import { describeThisDevice } from './deviceName';
 import { decideJoin, isOwnLeaveDisconnect } from './castJoinPolicy';
 import {
@@ -311,6 +312,15 @@ export class CastManager {
     // button, or the Cast dialog opened from this device's Cast icon.
     private userStopRequested = false;
     private userCastDialogAt = 0;
+    /** The 12-hour media token Cast URLs carry instead of the login's (castMediaToken.ts, 6a-2). */
+    private castMediaTokenHolder: CastMediaToken | null = null;
+    private get castMediaToken(): CastMediaToken {
+        return this.castMediaTokenHolder ??= new CastMediaToken({
+            mint: () => mintScopedToken(usePlayerStore.getState().getAuthHeader(), 'media', '12h'),
+            now: () => Date.now(),
+        });
+    }
+    private castMediaTokenTimer: ReturnType<typeof setTimeout> | null = null;
     /** Chrome's device picker, opened from the Connect menu, has not answered yet. */
     private castPickerPendingSince = 0;
     private castEndSnapshotAtStop: CastEndSnapshot | null = null;
@@ -1018,9 +1028,15 @@ export class CastManager {
             this.logCast('warn', 'receiver-session-handover', `${detail} result=other-cast-session`);
             return false;
         }
+        // The receiver builds its own items: it gets this device's Cast media
+        // token with the session, never the login's (6a-2).
+        const tokenReady = this.readyCastMediaToken();
+        if (tokenReady) await tokenReady;
+        const mediaToken = this.castMediaToken.current();
         const result = await handOverToReceiver({
             ...handover,
             quality: resolveCastStreamingQuality(usePlayerStore.getState().streamingQuality),
+            ...(mediaToken ? { mediaToken } : {}),
         }, {
             send: (message) => session.sendMessage(getAuroraStatusNamespace(session), message),
             acks: this.receiverFollowAcks,
@@ -2708,6 +2724,8 @@ export class CastManager {
             ? applyCastStreamingQualityToHlsUrl(track.url || '', streamingQuality)
             : applyStreamingQualityToHlsUrl(track.url || '', streamingQuality);
         let mediaUrl = useHls ? (effectiveHlsUrl || track.rawUrl || '') : (track.rawUrl || effectiveHlsUrl || '');
+        const castToken = this.castTokenFor(mediaUrl);
+        mediaUrl = withCastToken(mediaUrl, castToken);
         if (useHls) {
             if (compactHlsUrl) {
                 mediaUrl = stripQueryParam(mediaUrl, 'token');
@@ -2739,8 +2757,7 @@ export class CastManager {
             customData.queueEntryId = track.queueEntryId;
         }
         if (useHls) {
-            const authToken = this.extractTokenFromUrl(mediaUrl);
-            if (includeAuthTokenInCustomData && authToken) customData.token = authToken;
+            if (includeAuthTokenInCustomData && castToken) customData.token = castToken;
             customData.codec = CUSTOM_RECEIVER_HLS_CODEC;
         }
         customData.diagnosticsVerbose = this.diagnosticsVerbose;
@@ -3511,6 +3528,59 @@ export class CastManager {
         return '';
     }
 
+    /** The token a Cast URL carries: the Cast media token, or the URL's own when there is none. */
+    private castTokenFor(url: string): string {
+        return this.castMediaToken.current() || this.extractTokenFromUrl(url);
+    }
+
+    /**
+     * Makes sure Cast URLs built next carry a Cast media token with time to
+     * spare, and that it is renewed while this device is connected. When
+     * minting fails, URLs keep their own token, as before.
+     */
+    private readyCastMediaToken(): Promise<void> | null {
+        // Held and not due: no await, so a load starts in the same tick as before.
+        if (this.castMediaToken.current() && Date.now() < this.castMediaToken.renewAt()) return null;
+        return this.mintCastMediaToken();
+    }
+
+    private async mintCastMediaToken(): Promise<void> {
+        const token = await this.castMediaToken.ensure();
+        this.logCast(token ? 'ok' : 'warn', 'cast-media-token', token ? 'result=minted' : 'result=failed fallback=url-token');
+        this.scheduleCastMediaTokenRenewal();
+    }
+
+    private scheduleCastMediaTokenRenewal() {
+        if (this.castMediaTokenTimer) clearTimeout(this.castMediaTokenTimer);
+        this.castMediaTokenTimer = null;
+        const renewAt = this.castMediaToken.renewAt();
+        if (!renewAt) return;
+        this.castMediaTokenTimer = setTimeout(() => {
+            this.castMediaTokenTimer = null;
+            void this.renewCastMediaToken();
+        }, Math.max(60_000, renewAt - Date.now()));
+    }
+
+    /**
+     * While connected, a fresh token goes to the receiver privately (a
+     * sender's message reaches the receiver only), so the items it already
+     * holds keep playing; with no device connected it waits for the next load.
+     */
+    private async renewCastMediaToken() {
+        if (!this.isConnected()) return;
+        const token = await this.castMediaToken.ensure();
+        const session = this.castContext?.getCurrentSession?.() || null;
+        if (token && session && typeof session.sendMessage === 'function') {
+            try {
+                await session.sendMessage(getAuroraStatusNamespace(session), { type: 'aurora.media-token', token });
+                this.logCast('ok', 'cast-media-token', 'result=renewed sent=receiver');
+            } catch (error) {
+                this.logCast('warn', 'cast-media-token', `result=renewed sent=failed ${this.describeError(error)}`);
+            }
+        }
+        this.scheduleCastMediaTokenRenewal();
+    }
+
     /**
      * Extract the auth token from a track URL's query parameters.
      */
@@ -3527,7 +3597,7 @@ export class CastManager {
         try {
             const parsed = new URL(url, window.location.href);
             if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
-            return parsed.toString();
+            return withCastToken(parsed.toString(), this.castMediaToken.current());
         } catch {
             return '';
         }
@@ -3535,6 +3605,8 @@ export class CastManager {
 
     public async castMedia(hlsUrl: string, rawUrl: string, title: string, artist: string, artUrl?: string, album?: string, format?: string, token?: string) {
         if (!this.isConnected()) return;
+        const tokenReady = this.readyCastMediaToken();
+        if (tokenReady) await tokenReady;
 
         const castSession = this.castContext.getCurrentSession();
         if (!castSession) return;
@@ -3548,7 +3620,8 @@ export class CastManager {
         // Source. Adaptive browser HLS is not sent to Cast.
         const useHls = !!(this.customAppId && effectiveHlsUrl);
         let mediaUrl = useHls ? effectiveHlsUrl : (rawUrl || effectiveHlsUrl);
-        const authToken = token || this.extractTokenFromUrl(mediaUrl);
+        const authToken = this.castMediaToken.current() || token || this.extractTokenFromUrl(mediaUrl);
+        mediaUrl = withCastToken(mediaUrl, authToken);
 
         if (useHls) {
             try {
@@ -3645,6 +3718,11 @@ export class CastManager {
     public async castQueue(tracks: CastQueueTrack[], startIndex = 0, repeat: CastRepeat = 'none', startTime = 0, confirmationRetry = false) {
         if (this.leftToReceiver('load')) return;
         if (!this.isConnected() || tracks.length === 0) return;
+        const tokenReady = this.readyCastMediaToken();
+        if (tokenReady) {
+            await tokenReady;
+            if (!this.isConnected()) return;
+        }
         let session = this.castContext.getCurrentSession();
         if (!session) return;
         const generation = ++this.queueLoadGeneration;
@@ -3691,7 +3769,7 @@ export class CastManager {
                     includeAuthTokenInCustomData: false, includeArtwork: true,
                     includeDuration: i === start, compactHlsUrl: true,
                 }));
-                const token = this.extractTokenFromUrl(tracks[index].url || tracks[index].rawUrl || '');
+                const token = this.castTokenFor(tracks[index].url || tracks[index].rawUrl || '');
                 items[start].media.customData = { ...items[start].media.customData, ...(token ? { token } : {}), diagnosticsVerbose: this.diagnosticsVerbose };
                 const request = new chrome.cast.media.LoadRequest(items[start].media);
                 request.autoplay = true;

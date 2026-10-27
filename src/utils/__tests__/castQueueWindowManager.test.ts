@@ -3,6 +3,9 @@ import { CastManager, AuroraReceiverStatus } from '../CastManager';
 import { CastQueueInsertAcks, serializedBytes } from '../castQueueWindow';
 import type { TrackInfo } from '../fileSystem';
 
+// A Cast media token already held (6a-2), so loads start without minting one.
+const heldCastToken = () => ({ current: () => 'cast-media-token', renewAt: () => Number.MAX_SAFE_INTEGER, ensure: async () => 'cast-media-token' });
+
 jest.mock('../PlaybackManager', () => ({ playbackManager: {} }));
 const mockState = { playlist: [] as TrackInfo[], currentIndex: 0, repeat: 'none' as 'none' | 'one' | 'all', streamingQuality: '192' };
 jest.mock('../../store', () => ({ usePlayerStore: { getState: () => mockState, setState: jest.fn() } }));
@@ -45,7 +48,7 @@ function harness() {
     let active: unknown = session;
     const manager = Object.create(CastManager.prototype) as Pick<CastManager, keyof CastManager> & Internals;
     Object.assign(manager, {
-        state: 'CONNECTED', castContext: { getCurrentSession: () => active }, currentLoadPromise: Promise.resolve(),
+        castMediaTokenHolder: heldCastToken(), state: 'CONNECTED', castContext: { getCurrentSession: () => active }, currentLoadPromise: Promise.resolve(),
         playbackConfirmation: new CastPlaybackConfirmation(), confirmationLoadAccepted: false, getCastDeviceName: () => 'Test device',
         healthStatus: { phase: 'connected', message: '' },
         queueLoadGeneration: 0, queueWindowBusy: false, queueWindowEditSeq: 0, queueWindowEditHandled: 0, skipRequestSeq: 0, pendingSkip: null, skipRunner: null, staleSdkMedia: null, queueWindow: null,

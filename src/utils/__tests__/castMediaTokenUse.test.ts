@@ -1,0 +1,79 @@
+import { CastManager } from '../CastManager';
+import { ReceiverFollowAcks } from '../receiverSessionFollow';
+
+jest.mock('../PlaybackManager', () => ({ playbackManager: {} }));
+jest.mock('../../store', () => ({ usePlayerStore: { getState: () => ({ streamingQuality: 'auto', playlist: [], currentIndex: 0 }), setState: jest.fn() } }));
+
+/**
+ * 6a-2 (docs/listen-together.md): what a Cast session shows every sender
+ * carries the 12-hour Cast media token, never the login's 30-day one.
+ */
+type Internals = {
+  buildMediaInfo(track: Record<string, unknown>, options?: Record<string, unknown>): any;
+  handOverSessionToReceiver(handover: Record<string, unknown>, reason: string): Promise<boolean>;
+  attachAuroraStatusListener(session: unknown, sessionId: string): void;
+};
+
+beforeAll(() => {
+  class MediaInfo { metadata: any; customData: any; streamType: any; hlsSegmentFormat: any; constructor(public contentId: string, public contentType: string) {} }
+  (globalThis as any).chrome = { cast: {
+    Image: class { constructor(public url: string) {} },
+    media: {
+      MediaInfo, MusicTrackMediaMetadata: class {}, StreamType: { BUFFERED: 'BUFFERED' }, HlsSegmentFormat: { TS: 'TS' },
+    },
+  } };
+});
+
+const held = (token: string | null) => ({ current: () => token, renewAt: () => Number.MAX_SAFE_INTEGER, ensure: async () => token });
+
+function manager(token: string | null) {
+  const m = Object.create(CastManager.prototype) as Internals;
+  Object.assign(m, { customAppId: '041FEA05', diagnosticsVerbose: false, castMediaTokenHolder: held(token), logCast: jest.fn() });
+  return m;
+}
+
+const track = {
+  queueEntryId: 'e1', title: 'Lonely', artist: 'A',
+  url: 'https://aurora.example/api/stream/t1/playlist.m3u8?quality=auto&token=login-30d',
+  artUrl: 'https://aurora.example/api/v1/artwork/h1?token=login-30d',
+};
+
+it('puts the Cast token, not the login one, in the URL, customData and artwork', () => {
+  const info = manager('cast-12h').buildMediaInfo(track);
+  expect(info.contentId).toContain('token=cast-12h');
+  expect(info.customData.token).toBe('cast-12h');
+  expect(info.metadata.images[0].url).toContain('token=cast-12h');
+  expect(JSON.stringify(info)).not.toContain('login-30d');
+});
+
+it("keeps the URL's own token when no Cast token could be minted, as before", () => {
+  const info = manager(null).buildMediaInfo(track);
+  expect(info.customData.token).toBe('login-30d');
+});
+
+it('hands the receiver the Cast token with the session', async () => {
+  const NS = 'urn:x-cast:aurora.status';
+  let onMessage: (ns: string, message: string) => void = () => undefined;
+  const sent: any[] = [];
+  const session = {
+    getSessionId: () => 'cast-77',
+    addMessageListener: (_ns: string, listener: typeof onMessage) => { onMessage = listener; },
+    sendMessage: jest.fn(async (_ns: string, message: any) => {
+      sent.push(message);
+      queueMicrotask(() => onMessage(NS, JSON.stringify({ type: 'aurora.session.follow.ack', requestId: message.requestId, ok: true })));
+    }),
+  };
+  const m = manager('cast-12h');
+  Object.assign(m, {
+    castContext: { getCurrentSession: () => session }, auroraControlRequestId: 0, auroraControlCapLoggedSid: null,
+    sessionFollowCapSid: '', receiverFollowListeners: new Set(), receiverFollowStateListeners: new Set(),
+    receiverFollowAcks: new ReceiverFollowAcks(), probeAcks: new Map(), applyAuroraStatus: jest.fn(),
+    syncReceiverDiagnostics: jest.fn(), isConnected: () => true,
+  });
+  m.attachAuroraStatusListener(session, 'cast-77');
+  onMessage(NS, JSON.stringify({ type: 'aurora.status', caps: ['session-follow'], queueEntryId: 'e1' }));
+  await expect(m.handOverSessionToReceiver({
+    sessionId: 's1', outputId: 'receiver:cast-77', generation: 3, token: 'receiver-credential', expiresAt: '2026-10-28T00:00:00.000Z',
+  }, 'claim')).resolves.toBe(true);
+  expect(sent[0]).toMatchObject({ type: 'aurora.session.follow', mediaToken: 'cast-12h' });
+});

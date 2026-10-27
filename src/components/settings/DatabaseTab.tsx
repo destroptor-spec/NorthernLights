@@ -59,7 +59,8 @@ export const DatabaseTab: React.FC = () => {
     useEffect(() => {
         if (dbTab === 'mbdb' && authToken) {
             fetchMbdbUpdateInfo();
-            const token = sseAccessToken || authToken;
+            const token = sseAccessToken;
+            if (!token) return;
             const es = new ServerEventStream('/api/admin/mbdb/status?token=' + encodeURIComponent(token));
             es.onmessage = (e) => {
                 try {
