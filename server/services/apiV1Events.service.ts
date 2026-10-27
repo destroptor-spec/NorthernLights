@@ -15,7 +15,13 @@ export type ApiV1EventType =
   | 'library.revision'
   | 'playbackSync.changed'
   | 'devices.changed'
-  | 'playbackSession.transferRequested';
+  | 'playbackSession.transferRequested'
+  // Listen together (docs/listen-together.md, 6c)
+  | 'playbackSession.memberJoined'
+  | 'playbackSession.memberLeft'
+  | 'playbackSession.visibilityChanged'
+  | 'playbackSession.togetherEnded'
+  | 'playbackSession.invitePrompt';
 
 export interface ApiV1Event {
   id: string;
@@ -88,6 +94,11 @@ export type ConnectedDevice = { clientId: string; name: string | null; kind: Con
 // The user's devices with an event stream open now: those remote commands
 // and transfers can reach, and the Connect menu lists (GET /devices).
 const listening = new Map<string, Map<string, { count: number; name: string | null; kind: ConnectedDeviceKind }>>();
+
+/** The users with Aurora open somewhere now (an event stream open): who can be prompted to join. */
+export function listOnlineUserIds(): string[] {
+  return Array.from(listening.keys());
+}
 
 /** The user's devices that have Aurora open now, one entry per device. */
 export function listConnectedDevices(userId: string): ConnectedDevice[] {

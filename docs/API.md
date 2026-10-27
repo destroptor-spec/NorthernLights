@@ -183,7 +183,7 @@ Playback sessions are server-backed queue snapshots with transport state:
 
 **Ownership.** A session belongs to its user, never to a device. Any of the user's devices (a web session or an app key) may read, change or delete it; there is no device-level owner check and no handoff step. `ownerClientId` is deprecated and only records the client that last created or claimed the session.
 
-**Owner and guests** (Listen together, [listen-together.md](./listen-together.md); built 2026-10-27, nobody can join yet):
+**Owner and guests** (Listen together, [listen-together.md](./listen-together.md); built 2026-10-27; joining through links since 6c-1):
 - **The owner** is the user who started a session. The owner may do everything, and alone chooses where it plays.
 - **A guest** may do what its scopes allow:
   - `transport`: play, pause, seek, next, previous, jump;
@@ -196,6 +196,16 @@ Playback sessions are server-backed queue snapshots with transport state:
   - anyone else: `404 PLAYBACK_SESSION_NOT_FOUND`, so a session ID never confirms a session exists.
 - **Events:** a session's events reach its owner and its guests. Remote commands go only to the owner's devices.
 - **Sync for a guest** follows the owner's setting, not the guest's own; with sync off server-wide it is off for everyone.
+
+**Join links** (6c-1). Everything here except joining is the owner's (`403 SESSION_OWNER_ONLY` for a guest):
+- **A link:** `POST /playback-sessions/:id/invites` with `{ permissions? }` (all scopes when left out) returns `{ token, path: "/listen/<token>", permissions, createdAt }`. Anyone signed in on this server who opens it can join, as many as want, until the owner revokes it (`DELETE …/invites/:token`) or ends listening together. A private session becomes `invite`. `GET …/invites` lists the working links, newest first.
+- **Sharing:** `PATCH /playback-sessions/:id/sharing` with `{ visibility: private | invite }`. Private keeps the guests already in, but no one new can join.
+- **Prompting:** `POST …/invites/:token/prompt` with `{ userIds }` (1–20 users of this server) sends each of them `playbackSession.invitePrompt` with the link and its preview. `GET /users/online` lists the others with Aurora open now (`{ username, avatar }`), whom an owner can prompt.
+- **Before joining:** `GET /session-invites/:token` answers `{ ownerName, owner, guests, sessionId, joined }`: "{ownerName}'s session" with avatars (`{ userId, initial, pictureUrl }`), no guest names, nothing about what plays.
+- **Joining:** `POST /session-invites/:token/join` (body `{}`) makes the caller a guest with the link's scopes and returns the session. A guest in another session leaves that one first; the owner opening its own link gets its session back. Both preview and join are limited to 30 a minute per user.
+- **Members:** `GET /playback-sessions/:id/members` (owner and guests) lists `{ owner, guests }` with names, avatars, scopes and `joinedAt`. `DELETE …/members/:userId` removes a guest (owner) or leaves (the guest itself).
+- **Ending:** `POST /playback-sessions/:id/together/end` (body `{}`) removes every guest, revokes every link and makes the session private. The music plays on.
+- **Refusals:** a revoked or unknown link, or one whose session is gone: `404 SESSION_INVITE_NOT_FOUND`; a private session: `409 SESSION_NOT_JOINABLE`; sync off for the owner: `403 PLAYBACK_SYNC_DISABLED`.
 
 **Availability.** Playback sessions exist for "Sync playback across devices", which the server admin turns off, on, or over to each user (a server setting, outside v1). While it is off for the account, every `/playback-sessions` route answers `403 PLAYBACK_SYNC_DISABLED`, to the web app, the PWA and every other client alike, and `playbackSync.changed` on `/events` announces each change. Stored sessions are kept and come back when sync is turned on again.
 
@@ -261,7 +271,7 @@ Keys are scoped to the session, kept for 24 hours and capped at the newest 1,000
 
 `GET /api/v1/events` is a user-scoped Server-Sent Events stream for playback-session, playlist, annotation, and library-revision changes. Browser `EventSource` callers first mint a short-lived `sse` token using `POST /api/v1/auth/scoped-token`, then pass it in the `token` query parameter. Native clients may use a normal bearer header. Scanner/auto-walk changes and mutations made through Aurora web or OpenSubsonic publish the same invalidations, so a dedicated client does not stay stale when another surface changes state.
 
-The query parameter accepts only an `sse` token or a receiver credential; a full session token is refused there. With an `sse` token, `clientId` names the device the stream belongs to (see Remote control). `playbackSync.changed` (`{ enabled }`) says whether the playback-session API works for this account now (see Playback sessions). Session events are `playbackSession.created`, `updated`, `handedOff` and `deleted` (fetch the session when the revision is newer than yours), plus `playbackSession.progress` (see Reports).
+The query parameter accepts only an `sse` token or a receiver credential; a full session token is refused there. With an `sse` token, `clientId` names the device the stream belongs to (see Remote control). `playbackSync.changed` (`{ enabled }`) says whether the playback-session API works for this account now (see Playback sessions). Session events are `playbackSession.created`, `updated`, `handedOff` and `deleted` (fetch the session when the revision is newer than yours), plus `playbackSession.progress` (see Reports). Listen together adds `playbackSession.memberJoined` (`{ sessionId, userId, avatar }`), `memberLeft` (`{ sessionId, userId, reason: left | removed | ended }`), `visibilityChanged` (`{ sessionId, visibility }`) and `togetherEnded` (`{ sessionId }`), which reach the owner and every guest, and `invitePrompt` (`{ sessionId, token, path, preview }`) to a prompted user.
 
 Reconnect with `Last-Event-ID`. If the in-memory replay window no longer includes that ID, Aurora emits `resync.required`; refetch affected resources and sessions. SSE is a cache-invalidation signal, not a complete event-sourced history. Progress events are not part of the replay window, so a client whose last seen event was one of them gets `resync.required`.
 

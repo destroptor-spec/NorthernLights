@@ -79,6 +79,9 @@ import {
   playbackOutputClaimSchema,
   playbackCommandRequestSchema,
   playbackTransferRequestSchema,
+  sessionSharingSchema,
+  sessionInviteCreateSchema,
+  sessionInvitePromptSchema,
   artworkLinksRequestSchema,
   playbackOutputRefreshSchema,
   playbackOutputReportSchema,
@@ -134,6 +137,22 @@ import {
   guestSessionOwner,
 } from '../services/playbackSession.service';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import {
+  createSessionInvite,
+  endListeningTogether,
+  joinSessionByInvite,
+  listOnlineUsers,
+  listSessionInvites,
+  listSessionMembers,
+  previewSessionInvite,
+  promptSessionInvite,
+  removeSessionMember,
+  revokeSessionInvite,
+  SessionInviteNotFoundError,
+  SessionNotJoinableError,
+  SessionSyncOffError,
+  setSessionVisibility,
+} from '../services/sessionMembers.service';
 import { isPlaybackSyncEnabledFor } from '../services/playbackSync.service';
 import { publishApiV1Event, replayApiV1Events, subscribeApiV1Events, noteClientListening, listConnectedDevices, isClientListening as isDeviceConnected } from '../services/apiV1Events.service';
 import { topUpSessionInfinity } from '../services/sessionInfinity.service';
@@ -179,6 +198,14 @@ const pairingExchangeLimiter = createRateLimiter({
   keyGenerator: (req) => typeof req.body?.requestId === 'string' ? `request:${req.body.requestId}` : 'invalid-request',
 });
 const listenerLimiter = createRateLimiter({ keyPrefix: 'api-v1-listener', windowMs: 60_000, max: 1200 });
+// Join links are bearer links within the server: looking them up and joining
+// are limited per user (Listen together, 6c).
+const sessionInviteLimiter = createRateLimiter({
+  keyPrefix: 'api-v1-session-invite',
+  windowMs: 60_000,
+  max: 30,
+  keyGenerator: (req) => `user:${req.apiV1?.userId ?? 'unknown'}`,
+});
 // Media streaming is registered before the router-wide listener limiter, so it
 // needs its own. Range requests make it the highest-frequency endpoint here, and
 // its own bucket stops a heavy stream from consuming a client's API quota.
@@ -1231,6 +1258,104 @@ router.post('/playback-sessions/:id/transfer', async (req, res) => {
   dataResponse(req, res, { accepted: true }, 202);
 });
 
+// ── Listen together (docs/listen-together.md, 6c) ──────────────────────
+// The owner manages visibility, guests and join links; a guest may leave.
+// A join link works for anyone signed in on this server.
+
+router.patch('/playback-sessions/:id/sharing', async (req, res) => {
+  const input = parseBody(sessionSharingSchema, req, res);
+  if (!input) return;
+  try {
+    dataResponse(req, res, await setSessionVisibility(req.apiV1!.userId, req.params.id, input.visibility));
+  } catch (error) {
+    handleSessionError(req, res, error);
+  }
+});
+
+router.get('/playback-sessions/:id/members', async (req, res) => {
+  try {
+    dataResponse(req, res, await listSessionMembers(req.apiV1!.userId, req.params.id));
+  } catch (error) {
+    handleSessionError(req, res, error);
+  }
+});
+
+router.delete('/playback-sessions/:id/members/:userId', async (req, res) => {
+  try {
+    await removeSessionMember(req.apiV1!.userId, req.params.id, routeParam(req, 'userId'));
+    res.status(204).end();
+  } catch (error) {
+    handleSessionError(req, res, error);
+  }
+});
+
+router.get('/playback-sessions/:id/invites', async (req, res) => {
+  try {
+    dataResponse(req, res, await listSessionInvites(req.apiV1!.userId, req.params.id));
+  } catch (error) {
+    handleSessionError(req, res, error);
+  }
+});
+
+router.post('/playback-sessions/:id/invites', async (req, res) => {
+  const input = parseBody(sessionInviteCreateSchema, req, res);
+  if (!input) return;
+  try {
+    dataResponse(req, res, await createSessionInvite(req.apiV1!.userId, req.params.id, input.permissions), 201);
+  } catch (error) {
+    handleSessionError(req, res, error);
+  }
+});
+
+router.delete('/playback-sessions/:id/invites/:token', async (req, res) => {
+  try {
+    await revokeSessionInvite(req.apiV1!.userId, req.params.id, routeParam(req, 'token'));
+    res.status(204).end();
+  } catch (error) {
+    handleSessionError(req, res, error);
+  }
+});
+
+router.post('/playback-sessions/:id/invites/:token/prompt', async (req, res) => {
+  const input = parseBody(sessionInvitePromptSchema, req, res);
+  if (!input) return;
+  try {
+    dataResponse(req, res, await promptSessionInvite(req.apiV1!.userId, req.params.id, routeParam(req, 'token'), input.userIds));
+  } catch (error) {
+    handleSessionError(req, res, error);
+  }
+});
+
+router.post('/playback-sessions/:id/together/end', async (req, res) => {
+  if (!parseBody(z.object({}).strict(), req, res)) return;
+  try {
+    dataResponse(req, res, await endListeningTogether(req.apiV1!.userId, req.params.id));
+  } catch (error) {
+    handleSessionError(req, res, error);
+  }
+});
+
+router.get('/session-invites/:token', sessionInviteLimiter, async (req, res) => {
+  try {
+    dataResponse(req, res, await previewSessionInvite(req.apiV1!.userId, routeParam(req, 'token')));
+  } catch (error) {
+    handleSessionError(req, res, error);
+  }
+});
+
+router.post('/session-invites/:token/join', sessionInviteLimiter, async (req, res) => {
+  if (!parseBody(z.object({}).strict(), req, res)) return;
+  try {
+    dataResponse(req, res, await joinSessionByInvite(req.apiV1!.userId, routeParam(req, 'token')));
+  } catch (error) {
+    handleSessionError(req, res, error);
+  }
+});
+
+router.get('/users/online', async (req, res) => {
+  dataResponse(req, res, await listOnlineUsers(req.apiV1!.userId));
+});
+
 // Legacy alias for claiming the output as a browser, at an expected revision.
 router.post('/playback-sessions/:id/commands', async (req, res) => {
   const request = parseBody(playbackCommandRequestSchema, req, res);
@@ -1279,6 +1404,9 @@ router.delete('/playback-sessions/:id', async (req, res) => {
 function handleSessionError(req: Request, res: Response, error: unknown) {
   if (error instanceof PlaybackSessionNotFoundError) return sendApiV1Error(req, res, 404, 'PLAYBACK_SESSION_NOT_FOUND', 'Playback session not found.');
   if (error instanceof PlaybackSessionOwnerOnlyError) return sendApiV1Error(req, res, 403, 'SESSION_OWNER_ONLY', "Only the session's owner can do this.");
+  if (error instanceof SessionInviteNotFoundError) return sendApiV1Error(req, res, 404, 'SESSION_INVITE_NOT_FOUND', 'This join link does not work (any more).');
+  if (error instanceof SessionNotJoinableError) return sendApiV1Error(req, res, 409, 'SESSION_NOT_JOINABLE', 'This session is private right now.');
+  if (error instanceof SessionSyncOffError) return sendApiV1Error(req, res, 403, 'PLAYBACK_SYNC_DISABLED', "Playback sync across devices is turned off for this session's owner.");
   if (error instanceof PlaybackSessionScopeError) return sendApiV1Error(req, res, 403, 'SESSION_SCOPE_DENIED', "This session's owner has not allowed that.", { need: error.need });
   if (error instanceof PlaybackOutputIdentityError) return sendApiV1Error(req, res, 422, 'OUTPUT_IDENTITY_MISMATCH', 'The report names a different output or generation than its credential.');
   if (error instanceof PlaybackOutputUnreachableError) return sendApiV1Error(req, res, 409, 'OUTPUT_UNREACHABLE', 'The device playing the session is not connected right now.', { current: error.current });
