@@ -309,7 +309,7 @@ export const userAvatarSchema = z.object({
 }).meta({ id: 'UserAvatar' });
 
 export const sessionSharingSchema = z.object({
-  visibility: z.enum(['private', 'invite']).describe('private: nobody can join (guests already in stay); invite: anyone with a join link can. "discoverable" comes later.'),
+  visibility: z.enum(['private', 'invite']).describe('private: nobody can join (guests already in stay) and every join link stops working; invite: anyone with a join link can. "discoverable" comes later.'),
 }).strict().meta({ id: 'SessionSharing' });
 
 export const sessionMemberSchema = z.object({

@@ -213,9 +213,13 @@ export async function setSharing(visibility: 'private' | 'invite'): Promise<void
   if (session && own) store.setState({ own: { ...own, visibility: session.visibility ?? visibility } });
 }
 
-/** The session's join link: the newest working one, or a new one. */
+/**
+ * The session's join link: the newest working one while it is open to
+ * invites; a fresh one when it is private (closing it revoked the old ones).
+ */
 async function joinLink(sessionId: string) {
-  const [newest] = await api.listSessionInvites(auth(), sessionId);
+  const open = store.getState().own?.visibility !== 'private';
+  const [newest] = open ? await api.listSessionInvites(auth(), sessionId) : [];
   const link = newest ?? await api.createSessionInvite(auth(), sessionId);
   // Making a link opens a private session to invites.
   const own = store.getState().own;
