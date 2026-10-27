@@ -24,6 +24,12 @@ export interface FollowedOutput {
    * device still asks before playing alongside it.
    */
   silent?: boolean;
+  /**
+   * The device casting to it, for a Cast output: the output itself for
+   * `cast`, the device that claimed it for `receiver` (the session's
+   * ownerClientId). "Play there" to that device ends the cast.
+   */
+  castingClientId?: string;
 }
 
 /** A report fetched with the session is at most this old when it is anchored. */
@@ -73,6 +79,8 @@ export function followFromSession(session: PlaybackSession, myClientId: string, 
     positionMs: report?.positionMs ?? session.positionMs,
     anchorMs: report ? anchorReportedAt(report.reportedAt, now) : now,
     ...(silent ? { silent: true } : {}),
+    ...(output.kind === 'cast' ? { castingClientId: output.id }
+      : output.kind === 'receiver' && session.ownerClientId ? { castingClientId: session.ownerClientId } : {}),
   };
 }
 

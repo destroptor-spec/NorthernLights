@@ -224,3 +224,18 @@ describe('nothing the session broadcasts carries the media token (6a-3)', () => 
     expect(out.media.contentId).toContain('token=request-token');
   });
 });
+
+test("refuses another session's handover while its own still plays here (6a)", async () => {
+  // Listen together: a guest's phone in this Cast session must not point the
+  // receiver at its own session.
+  const r = startReceiver(true);
+  r.receive({ senderId: 'owner', data: handover });
+  for (let i = 0; i < 10; i += 1) await Promise.resolve();
+  r.context.sendCustomMessage.mockClear();
+  r.receive({ senderId: 'guest', data: { ...handover, requestId: 6, sessionId: 'session-2', generation: 1, token: 'guest-secret' } });
+  expect(r.context.sendCustomMessage).not.toHaveBeenCalledWith(r.namespace, 'guest', expect.objectContaining({ type: 'aurora.session.follow.ack' }));
+  for (let i = 0; i < 10; i += 1) await Promise.resolve();
+  expect(r.context.sendCustomMessage).toHaveBeenCalledWith(r.namespace, 'guest', { type: 'aurora.session.follow.ack', requestId: 6, ok: false });
+  expect(r.streams).toEqual(['/api/v1/events?token=receiver-secret']);
+  expect(JSON.stringify(r.loggedLines())).not.toContain('guest-secret');
+});

@@ -206,6 +206,13 @@ session never LOAD (PR E), and a second sender leaves (#119/#123). Details that 
   the session's current entry first (`QueueUpdateRequestData.currentItemId`
   through `sendLocalMediaRequest`). A jump to an entry outside the window,
   and `load`, start a new window with `playerManager.load`.
+- A handover for another session while this one still plays here is taken
+  only after a check with the server shows this session's output is no longer
+  the receiver (another device took it, or the session is gone); otherwise it
+  is refused (`receiver-handover-refused`), and a failed check refuses too.
+  Any sender in the Cast session can send `aurora.session.follow`; with
+  Listen together that includes a guest's phone (docs/listen-together.md,
+  6a, 2026-10-27). The same session (a renewal, a newer grant) needs no check.
 - Being replaced has three cases: another device elsewhere (stop the
   music), a newer grant for this same receiver (wait for its handover, play
   on), and a sender in this Cast session claiming as a plain Cast output

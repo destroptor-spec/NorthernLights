@@ -121,11 +121,13 @@ const ConnectOption: React.FC<{
   selected?: boolean;
   /** Just picked: lit and checked while the card confirms it. */
   chosen?: boolean;
+  /** Asks to confirm a choice that ends something (a cast): warning colours. */
+  warning?: boolean;
   onClick?: () => void;
-}> = ({ icon, title, detail, selected = false, chosen = false, onClick }) => (
+}> = ({ icon, title, detail, selected = false, chosen = false, warning = false, onClick }) => (
   <button
     type="button"
-    className={`connect-option${selected || chosen ? ' is-selected' : ''}${chosen ? ' is-chosen' : ''}`}
+    className={`connect-option${selected || chosen ? ' is-selected' : ''}${chosen ? ' is-chosen' : ''}${warning ? ' is-warning' : ''}`}
     onClick={onClick}
     disabled={!onClick}
     aria-pressed={onClick ? selected || chosen : undefined}
@@ -183,7 +185,14 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
   // as it was, with the choice lit, before it closes (Andreas, 2026-10-24:
   // closing at once left him tapping again to make sure it took).
   const live = { follow, followedCast, controlsFollowed, castDevice, listedDevices };
+  // The device that casts: the one the followed Cast output comes from, or
+  // this one. Moving the music to (or from) it ends that cast.
+  const castingClientId = follow?.castingClientId ?? null;
+  const endsCast = (clientId: string) => castConnected || clientId === castingClientId;
   const [chosen, setChosen] = useState<string | null>(null);
+  // "Play there" that would end a cast asks first (Andreas, 2026-10-27): the
+  // first tap arms the row, the second moves the music.
+  const [armed, setArmed] = useState<string | null>(null);
   const frozen = useRef(live);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (closeTimer.current) clearTimeout(closeTimer.current); }, []);
@@ -288,11 +297,18 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
                     <ConnectOption
                       icon={<MonitorSmartphone size={18} />}
                       title={device.name || 'Another device'}
-                      detail="Play there"
+                      detail={armed === device.clientId && !chosen ? 'End cast? Tap to confirm' : 'Play there'}
                       chosen={isChosen(device.clientId)}
-                      onClick={leaving || chosen ? undefined : () => pick(device.clientId, () => {
-                        void usePlayerStore.getState().transferPlaybackTo(device);
-                      })}
+                      warning={armed === device.clientId && !chosen}
+                      onClick={leaving || chosen ? undefined : () => {
+                        if (endsCast(device.clientId) && armed !== device.clientId) {
+                          setArmed(device.clientId);
+                          return;
+                        }
+                        pick(device.clientId, () => {
+                          void usePlayerStore.getState().transferPlaybackTo(device);
+                        });
+                      }}
                     />
                   )}
               </div>
