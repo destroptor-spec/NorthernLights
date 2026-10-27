@@ -878,6 +878,115 @@ describeDb('playback sessions', () => {
     })).rejects.toBeInstanceOf(sessions.PlaybackSessionNotFoundError);
   });
 
+  describe('guests in a shared session (Listen together, 6b)', () => {
+    let guestId: string;
+    beforeAll(async () => {
+      const db = await import('../index');
+      guestId = (await db.createUser('guest', 'x', 'user')).id;
+    });
+    afterEach(async () => { await pool.query('DELETE FROM user_loved_tracks'); });
+    // Joining comes with 6c; until then a guest is a member row.
+    const join = (sessionId: string, permissions = ['transport', 'queue', 'replace'], who?: string) => pool.query(
+      'INSERT INTO playback_session_members (session_id, user_id, permissions) VALUES ($1, $2, $3)',
+      [sessionId, who ?? guestId, permissions],
+    );
+    const guestPatch = (session: { id: string; revision: number }, operations: Operations) => sessions.patchPlaybackSession({
+      userId: guestId, clientId: 'guest-phone', sessionId: session.id, patch: { expectedRevision: session.revision, operations },
+    });
+
+    it('a new session is private, and its owner may do everything', async () => {
+      const session = await create(trackIds(0, 2));
+      expect(session).toMatchObject({ visibility: 'private', access: { role: 'owner', permissions: ['transport', 'queue', 'replace'] } });
+    });
+
+    it('a guest sees the session with its own access, and its own loves on the tracks', async () => {
+      const session = await create(trackIds(0, 2));
+      await join(session.id, ['transport', 'queue']);
+      await pool.query('INSERT INTO user_loved_tracks (user_id, track_id) VALUES ($1, $2)', [guestId, trackId(1)]);
+      const seen = (await sessions.getPlaybackSession(guestId, session.id))!;
+      expect(seen.access).toEqual({ role: 'guest', permissions: ['transport', 'queue'] });
+      expect(seen.queue.map((entry) => entry.track.loved)).toEqual([false, true]);
+      expect((await sessions.getPlaybackSession(userId, session.id))!.queue.map((entry) => entry.track.loved)).toEqual([false, false]);
+      expect((await sessions.listPlaybackSessions(guestId)).map((listed) => listed.id)).toEqual([session.id]);
+    });
+
+    it('a guest changes what plays within its scopes, and only within them', async () => {
+      let session = await create(trackIds(0, 3));
+      await join(session.id, ['transport']);
+      session = (await guestPatch(session, [{ type: 'setTransport', playbackState: 'playing' }])).session;
+      expect(session.playbackState).toBe('playing');
+      const refused = await rejection(guestPatch(session, [{ type: 'remove', queueEntryIds: [session.queue[2].queueEntryId] }]));
+      expect(refused).toBeInstanceOf(sessions.PlaybackSessionScopeError);
+      expect(refused.need).toBe('queue');
+      expect(await rejection(guestPatch(session, [{ type: 'replaceQueue', trackIds: [trackId(9)] }]))).toBeInstanceOf(sessions.PlaybackSessionScopeError);
+      expect(await storedRows(session.id)).toHaveLength(3); // nothing written
+    });
+
+    it("a guest's edit runs as the owner's session: Infinity and history stay the owner's", async () => {
+      const session = await create(trackIds(0, 1));
+      await join(session.id);
+      const result = await guestPatch(session, [{ type: 'insert', trackIds: [trackId(5)] }]);
+      expect(result.ownerId).toBe(userId);
+      expect(trackOrder(result.session)).toEqual([trackId(0), trackId(5)]);
+    });
+
+    it('where it plays, and ending it, are the owner\'s alone', async () => {
+      const session = await create(trackIds(0, 1));
+      await join(session.id);
+      expect(await rejection(sessions.claimPlaybackOutput({ userId: guestId, clientId: 'guest-phone', sessionId: session.id, output: { kind: 'browser' } })))
+        .toBeInstanceOf(sessions.PlaybackSessionOwnerOnlyError);
+      expect(await rejection(sessions.getCurrentOutputGrant({ userId: guestId, sessionId: session.id, outputId: 'phone', generation: 1 })))
+        .toBeInstanceOf(sessions.PlaybackSessionOwnerOnlyError);
+      expect(await rejection(sessions.deletePlaybackSession(guestId, session.id, session.revision)))
+        .toBeInstanceOf(sessions.PlaybackSessionOwnerOnlyError);
+      // A guest's command passes the access check (and then finds nothing playing).
+      expect(await rejection(sessions.issuePlaybackCommand({
+        userId: guestId, clientId: 'guest-phone', sessionId: session.id,
+        request: { requestId: '00000000-0000-4000-8000-000000000001', outputId: 'phone', outputGeneration: 1, command: { type: 'play' } },
+      }))).toBeInstanceOf(sessions.PlaybackOutputNotActiveError);
+    });
+
+    it('a stranger learns nothing: not found, whatever it asks', async () => {
+      const session = await create(trackIds(0, 1));
+      await join(session.id);
+      expect(await sessions.getPlaybackSession(otherUserId, session.id)).toBeNull();
+      expect(await rejection(sessions.claimPlaybackOutput({ userId: otherUserId, clientId: 'x', sessionId: session.id, output: { kind: 'browser' } })))
+        .toBeInstanceOf(sessions.PlaybackSessionNotFoundError);
+      expect(await sessions.guestSessionOwner(otherUserId, session.id)).toBeNull();
+      expect(await sessions.guestSessionOwner(guestId, session.id)).toBe(userId);
+    });
+
+    it("guests hear the session's changes; commands stay with the owner's devices", async () => {
+      const session = await create(trackIds(0, 2));
+      await join(session.id);
+      const heard: Array<{ type: string }> = [];
+      const unsubscribe = subscribeApiV1Events(guestId, (event) => heard.push(event));
+      try {
+        await patch(session, [{ type: 'setTransport', playbackState: 'playing' }]);
+        const claimed = await sessions.claimPlaybackOutput({ userId, clientId: 'phone', sessionId: session.id, output: { kind: 'browser' } });
+        const closePhone = noteClientListening(userId, 'phone', { name: null, kind: 'browser' });
+        await sessions.issuePlaybackCommand({
+          userId: guestId, clientId: 'guest-phone', sessionId: session.id,
+          request: { requestId: '00000000-0000-4000-8000-000000000002', outputId: 'phone', outputGeneration: claimed.output!.generation, command: { type: 'pause' } },
+        });
+        closePhone();
+        expect(heard.map((event) => event.type)).toEqual(expect.arrayContaining(['playbackSession.updated', 'playbackSession.handedOff']));
+        expect(heard.map((event) => event.type)).not.toContain('playbackSession.command');
+      } finally {
+        unsubscribe();
+      }
+    });
+
+    it('a guest leaving (its row gone) loses the session; a user is a guest in one session at a time', async () => {
+      const first = await create(trackIds(0, 1));
+      const second = await create(trackIds(1, 1));
+      await join(first.id);
+      await expect(join(second.id)).rejects.toThrow(/playback_session_members_one_per_user/);
+      await pool.query('DELETE FROM playback_session_members WHERE user_id = $1', [guestId]);
+      expect(await sessions.getPlaybackSession(guestId, first.id)).toBeNull();
+    });
+  });
+
   describe('when a track leaves the library', () => {
     afterEach(async () => {
       await pool.query(`

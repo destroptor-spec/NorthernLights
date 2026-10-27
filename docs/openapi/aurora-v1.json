@@ -1119,6 +1119,43 @@
               "$ref": "#/components/schemas/PlaybackQueueEntry"
             }
           },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "private",
+              "invite",
+              "discoverable"
+            ],
+            "description": "Who may join (Listen together): private (nobody), invite (with a join link), discoverable (nearby users too)."
+          },
+          "access": {
+            "type": "object",
+            "properties": {
+              "role": {
+                "type": "string",
+                "enum": [
+                  "owner",
+                  "guest"
+                ]
+              },
+              "permissions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "transport",
+                    "queue",
+                    "replace"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "role",
+              "permissions"
+            ],
+            "description": "The caller's access: the owner (every scope, and alone chooses where it plays) or a guest with its scopes."
+          },
           "createdAt": {
             "type": "string",
             "format": "date-time"

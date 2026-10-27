@@ -266,6 +266,15 @@ export const playbackOutputSchema = z.object({
   report: playbackOutputReportStateSchema.nullable().describe("The output's latest accepted report."),
 }).meta({ id: 'PlaybackOutput' });
 
+/**
+ * What a guest may do in a shared session (docs/listen-together.md):
+ * transport (play, pause, seek, next, previous, jump), queue (insert, move,
+ * remove, repeat, shuffle), replace (start something new, Infinity). The owner
+ * may do everything, and alone chooses where it plays.
+ */
+export const SESSION_SCOPES = ['transport', 'queue', 'replace'] as const;
+export const SESSION_VISIBILITIES = ['private', 'invite', 'discoverable'] as const;
+
 export const playbackSessionSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
@@ -280,6 +289,12 @@ export const playbackSessionSchema = z.object({
   source: z.object({ kind: z.string(), id: z.string().nullable() }).nullable(),
   revision: z.number().int().positive(),
   queue: z.array(queueEntrySchema),
+  visibility: z.enum(SESSION_VISIBILITIES).optional()
+    .describe('Who may join (Listen together): private (nobody), invite (with a join link), discoverable (nearby users too).'),
+  access: z.object({
+    role: z.enum(['owner', 'guest']),
+    permissions: z.array(z.enum(SESSION_SCOPES)),
+  }).optional().describe("The caller's access: the owner (every scope, and alone chooses where it plays) or a guest with its scopes."),
   createdAt: ISO_DATE_TIME,
   updatedAt: ISO_DATE_TIME,
 }).meta({ id: 'PlaybackSession' });
