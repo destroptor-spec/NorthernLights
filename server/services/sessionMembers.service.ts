@@ -52,10 +52,20 @@ async function ownerSession(db: Db, userId: string, sessionId: string) {
   return loaded!;
 }
 
-/** Private (nobody can join; guests already in stay) or invite (anyone with a link). */
+/** Every working link of a session stops working. */
+async function revokeLinks(db: Db, sessionId: string) {
+  await db.query('UPDATE playback_session_invites SET revoked_at = NOW() WHERE session_id = $1 AND revoked_at IS NULL', [sessionId]);
+}
+
+/**
+ * Private (nobody can join; guests already in stay) or invite (anyone with a
+ * link). Going private revokes the links: a closed session's old link never
+ * works again, and opening it again takes a fresh one (Andreas, 2026-10-28).
+ */
 export async function setSessionVisibility(userId: string, sessionId: string, visibility: 'private' | 'invite'): Promise<PlaybackSession> {
   const db = await initDB();
   const { access } = await ownerSession(db, userId, sessionId);
+  if (visibility === 'private') await revokeLinks(db, sessionId);
   const updated = await db.query('UPDATE playback_sessions SET visibility = $2 WHERE id = $1 RETURNING *', [sessionId, visibility]);
   await publishToSession(db, userId, sessionId, 'playbackSession.visibilityChanged', { sessionId, visibility });
   return serializeSession(db, updated.rows[0], { userId, access });
@@ -113,15 +123,21 @@ function toInvite(row: { token: string; permissions: string[]; created_at: Date 
   };
 }
 
-/** A new join link. A private session becomes invite-only: a link is for joining. */
+/**
+ * A new join link. A private session becomes invite-only, a link being for
+ * joining, and any link left from before it was closed dies: only the new
+ * one works.
+ */
 export async function createSessionInvite(userId: string, sessionId: string, permissions?: SessionScope[]): Promise<SessionInvite> {
   const db = await initDB();
   const { row } = await ownerSession(db, userId, sessionId);
+  const opening = (row.visibility ?? 'private') === 'private';
+  if (opening) await revokeLinks(db, sessionId);
   const result = await db.query(
     'INSERT INTO playback_session_invites (session_id, permissions, created_by) VALUES ($1, $2, $3) RETURNING token, permissions, created_at',
     [sessionId, permissions ?? [...SESSION_SCOPES], userId],
   );
-  if ((row.visibility ?? 'private') === 'private') {
+  if (opening) {
     await db.query("UPDATE playback_sessions SET visibility = 'invite' WHERE id = $1", [sessionId]);
     await publishToSession(db, userId, sessionId, 'playbackSession.visibilityChanged', { sessionId, visibility: 'invite' });
   }
@@ -246,7 +262,7 @@ export async function endListeningTogether(userId: string, sessionId: string): P
   const audience = await sessionAudience(db, userId, sessionId);
   const guests = (await db.query('DELETE FROM playback_session_members WHERE session_id = $1 RETURNING user_id', [sessionId]))
     .rows.map((row) => String(row.user_id));
-  await db.query('UPDATE playback_session_invites SET revoked_at = NOW() WHERE session_id = $1 AND revoked_at IS NULL', [sessionId]);
+  await revokeLinks(db, sessionId);
   const updated = await db.query("UPDATE playback_sessions SET visibility = 'private' WHERE id = $1 RETURNING *", [sessionId]);
   for (const user of audience) {
     publishApiV1Event(user, 'playbackSession.togetherEnded', { sessionId });
