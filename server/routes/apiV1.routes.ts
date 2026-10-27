@@ -142,6 +142,7 @@ import {
   type OutputGrantClaims,
 } from '../services/scopedToken.service';
 import { generateAuroraApiDocument } from '../api/v1/openapi';
+import { signedArtworkLinks } from '../middleware/signedArtwork';
 import { artCachePath, DEFAULT_ART_SIZE, isValidArtSize } from '../services/artCache';
 
 const router = Router();
@@ -383,6 +384,9 @@ router.get('/media/tracks/:id', mediaLimiter, async (req, res) => {
   }
 });
 
+// A signed artwork link opens its one image with no credential (6a-4).
+router.use('/artwork', signedArtworkLinks(serveArtwork));
+
 router.use(requireApiV1Auth, listenerLimiter);
 
 // Playback sessions exist for "Sync playback across devices". When that is
@@ -401,6 +405,10 @@ router.use('/playback-sessions', async (req, res, next) => {
 router.get('/artwork/:hash', (req, res) => {
   const hash = routeParam(req, 'hash');
   if (!/^[0-9a-f]{1,64}$/.test(hash)) return sendApiV1Error(req, res, 400, 'INVALID_ARTWORK_ID', 'The artwork ID is invalid.');
+  serveArtwork(req, res, hash);
+});
+
+function serveArtwork(req: Request, res: Response, hash: string) {
   const requestedSize = typeof req.query.size === 'string' ? Number(req.query.size) : DEFAULT_ART_SIZE;
   const size = isValidArtSize(requestedSize) ? requestedSize : DEFAULT_ART_SIZE;
   const file = artCachePath(hash, size);
@@ -414,7 +422,7 @@ router.get('/artwork/:hash', (req, res) => {
   } catch {
     sendApiV1Error(req, res, 404, 'ARTWORK_NOT_FOUND', 'Artwork not found.');
   }
-});
+}
 
 router.get('/me', (req, res) => dataResponse(req, res, {
   user: { id: req.apiV1!.userId, username: req.apiV1!.username, role: req.apiV1!.role },

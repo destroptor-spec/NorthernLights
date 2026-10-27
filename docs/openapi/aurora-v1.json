@@ -2867,13 +2867,15 @@
     "/artwork/{hash}": {
       "get": {
         "summary": "Get cached cover artwork",
+        "description": "A track's artworkUrl carries `sig`, a signature for that one image: with it no credential is needed. Without it, authenticate as usual (a media token in `token` for an <img>).",
         "tags": [
           "Library"
         ],
         "security": [
           {
             "listenerAuth": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -2902,6 +2904,14 @@
             "required": false,
             "name": "token",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "sig",
+            "in": "query"
           }
         ],
         "responses": {
@@ -2918,6 +2928,16 @@
           },
           "401": {
             "description": "Authentication failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "INVALID_ARTWORK_SIGNATURE: the signature does not match this image",
             "content": {
               "application/json": {
                 "schema": {

@@ -106,7 +106,7 @@ Pairing requests expire after ten minutes. Approval binds the request to the use
 
 `GET /search/ranked` returns one relevance-ordered list across kinds, `{ results: [{ type: 'artist' | 'album' | 'track', relevance, item }], nextCursor }`, where `item` is an ArtistSummary, AlbumSummary or Track — the same DTOs as `GET /search`. Pass `nextCursor` back as `cursor` for the next page (default 30, max 100 per page); a cursor that no longer matches returns `400 INVALID_CURSOR`.
 
-Track DTOs expose opaque IDs, normalized metadata, user annotations, MusicBrainz identifiers, artwork identity/URL, media ETag, format and size. They never expose the database's Base64-encoded path. Resource payloads are explicitly mapped rather than serializing database rows.
+Track DTOs expose opaque IDs, normalized metadata, user annotations, MusicBrainz identifiers, artwork identity/URL, media ETag, format and size. A track's `artworkUrl` is signed for that one image (`/api/v1/artwork/<hash>?sig=…`) and opens it with no credential; a signature does not open any other image, and a bad one gets `403 INVALID_ARTWORK_SIGNATURE` unless the request also carries a credential. Album and other `artworkId` URLs a client builds itself still need a media token. They never expose the database's Base64-encoded path. Resource payloads are explicitly mapped rather than serializing database rows.
 
 Playlist `tracks` are entry objects shaped as `{ "track": Track, "addedAt": "ISO 8601 timestamp or null" }`. This preserves playlist ordering metadata without changing the meaning of a standalone Track. Full replacement validates every track and commits atomically; unavailable IDs return `409 TRACKS_UNAVAILABLE` without emptying the existing playlist.
 

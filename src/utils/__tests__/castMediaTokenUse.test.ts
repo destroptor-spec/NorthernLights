@@ -101,3 +101,15 @@ it('hands the receiver the Cast token with the session', async () => {
   }, 'claim')).resolves.toBe(true);
   expect(sent[0]).toMatchObject({ type: 'aurora.session.follow', mediaToken: 'cast-12h' });
 });
+
+it('a signed artwork link goes without a token: it opens its one image by itself (6a-4)', () => {
+  const info = manager('cast-12h').buildMediaInfo({ ...track, artUrl: 'https://aurora.example/api/v1/artwork/h1?sig=abcdefghijklmnopqrstuv&token=login-30d' });
+  expect(info.metadata.images[0].url).toBe('https://aurora.example/api/v1/artwork/h1?sig=abcdefghijklmnopqrstuv');
+});
+
+it('counts artwork with a token as broadcast (6a-4)', () => {
+  const m = manager('cast-12h');
+  m.castContext = { getCurrentSession: () => ({ getSessionId: () => 'cast-88' }) };
+  m.noteBroadcastTokens({ media: { contentId: 'https://a/x.m3u8', metadata: { images: [{ url: 'https://a/api/v1/artwork/h1?token=t' }] } } });
+  expect(m.logCast).toHaveBeenCalledWith('warn', 'cast-broadcast-token', 'seen=artwork');
+});
