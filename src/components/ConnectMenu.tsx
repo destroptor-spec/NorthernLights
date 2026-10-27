@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ConnectedDevice } from '../../shared/api/v1';
-import { Cast, Check, ChevronRight, Loader2, MonitorSmartphone, MonitorSpeaker, Speaker } from 'lucide-react';
+import { Cast, Check, ChevronRight, Loader2, LogOut, MonitorSmartphone, MonitorSpeaker, Speaker, Users } from 'lucide-react';
 import { usePlayerStore } from '../store/index';
 import { castManager } from '../utils/CastManager';
 import { sessionMirror } from '../utils/SessionMirror';
@@ -9,6 +9,10 @@ import { isFollowedOutputPlaying } from '../utils/sessionFollow';
 import { getAuroraClientId } from '../api/auroraApi';
 import { isPhoneOrTablet } from '../utils/deviceName';
 import { ContextMenuFrame, ContextMenuPortal } from './ContextMenu';
+import { useListenTogetherStore } from '../store/listenTogether';
+import { leaveSharedSession, refreshOwn } from '../utils/listenTogether';
+import { ListenTogetherPanel } from './ListenTogetherPanel';
+import { UserAvatar } from './UserAvatar';
 
 const MENU_WIDTH = 304;
 /** How long a device's row takes to fade and fold away (matches the CSS). */
@@ -56,9 +60,9 @@ export function useListedDevices(devices: ConnectedDevice[]): ListedDevice[] {
  * <google-cast-launcher>, the card unmounts, #40), then this device, then the
  * user's other devices. The device that plays is always the one marked;
  * there is no "Playing on" line. This device's output is named and opens
- * Settings → Playback → Output. Listen together and "Open your session" come
- * with Phase 6. The "Playing on" strip and the Now Playing heading only say
- * where.
+ * Settings → Playback → Output. Last, Listen together (Phase 6): the owner's
+ * sheet opens in the card, and a guest sees whom it listens with, and Leave.
+ * The "Playing on" strip and the Now Playing heading only say where.
  */
 const stopBubbling = (event: React.SyntheticEvent) => event.stopPropagation();
 
@@ -123,8 +127,10 @@ const ConnectOption: React.FC<{
   chosen?: boolean;
   /** Asks to confirm a choice that ends something (a cast): warning colours. */
   warning?: boolean;
+  /** Where the row leads (a sheet, leaving), shown at its end. */
+  trailing?: React.ReactNode;
   onClick?: () => void;
-}> = ({ icon, title, detail, selected = false, chosen = false, warning = false, onClick }) => (
+}> = ({ icon, title, detail, selected = false, chosen = false, warning = false, trailing, onClick }) => (
   <button
     type="button"
     className={`connect-option${selected || chosen ? ' is-selected' : ''}${chosen ? ' is-chosen' : ''}${warning ? ' is-warning' : ''}`}
@@ -138,6 +144,7 @@ const ConnectOption: React.FC<{
       <span className="connect-option-detail">{detail}</span>
     </span>
     {(selected || chosen) && <Check size={16} className="connect-option-check" aria-label="chosen" />}
+    {trailing && !selected && !chosen && <span className="connect-option-trailing">{trailing}</span>}
   </button>
 );
 
@@ -176,6 +183,12 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
   }, [connectedDevices, follow, followedCast, myId, syncOn]);
   const listedDevices = useListedDevices(otherDevices);
   const cast = useCastStatus('connect');
+  const ownSessionId = useListenTogetherStore((s) => s.ownSessionId);
+  const guestCount = useListenTogetherStore((s) => s.own?.guests.length ?? 0);
+  const shared = useListenTogetherStore((s) => s.shared);
+  const [panel, setPanel] = useState<'together' | null>(null);
+  // Who is in the session may have changed while the card was closed.
+  useEffect(() => { void refreshOwn(); }, []);
 
   const controlsFollowed = !!follow && remoteControlOutputId === follow.outputId;
   const castDevice = castConnected ? castManager.getCastDeviceName() || 'Cast device' : null;
@@ -237,6 +250,8 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
       />
     );
   };
+
+  if (panel === 'together') return <ListenTogetherPanel onBack={() => setPanel(null)} />;
 
   return (
     <div className="connect-card" role="dialog" aria-label="Connect">
@@ -314,6 +329,31 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Listen together: the session this user is a guest in, then the owner's sheet. */}
+      {syncOn && (shared || ownSessionId) && (
+        <div className={`connect-options${chosen ? ' has-choice' : ''}`}>
+          {shared && (
+            <ConnectOption
+              icon={shared.owner ? <UserAvatar avatar={shared.owner} size="sm" /> : <Users size={18} />}
+              title={shared.ownerName ? `Listening with ${shared.ownerName}` : 'Listening together'}
+              detail="Leave"
+              trailing={<LogOut size={16} aria-hidden="true" />}
+              chosen={isChosen('leave')}
+              onClick={chosen ? undefined : () => pick('leave', () => { void leaveSharedSession(); })}
+            />
+          )}
+          {ownSessionId && (
+            <ConnectOption
+              icon={<Users size={18} />}
+              title="Listen together"
+              detail={guestCount > 0 ? `${guestCount} listening with you` : 'Invite people to your session'}
+              trailing={<ChevronRight size={16} aria-hidden="true" />}
+              onClick={chosen ? undefined : () => setPanel('together')}
+            />
+          )}
         </div>
       )}
 

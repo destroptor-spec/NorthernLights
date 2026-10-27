@@ -384,8 +384,21 @@ One PR each, in this order:
    - 6c-1, the server API and events (built 2026-10-27, no schema change;
      `sessionMembers.service.ts`). A prompt for a session that went private
      is refused like a join;
-   - 6c-2, the web UI: the owner's sheet in Connect, the invite prompt, and the
-     `/listen/<token>` page.
+   - 6c-2, the web UI (built 2026-10-27, `ListenTogetherPanel`,
+     `InvitePrompt`, `ListenLink`, `utils/listenTogether.ts`):
+     - the owner's sheet opens inside the Connect card: who can join
+       (Private / Invite only), Copy (or, on phones, Share) invite link,
+       people online with Invite, the guests with Remove, and End listening
+       together (a second tap confirms);
+     - the invitation (a prompt or a `/listen/<token>` link, which goes
+       through sign-in) shows the preview with Join and Not now;
+     - a guest's devices only show "Listening with {owner}" with Leave until
+       6d; "{owner} removed you" and "{owner} ended listening together" are
+       toasts;
+     - the session follower and mirror work on the user's own sessions only
+       (`isOwnSession`): the shared session's claims, reports and changes
+       neither displace nor follow anything on a guest's devices, and a
+       guest never claims the owner's output.
 4. **6d: The guest client.** The shared session on the guest's device, the
    guest Connect card, and controls by scope.
 5. **6e: Nearby.** Discoverable sessions by public IP, and the "Join" row.

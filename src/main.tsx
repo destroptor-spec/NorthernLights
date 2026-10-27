@@ -10,6 +10,7 @@ import { createPwaUpdateHandler, reloadAppOnce, setPwaUpdateHandler, startPwaUpd
 import { OriginAccessGate } from './components/OriginAccessGate';
 import { actionWhenReplaced, sessionMirror } from './utils/SessionMirror';
 import { sessionFollower } from './utils/SessionFollower';
+import { isSharedSession, noteOwnSession, noteSharedSession, onTogetherEvent } from './utils/listenTogether';
 import { getAuroraClientId } from './api/auroraApi';
 import { toPlayableTracks } from './utils/playableTracks';
 import { applySessionCommand } from './utils/sessionCommands';
@@ -65,6 +66,11 @@ sessionFollower.start(usePlayerStore, {
   clientName: describeThisDevice,
   onDevices: (devices) => usePlayerStore.getState().setConnectedDevices(devices),
   onTransferRequested: () => void usePlayerStore.getState().playHereOnTransfer(),
+  // Listen together (6c): the owner's sheet, invitations, the session this user is a guest in.
+  onOwnSession: noteOwnSession,
+  onSharedSession: noteSharedSession,
+  isSharedSession,
+  onTogetherEvent,
   mirror: sessionMirror,
   toTracks: sessionQueueTracks,
   adoptPlayingQueue: (session) => usePlayerStore.getState().adoptSessionQueueAsOutput(sessionQueueTracks(session), session.currentEntryId),
