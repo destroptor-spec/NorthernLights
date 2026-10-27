@@ -152,14 +152,34 @@ nearby row in Connect.
 - **Avatars:** the owner's avatar on its own, then the guests' avatars
   stacked (overlapping, "+N" past four).
   - Users have no pictures yet; an avatar is the username's first letter, as
-    on the account page.
+    on the account page (Andreas, 2026-10-27: fine for now; Gravatar or
+    uploaded pictures later).
 - **Nothing else:**
   - no guest names (not even on hover or to screen readers, which hear
     "{owner} and {n} others");
   - not what's playing, the queue, or the device.
 
 The preview's API answer carries only what the screen shows: the owner's
-name, and for each member a user ID and initial.
+name, and for each member a user ID and an avatar.
+
+### Avatars in API v1
+
+Pictures come later, so v1 describes an avatar in a way that won't have to
+change. One shape (`UserAvatar`) is used wherever a user is shown: the
+preview, members, the online-users picker.
+
+```
+UserAvatar { userId, initial, pictureUrl: string | null }
+```
+
+- **Now:** `pictureUrl` is always null, and clients draw the initial.
+- **Later:** Gravatar or uploaded pictures fill `pictureUrl`. A client that
+  shows `pictureUrl` when present and falls back to the initial works before
+  and after.
+- **Pictures go through the server:** the URL will point at Aurora (for
+  example `/api/v1/users/:id/avatar`), never straight at Gravatar. Clients
+  then don't leak who looks at whom to a third party, and the service worker
+  doesn't need cross-origin images.
 
 ## Joining, leaving, ending
 
@@ -349,7 +369,8 @@ On devices, that means:
    apart and the guests' stacked; no guest names, nothing about what plays.
 7. **The guest's own playback** ends when they join.
 
-## Still open
+## Later
 
-- **Pictures:** avatars are initials until users can set a picture. Should
-  6c add pictures, or is that separate work?
+- **User pictures** (Gravatar or uploads): separate work after Phase 6
+  (Andreas, 2026-10-27). v1's `UserAvatar.pictureUrl` is already in place for
+  them.
