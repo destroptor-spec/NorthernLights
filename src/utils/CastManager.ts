@@ -93,6 +93,11 @@ const CAST_LOAD_ACK_TIMEOUT_MS = 12000;
  * after about 10.5 s (#40, 2026-10-11).
  */
 const CAST_PICKER_PENDING_MAX_MS = 30_000;
+/**
+ * How long Chrome gets to report the end of a Cast session this device asked
+ * to end before it is ended here regardless (endCastSessionLocally).
+ */
+export const CAST_END_CONFIRM_MS = 4_000;
 // How long a media-channel jump may take to show up in aurora.status.
 const CAST_MEDIA_CHANNEL_JUMP_TIMEOUT_MS = 3000;
 // A live SDK answers a queue jump in well under a second.
@@ -2113,6 +2118,7 @@ export class CastManager {
 
     public async reconcileActiveSession(reason: string = 'manual'): Promise<boolean> {
         if (!this.castContext || this.reconnectInProgress) return false;
+        if (this.isEndedLocally()) return false;
 
         this.reconnectInProgress = true;
         try {
@@ -2259,7 +2265,7 @@ export class CastManager {
                 cast.framework.CastContextEventType.CAST_STATE_CHANGED,
                 (event: any) => {
                     const prevState = this.state;
-                    this.state = event.castState;
+                    this.state = event.castState === 'CONNECTED' && this.isEndedLocally() ? 'NOT_CONNECTED' : event.castState;
                     this.notifyStateChange();
                     this.lastCastStateChangeAt = Date.now();
                     this.logCast('ok', `CAST_STATE_CHANGED: ${prevState} -> ${this.state}`);
@@ -2350,6 +2356,10 @@ export class CastManager {
                             break;
 
                         case cast.framework.SessionState.SESSION_RESUMED:
+                            if (this.isEndedLocally()) {
+                                this.logCast('ok', 'SESSION_RESUMED ignored', 'reason=ended-locally');
+                                break;
+                            }
                             this.resetCastEndIntent();
                             this.state = this.castContext.getCastState();
                             this.notifyStateChange();
@@ -2410,6 +2420,17 @@ export class CastManager {
                         case cast.framework.SessionState.SESSION_ENDED: {
                             console.log('[Cast] Session ended');
                             this.logCast('ok', 'SESSION_ENDED');
+                            if (this.castEndWatch) {
+                                clearTimeout(this.castEndWatch.timer);
+                                this.castEndWatch = null;
+                            }
+                            // Ended here already (endCastSessionLocally): only clean up.
+                            const endedSid = this.getSessionId(event.session || null) || this.getCurrentSessionId();
+                            if (this.endedLocallySid && (!endedSid || endedSid === this.endedLocallySid)) {
+                                this.endedLocallySid = '';
+                                this.logCast('ok', 'cast-end-confirmed-late');
+                                break;
+                            }
                             this.remotePlayerDescribesSid = this.getSessionId(event.session || null) || this.getCurrentSessionId() || this.remotePlayerDescribesSid;
                             // Where the Cast device was, taken before the
                             // state change below drops the position anchor.
@@ -3088,7 +3109,7 @@ export class CastManager {
         // device's. Taking it on set the store to "playing" for a moment, and
         // the sync mirror claimed the output from the device that casts
         // (prod 2026-10-14 19:59:24).
-        if (this.leftJoinedSession) return false;
+        if (this.leftJoinedSession || this.isEndedLocally()) return false;
         mediaSession = this.getHydratableMediaSession(mediaSession);
         if (!mediaSession || !this.hasActiveRemoteMediaSession(mediaSession)) return false;
 
@@ -3147,7 +3168,7 @@ export class CastManager {
     }
 
     private async startPlaybackForCurrentSession(reason: string): Promise<void> {
-        if (this.autoCastInProgress) return;
+        if (this.autoCastInProgress || this.isEndedLocally()) return;
         if (this.castContext?.getCastState) {
             this.state = this.castContext.getCastState();
             this.notifyStateChange();
@@ -4640,7 +4661,7 @@ export class CastManager {
         try {
             this.suppressRemoteEndedDuringDisconnect = true;
             this.stop();
-            this.castContext.endCurrentSession(true);
+            this.endCastSession('replaced');
             return true;
         } catch (error) {
             this.stoppedBecauseReplaced = false;
@@ -4650,6 +4671,69 @@ export class CastManager {
     }
 
     private stoppedBecauseReplaced = false;
+    /** A Cast session this device asked Chrome to end, waiting for its SESSION_ENDED. */
+    private castEndWatch: { sid: string; timer: ReturnType<typeof setTimeout> } | null = null;
+    /**
+     * A Cast session ended here because Chrome never reported its end. Chrome
+     * may still call it current: it is not casting, and nothing rejoins it.
+     */
+    private endedLocallySid = '';
+
+    /** Chrome still calls current a session ended here (endCastSessionLocally). */
+    private isEndedLocally(): boolean {
+        return !!this.endedLocallySid && this.getCurrentSessionId() === this.endedLocallySid;
+    }
+
+    /**
+     * Asks Chrome to end the current session, and watches for the end. Prod
+     * 2026-10-27 12:35 and 12:39 (desktop Chrome): another device took over,
+     * this one called endCurrentSession(true), and SESSION_ENDED never came.
+     * The desktop kept showing the cast, and Stop casting, Play here and Play
+     * there all did nothing until a reload.
+     */
+    private endCastSession(reason: 'user-stop' | 'replaced') {
+        const sid = this.getCurrentSessionId();
+        if (this.castEndWatch) clearTimeout(this.castEndWatch.timer);
+        this.castEndWatch = sid
+            ? { sid, timer: setTimeout(() => this.endCastSessionLocally(sid, reason), CAST_END_CONFIRM_MS) }
+            : null;
+        this.logCast('ok', 'cast-end-requested', `reason=${reason}`);
+        this.castContext.endCurrentSession(true);
+    }
+
+    /**
+     * Chrome did not report the end in time: try once more through the
+     * session itself, then end it here as SESSION_ENDED would (state, the
+     * handoff), and keep Chrome's lingering session from being rejoined or
+     * hydrated (isEndedLocally). A SESSION_ENDED that comes later only cleans up.
+     */
+    private endCastSessionLocally(sid: string, reason: string) {
+        this.castEndWatch = null;
+        if (this.getCurrentSessionId() !== sid || this.state !== 'CONNECTED') return;
+        const session = this.castContext?.getCurrentSession?.() || null;
+        this.logCast('warn', 'cast-end-unconfirmed', `reason=${reason} castState=${this.castContext?.getCastState?.() ?? 'unknown'} sessionState=${session?.getSessionState?.() ?? 'unknown'}`);
+        try {
+            const retried = session?.endSession?.(true);
+            if (retried && typeof retried.then === 'function') {
+                retried.then(undefined, (error: unknown) => this.logCast('warn', 'cast-end-retry-failed', this.describeError(error)));
+            }
+        } catch (error) {
+            this.logCast('warn', 'cast-end-retry-failed', this.describeError(error));
+        }
+        const endSnapshot = this.castEndSnapshotAtStop ?? this.captureCastEndSnapshot();
+        this.endedLocallySid = sid;
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+        this.rejoinSessionPending = false;
+        this.freshSessionStartedAt = 0;
+        this.clearUserSessionIntentTimer();
+        this.suppressRemoteEndedDuringDisconnect = false;
+        this.rejoinHydrationRunId += 1;
+        this.clearRejoinHydrationTimer();
+        this.state = 'NOT_CONNECTED';
+        this.setHealthStatus('idle', '');
+        this.notifyStateChange();
+        this.afterSessionEnded(endSnapshot);
+    }
 
     public async disconnect() {
         if (!this.castContext) return;
@@ -4669,7 +4753,7 @@ export class CastManager {
             this.stop();
 
             // End the cast session — pass true to stop the receiver app
-            this.castContext.endCurrentSession(true);
+            this.endCastSession('user-stop');
         } catch (e) {
             console.error('[Cast] Error during disconnect:', e);
             toast.error('Error disconnecting from Cast device.');
