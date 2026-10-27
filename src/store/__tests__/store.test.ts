@@ -603,3 +603,27 @@ describe('plays and scrobbles counted here or by the server', () => {
     expect(usePlayerStore.getState()._scrobbleEligible).toBe(true); // a later Next is still no skip
   });
 });
+
+describe('"Play there" to a device that casts (Connect, 2026-10-27)', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+    usePlayerStore.setState({ castConnected: false, sessionFollow: null });
+  });
+
+  it('stops casting and plays here, as Stop casting does', async () => {
+    // The desktop cast; "Chrome on Linux · Play there" on the phone did nothing.
+    const stop = jest.spyOn(castManager, 'disconnect').mockResolvedValue(undefined);
+    const playWhere = jest.spyOn(usePlayerStore.getState(), 'resolvePlayWhere');
+    usePlayerStore.setState({ castConnected: true, sessionFollow: null });
+    await usePlayerStore.getState().playHereOnTransfer();
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(playWhere).not.toHaveBeenCalled();
+  });
+
+  it('does nothing on a device that neither casts nor follows another', async () => {
+    const stop = jest.spyOn(castManager, 'disconnect').mockResolvedValue(undefined);
+    usePlayerStore.setState({ castConnected: false, sessionFollow: null });
+    await usePlayerStore.getState().playHereOnTransfer();
+    expect(stop).not.toHaveBeenCalled();
+  });
+});

@@ -1502,6 +1502,15 @@ export const usePlayerStore = create<PlayerState>()(
           }
         },
         playHereOnTransfer: async () => {
+          // A device that casts plays the session through its Cast device, so
+          // "Play there" means: stop casting and play here, as Stop casting
+          // does (the music goes on from where the Cast device was). Before,
+          // the transfer was dropped (Andreas, 2026-10-27: the desktop cast,
+          // "Chrome on Linux · Play there" on the phone did nothing).
+          if (get().castConnected) {
+            void castManager.disconnect();
+            return;
+          }
           // The same as "Play on this device" in the Connect menu: take the
           // output over and play from where the session is. A browser that
           // may not start sound by itself asks for a tap (autoplay).
