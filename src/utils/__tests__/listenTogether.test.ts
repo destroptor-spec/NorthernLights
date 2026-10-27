@@ -168,6 +168,13 @@ describe('the owner', () => {
     expect(mocked.createSessionInvite).toHaveBeenCalledTimes(1);
   });
 
+  it('takes a fresh link for a private session, never the old one', async () => {
+    mocked.listSessionInvites.mockResolvedValue([{ token: 'old', path: '/listen/old', permissions: ['transport'], createdAt: '' }]);
+    mocked.createSessionInvite.mockResolvedValue({ token: 'new', path: '/listen/new', permissions: ['transport'], createdAt: '' });
+    expect(await inviteUrl()).toBe(`${window.location.origin}/listen/new`);
+    expect(mocked.listSessionInvites).not.toHaveBeenCalled();
+  });
+
   it('ending clears the guests and makes the session private', async () => {
     mocked.endListeningTogether.mockResolvedValue(session('own-1'));
     await endTogether();

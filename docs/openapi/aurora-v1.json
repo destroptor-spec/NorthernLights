@@ -2510,7 +2510,7 @@
               "private",
               "invite"
             ],
-            "description": "private: nobody can join (guests already in stay); invite: anyone with a join link can. \"discoverable\" comes later."
+            "description": "private: nobody can join (guests already in stay) and every join link stops working; invite: anyone with a join link can. \"discoverable\" comes later."
           }
         },
         "required": [
@@ -9825,7 +9825,7 @@
     "/playback-sessions/{id}/sharing": {
       "patch": {
         "summary": "Who may join: private or invite only (owner)",
-        "description": "Private keeps guests already in, but no one new can join. Guests hear playbackSession.visibilityChanged.",
+        "description": "Private keeps guests already in, but no one new can join, and every join link stops working: opening the session again takes a new link. Guests hear playbackSession.visibilityChanged.",
         "tags": [
           "Listen together"
         ],

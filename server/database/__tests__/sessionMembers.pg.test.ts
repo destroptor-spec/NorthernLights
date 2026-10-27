@@ -107,20 +107,41 @@ describeDb('listen together', () => {
     expect((await members.previewSessionInvite(ownerId, invite.token)).joined).toBe(true);
   });
 
-  it('a revoked or unknown link does not work; a private session cannot be joined', async () => {
+  it('a revoked or unknown link does not work', async () => {
     const session = await create();
     const invite = await members.createSessionInvite(ownerId, session.id);
-    await members.setSessionVisibility(ownerId, session.id, 'private');
-    expect(await rejection(members.previewSessionInvite(guestId, invite.token))).toBeInstanceOf(members.SessionNotJoinableError);
-    expect(await rejection(members.joinSessionByInvite(guestId, invite.token))).toBeInstanceOf(members.SessionNotJoinableError);
-    expect(await rejection(members.promptSessionInvite(ownerId, session.id, invite.token, [guestId]))).toBeInstanceOf(members.SessionNotJoinableError);
-
-    await members.setSessionVisibility(ownerId, session.id, 'invite');
     await members.revokeSessionInvite(ownerId, session.id, invite.token);
     expect(await members.listSessionInvites(ownerId, session.id)).toEqual([]);
     expect(await rejection(members.joinSessionByInvite(guestId, invite.token))).toBeInstanceOf(members.SessionInviteNotFoundError);
     expect(await rejection(members.previewSessionInvite(guestId, 'f'.repeat(64)))).toBeInstanceOf(members.SessionInviteNotFoundError);
     expect(await rejection(members.revokeSessionInvite(ownerId, session.id, invite.token))).toBeInstanceOf(members.SessionInviteNotFoundError);
+  });
+
+  it('closing a session (private) kills its links; opening it again takes a fresh one', async () => {
+    // Andreas, 2026-10-28: "It never generates a fresh link".
+    const session = await create();
+    const first = await members.createSessionInvite(ownerId, session.id);
+    await members.setSessionVisibility(ownerId, session.id, 'private');
+    expect(await members.listSessionInvites(ownerId, session.id)).toEqual([]);
+    expect(await rejection(members.joinSessionByInvite(guestId, first.token))).toBeInstanceOf(members.SessionInviteNotFoundError);
+
+    const second = await members.createSessionInvite(ownerId, session.id);
+    expect(second.token).not.toBe(first.token);
+    expect((await sessions.getPlaybackSession(ownerId, session.id))!.visibility).toBe('invite');
+    expect((await members.joinSessionByInvite(guestId, second.token)).access?.role).toBe('guest');
+    expect(await rejection(members.joinSessionByInvite(otherId, first.token))).toBeInstanceOf(members.SessionInviteNotFoundError);
+  });
+
+  it('a link left working on a private session (from before links died with it) cannot be used', async () => {
+    const session = await create();
+    const invite = await members.createSessionInvite(ownerId, session.id);
+    await pool.query("UPDATE playback_sessions SET visibility = 'private' WHERE id = $1", [session.id]);
+    expect(await rejection(members.previewSessionInvite(guestId, invite.token))).toBeInstanceOf(members.SessionNotJoinableError);
+    expect(await rejection(members.joinSessionByInvite(guestId, invite.token))).toBeInstanceOf(members.SessionNotJoinableError);
+    expect(await rejection(members.promptSessionInvite(ownerId, session.id, invite.token, [guestId]))).toBeInstanceOf(members.SessionNotJoinableError);
+    // Opening it again revokes the leftover.
+    await members.createSessionInvite(ownerId, session.id);
+    expect(await rejection(members.joinSessionByInvite(guestId, invite.token))).toBeInstanceOf(members.SessionInviteNotFoundError);
   });
 
   it("joining needs the owner's sync to be on", async () => {

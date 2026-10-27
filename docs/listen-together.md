@@ -399,6 +399,10 @@ One PR each, in this order:
        (`isOwnSession`): the shared session's claims, reports and changes
        neither displace nor follow anything on a guest's devices, and a
        guest never claims the owner's output.
+   - Fix after the first prod test (Andreas, 2026-10-28: "it never
+     generates a fresh link"): going Private revokes the session's links,
+     and making a link for a private session revokes any left over, so
+     closing and reopening always gives a fresh link and the old one dies.
 4. **6d: The guest client.** The shared session on the guest's device, the
    guest Connect card, and controls by scope.
 5. **6e: Nearby.** Discoverable sessions by public IP, and the "Join" row.
