@@ -8,7 +8,7 @@ import { getAuroraStatusNamespace } from './castNamespace';
 import { CastDiagnosticsSync } from './castDiagnostics';
 import { playbackManager } from './PlaybackManager';
 import { usePlayerStore } from '../store';
-import { getAuroraClientId, mintScopedToken } from '../api/auroraApi';
+import { getAuroraClientId, mintScopedToken, signArtworkLinks } from '../api/auroraApi';
 import { CastMediaToken, withCastToken } from './castMediaToken';
 import { describeThisDevice } from './deviceName';
 import { decideJoin, isOwnLeaveDisconnect } from './castJoinPolicy';
@@ -326,6 +326,8 @@ export class CastManager {
         });
     }
     private castMediaTokenTimer: ReturnType<typeof setTimeout> | null = null;
+    /** Signed links fetched for artwork held unsigned, by artwork ID (readySignedArtwork). */
+    private signedArtworkLinks: Map<string, string> | null = null;
     /** What noteBroadcastTokens has logged for this Cast session. */
     private broadcastTokenSid = '';
     private broadcastTokenLogged = new Set<string>();
@@ -3559,9 +3561,8 @@ export class CastManager {
 
     /**
      * Checks that what the Cast session broadcasts carries no media token
-     * (6a-3), on every media status: logs `seen=none` once per Cast session,
-     * and each place a token turns up once. Artwork is left out until it has
-     * signed links of its own (6a-4).
+     * (6a-3, artwork since 6a-4), on every media status: logs `seen=none`
+     * once per Cast session, and each place a token turns up once.
      */
     private noteBroadcastTokens(mediaSession: any | null) {
         const sid = this.getCurrentSessionId();
@@ -3577,6 +3578,8 @@ export class CastManager {
         for (const m of media) {
             if (typeof m.contentId === 'string' && /[?&]token=/.test(m.contentId)) places.add('contentId');
             if (m.customData && typeof m.customData === 'object' && 'token' in m.customData) places.add('customData');
+            const images = Array.isArray(m.metadata?.images) ? m.metadata.images : [];
+            if (images.some((image: any) => typeof image?.url === 'string' && /[?&]token=/.test(image.url))) places.add('artwork');
         }
         const logged = this.broadcastTokenLogged;
         if (places.size === 0) {
@@ -3588,6 +3591,47 @@ export class CastManager {
             if (!logged.has(place)) this.logCast('warn', 'cast-broadcast-token', `seen=${place}`);
             logged.add(place);
         }
+    }
+
+    /** The artwork ID of an unsigned /api/v1/artwork/<id> link, else null. */
+    private unsignedArtworkId(url: string | undefined): string | null {
+        if (!url) return null;
+        try {
+            const parsed = new URL(url, window.location.href);
+            if (parsed.searchParams.has('sig')) return null;
+            const match = /^\/api\/v1\/artwork\/([0-9a-f]{1,64})$/.exec(parsed.pathname);
+            return match ? match[1] : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Artwork a queue holds unsigned (one saved before links were signed;
+     * prod 2026-10-27 15:22: cast-broadcast-token seen=artwork) gets signed
+     * links from the server in one request, so Cast never shows a token in
+     * artwork (6a-4). Null when every link is signed or known: no await, so a
+     * load starts in the same tick. On failure such artwork keeps the Cast token.
+     */
+    private readySignedArtwork(urls: Array<string | undefined>): Promise<void> | null {
+        const known = this.signedArtworkLinks ??= new Map();
+        const ids = [...new Set(urls.map((url) => this.unsignedArtworkId(url)).filter((id): id is string => !!id && !known.has(id)))];
+        if (ids.length === 0) return null;
+        return (async () => {
+            for (let i = 0; i < ids.length; i += 500) {
+                const chunk = ids.slice(i, i + 500);
+                try {
+                    const { links } = await signArtworkLinks(usePlayerStore.getState().getAuthHeader(), chunk);
+                    for (const [id, link] of Object.entries(links || {})) {
+                        if (typeof link === 'string') known.set(id, link);
+                    }
+                } catch (error) {
+                    this.logCast('warn', 'cast-artwork-links', `result=failed count=${chunk.length} ${this.describeError(error)}`);
+                    return;
+                }
+            }
+            this.logCast('ok', 'cast-artwork-links', `result=signed count=${ids.length}`);
+        })();
     }
 
     /** The token a Cast URL carries: the Cast media token, or the URL's own when there is none. */
@@ -3659,6 +3703,16 @@ export class CastManager {
         try {
             const parsed = new URL(url, window.location.href);
             if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+            // A signed link opens its one image by itself (6a-4): no token in
+            // what every sender and media notification sees.
+            if (parsed.searchParams.has('sig')) {
+                parsed.searchParams.delete('token');
+                return parsed.toString();
+            }
+            // Held unsigned, but signed by the server since (readySignedArtwork),
+            // on the artwork's own server.
+            const signed = this.signedArtworkLinks?.get(this.unsignedArtworkId(parsed.toString()) || '');
+            if (signed) return new URL(signed, parsed).toString();
             return withCastToken(parsed.toString(), this.castMediaToken.current());
         } catch {
             return '';
@@ -3669,6 +3723,8 @@ export class CastManager {
         if (!this.isConnected()) return;
         const tokenReady = this.readyCastMediaToken();
         if (tokenReady) await tokenReady;
+        const artworkReady = this.readySignedArtwork([artUrl]);
+        if (artworkReady) await artworkReady;
 
         const castSession = this.castContext.getCurrentSession();
         if (!castSession) return;
@@ -3785,6 +3841,12 @@ export class CastManager {
         const tokenReady = this.readyCastMediaToken();
         if (tokenReady) {
             await tokenReady;
+            if (!this.isConnected()) return;
+        }
+        // The whole queue, so later window refills find their links too.
+        const artworkReady = this.readySignedArtwork(usePlayerStore.getState().playlist.map((t) => t.artUrl).concat(tracks.map((t) => t.artUrl)));
+        if (artworkReady) {
+            await artworkReady;
             if (!this.isConnected()) return;
         }
         let session = this.castContext.getCurrentSession();
@@ -4363,6 +4425,8 @@ export class CastManager {
      */
     public async appendToQueue(track: { queueEntryId?: string; url?: string; rawUrl?: string; title?: string; artist?: string; artUrl?: string; album?: string; format?: string; duration?: number }) {
         if (this.leftToReceiver('append')) return;
+        const artworkReady = this.readySignedArtwork([track.artUrl]);
+        if (artworkReady) await artworkReady;
         if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
             this.queueWindowEditSeq++; // reconciled once the load has landed
             return;
@@ -4416,6 +4480,8 @@ export class CastManager {
 
     public async insertNextInQueue(track: { queueEntryId?: string; url?: string; rawUrl?: string; title?: string; artist?: string; artUrl?: string; album?: string; format?: string; duration?: number }) {
         if (this.leftToReceiver('insert-next')) return;
+        const artworkReady = this.readySignedArtwork([track.artUrl]);
+        if (artworkReady) await artworkReady;
         if (this.queueLoadingSession && this.queueLoadingSession === this.castContext?.getCurrentSession?.()) {
             this.queueWindowEditSeq++; // reconciled once the load has landed
             return;

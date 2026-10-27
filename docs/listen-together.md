@@ -322,7 +322,7 @@ commands just take effect, with text only when they fail.
          (`mediaAccessToken: data.mediaToken || data.token`);
        - 6a-3: no token in anything Cast broadcasts; the receiver adds it to
          each request itself;
-       - 6a-4: signed per-image artwork links.
+       - 6a-4: signed per-image artwork links (built 2026-10-27).
   2. **Handover from any sender.** A guest's phone on the Cast session could
      point the receiver at its own session. Cast itself lets anyone on the
      network take the speaker over; this was a quieter way, where the owner's

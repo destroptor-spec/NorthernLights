@@ -2,7 +2,9 @@ import { CastManager } from '../CastManager';
 import { ReceiverFollowAcks } from '../receiverSessionFollow';
 
 jest.mock('../PlaybackManager', () => ({ playbackManager: {} }));
-jest.mock('../../store', () => ({ usePlayerStore: { getState: () => ({ streamingQuality: 'auto', playlist: [], currentIndex: 0 }), setState: jest.fn() } }));
+jest.mock('../../store', () => ({ usePlayerStore: { getState: () => ({ streamingQuality: 'auto', playlist: [], currentIndex: 0, getAuthHeader: () => ({ Authorization: 'Bearer login' }) }), setState: jest.fn() } }));
+jest.mock('../../api/auroraApi', () => ({ ...jest.requireActual('../../api/auroraApi'), signArtworkLinks: jest.fn() }));
+import { signArtworkLinks } from '../../api/auroraApi';
 
 /**
  * 6a-2 (docs/listen-together.md): what a Cast session shows every sender
@@ -100,4 +102,44 @@ it('hands the receiver the Cast token with the session', async () => {
     sessionId: 's1', outputId: 'receiver:cast-77', generation: 3, token: 'receiver-credential', expiresAt: '2026-10-28T00:00:00.000Z',
   }, 'claim')).resolves.toBe(true);
   expect(sent[0]).toMatchObject({ type: 'aurora.session.follow', mediaToken: 'cast-12h' });
+});
+
+it('a signed artwork link goes without a token: it opens its one image by itself (6a-4)', () => {
+  const info = manager('cast-12h').buildMediaInfo({ ...track, artUrl: 'https://aurora.example/api/v1/artwork/h1?sig=abcdefghijklmnopqrstuv&token=login-30d' });
+  expect(info.metadata.images[0].url).toBe('https://aurora.example/api/v1/artwork/h1?sig=abcdefghijklmnopqrstuv');
+});
+
+it('counts artwork with a token as broadcast (6a-4)', () => {
+  const m = manager('cast-12h');
+  m.castContext = { getCurrentSession: () => ({ getSessionId: () => 'cast-88' }) };
+  m.noteBroadcastTokens({ media: { contentId: 'https://a/x.m3u8', metadata: { images: [{ url: 'https://a/api/v1/artwork/h1?token=t' }] } } });
+  expect(m.logCast).toHaveBeenCalledWith('warn', 'cast-broadcast-token', 'seen=artwork');
+});
+
+describe('artwork held unsigned, from a queue saved before links were signed (6a-4)', () => {
+  // Prod 2026-10-27 15:22: cast-broadcast-token seen=artwork on a saved queue.
+  const unsigned = 'https://aurora.example/api/v1/artwork/ab12?token=login-30d';
+  const ready = (m: any, urls: Array<string | undefined>) => m.readySignedArtwork(urls);
+
+  it('fetches signed links in one request, then uses them with no token', async () => {
+    (signArtworkLinks as jest.Mock).mockResolvedValueOnce({ links: { ab12: '/api/v1/artwork/ab12?sig=abcdefghijklmnopqrstuv' } });
+    const m = manager('cast-12h');
+    await ready(m, [unsigned, unsigned, undefined]);
+    expect(signArtworkLinks).toHaveBeenCalledWith({ Authorization: 'Bearer login' }, ['ab12']);
+    const info = m.buildMediaInfo({ ...track, artUrl: unsigned });
+    expect(info.metadata.images[0].url).toBe('https://aurora.example/api/v1/artwork/ab12?sig=abcdefghijklmnopqrstuv');
+    expect(ready(m, [unsigned])).toBeNull(); // known: no second request, no wait
+  });
+
+  it('keeps the Cast token on that artwork when the links cannot be had', async () => {
+    (signArtworkLinks as jest.Mock).mockRejectedValueOnce(new Error('offline'));
+    const m = manager('cast-12h');
+    await ready(m, [unsigned]);
+    expect(m.logCast).toHaveBeenCalledWith('warn', 'cast-artwork-links', expect.stringContaining('result=failed'));
+    expect(m.buildMediaInfo({ ...track, artUrl: unsigned }).metadata.images[0].url).toContain('token=cast-12h');
+  });
+
+  it('asks for nothing when every link is signed', () => {
+    expect(ready(manager('cast-12h'), ['https://aurora.example/api/v1/artwork/ab12?sig=abcdefghijklmnopqrstuv'])).toBeNull();
+  });
 });

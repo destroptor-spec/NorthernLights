@@ -25,6 +25,11 @@ export async function getJwtSecret(): Promise<string> {
   return secret;
 }
 
+/** The secret once loaded (any signed-in request loads it), for synchronous callers; null before. */
+export function getCachedJwtSecret(): string | null {
+  return cachedSecret;
+}
+
 export async function regenerateJwtSecret(): Promise<string> {
   const secret = crypto.randomBytes(64).toString('hex');
   await setSystemSetting('jwtSecret', secret);

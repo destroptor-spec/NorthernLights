@@ -51,6 +51,7 @@ describe('Aurora API v1 authentication boundaries', () => {
     (verifyScopedToken as jest.MockedFunction<typeof verifyScopedToken>).mockResolvedValue(scoped);
     const req = {
       headers: { authorization: 'Bearer scoped-token' },
+      method: 'GET',
       path: '/artwork/cover',
       query: {},
     } as unknown as Request;
@@ -162,6 +163,8 @@ describe('scoped token endpoint allowlist', () => {
       ['receiver', 'GET', '/playback/reports'],
       // Existing scopes must not have widened.
       ['media', 'POST', '/recommendations/next'],
+      // A media token reads artwork; it does not ask for signed links (6a-4).
+      ['media', 'POST', '/artwork/links'],
       ['media', 'GET', '/preferences'],
       ['media', 'GET', '/events'],
       ['sse', 'GET', '/artwork/abc'],

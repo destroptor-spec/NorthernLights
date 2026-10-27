@@ -437,6 +437,15 @@ export const connectedDeviceSchema = z.object({
   kind: z.enum(CONNECTED_DEVICE_KINDS).describe('browser: the web app. receiver: a Cast receiver following a session. app: another API v1 client.'),
 }).meta({ id: 'ConnectedDevice' });
 
+export const artworkLinksRequestSchema = z.object({
+  ids: z.array(z.string().regex(/^[0-9a-f]{1,64}$/)).min(1).max(500)
+    .describe('Artwork IDs (a track\'s artworkId) to sign links for.'),
+}).strict().meta({ id: 'ArtworkLinksRequest' });
+
+export const artworkLinksSchema = z.object({
+  links: z.record(z.string(), z.string()).describe('Each artwork ID with its signed link (`/api/v1/artwork/<id>?sig=…`), which opens that one image with no credential.'),
+}).meta({ id: 'ArtworkLinks' });
+
 export const playbackTransferRequestSchema = z.object({
   targetClientId: z.string().min(8).max(128).describe('A device from GET /devices: it takes the session over and plays it from where it is.'),
 }).strict().meta({ id: 'PlaybackTransferRequest' });
@@ -553,5 +562,6 @@ export type PlaybackCommand = z.infer<typeof playbackCommandSchema>;
 export type PlaybackCommandRequest = z.infer<typeof playbackCommandRequestSchema>;
 export type ConnectedDevice = z.infer<typeof connectedDeviceSchema>;
 export type PlaybackTransferRequest = z.infer<typeof playbackTransferRequestSchema>;
+export type ArtworkLinks = z.infer<typeof artworkLinksSchema>;
 export type ListenerPreferences = z.infer<typeof listenerPreferencesSchema>;
 export type NextRecommendationRequest = z.input<typeof nextRecommendationSchema>;

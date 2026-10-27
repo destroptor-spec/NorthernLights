@@ -541,3 +541,15 @@ describe('a handover for another session (docs/listen-together.md, 6a)', () => {
     expect(h.calls('GET', '/api/v1/playback-sessions/session-1').length).toBe(gets + 1); // the newer grant's own start fetch
   });
 });
+
+describe('signed artwork links (docs/listen-together.md, 6a-4)', () => {
+  it('uses a signed link as it is, with no token', async () => {
+    const signed = { ...sessionOf([1, 2, 3]) };
+    signed.queue = signed.queue.map((e: any) => ({ ...e, track: { ...e.track, artworkUrl: `${e.track.artworkUrl}?sig=abcdefghijklmnopqrstuv` } }));
+    const h = harness({ caf: [1], session: signed as any });
+    h.follower.start(h.handover);
+    await h.settle();
+    const [inserted] = h.queue.insertItems.mock.calls[0] as any[];
+    expect(inserted[0].media.metadata.images[0].url).toBe('https://aurora.example/api/v1/artwork/h2?sig=abcdefghijklmnopqrstuv');
+  });
+});
