@@ -170,13 +170,15 @@ describe('following', () => {
     expect(queue.insertItems).toHaveBeenCalledTimes(1);
     const [inserted] = queue.insertItems.mock.calls[0] as any[];
     expect(inserted.map((i: any) => i.media.customData.queueEntryId)).toEqual([uuid(3), uuid(4)]);
-    expect(inserted[0].media).toMatchObject({
-      contentId: 'https://aurora.example/api/stream/track-3/playlist.m3u8?quality=256k&codec=aac&token=media-token',
+    // No token in what the session broadcasts (6a-3): the receiver's request
+    // handlers add it. Artwork keeps it until 6a-4.
+    expect(inserted[0].media).toEqual(expect.objectContaining({
+      contentId: 'https://aurora.example/api/stream/track-3/playlist.m3u8?quality=256k&codec=aac',
       contentType: 'application/vnd.apple.mpegurl',
       streamType: 'BUFFERED',
       hlsSegmentFormat: 'ts',
-      customData: { queueEntryId: uuid(3), token: 'media-token', codec: 'aac', auroraFollow: true },
-    });
+      customData: { queueEntryId: uuid(3), codec: 'aac', auroraFollow: true },
+    }));
     expect(inserted[0].media.metadata).toMatchObject({ title: 'T3', songName: 'T3', artist: 'A3', albumName: 'Album' });
     expect(inserted[0].media.metadata.images[0].url).toBe('https://aurora.example/api/v1/artwork/h3?token=media-token');
     expect(markers.join('\n')).toContain('receiver-window-reconciled reason=start removed=0 inserted=2 revision=10');

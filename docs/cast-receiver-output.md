@@ -178,14 +178,26 @@ session never LOAD (PR E), and a second sender leaves (#119/#123). Details that 
     streams with.
   - **The receiver** puts its newest token on every request (manifests and
     segments, and the first `contentId`), over any older one in the URL.
-  - **Not yet:** the token is still visible in what the session broadcasts;
-    6a-3 takes it out.
+  - **Not broadcast (6a-3):** nothing the session broadcasts carries the
+    token, except artwork until 6a-4.
+    - The sender puts it in the LOAD request's own `customData`, which isn't
+      part of the media status, and sends HLS URLs without it.
+    - The receiver's LOAD interceptor takes it from there (or, from an older
+      sender, from the media's `customData`), then removes it from the media,
+      the queue items and each HLS `contentId`. Its request handlers add it to
+      every manifest and segment request.
+    - A progressive load (the default receiver, or `audio/flac`) keeps the
+      token in its URL, because the platform player fetches that URL
+      directly.
+    - The sender checks every media status and logs `cast-broadcast-token
+      seen=none` once per Cast session, or `seen=contentId|customData` where a
+      token turns up.
   - **Receivers loaded before this change** keep the 12-hour token from the
     LOAD and don't renew it. Only a Cast session running over 12 hours across
     a deploy is affected.
 - Items are built like the sender's (stream URL with the Cast quality from the
-  handover, `codec=aac`, the media token the receiver already holds; artwork
-  with the same token), not through `POST /tracks/:id/playback`, whose
+  handover and `codec=aac`, no token, which the request handlers add; artwork
+  with the receiver's media token until 6a-4), not through `POST /tracks/:id/playback`, whose
   15-minute media tokens would expire before a queued item plays.
 - The window keeps the common prefix of what follows the current item, drops
   everything after it and appends the rest of the session's next 9 entries,

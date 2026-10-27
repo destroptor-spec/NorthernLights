@@ -180,3 +180,47 @@ describe('the Cast media token (6a-2)', () => {
     expect(manifestUrl(r).url).toContain('token=cast-from-owner');
   });
 });
+
+describe('nothing the session broadcasts carries the media token (6a-3)', () => {
+  const loadRequest = (extra: Record<string, unknown> = {}) => ({
+    media: {
+      contentId: 'https://music.example.test/api/stream/t1/playlist.m3u8?quality=128k&token=sender-token',
+      contentType: 'application/vnd.apple.mpegurl',
+      customData: { queueEntryId: 'e1', token: 'sender-token', codec: 'aac' },
+      metadata: { title: 'One' },
+    },
+    queueData: { items: [
+      { media: { contentId: 'https://music.example.test/api/stream/t2/playlist.m3u8?quality=128k&token=sender-token', contentType: 'application/vnd.apple.mpegurl', customData: { queueEntryId: 'e2' } } },
+    ] },
+    ...extra,
+  });
+  const manifestToken = (r: ReturnType<typeof startReceiver>) => {
+    const request = { url: 'https://music.example.test/api/stream/t1/playlist.m3u8', headers: {} as Record<string, string> };
+    r.context.start.mock.calls[0][0].playbackConfig.manifestRequestHandler(request);
+    return new URL(request.url).searchParams.get('token');
+  };
+
+  test("takes the token from the LOAD request's own customData, and keeps it out of the media", () => {
+    const r = startReceiver(true, false);
+    const out = r.load(loadRequest({ customData: { token: 'request-token' } }));
+    expect(JSON.stringify(out.media)).not.toContain('token');
+    expect(JSON.stringify(out.queueData)).not.toContain('token');
+    expect(out.customData).toEqual({});
+    expect(manifestToken(r)).toBe('request-token');
+  });
+
+  test("an older sender's token in the media is taken, then scrubbed from it", () => {
+    const r = startReceiver(true, false);
+    const out = r.load(loadRequest());
+    expect(out.media.customData).toEqual({ queueEntryId: 'e1', codec: 'aac' });
+    expect(out.media.contentId).not.toContain('token=');
+    expect(out.queueData.items[0].media.contentId).not.toContain('token=');
+    expect(manifestToken(r)).toBe('sender-token');
+  });
+
+  test('a progressive load keeps its token in the URL: the platform player fetches it directly', () => {
+    const r = startReceiver(true, false);
+    const out = r.load({ media: { contentId: 'https://music.example.test/api/stream/t1/raw', contentType: 'audio/flac', customData: {} }, customData: { token: 'request-token' } });
+    expect(out.media.contentId).toContain('token=request-token');
+  });
+});
