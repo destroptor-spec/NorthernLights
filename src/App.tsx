@@ -299,7 +299,7 @@ const App: React.FC = () => {
   }, []);
 
   useSSE(
-    !needsSetup && (sseAccessToken || authToken) ? `/api/library/scan/status?token=${encodeURIComponent(sseAccessToken || authToken || '')}` : null,
+    !needsSetup && sseAccessToken ? `/api/library/scan/status?token=${encodeURIComponent(sseAccessToken)}` : null,
     { onMessage: onSSEMessage, throttleMs: 100 }
   );
 

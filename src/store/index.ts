@@ -9,6 +9,7 @@ import { extractMetadata } from '../utils/fileSystem';
 import { playbackManager, PlaybackState } from '../utils/PlaybackManager';
 import { castManager } from '../utils/CastManager';
 import { cloneTrackForQueue, ensureQueueEntryIds, hasNextTrack, rekeyLegacyQueueEntryIds } from '../utils/queue';
+import { storedSignInLacksUrlTokens } from '../utils/urlTokens';
 import { preloadManager } from '../utils/PreloadManager';
 import { setPlaybackDebugLogging } from '../utils/playbackDebug';
 import { savePlaybackContinuitySnapshot } from '../utils/playbackContinuity';
@@ -1615,8 +1616,8 @@ export const usePlayerStore = create<PlayerState>()(
             clearSessionAuth();
             set({
               authToken: data.token,
-              mediaAccessToken: data.mediaToken || data.token,
-              sseAccessToken: data.sseToken || data.token,
+              mediaAccessToken: data.mediaToken ?? null,
+              sseAccessToken: data.sseToken ?? null,
               currentUser: data.user || null,
               rememberDevice: true,
               needsSetup: true,
@@ -1710,16 +1711,16 @@ export const usePlayerStore = create<PlayerState>()(
         setAuthToken: (token: string, mediaAccessToken: string | null = null, sseAccessToken: string | null = null) => {
           set({
             authToken: token,
-            mediaAccessToken: mediaAccessToken || token,
-            sseAccessToken: sseAccessToken || token,
+            mediaAccessToken,
+            sseAccessToken,
             authExpired: false,
             authExpiredMessage: null,
           });
           if (!get().rememberDevice) {
             writeSessionAuth({
               authToken: token,
-              mediaAccessToken: mediaAccessToken || token,
-              sseAccessToken: sseAccessToken || token,
+              mediaAccessToken,
+              sseAccessToken,
               currentUser: get().currentUser,
             });
           }
@@ -1822,8 +1823,8 @@ export const usePlayerStore = create<PlayerState>()(
               // written to localStorage.
               set({
                 authToken: data.token,
-                mediaAccessToken: data.mediaToken || data.token,
-                sseAccessToken: data.sseToken || data.token,
+                mediaAccessToken: data.mediaToken ?? null,
+                sseAccessToken: data.sseToken ?? null,
                 currentUser: data.user,
                 rememberDevice,
                 authExpired: false,
@@ -1835,8 +1836,8 @@ export const usePlayerStore = create<PlayerState>()(
               } else {
                 writeSessionAuth({
                   authToken: data.token,
-                  mediaAccessToken: data.mediaToken || data.token,
-                  sseAccessToken: data.sseToken || data.token,
+                  mediaAccessToken: data.mediaToken ?? null,
+                  sseAccessToken: data.sseToken ?? null,
                   currentUser: data.user,
                 });
               }
@@ -1870,8 +1871,8 @@ export const usePlayerStore = create<PlayerState>()(
               clearSessionAuth();
               set({
                 authToken: data.token,
-                mediaAccessToken: data.mediaToken || data.token,
-                sseAccessToken: data.sseToken || data.token,
+                mediaAccessToken: data.mediaToken ?? null,
+                sseAccessToken: data.sseToken ?? null,
                 currentUser: data.user,
                 rememberDevice: true,
                 authExpired: false,
@@ -1901,7 +1902,7 @@ export const usePlayerStore = create<PlayerState>()(
 
         hydrateTracks: (tracks: TrackInfo[]) => {
           const { mediaAccessToken, authToken, streamingQuality } = get();
-          const token = mediaAccessToken || authToken || '';
+          const token = mediaAccessToken || '';
           const quality = streamingQuality;
           return tracks.map((t) => hydrateServerTrack(t, token, quality));
         },
@@ -2236,7 +2237,7 @@ export const usePlayerStore = create<PlayerState>()(
                 return;
               }
               const { mediaAccessToken, authToken, streamingQuality } = latest;
-              const token = mediaAccessToken || authToken || '';
+              const token = mediaAccessToken || '';
 
               const track = {
                 ...toLegacyTrack(recommended, token, streamingQuality),
@@ -2297,7 +2298,7 @@ export const usePlayerStore = create<PlayerState>()(
 
               const { mediaAccessToken, authToken, streamingQuality } = get();
               if (ac.signal.aborted) return;
-              const token = mediaAccessToken || authToken || '';
+              const token = mediaAccessToken || '';
               const quality = streamingQuality;
 
               set((state: PlayerState): Partial<PlayerState> => {
@@ -2392,7 +2393,7 @@ export const usePlayerStore = create<PlayerState>()(
               if (!res.ok) return;
               const data = await res.json();
               const { mediaAccessToken, authToken, streamingQuality } = get();
-              const token = mediaAccessToken || authToken || '';
+              const token = mediaAccessToken || '';
               const quality = streamingQuality;
               set({ library: (data.tracks || []).map((t: TrackInfo) => hydrateServerTrack(t, token, quality)) });
             } catch (e) {
@@ -2416,7 +2417,7 @@ export const usePlayerStore = create<PlayerState>()(
               const authHeaders = get().getAuthHeader();
               const playlists = await auroraApiRequest<ApiV1Playlist[]>('/playlists', authHeaders, { signal: ac.signal });
               const { mediaAccessToken, authToken, streamingQuality } = get();
-              const token = mediaAccessToken || authToken || '';
+              const token = mediaAccessToken || '';
               set({ playlists: playlists.map(playlist => mapApiV1Playlist(playlist, token, streamingQuality)) });
            } catch (e) {
               if (isAbortError(e) || ac.signal.aborted) return; // aborted on logout
@@ -2440,7 +2441,7 @@ export const usePlayerStore = create<PlayerState>()(
               const authHeaders = get().getAuthHeader();
               const playlists = await auroraApiRequest<ApiV1Playlist[]>('/playlists/discover', authHeaders);
               const { mediaAccessToken, authToken, streamingQuality } = get();
-              const token = mediaAccessToken || authToken || '';
+              const token = mediaAccessToken || '';
               set({ discoverPlaylists: playlists.map(playlist => mapApiV1Playlist(playlist, token, streamingQuality)) });
            } catch (e) {
               console.error('Failed to fetch discoverable playlists', e);
@@ -2456,7 +2457,7 @@ export const usePlayerStore = create<PlayerState>()(
               const authHeaders = get().getAuthHeader();
               const playlist = await auroraApiRequest<ApiV1Playlist>(`/playlists/${encodeURIComponent(playlistId)}`, authHeaders);
               const { mediaAccessToken, authToken, streamingQuality } = get();
-              const token = mediaAccessToken || authToken || '';
+              const token = mediaAccessToken || '';
               const populated = mapApiV1Playlist(playlist, token, streamingQuality);
 
               set((state) => {
@@ -2482,7 +2483,7 @@ export const usePlayerStore = create<PlayerState>()(
                  body: JSON.stringify({ title, description })
               });
               const { mediaAccessToken, authToken, streamingQuality } = get();
-              const mapped = mapApiV1Playlist(created, mediaAccessToken || authToken || '', streamingQuality);
+              const mapped = mapApiV1Playlist(created, mediaAccessToken || '', streamingQuality);
               set({ playlists: [mapped, ...get().playlists] });
               return mapped;
            } catch (e) {
@@ -2791,7 +2792,7 @@ export const usePlayerStore = create<PlayerState>()(
               const data = await fetchRes.json();
               
               const { mediaAccessToken, authToken, streamingQuality } = get();
-              const token = mediaAccessToken || authToken || '';
+              const token = mediaAccessToken || '';
               const quality = streamingQuality;
 
               const latestLibrary = data.tracks.map((t: TrackInfo) => hydrateServerTrack(t, token, quality));
@@ -3003,7 +3004,7 @@ export const usePlayerStore = create<PlayerState>()(
           // cache key stable within a session. Local-only tracks (fileHandle, no
           // path) are left untouched.
           const { mediaAccessToken, authToken, streamingQuality } = get();
-          const freshToken = mediaAccessToken || authToken || '';
+          const freshToken = mediaAccessToken || '';
           const freshQuality = streamingQuality;
           const playable: TrackInfo = track.path && freshToken
             ? { ...track, ...buildTrackUrls(track.id, track.path, freshToken, freshQuality, (track as any).artHash, track.artUrl) }
@@ -3566,6 +3567,14 @@ export const usePlayerStore = create<PlayerState>()(
             state.sseAccessToken = sessionAuth.sseAccessToken;
             state.currentUser = sessionAuth.currentUser;
           }
+        }
+        // The login token never goes in a URL (urlTokens.ts): such a stored
+        // sign-in signs in again.
+        if (state && storedSignInLacksUrlTokens(state)) {
+          state.authToken = null;
+          state.mediaAccessToken = null;
+          state.sseAccessToken = null;
+          state.currentUser = null;
         }
       },
     }

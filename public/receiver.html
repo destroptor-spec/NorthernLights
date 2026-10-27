@@ -979,11 +979,14 @@
         });
       }
 
+      // Every request carries the newest media token, also over an older one
+      // in the URL: a Cast media token lives 12 hours and is renewed while the
+      // items built with the old one still play (6a-2).
       function withAuth(url) {
         if (!url) return url;
         try {
           var parsed = new URL(url, window.location.href);
-          if (currentAuthToken && !parsed.searchParams.has('token')) {
+          if (currentAuthToken) {
             parsed.searchParams.set('token', currentAuthToken);
           }
           return parsed.toString();
@@ -996,7 +999,7 @@
         if (!requestInfo) return;
         requestInfo.url = withAuth(requestInfo.url);
         requestInfo.headers = requestInfo.headers || {};
-        if (currentAuthToken && !requestInfo.headers.Authorization) {
+        if (currentAuthToken) {
           requestInfo.headers.Authorization = 'Bearer ' + currentAuthToken;
         }
         if (VERBOSE_NETWORK_LOGS) {
@@ -1442,6 +1445,7 @@
             clearTimeout: function(timer) { clearTimeout(timer); },
             now: function() { return Date.now(); },
             mediaToken: function() { return currentAuthToken; },
+            setMediaToken: function(token) { currentAuthToken = token; },
             origin: window.location.origin,
             marker: function(name, detail) { postDiagnosticMarker(name, detail); },
             onStopped: function(reason) {
@@ -1496,7 +1500,22 @@
           handleAuroraProbe(event, data);
         } else if (data.type === 'aurora.session.follow') {
           handleSessionFollow(event, data);
+        } else if (data.type === 'aurora.media-token') {
+          handleMediaToken(data);
         }
+      }
+
+      // A connected sender's renewed Cast media token (6a-2). Only while this
+      // receiver follows no session: one that does renews its own with its
+      // credential, so no other sender can swap the token it streams with.
+      function handleMediaToken(data) {
+        if (typeof data.token !== 'string' || !data.token || data.token.length > 4096) return;
+        if (sessionFollower && sessionFollower.following()) {
+          postDiagnosticMarker('receiver-media-token', 'source=sender result=ignored-following');
+          return;
+        }
+        currentAuthToken = data.token;
+        postDiagnosticMarker('receiver-media-token', 'source=sender result=taken');
       }
 
       function getMetadata(mediaInfo) {
@@ -1945,7 +1964,7 @@
                 }
                 // Token must ride in the URL: the platform <audio> element fetches
                 // contentId directly (Shaka request handlers don't apply to progressive).
-                if (currentAuthToken && !urlObj.searchParams.has('token')) {
+                if (currentAuthToken) {
                   urlObj.searchParams.set('token', currentAuthToken);
                 }
                 media.contentId = urlObj.toString();

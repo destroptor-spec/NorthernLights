@@ -120,6 +120,7 @@
    *   playerManager, queueManager, messages (cast.framework.messages),
    *   fetch, EventSource, setTimeout, clearTimeout, now,
    *   mediaToken(): string        the media token the receiver already holds
+   *   setMediaToken(token)        a newer one (a handover, a renewal)
    *   origin: string              the receiver page's origin
    *   marker(name, detail)        server log line
    *   onStopped(reason)           UI: following ended (expired, replaced, …)
@@ -222,6 +223,8 @@
       // Items need the media token a sender's LOAD brings; without it nothing would play.
       if (!env.mediaToken()) return false;
       if (state && state.sessionId === handover.sessionId && handover.generation < state.generation) return false;
+      // The sender's Cast media token, not the login's (6a-2).
+      if (typeof handover.mediaToken === 'string' && handover.mediaToken && env.setMediaToken) env.setMediaToken(handover.mediaToken);
       var sameGrant = state && state.sessionId === handover.sessionId && state.generation === handover.generation;
       var castSessionId = handover.outputId.indexOf('receiver:') === 0 ? handover.outputId.slice('receiver:'.length) : '';
       var quality = typeof handover.quality === 'string' && handover.quality ? handover.quality : (state && state.quality) || DEFAULT_QUALITY;
@@ -757,7 +760,10 @@
         grant.token = credential.token;
         grant.expiresAt = Date.parse(credential.expiresAt) || grant.expiresAt;
         grant.renewableUntil = Date.parse(credential.renewableUntil) || grant.renewableUntil;
-        marker('receiver-session-follow', 'credential=self-renewed generation=' + grant.generation);
+        // A fresh 12-hour media token comes with it (6a-2).
+        if (typeof credential.mediaToken === 'string' && credential.mediaToken && env.setMediaToken) env.setMediaToken(credential.mediaToken);
+        marker('receiver-session-follow', 'credential=self-renewed generation=' + grant.generation
+          + (credential.mediaToken ? ' mediaToken=renewed' : ''));
         scheduleRenew();
       }, function (error) {
         if (state !== grant) return;

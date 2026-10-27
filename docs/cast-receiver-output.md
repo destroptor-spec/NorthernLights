@@ -162,6 +162,27 @@ LOAD: CAF moving to the next queue item runs through the same LOAD
 interceptor, and treating that as a sender's LOAD ended following at every
 track change (prod 2026-10-16 19:42 and 19:47). Senders that follow the
 session never LOAD (PR E), and a second sender leaves (#119/#123). Details that differ from the plan below:
+- **The media token Cast uses** (6a-2, docs/listen-together.md, 2026-10-27).
+  What a Cast session shows every sender (item URLs, `customData`, artwork)
+  carries a 12-hour media token of its own, never the login's 30-day one.
+  - **The sender** mints it (`POST /auth/scoped-token` with `expiresIn: 12h`)
+    before its first load (marker `cast-media-token`) and renews it two hours
+    before it runs out.
+  - **While connected,** it sends the renewal to the receiver privately
+    (`aurora.media-token`; a sender's message reaches only the receiver).
+  - **The handover** gives the receiver the same token (`mediaToken`).
+  - **A following receiver** renews its own with its credential
+    (`POST …/output/renew` returns `mediaToken`). Meanwhile it ignores
+    `aurora.media-token` from senders (`receiver-media-token
+    result=ignored-following`), so no other sender can swap the token it
+    streams with.
+  - **The receiver** puts its newest token on every request (manifests and
+    segments, and the first `contentId`), over any older one in the URL.
+  - **Not yet:** the token is still visible in what the session broadcasts;
+    6a-3 takes it out.
+  - **Receivers loaded before this change** keep the 12-hour token from the
+    LOAD and don't renew it. Only a Cast session running over 12 hours across
+    a deploy is affected.
 - Items are built like the sender's (stream URL with the Cast quality from the
   handover, `codec=aac`, the media token the receiver already holds; artwork
   with the same token), not through `POST /tracks/:id/playback`, whose

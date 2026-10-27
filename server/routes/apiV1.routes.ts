@@ -1127,12 +1127,19 @@ router.post('/playback-sessions/:id/output/renew', async (req, res) => {
     });
     const credential = await generateReceiverCredential(principal, grant, principal.receiverCap);
     if (!credential) return sendApiV1Error(req, res, 401, 'RECEIVER_RENEWAL_EXPIRED', 'This receiver credential can no longer be renewed; a controller must refresh it.');
+    // The receiver streams with a 12-hour media token, never the owner's
+    // login one (docs/listen-together.md, 6a-2), and renews it here with its
+    // credential: a receiver credential may not mint tokens itself.
+    const mediaToken = await generateEphemeralScopedToken('media', {
+      userId: principal.userId, username: principal.username, role: principal.role,
+    }, '12h');
     dataResponse(req, res, {
       token: credential.token,
       expiresAt: credential.expiresAt,
       renewableUntil: credential.cap,
       outputId: grant.oid,
       generation: grant.gen,
+      mediaToken,
     });
   } catch (error) {
     handleSessionError(req, res, error);
