@@ -260,6 +260,7 @@ routes. Sessions a user can see are their own, plus the one they're a guest in.
 | `PATCH /playback-sessions/:id/sharing` `{visibility}` | owner | set visibility |
 | `GET /playback-sessions/:id/members` | owner, guests | owner and guests with names and scopes |
 | `DELETE /playback-sessions/:id/members/:userId` | owner (anyone), guest (self) | remove / leave |
+| `GET /playback-sessions/:id/invites` | owner | the working links, newest first |
 | `POST /playback-sessions/:id/invites` `{permissions?}` | owner | create a join link: returns its token and URL |
 | `DELETE /playback-sessions/:id/invites/:token` | owner | revoke a link |
 | `POST /playback-sessions/:id/invites/:token/prompt` `{userIds}` | owner | prompt online users with the link |
@@ -379,7 +380,12 @@ One PR each, in this order:
    - No UI: shared sessions can't exist yet outside tests.
 3. **6c: Invites.** API, events, join links, the prompt with its preview,
    `/listen/<token>`, and the owner's sheet (visibility Private / Invite
-   only, invite, remove, end).
+   only, invite, remove, end). Two PRs:
+   - 6c-1, the server API and events (built 2026-10-27, no schema change;
+     `sessionMembers.service.ts`). A prompt for a session that went private
+     is refused like a join;
+   - 6c-2, the web UI: the owner's sheet in Connect, the invite prompt, and the
+     `/listen/<token>` page.
 4. **6d: The guest client.** The shared session on the guest's device, the
    guest Connect card, and controls by scope.
 5. **6e: Nearby.** Discoverable sessions by public IP, and the "Join" row.

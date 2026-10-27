@@ -219,7 +219,7 @@ type Db = PoolClient | Awaited<ReturnType<typeof initDB>>;
  * ratings (a guest sees theirs, not the owner's), and `access` says what the
  * viewer may do. Without a viewer, as the owner sees it.
  */
-async function serializeSession(db: Db, row: SessionRow, viewer?: { userId: string; access: SessionAccess }): Promise<PlaybackSession> {
+export async function serializeSession(db: Db, row: SessionRow, viewer?: { userId: string; access: SessionAccess }): Promise<PlaybackSession> {
   const entries = await loadEntries(db, row.id);
   const tracks = await getApiV1TracksByIds(viewer?.userId ?? row.user_id, entries.map((entry) => entry.track_id));
   const trackById = new Map<string, Track>();
@@ -266,7 +266,7 @@ async function serializeSession(db: Db, row: SessionRow, viewer?: { userId: stri
  * The session and what `viewerId` may do with it: the owner, a guest with its
  * scopes, or null when the viewer has no part in it (or it does not exist).
  */
-async function loadSessionFor(db: Db, viewerId: string, sessionId: string, lock = false): Promise<{ row: SessionRow; access: SessionAccess } | null> {
+export async function loadSessionFor(db: Db, viewerId: string, sessionId: string, lock = false): Promise<{ row: SessionRow; access: SessionAccess } | null> {
   const result = await db.query(`
     SELECT s.*, m.permissions AS member_permissions
     FROM playback_sessions s
@@ -280,7 +280,7 @@ async function loadSessionFor(db: Db, viewerId: string, sessionId: string, lock 
 }
 
 /** Throws unless `access` covers `need`: 404 for no part in it, 403 for a guest. */
-function enforceAccess(access: SessionAccess | null, need: SessionNeed): asserts access is SessionAccess {
+export function enforceAccess(access: SessionAccess | null, need: SessionNeed): asserts access is SessionAccess {
   switch (decideSessionAccess(access, need)) {
     case 'allow': return;
     case 'not-found': throw new PlaybackSessionNotFoundError();
@@ -290,12 +290,12 @@ function enforceAccess(access: SessionAccess | null, need: SessionNeed): asserts
 }
 
 /** Who hears a session's events: its owner and its guests. */
-async function sessionAudience(db: Db, ownerId: string, sessionId: string): Promise<string[]> {
+export async function sessionAudience(db: Db, ownerId: string, sessionId: string): Promise<string[]> {
   const result = await db.query('SELECT user_id FROM playback_session_members WHERE session_id = $1', [sessionId]);
   return [ownerId, ...result.rows.map((row) => String(row.user_id)).filter((id) => id !== ownerId)];
 }
 
-async function publishToSession(db: Db, ownerId: string, sessionId: string, type: ApiV1EventType, data: Record<string, unknown>, options?: { transient?: boolean }) {
+export async function publishToSession(db: Db, ownerId: string, sessionId: string, type: ApiV1EventType, data: Record<string, unknown>, options?: { transient?: boolean }) {
   for (const userId of await sessionAudience(db, ownerId, sessionId)) publishApiV1Event(userId, type, data, options);
 }
 
