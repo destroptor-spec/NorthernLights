@@ -1,7 +1,7 @@
 # Listen together (Phase 6)
 
-**Status:** spec, not started. Andreas's direction 2026-10-27; open
-questions at the end. Builds on [playback_sessions.md](playback_sessions.md)
+**Status:** spec, not started. Andreas's direction and answers 2026-10-27.
+Builds on [playback_sessions.md](playback_sessions.md)
 (Phases 0–5) and [cast-receiver-output.md](cast-receiver-output.md).
 
 ## What it is
@@ -24,11 +24,22 @@ rule it out.
 - **Guests** control playback: start, pause, skip, play next, reorder, start
   something new, and remove from the queue. Everything about *what* plays, nothing
   about *where*.
-- **Invites** work only between users on the same server.
+- **Invites** work only between users on the same server. An invite prompts
+  the users the owner picks, if they are online, and always gives a join URL.
+- **The join URL works for anyone on the server** who has it, like a share
+  link.
 - **Visibility:** private (default, as today), invite only, or discoverable
   by other online users in the same location.
-- **An invite** prompts the invitee if they are online, and always gives a
-  join URL.
+- **"The same location"** is the same public IP address. Invites work
+  wherever the invitee is.
+- **Before joining,** a user sees "{owner}'s session" and the members as
+  avatars: the owner's set apart, the guests' stacked. Nobody's name but the
+  owner's, and nothing about what plays.
+- **Joining** ends the guest's own playback.
+- **Ending** the session (owner only) removes everyone else from it. The
+  music keeps playing.
+- **Guests' scopes include** repeat, shuffle and Infinity.
+- **Plays and scrobbles** count for the owner only.
 - **Per-guest scopes** (queue, play/pause, change music) are preferred if they
   don't blow up scope and tests; not required for the MVP. See
   [Permissions](#permissions): storing and checking them costs little, so the
@@ -63,7 +74,7 @@ first).
 - `private`: no guests can join. Turning a session private does **not**
   remove guests already in it; the owner removes them, or ends listening
   together.
-- `invite`: joining needs an invite.
+- `invite`: joining needs the session's join URL.
 - `discoverable`: online users in the same location see it and can join
   without an invite (see [Discovery](#discovery)).
 
@@ -71,18 +82,23 @@ first).
 
 ```
 playback_session_invites
-  id            UUID PRIMARY KEY            -- also the join URL's token
+  token         TEXT PRIMARY KEY            -- the join URL's token (random, 32 bytes)
   session_id    UUID → playback_sessions ON DELETE CASCADE
-  invitee_id    UUID → users ON DELETE CASCADE
-  permissions   TEXT[]
+  permissions   TEXT[]                      -- what joining through it grants
   created_by    UUID → users
-  created_at, expires_at (24 h), accepted_at, declined_at, revoked_at
+  created_at, revoked_at
 ```
 
-An invite names one user. Its URL (`/listen/<id>`) works only for that user,
-signed in on this server; for anyone else it says the invite isn't theirs. It
-is spent when accepted, and dies when it expires, is revoked, or listening
-together ends.
+An invite is a link, not a person (Andreas: the join URL works for anyone on
+the server).
+- **Who can use it:** anyone signed in on this server who opens
+  `/listen/<token>` can join, as many people as want to.
+- **Prompts:** inviting online users sends each of them the same link as a
+  prompt (an event, no row of its own).
+- **How it ends:** it works until the owner revokes it or ends the session;
+  a new link replaces the old one.
+- **More than one:** the owner can hold several links with different scopes,
+  once per-invite scopes have a UI (6f).
 
 All three tables are additive. Prod shares its database with the dev channel,
 so the schema needs Andreas's sign-off before it lands.
@@ -118,36 +134,55 @@ stream (`getTrustedClientIp`, which already honours `TRUSTED_PROXY_MODE`).
 
 - **Who sees a discoverable session:** online users on this server whose event
   stream comes from that same address.
-- **What they see before joining:** the owner's display name and the playing
-  device's name, not the queue.
+- **What they see before joining:** see [Before joining](#before-joining).
 - **Limits:**
   - a phone on mobile data, or behind a VPN, won't see it;
   - carrier-grade NAT could show it to a user of this server elsewhere.
 
   Both are acceptable, because only users of this server are involved.
-- **Invites ignore location,** so "invite only" works wherever the guest is,
-  even though they hear nothing there.
+- **Invites ignore location** (decided): a join URL works wherever the guest
+  is, even though they hear nothing there.
+
+## Before joining
+
+The same preview everywhere: the invite prompt, `/listen/<token>`, and the
+nearby row in Connect.
+- **Title:** "{owner}'s session", from the owner's username ("Andreas'
+  session" for names ending in s).
+- **Avatars:** the owner's avatar on its own, then the guests' avatars
+  stacked (overlapping, "+N" past four).
+  - Users have no pictures yet; an avatar is the username's first letter, as
+    on the account page.
+- **Nothing else:**
+  - no guest names (not even on hover or to screen readers, which hear
+    "{owner} and {n} others");
+  - not what's playing, the queue, or the device.
+
+The preview's API answer carries only what the screen shows: the owner's
+name, and for each member a user ID and initial.
 
 ## Joining, leaving, ending
 
-- **Joining:** accepting an invite, or joining a discoverable session, makes
+- **Joining:** joining through a link, or joining a discoverable session, makes
   the user a member.
   - The device they joined on shows the shared session: queue, what plays,
     controls.
-  - If that device was playing the guest's own session, it pauses. Their own
-    session stays as it was, to return to.
+  - The guest's own playback ends (decided): whichever of their devices plays
+    their own session stops it, and stops casting it. Their own queue stays,
+    to return to.
   - The guest's other devices show "Listening with {owner}" in Connect, with
     "Open" to switch to the shared session.
 - **Leaving:** a guest leaves from Connect. Their devices return to their own
-  session, paused.
+  session, with nothing playing.
 - **Removing:** the owner removes a guest. For that guest it's the same as
   leaving, with a short notice ("{owner} removed you").
-- **Ending:** the owner ends listening together. Every guest is removed,
-  pending invites die, and visibility goes back to private. The music plays on
-  for the owner (see open question 2).
+- **Ending** (decided): the owner ends the session. Every guest is removed,
+  every invite link dies, and visibility goes back to private. The music
+  keeps playing for the owner.
 - **Owner away:** the owner's devices may close while the NAD plays
-  (Phase 5: the receiver follows the session itself). Guests keep control;
-  inviting and removing wait until the owner is back.
+  (Phase 5: the receiver follows the session itself). Guests keep control,
+  and existing links still let people join; new links, prompts and removals
+  wait until the owner is back.
 
 ## Where the audio plays
 
@@ -178,7 +213,8 @@ member's stream as well as the owner's.
   - `playbackSession.memberJoined`, `playbackSession.memberLeft` (with the
     reason: left, removed, ended), `playbackSession.visibilityChanged` and
     `playbackSession.togetherEnded`;
-  - to the invitee: `playbackSession.invited` and `playbackSession.inviteRevoked`;
+  - to each prompted user: `playbackSession.invitePrompt`, with the link and the
+    preview;
   - to users nearby: `playbackSession.discoverable`, which says that one appeared
     or went.
 - **A guest's stream** carries the shared session's events, and nothing else
@@ -186,8 +222,8 @@ member's stream as well as the owner's.
 
 ## Plays, history, Infinity
 
-- **Plays and scrobbles** count for the owner only, as today, from the output's
-  reports. Counting them for guests too is an option for later (open question 4).
+- **Plays and scrobbles** count for the owner only (decided), as today, from
+  the output's reports.
 - **Infinity** draws on the session's seeds and the owner's settings. A guest
   can switch it on or off with `replace`.
 - **Loves and ratings** are per user already: a guest loving the playing track
@@ -204,10 +240,11 @@ routes. Sessions a user can see are their own, plus the one they're a guest in.
 | `PATCH /playback-sessions/:id/sharing` `{visibility}` | owner | set visibility |
 | `GET /playback-sessions/:id/members` | owner, guests | owner and guests with names and scopes |
 | `DELETE /playback-sessions/:id/members/:userId` | owner (anyone), guest (self) | remove / leave |
-| `POST /playback-sessions/:id/invites` `{userId, permissions?}` | owner | invite: returns the invite and its join URL |
-| `DELETE /playback-sessions/:id/invites/:inviteId` | owner | revoke |
-| `GET /session-invites` | any | my pending invites |
-| `POST /session-invites/:id/accept` · `/decline` | invitee | join / say no |
+| `POST /playback-sessions/:id/invites` `{permissions?}` | owner | create a join link: returns its token and URL |
+| `DELETE /playback-sessions/:id/invites/:token` | owner | revoke a link |
+| `POST /playback-sessions/:id/invites/:token/prompt` `{userIds}` | owner | prompt online users with the link |
+| `GET /session-invites/:token` | any | the preview (see [Before joining](#before-joining)) |
+| `POST /session-invites/:token/join` | any | join through the link |
 | `GET /playback-sessions/nearby` | any | discoverable sessions in my location |
 | `POST /playback-sessions/:id/join` | any nearby | join a discoverable session |
 | `POST /playback-sessions/:id/together/end` | owner | end listening together |
@@ -216,8 +253,7 @@ routes. Sessions a user can see are their own, plus the one they're a guest in.
 New errors:
 - `403 SESSION_OWNER_ONLY`;
 - `403 SESSION_SCOPE_DENIED`, with `details.need`;
-- `404 SESSION_INVITE_NOT_FOUND`, which is also the answer for someone else's
-  invite, so nothing leaks;
+- `404 SESSION_INVITE_NOT_FOUND`, for a revoked link or an ended session;
 - `409 SESSION_NOT_JOINABLE`.
 
 ## UI
@@ -225,18 +261,20 @@ New errors:
 - **Owner, in Connect:** a "Listen together" row after the other devices. It
   opens a sheet with:
   - visibility (Private / Invite only / Nearby can join);
-  - "Invite", a list of online users;
+  - "Invite": copy the join link, or prompt users from a list of who's
+    online;
   - the guests, each with Remove;
   - "End listening together".
-- **Invitee:** a prompt with Join and Not now. It's an action, so text is
-  fine here. `/listen/<id>` shows the same choice.
+- **Invitee:** a prompt with the preview, Join and Not now. It's an action,
+  so text is fine here. "Not now" only closes it. `/listen/<token>` shows the
+  same preview and choice.
 - **Guest:**
   - Connect is headed "Listening with {owner}", lists the playing device
     (marked) and offers "Leave";
   - the player and queue look as for remote control today;
   - controls without the scope are disabled, with no text.
 - **Nearby:** a user who sees a discoverable session gets a row in their
-  Connect card: "{owner} is listening nearby · Join".
+  Connect card with the preview and "Join".
 
 No status text while things work (as everywhere): joining, leaving and
 commands just take effect, with text only when they fail.
@@ -263,9 +301,13 @@ commands just take effect, with text only when they fail.
      - **Fix:** the receiver checks a handover against the session's current
        output grant before it switches, and says which session it follows (an
        opaque ID) in `aurora.status`.
-- **Discovery** shows names only: no queue, no artwork, until someone joins.
-- **Invites and joins** are rate-limited per user. An invite URL is useless to
-  anyone but its invitee.
+- **Before joining,** discovery and links show only the preview: the
+  owner's name and initials.
+- **A join link is a bearer link within the server** (decided): anyone on the
+  server who gets it can join with its scopes.
+  - The owner sees who joined, and can remove them or revoke the link.
+  - Links are random 32-byte tokens, never logged.
+  - Joins are rate-limited per user.
 
 ## Plan
 
@@ -279,8 +321,9 @@ One PR each, in this order:
      the guest refusals;
    - event fan-out to members, and the matrix tests.
    - No UI: shared sessions can't exist yet outside tests.
-3. **6c: Invites.** API, events, the invite prompt, `/listen/<id>`, and the
-   owner's sheet (visibility Private / Invite only, invite, remove, end).
+3. **6c: Invites.** API, events, join links, the prompt with its preview,
+   `/listen/<token>`, and the owner's sheet (visibility Private / Invite
+   only, invite, remove, end).
 4. **6d: The guest client.** The shared session on the guest's device, the
    guest Connect card, and controls by scope.
 5. **6e: Nearby.** Discoverable sessions by public IP, and the "Join" row.
@@ -294,20 +337,19 @@ On devices, that means:
 - the owner removes the guest, and the guest's controls stop at once;
 - ending listening together leaves the owner's music playing.
 
-## Open questions
+## Answered (2026-10-27)
 
-1. **"Same location"** = same public IP as one of the owner's online devices?
-   Or something else, such as the same Cast device?
-2. **Ending:** does "End listening together" only stop sharing (music plays
-   on), or should the owner also get "Stop" there?
-3. **Guests and Infinity / repeat / shuffle:** are they part of "anything
-   related to playing" (as proposed: Infinity under `replace`; repeat and
-   shuffle under `queue`)?
-4. **Plays and scrobbles for guests:** owner only (proposed), or also for each
-   guest who opts in?
-5. **Invite URL:** bound to the invitee (proposed), or usable by anyone on the
-   server who has it, like a share link?
-6. **Before joining a discoverable session:** names only (proposed), or also
-   what's playing?
-7. **The guest's own music when joining:** pause it (proposed), or leave it
-   playing on that device?
+1. **"Same location"** is the same public IP; invites work from anywhere.
+2. **Ending** removes everyone else; the music keeps playing.
+3. **Repeat, shuffle and Infinity** are guest controls (under `queue` and
+   `replace`).
+4. **Plays and scrobbles** count for the owner only.
+5. **The join URL** works for anyone on the server.
+6. **Before joining:** "{owner}'s session" with avatars, the owner's set
+   apart and the guests' stacked; no guest names, nothing about what plays.
+7. **The guest's own playback** ends when they join.
+
+## Still open
+
+- **Pictures:** avatars are initials until users can set a picture. Should
+  6c add pictures, or is that separate work?
