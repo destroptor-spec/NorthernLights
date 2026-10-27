@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { playlistPermissions } from '../../shared/playlistPermissions';
 import { initDB } from '../database';
+import { artworkUrlFor } from './artworkLink.service';
 import { playlistGenerationSourceSchema } from '../../shared/api/v1';
 import type { AlbumSummary, ArtistSummary, Genre, Playlist, Track } from '../../shared/api/v1';
 
@@ -76,7 +77,9 @@ export function mapTrackV1(row: any): Track {
     playCount: Math.max(0, nullableInt(row.user_play_count ?? row.playCount ?? row.play_count) || 0),
     lastPlayedAt: typeof lastPlayed === 'number' ? iso(lastPlayed) : iso(lastPlayed),
     artworkId: artHash,
-    artworkUrl: artHash ? `/api/v1/artwork/${encodeURIComponent(artHash)}` : null,
+    // Signed for that one image (6a-4): it opens with no token, so Cast and
+    // media notifications never need one in the URL.
+    artworkUrl: artHash ? artworkUrlFor(artHash) : null,
     musicBrainz: {
       recordingId: nullableString(row.mbRecordingId ?? row.mb_recording_id),
       trackId: nullableString(row.mbTrackId ?? row.mb_track_id),

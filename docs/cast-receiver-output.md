@@ -178,8 +178,13 @@ session never LOAD (PR E), and a second sender leaves (#119/#123). Details that 
     streams with.
   - **The receiver** puts its newest token on every request (manifests and
     segments, and the first `contentId`), over any older one in the URL.
-  - **Not broadcast (6a-3):** nothing the session broadcasts carries the
-    token, except artwork until 6a-4.
+  - **Not broadcast (6a-3, artwork 6a-4):** nothing the session broadcasts
+    carries the token.
+    - Artwork uses the track's signed link (`/api/v1/artwork/<hash>?sig=…`),
+      which opens that one image with no credential, so neither the sender
+      nor the receiver adds a token to it. That suits the phones' media
+      notifications too, which fetch artwork without signing in.
+    - An unsigned link, from an older server, still gets the token.
     - The sender puts it in the LOAD request's own `customData`, which isn't
       part of the media status, and sends HLS URLs without it.
     - The receiver's LOAD interceptor takes it from there (or, from an older
@@ -197,7 +202,7 @@ session never LOAD (PR E), and a second sender leaves (#119/#123). Details that 
     a deploy is affected.
 - Items are built like the sender's (stream URL with the Cast quality from the
   handover and `codec=aac`, no token, which the request handlers add; artwork
-  with the receiver's media token until 6a-4), not through `POST /tracks/:id/playback`, whose
+  from the track's signed link, with no token (6a-4)), not through `POST /tracks/:id/playback`, whose
   15-minute media tokens would expire before a queued item plays.
 - The window keeps the common prefix of what follows the current item, drops
   everything after it and appends the rest of the session's next 9 entries,

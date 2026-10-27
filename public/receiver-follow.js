@@ -430,10 +430,14 @@
         + '?quality=' + encodeURIComponent(state.quality) + '&codec=' + FORCED_CODEC;
     }
 
+    // A signed link (the server signs a track's artworkUrl, 6a-4) opens its
+    // one image by itself: no token in what every sender sees. An unsigned one
+    // (an older server) still gets the receiver's media token.
     function artworkUrl(track) {
       if (!track.artworkUrl) return '';
-      var token = env.mediaToken();
       var url = track.artworkUrl.indexOf('http') === 0 ? track.artworkUrl : env.origin + track.artworkUrl;
+      if (/[?&]sig=/.test(url)) return url;
+      var token = env.mediaToken();
       return token ? url + (url.indexOf('?') >= 0 ? '&' : '?') + 'token=' + encodeURIComponent(token) : url;
     }
 

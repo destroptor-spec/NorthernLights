@@ -3559,9 +3559,8 @@ export class CastManager {
 
     /**
      * Checks that what the Cast session broadcasts carries no media token
-     * (6a-3), on every media status: logs `seen=none` once per Cast session,
-     * and each place a token turns up once. Artwork is left out until it has
-     * signed links of its own (6a-4).
+     * (6a-3, artwork since 6a-4), on every media status: logs `seen=none`
+     * once per Cast session, and each place a token turns up once.
      */
     private noteBroadcastTokens(mediaSession: any | null) {
         const sid = this.getCurrentSessionId();
@@ -3577,6 +3576,8 @@ export class CastManager {
         for (const m of media) {
             if (typeof m.contentId === 'string' && /[?&]token=/.test(m.contentId)) places.add('contentId');
             if (m.customData && typeof m.customData === 'object' && 'token' in m.customData) places.add('customData');
+            const images = Array.isArray(m.metadata?.images) ? m.metadata.images : [];
+            if (images.some((image: any) => typeof image?.url === 'string' && /[?&]token=/.test(image.url))) places.add('artwork');
         }
         const logged = this.broadcastTokenLogged;
         if (places.size === 0) {
@@ -3659,6 +3660,12 @@ export class CastManager {
         try {
             const parsed = new URL(url, window.location.href);
             if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+            // A signed link opens its one image by itself (6a-4): no token in
+            // what every sender and media notification sees.
+            if (parsed.searchParams.has('sig')) {
+                parsed.searchParams.delete('token');
+                return parsed.toString();
+            }
             return withCastToken(parsed.toString(), this.castMediaToken.current());
         } catch {
             return '';
