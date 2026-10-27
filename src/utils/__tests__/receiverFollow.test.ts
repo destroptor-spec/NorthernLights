@@ -439,3 +439,75 @@ describe('when the session moves on', () => {
     expect(states().at(-1)).toBe('idle');
   });
 });
+
+describe('a handover for another session (docs/listen-together.md, 6a)', () => {
+  // Any sender in the Cast session can send aurora.session.follow: with
+  // Listen together, a guest's phone. It must not point the receiver at its
+  // own session while the owner's still plays here.
+  const otherSession = (h: ReturnType<typeof harness>) => ({ ...h.handover, sessionId: 'session-2', outputId: 'receiver:cast-77', generation: 1, token: 'guest-receiver-token' });
+  const take = (h: ReturnType<typeof harness>, handover: Record<string, unknown>) => {
+    const done = jest.fn();
+    h.follower.takeHandover(handover, done);
+    return done;
+  };
+
+  it('is refused while this session still plays here', async () => {
+    const h = harness();
+    h.follower.start(h.handover);
+    await h.settle();
+    const done = take(h, otherSession(h));
+    await h.settle();
+    expect(done).toHaveBeenCalledWith(false);
+    expect(h.follower.following()).toBe(true);
+    expect(h.markers).toContain('receiver-handover-refused reason=following-another-session generation=3');
+    expect(h.calls('GET', '/api/v1/playback-sessions/session-2')).toHaveLength(0);
+  });
+
+  it('is taken once another device has this session', async () => {
+    const h = harness();
+    h.follower.start(h.handover);
+    await h.settle();
+    h.setSession(sessionOf([1, 2, 3, 4], { output: { id: 'phone', kind: 'browser', generation: 4 } }));
+    const done = take(h, otherSession(h));
+    await h.settle();
+    expect(done).toHaveBeenCalledWith(true);
+    expect(h.markers).toContainEqual(expect.stringMatching(/^receiver-session-follow started generation=1/));
+  });
+
+  it('is taken once this session is gone', async () => {
+    const h = harness();
+    h.follower.start(h.handover);
+    await h.settle();
+    h.routes['GET /api/v1/playback-sessions/session-1'] = () => ({ status: 404, body: { error: { code: 'PLAYBACK_SESSION_NOT_FOUND' } } });
+    const done = take(h, otherSession(h));
+    await h.settle();
+    expect(done).toHaveBeenCalledWith(true);
+  });
+
+  it('is refused when the check itself fails', async () => {
+    const h = harness();
+    h.follower.start(h.handover);
+    await h.settle();
+    h.routes['GET /api/v1/playback-sessions/session-1'] = () => ({ status: 503, body: { error: { code: 'UNAVAILABLE' } } });
+    const done = take(h, otherSession(h));
+    await h.settle();
+    expect(done).toHaveBeenCalledWith(false);
+    expect(h.follower.following()).toBe(true);
+  });
+
+  it('needs no check for the same session (a renewal, or a newer grant) or a receiver that follows nothing', async () => {
+    const idle = harness();
+    const first = take(idle, idle.handover);
+    expect(first).toHaveBeenCalledWith(true);
+
+    const h = harness();
+    h.follower.start(h.handover);
+    await h.settle();
+    const gets = h.calls('GET', '/api/v1/playback-sessions/session-1').length;
+    const renewed = take(h, { ...h.handover, token: 'renewed-by-sender' });
+    expect(renewed).toHaveBeenCalledWith(true);
+    const newer = take(h, { ...h.handover, generation: 5 });
+    expect(newer).toHaveBeenCalledWith(true);
+    expect(h.calls('GET', '/api/v1/playback-sessions/session-1').length).toBe(gets + 1); // the newer grant's own start fetch
+  });
+});
