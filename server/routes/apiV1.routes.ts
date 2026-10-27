@@ -129,7 +129,11 @@ import {
   issuePlaybackCommand,
   PlaybackOutputNotActiveError,
   PlaybackOutputUnreachableError,
+  PlaybackSessionOwnerOnlyError,
+  PlaybackSessionScopeError,
+  guestSessionOwner,
 } from '../services/playbackSession.service';
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 import { isPlaybackSyncEnabledFor } from '../services/playbackSync.service';
 import { publishApiV1Event, replayApiV1Events, subscribeApiV1Events, noteClientListening, listConnectedDevices, isClientListening as isDeviceConnected } from '../services/apiV1Events.service';
 import { topUpSessionInfinity } from '../services/sessionInfinity.service';
@@ -398,6 +402,13 @@ router.use(requireApiV1Auth, listenerLimiter);
 router.use('/playback-sessions', async (req, res, next) => {
   try {
     if (await isPlaybackSyncEnabledFor(req.apiV1!.userId)) return next();
+    // A guest in someone's session goes by the owner's setting, not its own
+    // (Listen together); with sync off server-wide it is off for everyone.
+    const sessionId = req.path.split('/')[1] || '';
+    if (UUID_PATTERN.test(sessionId)) {
+      const ownerId = await guestSessionOwner(req.apiV1!.userId, sessionId);
+      if (ownerId && await isPlaybackSyncEnabledFor(ownerId)) return next();
+    }
     sendApiV1Error(req, res, 403, 'PLAYBACK_SYNC_DISABLED', 'Playback sync across devices is turned off for this account.');
   } catch (error) {
     next(error);
@@ -1072,7 +1083,7 @@ router.patch('/playback-sessions/:id', async (req, res) => {
     // the original attempt produced.
     dataResponse(req, res, result.session, 200, { appliedRevision: result.appliedRevision, replayed: result.replayed });
     // Infinity switched on, or the queue shortened: the server tops it up.
-    if (!result.replayed) void topUpSessionInfinity(req.apiV1!.userId, result.session.id);
+    if (!result.replayed) void topUpSessionInfinity(result.ownerId, result.session.id);
   } catch (error) {
     handleSessionError(req, res, error);
   }
@@ -1205,6 +1216,8 @@ router.post('/playback-sessions/:id/transfer', async (req, res) => {
   const userId = req.apiV1!.userId;
   const session = await getPlaybackSession(userId, req.params.id);
   if (!session) return sendApiV1Error(req, res, 404, 'PLAYBACK_SESSION_NOT_FOUND', 'Playback session not found.');
+  // Where it plays is the owner's alone.
+  if (session.access?.role !== 'owner') return sendApiV1Error(req, res, 403, 'SESSION_OWNER_ONLY', "Only the session's owner can do this.");
   const target = listConnectedDevices(userId).find((device) => device.clientId === input.targetClientId);
   if (!target || target.kind === 'receiver' || !isDeviceConnected(userId, input.targetClientId)) {
     return sendApiV1Error(req, res, 409, 'DEVICE_NOT_CONNECTED', 'That device does not have Aurora open.');
@@ -1265,6 +1278,8 @@ router.delete('/playback-sessions/:id', async (req, res) => {
 
 function handleSessionError(req: Request, res: Response, error: unknown) {
   if (error instanceof PlaybackSessionNotFoundError) return sendApiV1Error(req, res, 404, 'PLAYBACK_SESSION_NOT_FOUND', 'Playback session not found.');
+  if (error instanceof PlaybackSessionOwnerOnlyError) return sendApiV1Error(req, res, 403, 'SESSION_OWNER_ONLY', "Only the session's owner can do this.");
+  if (error instanceof PlaybackSessionScopeError) return sendApiV1Error(req, res, 403, 'SESSION_SCOPE_DENIED', "This session's owner has not allowed that.", { need: error.need });
   if (error instanceof PlaybackOutputIdentityError) return sendApiV1Error(req, res, 422, 'OUTPUT_IDENTITY_MISMATCH', 'The report names a different output or generation than its credential.');
   if (error instanceof PlaybackOutputUnreachableError) return sendApiV1Error(req, res, 409, 'OUTPUT_UNREACHABLE', 'The device playing the session is not connected right now.', { current: error.current });
   if (error instanceof PlaybackOutputNotActiveError) return sendApiV1Error(req, res, 409, 'OUTPUT_NOT_ACTIVE', 'Nothing is playing the session right now.', { current: error.current });

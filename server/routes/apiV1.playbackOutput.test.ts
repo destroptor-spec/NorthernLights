@@ -65,6 +65,7 @@ const session = (output: PlaybackSession['output']): PlaybackSession => ({
   source: null,
   revision: 4,
   queue: [],
+  access: { role: 'owner', permissions: ['transport', 'queue', 'replace'] },
   createdAt: '2026-10-13T10:00:00.000Z',
   updatedAt: '2026-10-13T11:00:00.000Z',
 });
@@ -397,6 +398,12 @@ describe('the device list and transfers (Connect)', () => {
     }));
     unsubscribe();
     closePhone();
+  });
+
+  it("refuses a guest: where it plays is the owner's alone (Listen together)", async () => {
+    (getPlaybackSession as jest.Mock).mockResolvedValue({ ...session(output), access: { role: 'guest', permissions: ['transport', 'queue', 'replace'] } });
+    const refused = await call('post', '/playback-sessions/:id/transfer', { targetClientId: 'phone-0002' }, { id: sessionId });
+    expect([refused.status, refused.body.error.code]).toEqual([403, 'SESSION_OWNER_ONLY']);
   });
 
   it('refuses a device that does not have Aurora open, a Cast receiver, and an unknown session', async () => {

@@ -3,7 +3,8 @@ import type { PoolClient } from 'pg';
 import { initDB } from '../database';
 import type { PlaybackCommandRequest, PlaybackOutput, PlaybackOutputClaim, PlaybackOutputReport, PlaybackSession, PlaybackSessionPatch, Track } from '../../shared/api/v1';
 import { getApiV1TracksByIds } from './apiV1Dto.service';
-import { isClientListening, publishApiV1Event } from './apiV1Events.service';
+import { isClientListening, publishApiV1Event, type ApiV1EventType } from './apiV1Events.service';
+import { accessFor, commandNeed, decideSessionAccess, missingScope, OWNER_ONLY, patchNeed, READ, type SessionAccess, type SessionNeed, type SessionScope } from './sessionAccess';
 
 type SessionRow = {
   id: string;
@@ -32,6 +33,9 @@ type SessionRow = {
   output_reported_at: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
+  visibility?: PlaybackSession['visibility'];
+  /** The viewer's member row, when the session is read for a guest (loadSessionFor). */
+  member_permissions?: string[] | null;
 };
 
 type QueueEntryAddedBy = PlaybackSession['queue'][number]['addedBy'];
@@ -46,6 +50,14 @@ type EntryRow = {
 };
 
 export class PlaybackSessionNotFoundError extends Error {}
+/** Only the owner may do this: choose where it plays, end it (docs/listen-together.md). */
+export class PlaybackSessionOwnerOnlyError extends Error {}
+/** A guest's scopes do not cover this. */
+export class PlaybackSessionScopeError extends Error {
+  constructor(public readonly need: SessionScope) {
+    super(`Needs the ${need} scope`);
+  }
+}
 /** A report's body named a different output or generation than its credential. */
 export class PlaybackOutputIdentityError extends Error {}
 /** A refresh named an output grant that has since been replaced by a newer claim. */
@@ -98,6 +110,8 @@ export type PlaybackSessionPatchResult = {
   appliedRevision: number;
   /** True when the requestId had already been applied and nothing was applied again. */
   replayed: boolean;
+  /** The session's owner (the caller, or for a guest the user it belongs to): server work like Infinity runs for them. */
+  ownerId: string;
 };
 
 // Request keys outlive any client retry, including an offline journal replay.
@@ -198,9 +212,16 @@ function serializeOutput(row: SessionRow, now = Date.now()): PlaybackOutput | nu
   };
 }
 
-async function serializeSession(db: PoolClient | Awaited<ReturnType<typeof initDB>>, row: SessionRow): Promise<PlaybackSession> {
+type Db = PoolClient | Awaited<ReturnType<typeof initDB>>;
+
+/**
+ * The session as `viewer` sees it: tracks carry the viewer's own loves and
+ * ratings (a guest sees theirs, not the owner's), and `access` says what the
+ * viewer may do. Without a viewer, as the owner sees it.
+ */
+async function serializeSession(db: Db, row: SessionRow, viewer?: { userId: string; access: SessionAccess }): Promise<PlaybackSession> {
   const entries = await loadEntries(db, row.id);
-  const tracks = await getApiV1TracksByIds(row.user_id, entries.map((entry) => entry.track_id));
+  const tracks = await getApiV1TracksByIds(viewer?.userId ?? row.user_id, entries.map((entry) => entry.track_id));
   const trackById = new Map<string, Track>();
   for (const track of tracks) trackById.set(track.id, track);
   // Entries whose track is gone are left out, and positions are renumbered so
@@ -232,9 +253,50 @@ async function serializeSession(db: PoolClient | Awaited<ReturnType<typeof initD
       addedAt: new Date(entry.added_at).toISOString(),
       addedBy: entry.added_by === 'infinity' ? 'infinity' as const : 'user' as const,
     })),
+    visibility: row.visibility ?? 'private',
+    access: viewer
+      ? { role: viewer.access.role, permissions: viewer.access.permissions }
+      : { role: 'owner', permissions: ['transport', 'queue', 'replace'] },
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
   };
+}
+
+/**
+ * The session and what `viewerId` may do with it: the owner, a guest with its
+ * scopes, or null when the viewer has no part in it (or it does not exist).
+ */
+async function loadSessionFor(db: Db, viewerId: string, sessionId: string, lock = false): Promise<{ row: SessionRow; access: SessionAccess } | null> {
+  const result = await db.query(`
+    SELECT s.*, m.permissions AS member_permissions
+    FROM playback_sessions s
+    LEFT JOIN playback_session_members m ON m.session_id = s.id AND m.user_id = $2
+    WHERE s.id = $1${lock ? ' FOR UPDATE OF s' : ''}
+  `, [sessionId, viewerId]);
+  const row = result.rows[0] as SessionRow | undefined;
+  if (!row) return null;
+  const access = accessFor({ ownerId: row.user_id, viewerId, memberPermissions: row.member_permissions ?? null });
+  return access ? { row, access } : null;
+}
+
+/** Throws unless `access` covers `need`: 404 for no part in it, 403 for a guest. */
+function enforceAccess(access: SessionAccess | null, need: SessionNeed): asserts access is SessionAccess {
+  switch (decideSessionAccess(access, need)) {
+    case 'allow': return;
+    case 'not-found': throw new PlaybackSessionNotFoundError();
+    case 'owner-only': throw new PlaybackSessionOwnerOnlyError();
+    case 'scope-denied': throw new PlaybackSessionScopeError(missingScope(access!, need)!);
+  }
+}
+
+/** Who hears a session's events: its owner and its guests. */
+async function sessionAudience(db: Db, ownerId: string, sessionId: string): Promise<string[]> {
+  const result = await db.query('SELECT user_id FROM playback_session_members WHERE session_id = $1', [sessionId]);
+  return [ownerId, ...result.rows.map((row) => String(row.user_id)).filter((id) => id !== ownerId)];
+}
+
+async function publishToSession(db: Db, ownerId: string, sessionId: string, type: ApiV1EventType, data: Record<string, unknown>, options?: { transient?: boolean }) {
+  for (const userId of await sessionAudience(db, ownerId, sessionId)) publishApiV1Event(userId, type, data, options);
 }
 
 async function ensureTracksExist(db: PoolClient, trackIds: string[]) {
@@ -332,18 +394,40 @@ export async function createPlaybackSession(input: {
   }
 }
 
+/**
+ * The owner of a session `userId` is a guest in, or null. "Sync playback
+ * across devices" for a guest follows the owner's setting (Andreas,
+ * 2026-10-27): the session lives with them.
+ */
+export async function guestSessionOwner(userId: string, sessionId: string): Promise<string | null> {
+  const db = await initDB();
+  const result = await db.query(`
+    SELECT s.user_id FROM playback_session_members m JOIN playback_sessions s ON s.id = m.session_id
+    WHERE m.session_id = $1 AND m.user_id = $2
+  `, [sessionId, userId]);
+  return result.rows[0] ? String(result.rows[0].user_id) : null;
+}
+
+/** The user's own sessions, and the one they are a guest in. */
 export async function listPlaybackSessions(userId: string): Promise<PlaybackSession[]> {
   const db = await initDB();
   const result = await db.query(`
-    SELECT * FROM playback_sessions WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 50
+    SELECT s.*, m.permissions AS member_permissions
+    FROM playback_sessions s
+    LEFT JOIN playback_session_members m ON m.session_id = s.id AND m.user_id = $1
+    WHERE s.user_id = $1 OR m.user_id = $1
+    ORDER BY s.updated_at DESC LIMIT 50
   `, [userId]);
-  return Promise.all((result.rows as SessionRow[]).map((row) => serializeSession(db, row)));
+  return Promise.all((result.rows as SessionRow[]).map((row) => {
+    const access = accessFor({ ownerId: row.user_id, viewerId: userId, memberPermissions: row.member_permissions ?? null })!;
+    return serializeSession(db, row, { userId, access });
+  }));
 }
 
 export async function getPlaybackSession(userId: string, sessionId: string): Promise<PlaybackSession | null> {
   const db = await initDB();
-  const result = await db.query('SELECT * FROM playback_sessions WHERE id = $1 AND user_id = $2', [sessionId, userId]);
-  return result.rows[0] ? serializeSession(db, result.rows[0] as SessionRow) : null;
+  const loaded = await loadSessionFor(db, userId, sessionId);
+  return loaded ? serializeSession(db, loaded.row, { userId, access: loaded.access }) : null;
 }
 
 export async function patchPlaybackSession(input: {
@@ -357,13 +441,14 @@ export async function patchPlaybackSession(input: {
   const { requestId } = input.patch;
   try {
     await client.query('BEGIN');
-    const result = await client.query(`
-      SELECT * FROM playback_sessions WHERE id = $1 AND user_id = $2 FOR UPDATE
-    `, [input.sessionId, input.userId]);
-    const row = result.rows[0] as SessionRow | undefined;
-    if (!row) throw new PlaybackSessionNotFoundError();
+    const loaded = await loadSessionFor(client, input.userId, input.sessionId, true);
     // No device check: a session belongs to its user, and any of their devices
-    // may change it. Only reports are tied to the output grant.
+    // may change it; a guest, within its scopes. Only reports are tied to the
+    // output grant.
+    enforceAccess(loaded?.access ?? null, patchNeed(input.patch));
+    const { row, access } = loaded!;
+    const ownerId = access.ownerId;
+    const viewer = { userId: input.userId, access };
 
     // The request key is checked before the revision, so a retry after a lost
     // response gets its original success rather than a conflict with itself.
@@ -376,7 +461,7 @@ export async function patchPlaybackSession(input: {
       if (prior.rows[0]) {
         if (prior.rows[0].request_hash !== requestHash) throw new PlaybackSessionRequestReusedError();
         await client.query('ROLLBACK');
-        return { session: await serializeSession(db, row), appliedRevision: Number(prior.rows[0].revision), replayed: true };
+        return { session: await serializeSession(db, row, viewer), appliedRevision: Number(prior.rows[0].revision), replayed: true, ownerId };
       }
     }
 
@@ -478,7 +563,7 @@ export async function patchPlaybackSession(input: {
           repeat_mode = $6, shuffle = $7, infinity = $8, revision = revision + 1, updated_at = NOW()
       WHERE id = $1 AND user_id = $2
       RETURNING *
-    `, [input.sessionId, input.userId, currentEntryId, positionMs, playbackState, repeatMode, shuffle, infinity]);
+    `, [input.sessionId, ownerId, currentEntryId, positionMs, playbackState, repeatMode, shuffle, infinity]);
     const appliedRevision = Number(updated.rows[0].revision);
     if (requestId) {
       // An expired key that hasn't been pruned yet is reused as a new one.
@@ -500,9 +585,9 @@ export async function patchPlaybackSession(input: {
       `, [input.sessionId, REQUEST_KEYS_PER_SESSION]);
     }
     await client.query('COMMIT');
-    const session = await serializeSession(db, updated.rows[0] as SessionRow);
-    publishApiV1Event(input.userId, 'playbackSession.updated', { sessionId: session.id, revision: session.revision });
-    return { session, appliedRevision, replayed: false };
+    const session = await serializeSession(db, updated.rows[0] as SessionRow, viewer);
+    await publishToSession(db, ownerId, session.id, 'playbackSession.updated', { sessionId: session.id, revision: session.revision });
+    return { session, appliedRevision, replayed: false, ownerId };
   } catch (error) {
     if (!(error instanceof PlaybackSessionRevisionError)) {
       try { await client.query('ROLLBACK'); } catch { /* transaction already closed */ }
@@ -542,6 +627,8 @@ export async function claimPlaybackOutput(input: {
   expectedRevision?: number;
 }): Promise<PlaybackSession> {
   const db = await initDB();
+  // Where it plays is the owner's alone: a guest never claims the output.
+  enforceAccess((await loadSessionFor(db, input.userId, input.sessionId))?.access ?? null, OWNER_ONLY);
   const outputId = claimedOutputId(input.clientId, input.output);
   const result = await db.query(`
     UPDATE playback_sessions
@@ -565,7 +652,7 @@ export async function claimPlaybackOutput(input: {
     castSessionIds.delete(input.sessionId);
   }
   const session = await serializeSession(db, result.rows[0] as SessionRow);
-  publishApiV1Event(input.userId, 'playbackSession.handedOff', {
+  await publishToSession(db, input.userId, session.id, 'playbackSession.handedOff', {
     sessionId: session.id,
     ownerClientId: input.clientId,
     outputId,
@@ -616,8 +703,11 @@ export async function issuePlaybackCommand(input: {
   sessionId: string;
   request: PlaybackCommandRequest;
 }): Promise<{ accepted: boolean }> {
-  const session = await getPlaybackSession(input.userId, input.sessionId);
-  if (!session) throw new PlaybackSessionNotFoundError();
+  const db = await initDB();
+  const loaded = await loadSessionFor(db, input.userId, input.sessionId);
+  enforceAccess(loaded?.access ?? null, commandNeed(input.request.command));
+  const ownerId = loaded!.access.ownerId;
+  const session = await serializeSession(db, loaded!.row, { userId: input.userId, access: loaded!.access });
   const output = session.output;
   if (!output) throw new PlaybackOutputNotActiveError(session);
   if (output.id !== input.request.outputId || output.generation !== input.request.outputGeneration) {
@@ -627,9 +717,10 @@ export async function issuePlaybackCommand(input: {
   // Commands travel over the output's event stream: without one open (its
   // app closed, or offline), nothing would carry it out. Say so at once
   // rather than after a minute of silence.
-  if (!isClientListening(input.userId, output.id)) throw new PlaybackOutputUnreachableError(session);
+  // The output is one of the owner's devices (or their receiver), also when a guest sends it.
+  if (!isClientListening(ownerId, output.id)) throw new PlaybackOutputUnreachableError(session);
   if (!firstUseOfCommandId(session.id, input.request.requestId, Date.now())) return { accepted: false };
-  publishApiV1Event(input.userId, 'playbackSession.command', {
+  publishApiV1Event(ownerId, 'playbackSession.command', {
     sessionId: session.id,
     outputId: output.id,
     generation: output.generation,
@@ -651,6 +742,8 @@ export async function getCurrentOutputGrant(input: {
   outputId: string;
   generation: number;
 }): Promise<{ sid: string; oid: string; gen: number; kind: PlaybackOutput['kind'] }> {
+  const db = await initDB();
+  enforceAccess((await loadSessionFor(db, input.userId, input.sessionId))?.access ?? null, OWNER_ONLY);
   const session = await getPlaybackSession(input.userId, input.sessionId);
   if (!session) throw new PlaybackSessionNotFoundError();
   if (session.output?.id !== input.outputId || session.output.generation !== input.generation) {
@@ -738,10 +831,10 @@ export async function reportPlaybackOutput(input: {
     ]);
     await client.query('COMMIT');
     const revision = Number(updated.rows[0].revision);
-    if (changed) publishApiV1Event(input.userId, 'playbackSession.updated', { sessionId: input.sessionId, revision });
+    if (changed) await publishToSession(db, input.userId, input.sessionId, 'playbackSession.updated', { sessionId: input.sessionId, revision });
     // Every accepted report, so other devices can show live progress without
     // fetching the session. Not kept for replay; the next report replaces it.
-    publishApiV1Event(input.userId, 'playbackSession.progress', {
+    await publishToSession(db, input.userId, input.sessionId, 'playbackSession.progress', {
       sessionId: input.sessionId,
       revision,
       outputId: grant.oid,
@@ -790,6 +883,9 @@ export async function deletePlaybackSession(
   expectedRevision: number,
 ): Promise<void> {
   const db = await initDB();
+  enforceAccess((await loadSessionFor(db, userId, sessionId))?.access ?? null, OWNER_ONLY);
+  // Its guests hear it too: taken before the delete takes their rows with it.
+  const audience = await sessionAudience(db, userId, sessionId);
   const result = await db.query(
     'DELETE FROM playback_sessions WHERE id = $1 AND user_id = $2 AND revision = $3 RETURNING id',
     [sessionId, userId, expectedRevision],
@@ -799,5 +895,5 @@ export async function deletePlaybackSession(
     if (!current) throw new PlaybackSessionNotFoundError();
     throw new PlaybackSessionRevisionError(current);
   }
-  publishApiV1Event(userId, 'playbackSession.deleted', { sessionId });
+  for (const member of audience) publishApiV1Event(member, 'playbackSession.deleted', { sessionId });
 }
