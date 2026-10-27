@@ -330,6 +330,24 @@ commands just take effect, with text only when they fail.
      - **Fix (6a-1):** a handover for another session waits for a check with
        the server, and is taken only once the receiver's own session no
        longer plays there.
+- **Joining a Cast session that's already running ("deaf joiner"),** to settle
+  before guests use Cast. Known since 2026-10-13, and seen again on prod
+  2026-10-27 12:33.
+  - **What happens:** desktop Chrome joining a Cast session a phone started
+    gets a one-way connection. Its commands reach the receiver, but no media
+    status, `aurora.status` or load acknowledgement comes back. The sender
+    believes nothing plays, so it loads again, which restarts the track, and
+    ends with `playback-unconfirmed`.
+  - **Today's guard doesn't always apply:** the joining device leaves
+    (`cast-join-left`) only while another of the same user's devices holds
+    the output. On 2026-10-27 the phone had dropped off in a server restart,
+    the receiver app kept running, and the desktop joined it.
+  - **With guests:** a guest never casts the shared session (the owner
+    chooses where it plays), but a guest's phone joining the owner's Cast
+    session from Chrome's picker is exactly this case. 6d should keep guest
+    devices out of the owner's Cast session (leave on join, as
+    `cast-join-left` does). The owner's own devices need a fix for a joined
+    session that never answers: leave it and start a new one.
 - **Before joining,** discovery and links show only the preview: the
   owner's name and initials.
 - **A join link is a bearer link within the server** (decided): anyone on the
