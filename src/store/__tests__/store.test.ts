@@ -228,6 +228,23 @@ describe('Music Store Logic', () => {
         expect(playAtIndex).not.toHaveBeenCalled();
       });
 
+      it("Play/Pause shows the playing device's state, and pauses it", async () => {
+        following();
+        const state = usePlayerStore.getState();
+        expect(state.remoteControlOutputId).toBe('desktop');
+        expect(selectDisplayedPlaying(state)).toBe(true);
+        expect(selectDisplayedPlaybackState(state)).toBe('playing');
+        usePlayerStore.getState().setSessionFollow(follow({ state: 'paused' }));
+        expect(selectDisplayedPlaying(usePlayerStore.getState())).toBe(false);
+      });
+
+      it('lets go of the playing device once the session is no longer shown', () => {
+        following();
+        useListenTogetherStore.setState({ openedSessionId: null });
+        usePlayerStore.getState().setSessionFollow(follow({ outputId: 'own-desktop' }));
+        expect(usePlayerStore.getState().remoteControlOutputId).toBeNull();
+      });
+
       it('never takes the session over here, whatever asks', async () => {
         following();
         usePlayerStore.getState().openPlayWhere();
