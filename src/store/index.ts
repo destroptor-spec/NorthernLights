@@ -1231,6 +1231,9 @@ export const usePlayerStore = create<PlayerState>()(
         // it, and nothing ever plays here.
         if (useListenTogetherStore.getState().openedSessionId) {
           const { sessionFollow } = get();
+          // Beyond the gig's level: nothing happens (its controls are disabled).
+          const permissions = useListenTogetherStore.getState().shared?.permissions;
+          if (permissions && !permissions.includes(remote.type === 'load' ? 'replace' : 'transport')) return true;
           if (sessionFollow && !sessionFollow.silent) {
             void sendToPlayingDevice(remote, sessionFollow);
           } else if (options.ask !== false) {

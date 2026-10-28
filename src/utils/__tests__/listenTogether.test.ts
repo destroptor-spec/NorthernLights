@@ -7,7 +7,12 @@ import {
   configureListenTogether,
   endTogether,
   openSharedSession,
-  inviteUrl,
+  copyInviteLink,
+  guestMay,
+  joinNearby,
+  setDiscoverable,
+  setGigLevel,
+  startGig,
   isSharedSession,
   joinInvite,
   leaveSharedSession,
@@ -43,7 +48,7 @@ beforeEach(() => {
   jest.resetAllMocks();
   addToast = jest.fn();
   usePlayerStore.setState({ currentUser: { id: 'me', username: 'bo', role: 'user' }, addToast, getAuthHeader: () => ({}) } as never);
-  useListenTogetherStore.setState({ ownSessionId: null, own: null, shared: null, prompt: null, openedSessionId: null });
+  useListenTogetherStore.setState({ ownSessionId: null, own: null, shared: null, prompt: null, openedSessionId: null, available: [] });
   usePlayerStore.setState({ playbackState: 'paused', castConnected: false, sessionFollow: null } as never);
   mocked.listSessionMembers.mockResolvedValue(members());
   configureListenTogether(controls);
@@ -51,8 +56,8 @@ beforeEach(() => {
 afterEach(() => jest.restoreAllMocks());
 
 it('names a session after its owner, and says how many others without naming them', () => {
-  expect(sessionTitle('Andreas')).toBe("Andreas' session");
-  expect(sessionTitle('Bo')).toBe("Bo's session");
+  expect(sessionTitle('Andreas')).toBe("Andreas' Gig");
+  expect(sessionTitle('Bo')).toBe("Bo's Gig");
   expect(previewLabel('Bo', 0)).toBe('Bo');
   expect(previewLabel('Bo', 1)).toBe('Bo and 1 other');
   expect(previewLabel('Bo', 3)).toBe('Bo and 3 others');
@@ -68,7 +73,7 @@ describe('the invitee', () => {
     const joining = joinInvite();
     expect(useListenTogetherStore.getState().prompt).toBeNull();
     expect(await joining).toBe(true);
-    expect(useListenTogetherStore.getState().shared).toEqual({ sessionId: 'shared-1', ownerName: 'Andreas', owner: OWNER });
+    expect(useListenTogetherStore.getState().shared).toEqual({ sessionId: 'shared-1', ownerName: 'Andreas', owner: OWNER, permissions: ['transport'] });
     expect(isSharedSession('shared-1')).toBe(true);
     expect(addToast).not.toHaveBeenCalled();
   });
@@ -88,7 +93,7 @@ describe('the invitee', () => {
     useListenTogetherStore.setState({ prompt: { token: 'tok', preview: preview() } });
     mocked.joinSessionByInvite.mockRejectedValue(new AuroraApiError('private', 409, 'SESSION_NOT_JOINABLE'));
     expect(await joinInvite()).toBe(false);
-    expect(addToast).toHaveBeenLastCalledWith("Andreas' session is private right now.", 'error');
+    expect(addToast).toHaveBeenLastCalledWith("Andreas' Gig is private right now.", 'error');
     expect(useListenTogetherStore.getState().shared).toBeNull();
   });
 
@@ -121,7 +126,7 @@ describe('the guest', () => {
 
     useListenTogetherStore.setState({ shared: { sessionId: 'shared-1', ownerName: 'Andreas', owner: OWNER } });
     onTogetherEvent('playbackSession.memberLeft', { sessionId: 'shared-1', userId: 'me', reason: 'ended' });
-    expect(addToast).toHaveBeenLastCalledWith('Andreas ended listening together.', 'info');
+    expect(addToast).toHaveBeenLastCalledWith('Andreas ended the gig.', 'info');
 
     addToast.mockClear();
     useListenTogetherStore.setState({ shared: { sessionId: 'shared-1', ownerName: 'Andreas', owner: OWNER } });
@@ -140,7 +145,7 @@ describe('the guest', () => {
     onTogetherEvent('playbackSession.memberJoined', { sessionId: 'shared-2', userId: 'me', avatar: avatar('me', 'B') });
     expect(isSharedSession('shared-2')).toBe(true);
     await flush();
-    expect(useListenTogetherStore.getState().shared).toEqual({ sessionId: 'shared-2', ownerName: 'Andreas', owner: OWNER });
+    expect(useListenTogetherStore.getState().shared).toMatchObject({ sessionId: 'shared-2', ownerName: 'Andreas', owner: OWNER });
   });
 
   it('the follower listing no shared session clears it', () => {
@@ -159,40 +164,103 @@ describe('the owner', () => {
   });
 
   it("reads who is in the user's own session, and again when someone joins or leaves", async () => {
-    expect(useListenTogetherStore.getState().own).toEqual({ visibility: 'private', guests: [guest] });
+    expect(useListenTogetherStore.getState().own).toMatchObject({ visibility: 'private', guests: [guest], ownerAvatar: OWNER });
     mocked.listSessionMembers.mockResolvedValue(members());
     onTogetherEvent('playbackSession.memberLeft', { sessionId: 'own-1', userId: 'g-1', reason: 'left' });
     await flush();
     expect(useListenTogetherStore.getState().own?.guests).toEqual([]);
   });
 
-  it('reuses the newest working link, or makes one (which opens the session to invites)', async () => {
-    mocked.listSessionInvites.mockResolvedValue([]);
-    mocked.createSessionInvite.mockResolvedValue({ token: 'new', path: '/listen/new', permissions: ['transport'], createdAt: '' });
-    expect(await inviteUrl()).toBe(`${window.location.origin}/listen/new`);
-    expect(useListenTogetherStore.getState().own?.visibility).toBe('invite');
-
-    mocked.listSessionInvites.mockResolvedValue([{ token: 'old', path: '/listen/old', permissions: ['transport'], createdAt: '' }]);
-    expect(await inviteUrl()).toBe(`${window.location.origin}/listen/old`);
-    expect(mocked.createSessionInvite).toHaveBeenCalledTimes(1);
+  it('starts a gig with a link at the first level, Queue Editor', async () => {
+    mocked.createSessionInvite.mockResolvedValue({ token: 'new', path: '/listen/new', permissions: ['queue'], createdAt: '' });
+    await startGig();
+    expect(mocked.createSessionInvite).toHaveBeenCalledWith({}, 'own-1', ['queue']);
+    expect(useListenTogetherStore.getState().own).toMatchObject({ visibility: 'invite', permissions: ['queue'] });
   });
 
-  it('takes a fresh link for a private session, never the old one', async () => {
-    mocked.listSessionInvites.mockResolvedValue([{ token: 'old', path: '/listen/old', permissions: ['transport'], createdAt: '' }]);
-    mocked.createSessionInvite.mockResolvedValue({ token: 'new', path: '/listen/new', permissions: ['transport'], createdAt: '' });
-    expect(await inviteUrl()).toBe(`${window.location.origin}/listen/new`);
-    expect(mocked.listSessionInvites).not.toHaveBeenCalled();
+  it('moves the level for everyone at once, and puts it back if the server refuses', async () => {
+    mocked.setSessionSharing.mockResolvedValue(session('own-1', { visibility: 'invite' }));
+    await setGigLevel(2);
+    expect(mocked.setSessionSharing).toHaveBeenCalledWith({}, 'own-1', { permissions: ['queue', 'transport'] });
+    expect(useListenTogetherStore.getState().own?.permissions).toEqual(['queue', 'transport']);
+    mocked.setSessionSharing.mockRejectedValue(new Error('offline'));
+    await setGigLevel(3);
+    expect(useListenTogetherStore.getState().own?.permissions).toEqual(['queue', 'transport']);
+    expect(addToast).toHaveBeenLastCalledWith("Couldn't change what guests can do.", 'error');
   });
 
-  it('ending clears the guests and makes the session private', async () => {
+  it('makes the gig discoverable, or not', async () => {
+    mocked.setSessionSharing.mockResolvedValue(session('own-1', { visibility: 'discoverable' }));
+    await setDiscoverable(true);
+    expect(mocked.setSessionSharing).toHaveBeenCalledWith({}, 'own-1', { visibility: 'discoverable' });
+    expect(useListenTogetherStore.getState().own?.visibility).toBe('discoverable');
+  });
+
+  it('copies the newest working link and says so', async () => {
+    const writeText = jest.fn(async () => undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    mocked.listSessionInvites.mockResolvedValue([{ token: 'old', path: '/listen/old', permissions: ['queue'], createdAt: '' }]);
+    await copyInviteLink();
+    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/listen/old`);
+    expect(addToast).toHaveBeenLastCalledWith('Link copied!', 'info');
+    expect(mocked.createSessionInvite).not.toHaveBeenCalled();
+  });
+
+  it('ending clears the guests and the level, and makes the session private', async () => {
     mocked.endListeningTogether.mockResolvedValue(session('own-1'));
     await endTogether();
-    expect(useListenTogetherStore.getState().own).toEqual({ visibility: 'private', guests: [] });
+    expect(useListenTogetherStore.getState().own).toMatchObject({ visibility: 'private', guests: [], permissions: null });
   });
 
-  it('visibility changes from another of the owner\'s devices show here', () => {
+  it("visibility and level changes from another of the owner's devices show here", () => {
     onTogetherEvent('playbackSession.visibilityChanged', { sessionId: 'own-1', visibility: 'invite' });
-    expect(useListenTogetherStore.getState().own?.visibility).toBe('invite');
+    onTogetherEvent('playbackSession.accessChanged', { sessionId: 'own-1', permissions: ['queue', 'transport', 'replace'] });
+    expect(useListenTogetherStore.getState().own).toMatchObject({ visibility: 'invite', permissions: ['queue', 'transport', 'replace'] });
+  });
+});
+
+describe('gigs nearby (6e)', () => {
+  const gig = preview({ sessionId: 'nearby-1', guests: [] });
+
+  it('a gig appearing or going nearby reads the list again', async () => {
+    mocked.listNearbyGigs.mockResolvedValue([gig]);
+    onTogetherEvent('playbackSession.discoverable', { sessionId: 'nearby-1', discoverable: true });
+    await flush();
+    expect(useListenTogetherStore.getState().available).toEqual([gig]);
+  });
+
+  it('joining one makes it the shared gig, shown here, at its level', async () => {
+    useListenTogetherStore.setState({ available: [gig] });
+    mocked.joinNearbyGig.mockResolvedValue(session('nearby-1', { access: { role: 'guest', permissions: ['queue'] } }));
+    await joinNearby(gig);
+    expect(useListenTogetherStore.getState()).toMatchObject({
+      openedSessionId: 'nearby-1',
+      shared: { sessionId: 'nearby-1', ownerName: 'Andreas', permissions: ['queue'] },
+      available: [],
+    });
+  });
+
+  it("says when a gig isn't there any more", async () => {
+    mocked.joinNearbyGig.mockRejectedValue(new AuroraApiError('gone', 404, 'PLAYBACK_SESSION_NOT_FOUND'));
+    mocked.listNearbyGigs.mockResolvedValue([]);
+    await joinNearby(gig);
+    expect(addToast).toHaveBeenLastCalledWith("Andreas' Gig isn't available any more.", 'error');
+  });
+});
+
+describe("a guest's level", () => {
+  it('decides what this device may do while it shows the gig, and follows the owner moving it', () => {
+    useListenTogetherStore.setState({ shared: { sessionId: 'shared-1', ownerName: 'Andreas', owner: OWNER, permissions: ['queue'] }, openedSessionId: 'shared-1' });
+    expect(guestMay('queue')).toBe(true);
+    expect(guestMay('transport')).toBe(false);
+    onTogetherEvent('playbackSession.accessChanged', { sessionId: 'shared-1', permissions: ['queue', 'transport'] });
+    expect(guestMay('transport')).toBe(true);
+    expect(guestMay('replace')).toBe(false);
+  });
+
+  it("never limits the user's own session", () => {
+    useListenTogetherStore.setState({ shared: { sessionId: 'shared-1', ownerName: 'Andreas', owner: OWNER, permissions: ['queue'] }, openedSessionId: null });
+    expect(guestMay('replace')).toBe(true);
   });
 });
 

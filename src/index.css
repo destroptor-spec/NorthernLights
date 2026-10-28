@@ -9431,6 +9431,7 @@ a:focus-visible > .genre-card .genre-card__label {
   height: 100%;
   object-fit: cover;
 }
+.user-avatar--xs { width: 22px; height: 22px; font-size: 0.65rem; }
 .user-avatar--sm { width: 28px; height: 28px; font-size: 0.8rem; }
 .user-avatar--md { width: 36px; height: 36px; font-size: 0.95rem; }
 .user-avatar--lg { width: 56px; height: 56px; font-size: 1.4rem; }
@@ -9450,79 +9451,159 @@ a:focus-visible > .genre-card .genre-card__label {
 .avatar-stack .user-avatar + .user-avatar {
   margin-left: -10px;
 }
+.avatar-stack .user-avatar--xs + .user-avatar--xs {
+  margin-left: -7px;
+}
+.session-preview-avatars.is-small {
+  gap: 6px;
+  flex-shrink: 0;
+}
 .avatar-stack-more {
   font-size: 0.75rem;
   color: var(--color-text-secondary);
 }
 
-/* The owner's Listen together sheet, inside the Connect card. */
-.together-header {
+/* Listen together's gig, at the foot of the Connect card (GigSection): lines
+   like Output, under the same border. */
+.connect-line {
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-left: -8px;
-}
-.together-back {
-  padding: 6px;
-}
-.together-section {
-  display: flex;
-  flex-direction: column;
   gap: 8px;
-}
-.together-section-title {
-  font-size: 0.75rem;
-  color: var(--color-text-muted);
-}
-.together-segments {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-}
-.together-link {
   width: 100%;
-  justify-content: center;
-  gap: 8px;
-}
-.together-link-text {
-  width: 100%;
-  padding: 8px 10px;
-  border-radius: 10px;
-  border: 1px solid var(--glass-border);
-  background: color-mix(in srgb, var(--color-text-primary) 4%, transparent);
-  color: var(--color-text-primary);
+  min-height: 44px;
+  padding: 8px 4px;
+  border: 0;
+  background: none;
+  color: var(--color-text-secondary);
   font: inherit;
   font-size: 0.8rem;
+  text-align: left;
 }
-.together-people {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-height: 220px;
-  overflow-y: auto;
+button.connect-line {
+  cursor: pointer;
 }
-.together-person {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 40px;
+button.connect-line:hover:not(:disabled) .connect-line-label,
+button.connect-line:hover:not(:disabled) .connect-line-icon {
+  color: var(--color-text-primary);
 }
-.together-person-name {
+button.connect-line:disabled {
+  cursor: default;
+}
+.connect-line-label {
   flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  color: var(--color-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.875rem;
-  color: var(--color-text-primary);
 }
-.together-empty {
-  font-size: 0.8rem;
-  color: var(--color-text-secondary);
+.connect-line-value {
+  color: var(--color-text-muted);
+  white-space: nowrap;
 }
-.together-end {
+.connect-line-icon {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+}
+.connect-gig,
+.connect-gigs {
+  border-top: 1px solid var(--glass-border);
+}
+.connect-gigs {
+  display: flex;
+  flex-direction: column;
+  padding-top: 8px;
+}
+.connect-section-title {
+  padding: 0 4px;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+/* The card grows as a gig starts (grid rows 0fr -> 1fr), the devices above untouched. */
+.connect-gig-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 240ms var(--ease-out), opacity 240ms var(--ease-out);
+}
+.connect-gig.is-running .connect-gig-body {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.connect-gig-inner {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.connect-gig-end {
   width: 100%;
   justify-content: center;
+  margin-top: 4px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .connect-gig-body { transition: none; }
+}
+/* The Settings switch, sized for the Connect card's text. */
+.account-switch--sm {
+  width: 36px;
+  height: 20px;
+}
+.account-switch--sm .account-switch__thumb {
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+}
+.account-switch--sm[data-state="on"] .account-switch__thumb {
+  transform: translateX(16px);
+}
+/* The guests' level: one rail, three stops. */
+.gig-level {
+  width: 96px;
+  height: 20px;
+  flex-shrink: 0;
+  appearance: none;
+  /* The three stops sit where the thumb's centre lands: 7px in, the middle, 7px from the end. */
+  background:
+    radial-gradient(circle at 7px 50%, var(--color-text-muted) 2.5px, transparent 3px),
+    radial-gradient(circle at 50% 50%, var(--color-text-muted) 2.5px, transparent 3px),
+    radial-gradient(circle at calc(100% - 7px) 50%, var(--color-text-muted) 2.5px, transparent 3px),
+    linear-gradient(var(--glass-border), var(--glass-border)) 50% 50% / calc(100% - 14px) 2px no-repeat;
+  cursor: pointer;
+}
+.gig-level::-moz-range-track {
+  background: transparent;
+}
+.gig-level::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--color-primary) 40%, transparent);
+}
+.gig-level::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--color-primary);
+}
+.gig-level:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+  border-radius: var(--radius-pill);
+}
+/* A guest below Playback Control: the seek bar shows where it is, no more. */
+.seek-locked {
+  pointer-events: none;
+}
+.mobile-player-pill-btn:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 .mobile-now-heading-device.is-silent {
   color: var(--color-warning);

@@ -17,8 +17,20 @@ const json = (method: string, body: unknown): RequestInit => ({
 });
 const session = (sessionId: string) => `/playback-sessions/${encodeURIComponent(sessionId)}`;
 
-export function setSessionSharing(auth: AuthHeaders, sessionId: string, visibility: 'private' | 'invite'): Promise<PlaybackSession> {
-  return auroraApiRequest(`${session(sessionId)}/sharing`, auth, json('PATCH', { visibility }));
+export function setSessionSharing(
+  auth: AuthHeaders,
+  sessionId: string,
+  change: { visibility?: 'private' | 'invite' | 'discoverable'; permissions?: string[] },
+): Promise<PlaybackSession> {
+  return auroraApiRequest(`${session(sessionId)}/sharing`, auth, json('PATCH', change));
+}
+
+export function listNearbyGigs(auth: AuthHeaders): Promise<SessionInvitePreview[]> {
+  return auroraApiRequest('/playback-sessions/nearby', auth);
+}
+
+export function joinNearbyGig(auth: AuthHeaders, sessionId: string): Promise<PlaybackSession> {
+  return auroraApiRequest(`${session(sessionId)}/join`, auth, json('POST', {}));
 }
 
 export function listSessionMembers(auth: AuthHeaders, sessionId: string): Promise<SessionMembers> {
@@ -33,8 +45,8 @@ export function listSessionInvites(auth: AuthHeaders, sessionId: string): Promis
   return auroraApiRequest(`${session(sessionId)}/invites`, auth);
 }
 
-export function createSessionInvite(auth: AuthHeaders, sessionId: string): Promise<SessionInvite> {
-  return auroraApiRequest(`${session(sessionId)}/invites`, auth, json('POST', {}));
+export function createSessionInvite(auth: AuthHeaders, sessionId: string, permissions?: string[]): Promise<SessionInvite> {
+  return auroraApiRequest(`${session(sessionId)}/invites`, auth, json('POST', permissions ? { permissions } : {}));
 }
 
 export function promptSessionInvite(auth: AuthHeaders, sessionId: string, token: string, userIds: string[]): Promise<{ prompted: number }> {
