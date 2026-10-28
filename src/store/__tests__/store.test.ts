@@ -5,6 +5,7 @@ import { castManager } from '../../utils/CastManager';
 import { sessionMirror } from '../../utils/SessionMirror';
 import * as auroraApi from '../../api/auroraApi';
 import { sessionFollower } from '../../utils/SessionFollower';
+import { useListenTogetherStore } from '../listenTogether';
 
 jest.mock('../../utils/sessionRemote', () => ({ sendRemoteAction: jest.fn(async () => 'sent'), startOnFollowingReceiver: jest.fn(async () => 'sent') }));
 import { TrackInfo } from '../../utils/fileSystem';
@@ -211,6 +212,36 @@ describe('Music Store Logic', () => {
       expect(playAtIndex).toHaveBeenCalledWith(1);
       expect(seek).toHaveBeenCalledWith(37);
       expect(sendRemoteAction).not.toHaveBeenCalled();
+    });
+
+    describe('showing a shared session (Listen together, 6d)', () => {
+      beforeEach(() => { useListenTogetherStore.setState({ openedSessionId: 'shared', shared: { sessionId: 'shared', ownerName: 'Andreas', owner: null } }); });
+      afterEach(() => { useListenTogetherStore.setState({ openedSessionId: null, shared: null }); });
+
+      it('sends every action to the device that plays, never asking "Play where?" or playing here', async () => {
+        following();
+        await usePlayerStore.getState().resume();
+        await usePlayerStore.getState().nextTrack();
+        await usePlayerStore.getState().pause();
+        expect(sent()).toEqual([{ type: 'play' }, { type: 'next' }, { type: 'pause' }]);
+        expect(usePlayerStore.getState().playWherePrompt).toBeNull();
+        expect(playAtIndex).not.toHaveBeenCalled();
+      });
+
+      it('never takes the session over here, whatever asks', async () => {
+        following();
+        usePlayerStore.getState().openPlayWhere();
+        expect(usePlayerStore.getState().playWherePrompt).toBeNull();
+        await usePlayerStore.getState().resolvePlayWhere('here');
+        expect(playAtIndex).not.toHaveBeenCalled();
+      });
+
+      it('plays nothing here when nothing plays there, and says so', async () => {
+        await usePlayerStore.getState().resume();
+        expect(playAtIndex).not.toHaveBeenCalled();
+        expect(sendRemoteAction).not.toHaveBeenCalled();
+        expect(usePlayerStore.getState().toasts.map((t) => t.message)).toContain("Nothing is playing in Andreas' session.");
+      });
     });
 
     it('never touches a device that plays', () => {

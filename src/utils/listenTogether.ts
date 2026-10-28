@@ -3,26 +3,24 @@ import { AuroraApiError } from '../api/auroraApi';
 import * as api from '../api/listenTogether';
 import { usePlayerStore } from '../store/index';
 import { useListenTogetherStore as store } from '../store/listenTogether';
+import { castManager } from './CastManager';
+import { sessionFollower } from './SessionFollower';
+import { sessionMirror } from './SessionMirror';
+import { isFollowedOutputPlaying } from './sessionFollow';
+import { sendRemoteAction } from './sessionRemote';
+import { previewLabel, sessionTitle } from './listenTogetherText';
 
 // Listen together in the web app (docs/listen-together.md, 6c): the owner's
 // sheet in Connect, invitations (prompts and /listen/<token> links), and
-// which session this user is a guest in. The guest's view of that session
-// comes with 6d; until then a guest sees who they listen with, and Leave.
+// which session this user is a guest in. The device a guest joins on shows
+// that session (6d): it follows it like another device's playback, and
+// sends what is done here to the device that plays it.
 
 const auth = () => usePlayerStore.getState().getAuthHeader();
 const me = () => usePlayerStore.getState().currentUser?.id ?? null;
 const toast = (message: string, type: 'info' | 'error' = 'error') => usePlayerStore.getState().addToast(message, type);
 
-/** "Andreas' session", "Bo's session". */
-export function sessionTitle(ownerName: string): string {
-  return `${ownerName}${/s$/i.test(ownerName) ? "'" : "'s"} session`;
-}
-
-/** What screen readers hear for a preview's avatars: no guest names. */
-export function previewLabel(ownerName: string, guests: number): string {
-  if (guests === 0) return ownerName;
-  return `${ownerName} and ${guests} ${guests === 1 ? 'other' : 'others'}`;
-}
+export { previewLabel, sessionTitle };
 
 export function listenUrl(path: string): string {
   return `${window.location.origin}${path}`;
@@ -61,7 +59,7 @@ export function noteOwnSession(session: PlaybackSession | null): void {
 /** The session this user is a guest in, as listed or read (or none). */
 export function noteSharedSession(session: PlaybackSession | null): void {
   if (!session) {
-    if (store.getState().shared) store.setState({ shared: null });
+    clearShared();
     return;
   }
   noteSharedSessionId(session.id);
@@ -69,7 +67,47 @@ export function noteSharedSession(session: PlaybackSession | null): void {
 
 /** Whether `sessionId` is the session this user is a guest in: its events aren't this user's own. */
 export function isSharedSession(sessionId: string): boolean {
-  return store.getState().shared?.sessionId === sessionId;
+  const { shared, openedSessionId } = store.getState();
+  return shared?.sessionId === sessionId || openedSessionId === sessionId;
+}
+
+/** The shared session this device shows, if any: the session follower follows it. */
+export function openedSharedSession(): string | null {
+  return store.getState().openedSessionId;
+}
+
+/** Out of the shared session (left, removed, ended, gone): every device back to the user's own. */
+function clearShared(): void {
+  const { shared, openedSessionId } = store.getState();
+  if (shared || openedSessionId) store.setState({ shared: null, openedSessionId: null });
+}
+
+/**
+ * Joining ends the user's own playback (decided, docs/listen-together.md):
+ * here, by pausing or stopping the cast (no handoff), and on another of
+ * their devices that plays their session, by a pause sent to it. Their own
+ * queue stays, to return to.
+ */
+async function stopOwnPlayback(): Promise<void> {
+  const player = usePlayerStore.getState();
+  const elsewhere = player.sessionFollow;
+  if (player.castConnected) castManager.stopCastingBecauseReplaced('listening-together');
+  else if (player.playbackState === 'playing') player.pause();
+  sessionMirror.endOutput('listening-together');
+  if (elsewhere && !elsewhere.silent && isFollowedOutputPlaying(elsewhere)) {
+    await sendRemoteAction({ type: 'pause' }, elsewhere, {
+      auth: auth(),
+      sessionRevision: () => sessionFollower.sessionRevision(),
+    });
+  }
+}
+
+/** Shows the shared session on this device, its own playback ended first. */
+export async function openSharedSession(): Promise<void> {
+  const shared = store.getState().shared;
+  if (!shared || store.getState().openedSessionId === shared.sessionId) return;
+  await stopOwnPlayback();
+  store.setState({ openedSessionId: shared.sessionId });
 }
 
 /** Marks the session at once (events for it must not count as the user's own), then reads its owner. */
@@ -120,7 +158,7 @@ export function onTogetherEvent(type: string, data: Record<string, unknown>): vo
     case 'playbackSession.memberLeft':
       if (isOwn) void refreshOwn();
       if (sessionId && data.userId === me() && shared?.sessionId === sessionId) {
-        store.setState({ shared: null });
+        clearShared();
         const owner = shared.ownerName ?? 'The owner';
         if (data.reason === 'removed') toast(`${owner} removed you.`, 'info');
         else if (data.reason === 'ended') toast(`${owner} ended listening together.`, 'info');
@@ -144,8 +182,10 @@ export async function openInviteLink(token: string): Promise<void> {
   try {
     const preview = await api.previewSessionInvite(auth(), token);
     if (preview.joined) {
+      // In it already: the link shows it here.
       if (preview.sessionId !== store.getState().ownSessionId) {
         noteSharedSessionId(preview.sessionId, { name: preview.ownerName, avatar: preview.owner });
+        await openSharedSession();
       }
       return;
     }
@@ -169,6 +209,8 @@ export async function joinInvite(): Promise<boolean> {
     const session = await api.joinSessionByInvite(auth(), prompt.token);
     if (session.access?.role === 'guest') {
       noteSharedSessionId(session.id, { name: preview.ownerName, avatar: preview.owner });
+      // The device joined on shows the session.
+      await openSharedSession();
     }
     return true;
   } catch (error) {
@@ -184,10 +226,10 @@ export async function leaveSharedSession(): Promise<void> {
   if (!shared || !userId) return;
   try {
     await api.removeSessionMember(auth(), shared.sessionId, userId);
-    store.setState({ shared: null });
+    clearShared();
   } catch (error) {
     if (error instanceof AuroraApiError && error.status === 404) {
-      store.setState({ shared: null });
+      clearShared();
       return;
     }
     toast(`Couldn't leave ${shared.ownerName ? sessionTitle(shared.ownerName) : 'the session'}.`);
