@@ -3,7 +3,9 @@ jest.mock('music-metadata', () => ({}), { virtual: true });
 jest.mock('../database', () => ({}));
 jest.mock('../services/sessionMembers.service', () => ({
   ...jest.requireActual('../services/sessionMembers.service'),
-  setSessionVisibility: jest.fn(),
+  setSessionSharing: jest.fn(),
+  listNearbyGigs: jest.fn(),
+  joinNearbyGig: jest.fn(),
   createSessionInvite: jest.fn(),
   removeSessionMember: jest.fn(),
   previewSessionInvite: jest.fn(),
@@ -21,8 +23,11 @@ import {
   SessionInviteNotFoundError,
   SessionNotJoinableError,
   SessionSyncOffError,
-  setSessionVisibility,
+  setSessionSharing,
+  listNearbyGigs,
+  joinNearbyGig,
 } from '../services/sessionMembers.service';
+import { PlaybackSessionNotFoundError as NotFound } from '../services/playbackSession.service';
 import { PlaybackSessionOwnerOnlyError } from '../services/playbackSession.service';
 
 /**
@@ -36,7 +41,7 @@ const TOKEN = 'a'.repeat(64);
 async function call(method: 'get' | 'post' | 'patch' | 'delete', path: string, body: unknown, params: Record<string, string> = {}) {
   const layer = router.stack.find((l) => l.route?.path === path && l.route.stack.some((h) => h.method === method))!;
   const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis(), end: jest.fn(), setHeader: jest.fn() };
-  const req = { apiV1: principal, requestId: 'r1', body, params, headers: {}, ip: '127.0.0.1' } as unknown as Request;
+  const req = { apiV1: principal, requestId: 'r1', body, params, headers: {}, ip: '127.0.0.1', socket: { remoteAddress: '127.0.0.1' } } as unknown as Request;
   for (const handler of layer.route!.stack) await handler.handle(req, res as unknown as Response, jest.fn());
   return { status: res.status.mock.calls.at(-1)?.[0] ?? 200, body: res.json.mock.calls.at(-1)?.[0] };
 }
@@ -57,9 +62,25 @@ it('creates a link with all scopes unless told otherwise, and refuses unknown sc
   expect(refused.status).toBe(400);
 });
 
-it('takes private or invite as the sharing, nothing else (discoverable comes with 6e)', async () => {
-  expect((await call('patch', '/playback-sessions/:id/sharing', { visibility: 'discoverable' }, { id: 's-1' })).status).toBe(400);
-  expect(setSessionVisibility).not.toHaveBeenCalled();
+it("takes who may join, the guests' permissions, or both; never neither", async () => {
+  (setSessionSharing as jest.Mock).mockResolvedValue({ id: 's-1' });
+  await call('patch', '/playback-sessions/:id/sharing', { visibility: 'discoverable' }, { id: 's-1' });
+  expect(setSessionSharing).toHaveBeenLastCalledWith('user-1', 's-1', { visibility: 'discoverable' });
+  await call('patch', '/playback-sessions/:id/sharing', { permissions: ['queue', 'transport'] }, { id: 's-1' });
+  expect(setSessionSharing).toHaveBeenLastCalledWith('user-1', 's-1', { permissions: ['queue', 'transport'] });
+  expect((await call('patch', '/playback-sessions/:id/sharing', {}, { id: 's-1' })).status).toBe(400);
+  expect((await call('patch', '/playback-sessions/:id/sharing', { permissions: [] }, { id: 's-1' })).status).toBe(400);
+  expect((await call('patch', '/playback-sessions/:id/sharing', { visibility: 'public' }, { id: 's-1' })).status).toBe(400);
+});
+
+it('lists gigs nearby by the address of the request, and joins one; anything else is not found', async () => {
+  (listNearbyGigs as jest.Mock).mockResolvedValue([]);
+  await call('get', '/playback-sessions/nearby', undefined);
+  expect(listNearbyGigs).toHaveBeenCalledWith('user-1', '127.0.0.1');
+  (joinNearbyGig as jest.Mock).mockRejectedValue(new NotFound());
+  const refused = await call('post', '/playback-sessions/:id/join', {}, { id: 's-1' });
+  expect([refused.status, refused.body.error.code]).toEqual([404, 'PLAYBACK_SESSION_NOT_FOUND']);
+  expect(joinNearbyGig).toHaveBeenCalledWith('user-1', 's-1', '127.0.0.1');
 });
 
 it("answers the owner's controls with SESSION_OWNER_ONLY for a guest", async () => {

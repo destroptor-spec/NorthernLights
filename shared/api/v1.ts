@@ -309,8 +309,10 @@ export const userAvatarSchema = z.object({
 }).meta({ id: 'UserAvatar' });
 
 export const sessionSharingSchema = z.object({
-  visibility: z.enum(['private', 'invite']).describe('private: nobody can join (guests already in stay) and every join link stops working; invite: anyone with a join link can. "discoverable" comes later.'),
-}).strict().meta({ id: 'SessionSharing' });
+  visibility: z.enum(SESSION_VISIBILITIES).optional().describe('private: nobody can join (guests already in stay) and every join link stops working; invite: anyone with a join link can; discoverable: also users nearby (the same public address as one of the owner\'s devices).'),
+  permissions: z.array(z.enum(SESSION_SCOPES)).min(1).optional().describe("The guests' permissions, for the working links and every guest already in, at once. The web app offers three stacked levels: Queue Editor [queue], Playback Control [queue, transport], Music Manager [queue, transport, replace]."),
+}).strict().refine((value) => value.visibility !== undefined || value.permissions !== undefined, { message: 'Give visibility, permissions or both.' })
+  .meta({ id: 'SessionSharing' });
 
 export const sessionMemberSchema = z.object({
   username: z.string(),
