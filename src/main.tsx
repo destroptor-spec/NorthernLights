@@ -10,7 +10,7 @@ import { createPwaUpdateHandler, reloadAppOnce, setPwaUpdateHandler, startPwaUpd
 import { OriginAccessGate } from './components/OriginAccessGate';
 import { actionWhenReplaced, sessionMirror } from './utils/SessionMirror';
 import { sessionFollower } from './utils/SessionFollower';
-import { isSharedSession, noteOwnSession, noteSharedSession, onTogetherEvent, openedSharedSession } from './utils/listenTogether';
+import { configureListenTogether, isSharedSession, noteOwnSession, noteSharedSession, onTogetherEvent, openedSharedSession } from './utils/listenTogether';
 import { useListenTogetherStore } from './store/listenTogether';
 import { getAuroraClientId } from './api/auroraApi';
 import { toPlayableTracks } from './utils/playableTracks';
@@ -107,6 +107,12 @@ sessionFollower.start(usePlayerStore, {
       });
   },
   log: logPlaybackInfo,
+});
+// Joining or opening a shared session ends this user's own playback (6d).
+configureListenTogether({
+  stopCasting: () => { castManager.stopCastingBecauseReplaced('listening-together'); },
+  endOutput: () => sessionMirror.endOutput('listening-together'),
+  sessionRevision: () => sessionFollower.sessionRevision(),
 });
 // Opening or leaving a shared session switches what this device follows.
 useListenTogetherStore.subscribe((state, previous) => {
