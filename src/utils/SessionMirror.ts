@@ -228,6 +228,33 @@ export class SessionMirror {
   };
 
   /**
+   * This device stops being its session's output on purpose (Listen
+   * together: it shows a shared session now). Says so at once, so the user's
+   * other devices stop showing it, and claims nothing until playback starts
+   * here again.
+   */
+  endOutput(reason: string): void {
+    const grant = this.grant;
+    const state = this.store?.getState();
+    if (grant && state) {
+      const entryId = state.currentIndex !== null ? state.playlist[state.currentIndex]?.queueEntryId : undefined;
+      this.options?.diagnostic?.('ok', 'sync-output-ended', `reason=${reason}`);
+      void this.api.reportPlaybackOutput(grant.credential, grant.sessionId, {
+        seq: ++grant.seq,
+        state: 'stopped',
+        reason,
+        queueEntryId: entryId && isUuid(entryId) ? entryId : null,
+        positionMs: Math.max(0, Math.round((this.options!.getPositionSeconds() || 0) * 1000)),
+      }).catch(() => undefined);
+    }
+    if (this.claimRetryTimer) clearTimeout(this.claimRetryTimer);
+    this.claimRetryTimer = null;
+    this.release();
+    this.sessionId = null;
+    this.displaced = false;
+  }
+
+  /**
    * Report at once, after carrying out a remote command, so the sender sees
    * it took. Not via a timer: Android stretches timers in a background tab
    * (prod 2026-10-14: the skip happened, the desktop said "isn't responding").

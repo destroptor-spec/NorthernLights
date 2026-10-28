@@ -10,7 +10,7 @@ import { getAuroraClientId } from '../api/auroraApi';
 import { isPhoneOrTablet } from '../utils/deviceName';
 import { ContextMenuFrame, ContextMenuPortal } from './ContextMenu';
 import { useListenTogetherStore } from '../store/listenTogether';
-import { leaveSharedSession, refreshOwn } from '../utils/listenTogether';
+import { leaveSharedSession, openSharedSession, refreshOwn } from '../utils/listenTogether';
 import { ListenTogetherPanel } from './ListenTogetherPanel';
 import { UserAvatar } from './UserAvatar';
 
@@ -61,7 +61,10 @@ export function useListedDevices(devices: ConnectedDevice[]): ListedDevice[] {
  * user's other devices. The device that plays is always the one marked;
  * there is no "Playing on" line. This device's output is named and opens
  * Settings → Playback → Output. Last, Listen together (Phase 6): the owner's
- * sheet opens in the card, and a guest sees whom it listens with, and Leave.
+ * sheet opens in the card. On the device that shows a shared session, the
+ * card is that session's: the device that plays it, marked, and Leave; where
+ * it plays is the owner's to choose (6d). The user's other devices offer to
+ * Open it.
  * The "Playing on" strip and the Now Playing heading only say where.
  */
 const stopBubbling = (event: React.SyntheticEvent) => event.stopPropagation();
@@ -186,6 +189,7 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
   const ownSessionId = useListenTogetherStore((s) => s.ownSessionId);
   const guestCount = useListenTogetherStore((s) => s.own?.guests.length ?? 0);
   const shared = useListenTogetherStore((s) => s.shared);
+  const showingShared = useListenTogetherStore((s) => !!s.openedSessionId);
   const [panel, setPanel] = useState<'together' | null>(null);
   // Who is in the session may have changed while the card was closed.
   useEffect(() => { void refreshOwn(); }, []);
@@ -252,6 +256,34 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
   };
 
   if (panel === 'together') return <ListenTogetherPanel onBack={() => setPanel(null)} />;
+
+  if (showingShared) {
+    const f = view.follow;
+    return (
+      <div className="connect-card" role="dialog" aria-label="Connect">
+        <div className="connect-card-header">
+          <span className="connect-card-title">{shared?.ownerName ? `Listening with ${shared.ownerName}` : 'Listening together'}</span>
+        </div>
+        <div className={`connect-options${chosen ? ' has-choice' : ''}`}>
+          {f && (
+            <ConnectOption
+              icon={view.followedCast ? <Speaker size={18} /> : <MonitorSmartphone size={18} />}
+              title={f.name}
+              detail={f.silent ? "Isn't responding" : isFollowedOutputPlaying(f) ? 'Playing' : 'Paused'}
+              selected={!chosen}
+            />
+          )}
+          <ConnectOption
+            icon={<LogOut size={18} />}
+            title="Leave"
+            detail="Back to your own music"
+            chosen={isChosen('leave')}
+            onClick={chosen ? undefined : () => pick('leave', () => { void leaveSharedSession(); })}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="connect-card" role="dialog" aria-label="Connect">
@@ -339,10 +371,10 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
             <ConnectOption
               icon={shared.owner ? <UserAvatar avatar={shared.owner} size="sm" /> : <Users size={18} />}
               title={shared.ownerName ? `Listening with ${shared.ownerName}` : 'Listening together'}
-              detail="Leave"
-              trailing={<LogOut size={16} aria-hidden="true" />}
-              chosen={isChosen('leave')}
-              onClick={chosen ? undefined : () => pick('leave', () => { void leaveSharedSession(); })}
+              detail="Open"
+              trailing={<ChevronRight size={16} aria-hidden="true" />}
+              chosen={isChosen('open')}
+              onClick={chosen ? undefined : () => pick('open', () => { void openSharedSession(); })}
             />
           )}
           {ownSessionId && (

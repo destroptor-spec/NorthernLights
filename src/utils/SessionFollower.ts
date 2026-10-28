@@ -91,6 +91,11 @@ export interface SessionFollowerOptions {
    */
   onSharedSession?: (session: PlaybackSession | null) => void;
   isSharedSession?: (sessionId: string) => boolean;
+  /**
+   * The shared session this device shows instead of the user's own (6d), or
+   * null. It is followed like another device's playback: never claimed here.
+   */
+  followShared?: () => string | null;
   /** Listen together's member, visibility and invite events. */
   onTogetherEvent?: (type: string, data: Record<string, unknown>) => void;
   /** Another device asked this one to take the session over (Connect → that device). */
@@ -403,12 +408,16 @@ export class SessionFollower {
       this.options!.onTogetherEvent?.(type, data);
       return;
     }
-    // The session this user is a guest in: its owner's claims and changes
-    // are not this user's (6d shows it).
-    if (sessionId && this.options!.isSharedSession?.(sessionId)) {
+    // The session this user is a guest in: its owner's claims are never
+    // this user's, and its changes matter only on a device that shows it.
+    const shared = !!sessionId && !!this.options!.isSharedSession?.(sessionId);
+    const target = this.target();
+    if (shared && sessionId !== target) {
       if (type === 'playbackSession.deleted') this.options!.onSharedSession?.(null);
       return;
     }
+    // Showing the shared session: the user's own playing elsewhere is no news here.
+    if (target && sessionId !== target && type === 'playbackSession.progress') return;
     switch (type) {
       case 'resync.required':
         await this.refresh(false);
@@ -436,6 +445,7 @@ export class SessionFollower {
         this.options!.onTransferRequested?.(sessionId, typeof data.requestedBy === 'string' ? data.requestedBy : null);
         return;
       case 'playbackSession.deleted':
+        if (shared) this.options!.onSharedSession?.(null);
         if (sessionId && this.session?.id === sessionId) {
           this.session = null;
           this.follow = null;
@@ -448,7 +458,7 @@ export class SessionFollower {
         const replacement = typeof data.outputKind === 'string'
           ? { kind: data.outputKind, name: typeof data.outputName === 'string' ? data.outputName : null }
           : null;
-        if (data.outputId !== myId) await this.noteClaim(sessionId, generation, replacement);
+        if (data.outputId !== myId && !shared) await this.noteClaim(sessionId, generation, replacement);
         this.fetchSession(sessionId);
         return;
       }
@@ -519,8 +529,12 @@ export class SessionFollower {
     try {
       const sessions = await this.api.listPlaybackSessions(state.getAuthHeader());
       if (!this.source) return;
-      const latest = sessions.find(isOwnSession);
+      const own = sessions.find(isOwnSession);
       this.options!.onSharedSession?.(sessions.find((session) => !isOwnSession(session)) ?? null);
+      if (own) this.options!.onOwnSession?.(own);
+      // The shared session this device shows, while the user is still in it.
+      const target = this.target();
+      const latest = target ? sessions.find((session) => session.id === target) ?? own : own;
       if (!latest) {
         this.session = null;
         this.follow = null;
@@ -563,13 +577,29 @@ export class SessionFollower {
     this.log('could not read the playback session', error);
   }
 
+  /** The shared session this device shows, or null for the user's own. */
+  private target(): string | null {
+    return this.options?.followShared?.() ?? null;
+  }
+
+  /**
+   * The device switched between the user's own session and a shared one
+   * (Listen together, 6d): read again, and show the one it shows now.
+   */
+  retarget(): void {
+    if (!this.source) return;
+    this.session = null;
+    this.follow = null;
+    void this.refresh(false);
+  }
+
   private async apply(session: PlaybackSession, initial: boolean) {
-    if (!isOwnSession(session)) {
-      this.options!.onSharedSession?.(session);
-      return;
-    }
+    const own = isOwnSession(session);
+    if (!own) this.options!.onSharedSession?.(session);
+    else this.options!.onOwnSession?.(session);
     const output = session.output;
-    if (output && output.id !== this.options!.clientId()) {
+    // A claim on the user's own session; the shared session's are the owner's.
+    if (own && output && output.id !== this.options!.clientId()) {
       if (initial) {
         // What was already true when this device connected is not a claim
         // against it.
@@ -579,8 +609,10 @@ export class SessionFollower {
         await this.noteClaim(session.id, output.generation, { kind: output.kind, name: output.name });
       }
     }
+    // Only the session this device shows is followed.
+    const target = this.target();
+    if (target ? session.id !== target : !own) return;
     this.session = session;
-    this.options!.onOwnSession?.(session);
     if (this.options!.mirror.noteSessionChanged?.(session)) {
       this.options!.diagnostic?.('ok', 'sync-queue-adopted', `revision=${session.revision} entries=${session.queue.length}`);
       this.options!.adoptPlayingQueue?.(session);

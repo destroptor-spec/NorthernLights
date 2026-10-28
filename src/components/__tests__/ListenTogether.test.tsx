@@ -22,6 +22,7 @@ jest.mock('../../utils/listenTogether', () => ({
   removeGuest: jest.fn(async () => undefined),
   endTogether: jest.fn(async () => undefined),
   leaveSharedSession: jest.fn(async () => undefined),
+  openSharedSession: jest.fn(async () => undefined),
 }));
 const mocked = together as jest.Mocked<typeof together>;
 
@@ -33,7 +34,7 @@ const guest = (userId: string, username: string) => ({
 beforeEach(() => {
   jest.clearAllMocks();
   act(() => {
-    useListenTogetherStore.setState({ ownSessionId: null, own: null, shared: null, prompt: null });
+    useListenTogetherStore.setState({ ownSessionId: null, own: null, shared: null, prompt: null, openedSessionId: null });
     usePlayerStore.setState({
       sessionFollow: null, remoteControlOutputId: null, castConnected: false, audioOutputSupported: false,
       syncPlaybackAcrossDevices: true, connectedDevices: [],
@@ -135,10 +136,28 @@ describe('Connect', () => {
     expect(screen.getByRole('dialog', { name: 'Connect' })).toBeTruthy();
   });
 
-  it('shows a guest whom it listens with, and lets it leave', () => {
+  it("offers the user's other devices to open the shared session", () => {
     act(() => { useListenTogetherStore.setState({ shared: { sessionId: 'shared', ownerName: 'Andreas', owner: avatar('o', 'A') } }); });
     render(<ConnectMenuContent onDone={jest.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: /Listening with Andreas Leave/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Listening with Andreas Open/ }));
+    expect(mocked.openSharedSession).toHaveBeenCalled();
+  });
+
+  it("on the device that shows it: the session's playing device, marked, and Leave; where it plays isn't the guest's", () => {
+    act(() => {
+      useListenTogetherStore.setState({ shared: { sessionId: 'shared', ownerName: 'Andreas', owner: avatar('o', 'A') }, openedSessionId: 'shared', ownSessionId: 'own' });
+      usePlayerStore.setState({
+        sessionFollow: { sessionId: 'shared', outputId: 'receiver:nad', name: 'NAD Forstærker', kind: 'receiver', generation: 3, state: 'playing', entryId: 'e1', positionMs: 0, anchorMs: 0 },
+        connectedDevices: [{ clientId: 'phone-2', name: 'Chrome on Android', kind: 'browser' }],
+      } as never);
+    });
+    render(<ConnectMenuContent onDone={jest.fn()} />);
+    expect(screen.getByText('Listening with Andreas')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /NAD Forstærker Playing/ }).className).toContain('is-selected');
+    for (const name of [/This device/, /Cast to a device/, /Chrome on Android/, /^Listen together/]) {
+      expect(screen.queryByRole('button', { name })).toBeNull();
+    }
+    fireEvent.click(screen.getByRole('button', { name: /Leave Back to your own music/ }));
     expect(mocked.leaveSharedSession).toHaveBeenCalled();
   });
 

@@ -10,7 +10,8 @@ import { createPwaUpdateHandler, reloadAppOnce, setPwaUpdateHandler, startPwaUpd
 import { OriginAccessGate } from './components/OriginAccessGate';
 import { actionWhenReplaced, sessionMirror } from './utils/SessionMirror';
 import { sessionFollower } from './utils/SessionFollower';
-import { isSharedSession, noteOwnSession, noteSharedSession, onTogetherEvent } from './utils/listenTogether';
+import { configureListenTogether, isSharedSession, noteOwnSession, noteSharedSession, onTogetherEvent, openedSharedSession } from './utils/listenTogether';
+import { useListenTogetherStore } from './store/listenTogether';
 import { getAuroraClientId } from './api/auroraApi';
 import { toPlayableTracks } from './utils/playableTracks';
 import { applySessionCommand } from './utils/sessionCommands';
@@ -38,7 +39,8 @@ sessionMirror.start(usePlayerStore, {
   getPositionSeconds: () => getPlaybackTimeSnapshot().currentTime,
   getOutputName: () => (usePlayerStore.getState().castConnected && castManager.getCastDeviceName()) || describeThisDevice(),
   getCastSessionId: () => castManager.getCastSessionId() || null,
-  canClaim: () => !castManager.isLeavingJoinedSession(),
+  // Never while this device shows a shared session (6d): it plays nothing itself.
+  canClaim: () => !castManager.isLeavingJoinedSession() && !openedSharedSession(),
   log: logPlaybackInfo,
   diagnostic: (level, marker, detail) => castManager.logSyncEvent(level, marker, detail),
   onSyncDisabled: () => void usePlayerStore.getState().refreshPlaybackSync(),
@@ -70,6 +72,7 @@ sessionFollower.start(usePlayerStore, {
   onOwnSession: noteOwnSession,
   onSharedSession: noteSharedSession,
   isSharedSession,
+  followShared: openedSharedSession,
   onTogetherEvent,
   mirror: sessionMirror,
   toTracks: sessionQueueTracks,
@@ -104,6 +107,16 @@ sessionFollower.start(usePlayerStore, {
       });
   },
   log: logPlaybackInfo,
+});
+// Joining or opening a shared session ends this user's own playback (6d).
+configureListenTogether({
+  stopCasting: () => { castManager.stopCastingBecauseReplaced('listening-together'); },
+  endOutput: () => sessionMirror.endOutput('listening-together'),
+  sessionRevision: () => sessionFollower.sessionRevision(),
+});
+// Opening or leaving a shared session switches what this device follows.
+useListenTogetherStore.subscribe((state, previous) => {
+  if (state.openedSessionId !== previous.openedSessionId) sessionFollower.retarget();
 });
 // Picking, in the Cast dialog, a Cast device another of the user's devices is
 // casting to: this device leaves that Cast session again and controls it from
