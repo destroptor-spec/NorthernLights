@@ -6,6 +6,7 @@ import { useDisplayedPlaying } from '../hooks/useDisplayedPlaying';
 import { hasNextTrack } from '../utils/queue';
 import { Play } from 'lucide-react';
 import { useSwipe } from '../hooks/useSwipe';
+import { useGuestMay } from '../hooks/useGuestMay';
 import MobileNowPlaying from './MobileNowPlaying';
 import { ConnectButton } from './ConnectMenu';
 import { castManager } from '../utils/CastManager';
@@ -20,6 +21,8 @@ const MobileMiniPlayer = () => {
   const pause = usePlayerStore((s) => s.pause);
   const resume = usePlayerStore((s) => s.resume);
   const nextTrack = usePlayerStore((s) => s.nextTrack);
+  // A guest in a gig below Playback Control: no play, pause or skip here.
+  const mayTransport = useGuestMay('transport');
   const canSkipNext = usePlayerStore(hasNextTrack);
   const prevTrack = usePlayerStore((s) => s.prevTrack);
   const castConnected = usePlayerStore((s) => s.castConnected);
@@ -94,11 +97,12 @@ const MobileMiniPlayer = () => {
 
   const swipeRef = useSwipe<HTMLDivElement>({
     onSwipeLeft: () => {
-      if (!canSkipNext) return;
+      if (!canSkipNext || !mayTransport) return;
       flashSwipe('left');
       nextTrack();
     },
     onSwipeRight: () => {
+      if (!mayTransport) return;
       flashSwipe('right');
       prevTrack();
     },
@@ -179,7 +183,7 @@ const MobileMiniPlayer = () => {
               onClick={handlePlayPause}
               aria-label={isBuffering ? 'Loading' : isPlaying ? 'Pause' : 'Play'}
               className="mobile-player-play-btn mobile-player-play-btn-sm"
-              disabled={isBuffering}
+              disabled={isBuffering || !mayTransport}
             >
               {isBuffering ? (
                 <svg className="mobile-player-spinner" width="22" height="22" viewBox="0 0 24 24" fill="none">

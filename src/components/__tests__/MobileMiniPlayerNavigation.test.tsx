@@ -2,6 +2,7 @@ import React from 'react';
 import { act, render, screen } from '@testing-library/react';
 import { MemoryRouter, useNavigate } from 'react-router-dom';
 import MobileMiniPlayer from '../MobileMiniPlayer';
+import { useListenTogetherStore } from '../../store/listenTogether';
 
 const mockState = () => ({
   playlist: [{ id: '1', path: '/a.flac', title: 'Always on my mind', artist: 'Artist' }], currentIndex: 0,
@@ -28,4 +29,17 @@ test('navigating (Go to Album in the track menu, a link) closes Now Playing firs
 
   act(() => navigate('/library/album/42'));
   expect(screen.getByTestId('now-playing').dataset.open).toBe('false');
+});
+
+test("a guest below Playback Control can't play, pause or skip here (no text)", () => {
+  act(() => {
+    useListenTogetherStore.setState({ openedSessionId: 's', shared: { sessionId: 's', ownerName: 'Andreas', owner: null, permissions: ['queue'] } });
+  });
+  render(<MemoryRouter><MobileMiniPlayer /></MemoryRouter>);
+  expect((screen.getByRole('button', { name: 'Pause' }) as HTMLButtonElement).disabled).toBe(true);
+  act(() => {
+    useListenTogetherStore.setState({ shared: { sessionId: 's', ownerName: 'Andreas', owner: null, permissions: ['queue', 'transport'] } });
+  });
+  expect((screen.getByRole('button', { name: 'Pause' }) as HTMLButtonElement).disabled).toBe(false);
+  act(() => { useListenTogetherStore.setState({ openedSessionId: null, shared: null }); });
 });

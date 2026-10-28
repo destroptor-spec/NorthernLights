@@ -4,6 +4,7 @@ import { playbackManager } from '../utils/PlaybackManager';
 import { WaveformProgressBar } from './WaveformProgressBar';
 import { formatTime } from '../utils/formatTime';
 import React from 'react';
+import { useGuestMay } from '../hooks/useGuestMay';
 
 const ProgressBarImpl = () => {
   const castPlaybackStatus = usePlayerStore((state) => state.castPlaybackStatus);
@@ -29,6 +30,8 @@ const ProgressBarImpl = () => {
   const handleSeek = React.useCallback((time: number) => {
     usePlayerStore.getState().seekTo(time);
   }, []);
+  // A guest below Playback Control can't seek: the bar only shows where it is.
+  const mayTransport = useGuestMay('transport');
 
   // A start in progress shows the normal bar (the play button spins); only
   // a start that failed after its retry replaces it.
@@ -39,7 +42,7 @@ const ProgressBarImpl = () => {
   }
 
   return (
-    <div className="progress-bar-container">
+    <div className={`progress-bar-container${mayTransport ? '' : ' seek-locked'}`}>
       <span className="progress-time">{formatTime(currentTime)}</span>
       {currentTrack?.url ? (
         <WaveformProgressBar
