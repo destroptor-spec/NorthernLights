@@ -4,6 +4,7 @@ import * as api from '../../api/listenTogether';
 import { usePlayerStore } from '../../store';
 import { useListenTogetherStore } from '../../store/listenTogether';
 import {
+  configureListenTogether,
   endTogether,
   openSharedSession,
   inviteUrl,
@@ -18,8 +19,6 @@ import {
   sessionTitle,
 } from '../listenTogether';
 
-import { castManager } from '../CastManager';
-import { sessionMirror } from '../SessionMirror';
 import { sendRemoteAction } from '../sessionRemote';
 
 jest.mock('../../api/listenTogether');
@@ -39,6 +38,7 @@ const session = (id: string, extra: Partial<PlaybackSession> = {}) => ({ id, vis
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 let addToast: jest.Mock;
+const controls = { stopCasting: jest.fn(), endOutput: jest.fn(), sessionRevision: jest.fn(() => 12) };
 beforeEach(() => {
   jest.resetAllMocks();
   addToast = jest.fn();
@@ -46,8 +46,7 @@ beforeEach(() => {
   useListenTogetherStore.setState({ ownSessionId: null, own: null, shared: null, prompt: null, openedSessionId: null });
   usePlayerStore.setState({ playbackState: 'paused', castConnected: false, sessionFollow: null } as never);
   mocked.listSessionMembers.mockResolvedValue(members());
-  jest.spyOn(sessionMirror, 'endOutput').mockImplementation(() => undefined);
-  jest.spyOn(castManager, 'stopCastingBecauseReplaced').mockImplementation(() => true);
+  configureListenTogether(controls);
 });
 afterEach(() => jest.restoreAllMocks());
 
@@ -210,7 +209,7 @@ describe('showing the shared session on a device (6d)', () => {
     mocked.joinSessionByInvite.mockResolvedValue(session('shared-1', { access: { role: 'guest', permissions: ['transport'] } }));
     await joinInvite();
     expect(pause).toHaveBeenCalled();
-    expect(sessionMirror.endOutput).toHaveBeenCalledWith('listening-together');
+    expect(controls.endOutput).toHaveBeenCalled();
     expect(useListenTogetherStore.getState().openedSessionId).toBe('shared-1');
   });
 
@@ -218,7 +217,7 @@ describe('showing the shared session on a device (6d)', () => {
     usePlayerStore.setState({ castConnected: true, sessionFollow: ownFollow } as never);
     useListenTogetherStore.setState({ shared: { sessionId: 'shared-1', ownerName: 'Andreas', owner: OWNER } });
     await openSharedSession();
-    expect(castManager.stopCastingBecauseReplaced).toHaveBeenCalledWith('listening-together');
+    expect(controls.stopCasting).toHaveBeenCalled();
     expect(sendRemoteAction).toHaveBeenCalledWith({ type: 'pause' }, ownFollow, expect.anything());
     expect(useListenTogetherStore.getState().openedSessionId).toBe('shared-1');
   });

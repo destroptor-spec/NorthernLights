@@ -3,9 +3,6 @@ import { AuroraApiError } from '../api/auroraApi';
 import * as api from '../api/listenTogether';
 import { usePlayerStore } from '../store/index';
 import { useListenTogetherStore as store } from '../store/listenTogether';
-import { castManager } from './CastManager';
-import { sessionFollower } from './SessionFollower';
-import { sessionMirror } from './SessionMirror';
 import { isFollowedOutputPlaying } from './sessionFollow';
 import { sendRemoteAction } from './sessionRemote';
 import { previewLabel, sessionTitle } from './listenTogetherText';
@@ -83,6 +80,27 @@ function clearShared(): void {
 }
 
 /**
+ * What ending the user's own playback needs from the playback singletons.
+ * main.tsx passes them in: importing CastManager here gave the
+ * CastManager/PlaybackManager import cycle a new way in (through ListenLink),
+ * which broke loading it in tests.
+ */
+export interface OwnPlaybackControls {
+  /** Stops casting without handing the music back here. */
+  stopCasting: () => void;
+  /** Reports this device's own output stopped, and claims nothing after. */
+  endOutput: () => void;
+  /** The own session's revision as last read, for a remote command. */
+  sessionRevision: () => number | null;
+}
+
+let controls: OwnPlaybackControls | null = null;
+
+export function configureListenTogether(own: OwnPlaybackControls): void {
+  controls = own;
+}
+
+/**
  * Joining ends the user's own playback (decided, docs/listen-together.md):
  * here, by pausing or stopping the cast (no handoff), and on another of
  * their devices that plays their session, by a pause sent to it. Their own
@@ -91,13 +109,13 @@ function clearShared(): void {
 async function stopOwnPlayback(): Promise<void> {
   const player = usePlayerStore.getState();
   const elsewhere = player.sessionFollow;
-  if (player.castConnected) castManager.stopCastingBecauseReplaced('listening-together');
+  if (player.castConnected) controls?.stopCasting();
   else if (player.playbackState === 'playing') player.pause();
-  sessionMirror.endOutput('listening-together');
+  controls?.endOutput();
   if (elsewhere && !elsewhere.silent && isFollowedOutputPlaying(elsewhere)) {
     await sendRemoteAction({ type: 'pause' }, elsewhere, {
       auth: auth(),
-      sessionRevision: () => sessionFollower.sessionRevision(),
+      sessionRevision: () => controls?.sessionRevision() ?? null,
     });
   }
 }
