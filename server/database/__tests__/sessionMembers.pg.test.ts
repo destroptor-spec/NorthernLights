@@ -307,4 +307,82 @@ describeDb('listen together', () => {
     }
     expect(await members.listOnlineUsers(ownerId)).toEqual([]);
   });
+
+  describe('gigs: levels and nearby (6e)', () => {
+    const HOME = '203.0.113.7';
+    const AWAY = '198.51.100.9';
+    const online: Array<() => void> = [];
+    const at = (userId: string, clientId: string, ip: string) => online.push(events.noteClientListening(userId, clientId, { ip }));
+    afterEach(() => { while (online.length) online.pop()!(); });
+
+    it("changing the level changes it for the link and for every guest already in, who hear it", async () => {
+      const session = await create();
+      const invite = await members.createSessionInvite(ownerId, session.id, ['queue']);
+      expect((await members.joinSessionByInvite(guestId, invite.token)).access).toEqual({ role: 'guest', permissions: ['queue'] });
+      const guest = listen(guestId);
+      try {
+        await members.setSessionSharing(ownerId, session.id, { permissions: ['queue', 'transport'] });
+        expect(guest.heard).toContainEqual(expect.objectContaining({ type: 'playbackSession.accessChanged', data: { sessionId: session.id, permissions: ['transport', 'queue'] } }));
+      } finally {
+        guest.unsubscribe();
+      }
+      expect((await sessions.getPlaybackSession(guestId, session.id))!.access?.permissions).toEqual(['transport', 'queue']);
+      expect((await members.listSessionInvites(ownerId, session.id))[0].permissions).toEqual(['transport', 'queue']);
+      expect((await members.joinSessionByInvite(otherId, invite.token)).access?.permissions).toEqual(['transport', 'queue']);
+    });
+
+    it('a discoverable gig shows to users on the same address only, as its preview', async () => {
+      const session = await create();
+      await members.createSessionInvite(ownerId, session.id, ['queue']);
+      at(ownerId, 'owner-phone', HOME);
+      at(guestId, 'guest-phone', HOME);
+      at(otherId, 'zoe-laptop', AWAY);
+      expect(await members.listNearbyGigs(guestId, HOME)).toEqual([]);
+
+      const nearby = listen(guestId);
+      const away = listen(otherId);
+      try {
+        await members.setSessionSharing(ownerId, session.id, { visibility: 'discoverable' });
+        expect(nearby.heard).toContainEqual(expect.objectContaining({ type: 'playbackSession.discoverable', data: { sessionId: session.id, discoverable: true } }));
+        expect(away.types()).not.toContain('playbackSession.discoverable');
+      } finally {
+        nearby.unsubscribe();
+        away.unsubscribe();
+      }
+      expect(await members.listNearbyGigs(guestId, HOME)).toEqual([{
+        ownerName: 'owner', owner: { userId: ownerId, initial: 'O', pictureUrl: null }, guests: [], sessionId: session.id, joined: false,
+      }]);
+      expect(await members.listNearbyGigs(otherId, AWAY)).toEqual([]);
+      expect(await members.listNearbyGigs(ownerId, HOME)).toEqual([]); // not one's own
+    });
+
+    it("joining nearby takes the gig's level; not discoverable or not nearby is not found", async () => {
+      const session = await create();
+      await members.createSessionInvite(ownerId, session.id, ['queue', 'transport']);
+      at(ownerId, 'owner-phone', HOME);
+      expect(await rejection(members.joinNearbyGig(guestId, session.id, HOME))).toBeInstanceOf(sessions.PlaybackSessionNotFoundError);
+
+      await members.setSessionSharing(ownerId, session.id, { visibility: 'discoverable' });
+      expect(await rejection(members.joinNearbyGig(otherId, session.id, AWAY))).toBeInstanceOf(sessions.PlaybackSessionNotFoundError);
+      expect(await rejection(members.joinNearbyGig(otherId, 'not-a-uuid', HOME))).toBeInstanceOf(sessions.PlaybackSessionNotFoundError);
+      const joined = await members.joinNearbyGig(guestId, session.id, HOME);
+      expect(joined.access).toEqual({ role: 'guest', permissions: ['transport', 'queue'] });
+      expect((await members.listNearbyGigs(guestId, HOME))[0].joined).toBe(true);
+    });
+
+    it('ending a discoverable gig tells users nearby it went, and it no longer shows', async () => {
+      const session = await create();
+      at(ownerId, 'owner-phone', HOME);
+      at(guestId, 'guest-phone', HOME);
+      await members.setSessionSharing(ownerId, session.id, { visibility: 'discoverable' });
+      const nearby = listen(guestId);
+      try {
+        await members.endListeningTogether(ownerId, session.id);
+        expect(nearby.heard).toContainEqual(expect.objectContaining({ type: 'playbackSession.discoverable', data: { sessionId: session.id, discoverable: false } }));
+      } finally {
+        nearby.unsubscribe();
+      }
+      expect(await members.listNearbyGigs(guestId, HOME)).toEqual([]);
+    });
+  });
 });

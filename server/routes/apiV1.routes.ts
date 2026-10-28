@@ -59,6 +59,7 @@ import {
   queueSmartHubRefreshForUser,
 } from '../services/smartHub.service';
 import { createRateLimiter } from '../middleware/rateLimit';
+import { getTrustedClientIp } from '../middleware/clientIp';
 import {
   apiV1RequestContext,
   requireApiV1Auth,
@@ -151,7 +152,9 @@ import {
   SessionInviteNotFoundError,
   SessionNotJoinableError,
   SessionSyncOffError,
-  setSessionVisibility,
+  setSessionSharing,
+  listNearbyGigs,
+  joinNearbyGig,
 } from '../services/sessionMembers.service';
 import { isPlaybackSyncEnabledFor } from '../services/playbackSync.service';
 import { publishApiV1Event, replayApiV1Events, subscribeApiV1Events, noteClientListening, listConnectedDevices, isClientListening as isDeviceConnected } from '../services/apiV1Events.service';
@@ -1090,6 +1093,20 @@ router.post('/playback-sessions', async (req, res) => {
   }
 });
 
+// Gigs nearby (Listen together, 6e): before /:id, which would take "nearby" for an ID.
+router.get('/playback-sessions/nearby', async (req, res) => {
+  dataResponse(req, res, await listNearbyGigs(req.apiV1!.userId, getTrustedClientIp(req)));
+});
+
+router.post('/playback-sessions/:id/join', sessionInviteLimiter, async (req, res) => {
+  if (!parseBody(z.object({}).strict(), req, res)) return;
+  try {
+    dataResponse(req, res, await joinNearbyGig(req.apiV1!.userId, routeParam(req, 'id'), getTrustedClientIp(req)));
+  } catch (error) {
+    handleSessionError(req, res, error);
+  }
+});
+
 router.get('/playback-sessions/:id', async (req, res) => {
   const session = await getPlaybackSession(req.apiV1!.userId, req.params.id);
   if (!session) return sendApiV1Error(req, res, 404, 'PLAYBACK_SESSION_NOT_FOUND', 'Playback session not found.');
@@ -1266,7 +1283,7 @@ router.patch('/playback-sessions/:id/sharing', async (req, res) => {
   const input = parseBody(sessionSharingSchema, req, res);
   if (!input) return;
   try {
-    dataResponse(req, res, await setSessionVisibility(req.apiV1!.userId, req.params.id, input.visibility));
+    dataResponse(req, res, await setSessionSharing(req.apiV1!.userId, req.params.id, input));
   } catch (error) {
     handleSessionError(req, res, error);
   }
@@ -1468,7 +1485,10 @@ router.get('/events', async (req, res) => {
   const device = req.apiV1!.scope === 'sse' ? { kind: 'browser' as const, name: queryClientName }
     : req.apiV1!.scope === 'receiver' ? { kind: 'receiver' as const, name: null }
       : { kind: 'app' as const, name: req.apiV1!.clientName || null };
-  const stopListening = streamClientId ? noteClientListening(req.apiV1!.userId, streamClientId, device) : () => undefined;
+  // Its address finds gigs nearby (Listen together, 6e).
+  const stopListening = streamClientId
+    ? noteClientListening(req.apiV1!.userId, streamClientId, { ...device, ip: getTrustedClientIp(req) || null })
+    : () => undefined;
   const keepalive = setInterval(() => res.write(': keepalive\n\n'), 20_000);
   req.on('close', () => {
     clearInterval(keepalive);

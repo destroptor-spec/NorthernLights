@@ -116,9 +116,19 @@ Three scopes, checked on the server for every request a guest makes:
 - **Owner:** everything, plus what no guest can do: claim the output (play
   here, Cast, transfer to a device), end listening together, change
   visibility, invite, remove guests.
-- **Guest:** the invite's scopes. The MVP UI offers one preset, "Can
-  control playback" (all three). Per-invite toggles are a later UI change; the
-  server enforces scopes from day one.
+- **Guest:** the invite's scopes, which the web app offers as three stacked
+  levels (Andreas, 2026-10-29). Each includes the ones below it:
+
+  | Level | Name | Scopes |
+  |---|---|---|
+  | 1 | Queue Editor | `queue` |
+  | 2 | Playback Control | `queue`, `transport` |
+  | 3 | Music Manager | `queue`, `transport`, `replace` |
+
+  A gig starts at level 1. The owner moves it at any time, and it applies at
+  once to the link and to every guest already in. The gig's level lives on
+  its link, so it needs no schema change. Controls a guest's level lacks are
+  disabled, with no text.
 
 Why it stays small to test: every session operation maps to exactly one scope
 in one table (`sessionOperationScope`), and one authorisation function decides
@@ -357,6 +367,29 @@ commands just take effect, with text only when they fail.
   - Links are random 32-byte tokens, never logged.
   - Joins are rate-limited per user.
 
+## Gigs: the Connect card (Andreas, 2026-10-28/29)
+
+A session open to guests is a **gig**. Guests see "{owner}'s Gig" ("Andreas'
+Gig"), where the spec said "{owner}'s session".
+
+- **The owner's Connect card** keeps the devices as they are: Cast, This
+  device, other devices.
+- **Below the border, a line like Output:** the Users icon with "Start a
+  gig" on the left, "Listen together" on the right.
+- **Starting a gig makes the card longer**, with no device pushed out:
+  - "Make discoverable", with a switch like the ones in Settings, off by
+    default. Off: only the link lets people in. On: users nearby see it too.
+  - "Copy invite link", with a copy icon. Tapping it copies the link and
+    shows the toast "Link copied!".
+  - the guests' level: one line with three stops (above), starting at 1.
+  - "End", last.
+- **While a gig runs,** the line shows the avatars of everyone in it,
+  overlapping, in place of "Start a gig": five at most, then "+2" for seven.
+- **Other users** see discoverable gigs nearby in their Connect card under
+  "Available gigs", each with its preview and Join.
+- **Deferred:** the "Online now" invite list, and removing one guest (End
+  removes everyone); the API keeps both.
+
 ## Plan
 
 One PR each, in this order:
@@ -429,7 +462,12 @@ One PR each, in this order:
    - Not in 6d: disabling single controls by scope. The app only makes
      all-scope links until 6f's toggles, and the server refuses the rest.
      The owner's side of the deaf joiner is its own PR (Cast).
-5. **6e: Nearby.** Discoverable sessions by public IP, and the "Join" row.
+5. **6e: Nearby.** Discoverable sessions by public IP, and the "Join" row,
+   named "Available gigs" (Andreas, 2026-10-29). Server built 2026-10-29: each
+   open event stream records its trusted client address;
+   `GET /playback-sessions/nearby` and `POST /playback-sessions/:id/join`;
+   `playbackSession.discoverable` to users nearby; levels through
+   `PATCH …/sharing { permissions }` (`playbackSession.accessChanged`).
 6. **6f (optional): per-invite scope toggles** in the invite sheet.
 
 **Done when** (from the migration plan): two accounts edit one queue playing on
