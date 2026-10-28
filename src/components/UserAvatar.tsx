@@ -1,6 +1,6 @@
 import React from 'react';
 import type { UserAvatar as Avatar } from '../../shared/api/v1';
-import { previewLabel } from '../utils/listenTogether';
+import { previewLabel } from '../utils/listenTogetherText';
 
 /**
  * A user's avatar: the picture when the server has one (later: Gravatar or

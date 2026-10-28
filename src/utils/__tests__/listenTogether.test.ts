@@ -5,6 +5,7 @@ import { usePlayerStore } from '../../store';
 import { useListenTogetherStore } from '../../store/listenTogether';
 import {
   endTogether,
+  openSharedSession,
   inviteUrl,
   isSharedSession,
   joinInvite,
@@ -17,7 +18,12 @@ import {
   sessionTitle,
 } from '../listenTogether';
 
+import { castManager } from '../CastManager';
+import { sessionMirror } from '../SessionMirror';
+import { sendRemoteAction } from '../sessionRemote';
+
 jest.mock('../../api/listenTogether');
+jest.mock('../sessionRemote', () => ({ ...jest.requireActual('../sessionRemote'), sendRemoteAction: jest.fn(async () => 'sent') }));
 const mocked = api as jest.Mocked<typeof api>;
 
 const avatar = (userId: string, initial: string) => ({ userId, initial, pictureUrl: null });
@@ -37,9 +43,13 @@ beforeEach(() => {
   jest.resetAllMocks();
   addToast = jest.fn();
   usePlayerStore.setState({ currentUser: { id: 'me', username: 'bo', role: 'user' }, addToast, getAuthHeader: () => ({}) } as never);
-  useListenTogetherStore.setState({ ownSessionId: null, own: null, shared: null, prompt: null });
+  useListenTogetherStore.setState({ ownSessionId: null, own: null, shared: null, prompt: null, openedSessionId: null });
+  usePlayerStore.setState({ playbackState: 'paused', castConnected: false, sessionFollow: null } as never);
   mocked.listSessionMembers.mockResolvedValue(members());
+  jest.spyOn(sessionMirror, 'endOutput').mockImplementation(() => undefined);
+  jest.spyOn(castManager, 'stopCastingBecauseReplaced').mockImplementation(() => true);
 });
+afterEach(() => jest.restoreAllMocks());
 
 it('names a session after its owner, and says how many others without naming them', () => {
   expect(sessionTitle('Andreas')).toBe("Andreas' session");
@@ -184,5 +194,59 @@ describe('the owner', () => {
   it('visibility changes from another of the owner\'s devices show here', () => {
     onTogetherEvent('playbackSession.visibilityChanged', { sessionId: 'own-1', visibility: 'invite' });
     expect(useListenTogetherStore.getState().own?.visibility).toBe('invite');
+  });
+});
+
+describe('showing the shared session on a device (6d)', () => {
+  const ownFollow = {
+    sessionId: 'own-1', outputId: 'desktop', name: 'Chrome on Linux', kind: 'browser' as const, generation: 2,
+    state: 'playing' as const, entryId: null, positionMs: 0, anchorMs: Date.now(),
+  };
+
+  it('the device joined on shows the session, its own playback ended first', async () => {
+    const pause = jest.fn();
+    usePlayerStore.setState({ playbackState: 'playing', pause } as never);
+    useListenTogetherStore.setState({ prompt: { token: 'tok', preview: preview() } });
+    mocked.joinSessionByInvite.mockResolvedValue(session('shared-1', { access: { role: 'guest', permissions: ['transport'] } }));
+    await joinInvite();
+    expect(pause).toHaveBeenCalled();
+    expect(sessionMirror.endOutput).toHaveBeenCalledWith('listening-together');
+    expect(useListenTogetherStore.getState().openedSessionId).toBe('shared-1');
+  });
+
+  it('stops a cast without handing it back here, and pauses the user\'s own music on another device', async () => {
+    usePlayerStore.setState({ castConnected: true, sessionFollow: ownFollow } as never);
+    useListenTogetherStore.setState({ shared: { sessionId: 'shared-1', ownerName: 'Andreas', owner: OWNER } });
+    await openSharedSession();
+    expect(castManager.stopCastingBecauseReplaced).toHaveBeenCalledWith('listening-together');
+    expect(sendRemoteAction).toHaveBeenCalledWith({ type: 'pause' }, ownFollow, expect.anything());
+    expect(useListenTogetherStore.getState().openedSessionId).toBe('shared-1');
+  });
+
+  it('a link to a session this user is in opens it here', async () => {
+    mocked.previewSessionInvite.mockResolvedValue(preview({ joined: true }));
+    await openInviteLink('tok');
+    expect(useListenTogetherStore.getState().openedSessionId).toBe('shared-1');
+  });
+
+  it("counts the opened session as shared before its owner is read (its claims aren't this user's)", () => {
+    useListenTogetherStore.setState({ openedSessionId: 'shared-1' });
+    expect(isSharedSession('shared-1')).toBe(true);
+  });
+
+  it('leaving, being removed, or the session going away takes every device back to its own', async () => {
+    const open = () => useListenTogetherStore.setState({ shared: { sessionId: 'shared-1', ownerName: 'Andreas', owner: OWNER }, openedSessionId: 'shared-1' });
+    open();
+    mocked.removeSessionMember.mockResolvedValue(undefined);
+    await leaveSharedSession();
+    expect(useListenTogetherStore.getState().openedSessionId).toBeNull();
+
+    open();
+    onTogetherEvent('playbackSession.memberLeft', { sessionId: 'shared-1', userId: 'me', reason: 'removed' });
+    expect(useListenTogetherStore.getState().openedSessionId).toBeNull();
+
+    open();
+    noteSharedSession(null);
+    expect(useListenTogetherStore.getState().openedSessionId).toBeNull();
   });
 });

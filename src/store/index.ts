@@ -33,6 +33,8 @@ import { isPlaybackSyncEnabled, parsePlaybackSyncMode, type PlaybackSyncMode } f
 import { computeLoudnessGainDb, type LoudnessData } from '../utils/loudness';
 import { getCachedLoudness, fetchLoudness, invalidateLoudness, type TrackLoudnessEntry } from '../utils/loudnessCache';
 import type { ToastType } from '../components/Toast';
+import { useListenTogetherStore } from './listenTogether';
+import { sessionTitle } from '../utils/listenTogetherText';
 import {
   auroraApiAllPages,
   auroraApiRequest,
@@ -1224,6 +1226,21 @@ export const usePlayerStore = create<PlayerState>()(
       // when nothing is chosen yet, and runs here once they chose this device.
       // Returns true when the action was handled that way.
       const routeToPlayingDevice = (remote: RemoteAction, local: () => Promise<void>, options: { ask?: boolean } = {}) => {
+        // Showing a shared session (Listen together, 6d): where it plays is
+        // the owner's choice, so every action goes to the device that plays
+        // it, and nothing ever plays here.
+        if (useListenTogetherStore.getState().openedSessionId) {
+          const { sessionFollow } = get();
+          if (sessionFollow && !sessionFollow.silent) {
+            void sendToPlayingDevice(remote, sessionFollow);
+          } else if (options.ask !== false) {
+            const owner = useListenTogetherStore.getState().shared?.ownerName;
+            get().addToast(sessionFollow
+              ? `${sessionFollow.name} isn't responding.`
+              : `Nothing is playing in ${owner ? sessionTitle(owner) : 'the session'}.`, 'info');
+          }
+          return true;
+        }
         if (takeOverConfirmed) {
           takeOverConfirmed = false;
           return false;
@@ -3199,6 +3216,8 @@ export const usePlayerStore = create<PlayerState>()(
           set({ playWherePrompt: null });
           castManager.logSyncEvent('ok', 'sync-play-where', `choice=${choice ?? 'dismissed'} output=${follow ? `${follow.kind}:${follow.name}${follow.silent ? ':silent' : ''}` : 'none'}`);
           if (!choice || !follow) return;
+          // A device showing a shared session never plays it (the owner chooses where).
+          if (choice === 'here' && useListenTogetherStore.getState().openedSessionId) return;
           if (choice === 'remote') {
             if (follow.silent) return;
             set({ remoteControlOutputId: follow.outputId });
@@ -3211,7 +3230,7 @@ export const usePlayerStore = create<PlayerState>()(
 
         openPlayWhere: () => {
           const follow = get().sessionFollow;
-          if (!follow) return;
+          if (!follow || useListenTogetherStore.getState().openedSessionId) return;
           pendingPlayWhere = { remote: null, local: () => get().resume() };
           set({ playWherePrompt: { outputName: follow.name } });
         },

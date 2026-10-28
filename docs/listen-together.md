@@ -404,7 +404,31 @@ One PR each, in this order:
      and making a link for a private session revokes any left over, so
      closing and reopening always gives a fresh link and the old one dies.
 4. **6d: The guest client.** The shared session on the guest's device, the
-   guest Connect card, and controls by scope.
+   guest Connect card, and controls by scope. Built 2026-10-28:
+   - The device a guest joins on shows the shared session
+     (`openedSessionId`, kept per device across reloads). `SessionFollower`
+     follows it like another device's playback (`followShared`), and the
+     store sends every action to the device that plays it
+     (`routeToPlayingDevice`). Nothing plays on the guest's device:
+     `SessionMirror` never claims there, "Play where?" never opens, and with
+     nothing playing an action only says so ("Nothing is playing in
+     Andreas' session.").
+   - Joining (or Open) ends the user's own playback: a pause here, or the
+     cast stopped without a handoff (`cast-stopped-replaced`,
+     by=listening-together); this device's own output reported stopped
+     (`sync-output-ended`); and a pause sent to another of their devices
+     that plays their session. Their own queue stays on the server.
+   - The guest's Connect card: "Listening with {owner}", the playing device
+     marked, and Leave ("Back to your own music"); no Cast, no This device,
+     no other devices. The user's other devices show "Listening with
+     {owner} · Open".
+   - Leaving, being removed, or the owner ending it takes the device back to
+     the user's own session, its queue paused.
+   - A guest device joining the owner's very Cast session leaves it
+     (`castingElsewhere`, as for the user's own devices).
+   - Not in 6d: disabling single controls by scope. The app only makes
+     all-scope links until 6f's toggles, and the server refuses the rest.
+     The owner's side of the deaf joiner is its own PR (Cast).
 5. **6e: Nearby.** Discoverable sessions by public IP, and the "Join" row.
 6. **6f (optional): per-invite scope toggles** in the invite sheet.
 
