@@ -3192,11 +3192,18 @@ export const usePlayerStore = create<PlayerState>()(
           // The remembered choice lasts while that device plays: another
           // device taking over, or playback there ending, forgets it.
           const keepTarget = !!follow && follow.outputId === get().remoteControlOutputId;
+          // Showing a shared session, the device that plays it is always the
+          // one controlled: there is no "Play where?" to choose it in, and
+          // Play/Pause shows its state (Andreas, 2026-10-28: the guest's
+          // button always showed paused, and only ever sent Play).
+          const guestTarget = useListenTogetherStore.getState().openedSessionId
+            ? (follow && !follow.silent ? follow.outputId : null)
+            : undefined;
           if (!follow) pendingPlayWhere = null;
           set({
             sessionFollow: follow,
             ...(follow ? {} : { playWherePrompt: null }),
-            ...(keepTarget ? {} : { remoteControlOutputId: null }),
+            ...(guestTarget !== undefined ? { remoteControlOutputId: guestTarget } : keepTarget ? {} : { remoteControlOutputId: null }),
           });
         },
 
