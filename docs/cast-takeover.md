@@ -55,6 +55,12 @@ idle or following account A's session.
 1. **Join and detect deafness.** Chrome joins; the desktop pings and hears
    nothing for 5 s (#211's `cast-join-deaf`). A join that hears the receiver
    is unchanged.
+   - **Then ask again whether it's one of your own devices.** A deaf join
+     is always into a session already running there, so the device's name is
+     enough: your own session casting to that device, a locked phone
+     included. If so, the desktop leaves and becomes the remote
+     (`cast-join-left reason=…:deaf`, #211), and there's no takeover. Your
+     own devices are never taken over or stopped (Andreas, 2026-10-30).
 2. **Claim.** Instead of stopping the receiver, the desktop claims a receiver
    output for its own session, as the phone does after its first load today:
    `kind: 'receiver'`, the joined Cast session's id, and a receiver
@@ -101,9 +107,14 @@ idle or following account A's session.
 - **The receiver predates the takeover flag:** it refuses (6a-1) and the
   fallback applies. The receiver ships before the senders use the flag, so
   this only happens on a stale receiver page.
-- **The desktop's own other device casts there** (sync on, own account): the
-  existing `cast-join-left` path (leave, become the remote) still comes first,
-  so nothing changes for one account.
+- **One of your own devices casts there** (sync on, same account): nothing
+  changes. The existing `cast-join-left` check runs first. If it misses (the
+  server has forgotten a cast output's Cast session id in a restart), the
+  deaf join's name check catches it. Either way the desktop leaves and
+  becomes the remote. A takeover only ever replaces another account's cast,
+  or an idle receiver app.
+- **Sync off:** there's no session to hand over or compare against, so a
+  deaf join keeps #211's stop and Cast again.
 
 ## Safety
 
@@ -153,7 +164,10 @@ is Aurora-channel only.
   stop casting, then pick the NAD on the desktop within 5 minutes. B's music
   starts, with no "Cast again".
 - **Same account:** with sync on, the phone casts and the desktop picks the
-  NAD. As today: `cast-join-left`, the desktop becomes the remote.
+  NAD. As today: `cast-join-left`, the desktop becomes the remote. Also
+  right after a deploy (the server has forgotten the phone's Cast session
+  id) and with the phone locked: `cast-join-left reason=…:deaf`, and the
+  phone's music plays on.
 - **Receivers:** the same on the A9 (slower) and Stue TV.
 - **Fallback:** a receiver page from before PR 1. You get "Cast again" after
   about 15 s, nothing stuck.
