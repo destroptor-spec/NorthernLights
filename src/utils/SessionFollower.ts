@@ -181,13 +181,25 @@ export class SessionFollower {
    * name right now (the session's output). Picking that device in this
    * device's Cast dialog would join its Cast session as a second sender.
    */
-  castingElsewhere(castDeviceName: string, castSessionId: string | null): { outputId: string } | null {
+  castingElsewhere(
+    castDeviceName: string,
+    castSessionId: string | null,
+    options: { joinedRunningSession?: boolean } = {},
+  ): { outputId: string } | null {
     const output = this.session?.output;
     if (!output || !this.options || output.id === this.options.clientId()) return null;
+    // A join that proved deaf (cast-join-deaf) joined a session already
+    // running there, never a new one, so the device's name is enough: the
+    // server may have lost a cast output's Cast session id in a restart. A
+    // phone gone quiet (locked) still casts there, and even this device's
+    // own receiver output is better controlled from here than stopped.
+    const joined = options.joinedRunningSession === true;
     // A receiver output this device claimed is its own Cast session (a
     // reload or recovery rejoining it), not another device's.
-    if (output.kind === 'receiver' && this.session!.ownerClientId === this.options.clientId()) return null;
-    if (!isCastOutput(output) || output.status !== 'active' || output.name !== castDeviceName) return null;
+    if (!joined && output.kind === 'receiver' && this.session!.ownerClientId === this.options.clientId()) return null;
+    const live = output.status === 'active' || (joined && output.status === 'unreachable');
+    if (!isCastOutput(output) || !live || output.name !== castDeviceName) return null;
+    if (joined) return { outputId: output.id };
     // Only the very Cast session it sends to: picking the device may also
     // start a new session, which ends the other device's (prod 2026-10-13
     // 22:16:20: the phone left a session it had just started).

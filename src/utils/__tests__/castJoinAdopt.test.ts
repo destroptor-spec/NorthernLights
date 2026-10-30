@@ -1,7 +1,8 @@
 import { CastManager } from '../CastManager';
 
 jest.mock('../PlaybackManager', () => ({ playbackManager: {} }));
-jest.mock('../../store', () => ({ usePlayerStore: { getState: () => ({ authToken: 'jwt' }), setState: jest.fn() } }));
+const mockAddToast = jest.fn();
+jest.mock('../../store', () => ({ usePlayerStore: { getState: () => ({ authToken: 'jwt', addToast: mockAddToast }), setState: jest.fn() } }));
 
 /**
  * Prod 2026-10-13 19:53:48–49 (desktop joins the NAD, paused on "Slidin'"
@@ -23,10 +24,18 @@ type Harness = {
   logCast: jest.Mock;
   lastAuroraStatus: unknown;
   lastAuroraStatusAt: number;
+  lastReceiverAnswerAt: number;
 };
 
-function harness() {
-  const session = { getSessionId: () => '1ecdcfad', sendMessage: jest.fn().mockResolvedValue(undefined) };
+/** `deaf`: the receiver never answers this device (one-way join); otherwise it acknowledges the join's ping. */
+function harness(options: { deaf?: boolean } = {}) {
+  const session = {
+    getSessionId: () => '1ecdcfad',
+    sendMessage: jest.fn((_ns: string, message: { type?: string; action?: string }) => {
+      if (!options.deaf && message?.type === 'aurora.control' && message.action === 'ping') manager.lastReceiverAnswerAt = Date.now();
+      return Promise.resolve(undefined);
+    }),
+  };
   const endCurrentSession = jest.fn();
   let media: unknown = null;
   const manager = Object.create(CastManager.prototype) as Harness;
@@ -51,7 +60,9 @@ function harness() {
     logCast: jest.fn(),
     lastAuroraStatus: null,
     lastAuroraStatusAt: 0,
+    lastReceiverAnswerAt: 0,
     watchdogMediaRequestId: 0,
+    auroraControlRequestId: 0,
   });
   return { manager, session, endCurrentSession, setMedia: (next: unknown) => { media = next; } };
 }
@@ -96,6 +107,87 @@ it('loads after the wait when the receiver stays silent, as before', async () =>
   expect(manager.handleCastConnected).toHaveBeenCalledTimes(1);
 });
 
+/**
+ * Prod 2026-10-27 12:33: the desktop joined the NAD's idle receiver app (the
+ * phone had stopped casting), heard nothing back, loaded its queue, and
+ * loaded it again 15 s later over its own track ("playback-unconfirmed").
+ * Picking the NAD again by hand started a new session, which worked.
+ */
+describe('a joined session that never answers', () => {
+  it('pings, waits for a slow receiver, then stops that receiver app instead of loading, and leaves it', async () => {
+    mockAddToast.mockClear();
+    const { manager, session, endCurrentSession } = harness({ deaf: true });
+    const pings = () => session.sendMessage.mock.calls.filter(([, message]) => (message as { action?: string })?.action === 'ping');
+    const started = manager.startPlaybackForCurrentSession('session-started');
+    expect(pings()).toHaveLength(1);
+    await jest.advanceTimersByTimeAsync(2600);
+    expect(pings()).toHaveLength(2); // once more, in case the first was lost
+    expect(manager.handleCastConnected).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(2500);
+    await started;
+    expect(manager.handleCastConnected).not.toHaveBeenCalled();
+    // The stop first: the other senders there hear the end (prod 2026-10-30 21:03:27).
+    expect(endCurrentSession).toHaveBeenCalledWith(true);
+    expect(endCurrentSession).not.toHaveBeenCalledWith(false);
+    expect(manager.logCast).toHaveBeenCalledWith('warn', 'cast-join-deaf', expect.stringMatching(/^reason=session-started waitedMs=5\d\d\d$/));
+    expect(manager.userSessionRequestPending).toBe(false);
+    // Then let go of it here: Chrome may never confirm a stop it can't hear (21:03:30).
+    await jest.advanceTimersByTimeAsync(1000);
+    expect(endCurrentSession).toHaveBeenLastCalledWith(false);
+  });
+
+  it('once ended, hands nothing back here and offers Cast again, whose tap opens the picker', () => {
+    mockAddToast.mockClear();
+    const { manager } = harness({ deaf: true });
+    const openCastPicker = jest.fn(() => 'opened');
+    Object.assign(manager, { openCastPicker, stoppedDeafDevice: 'NAD Forstærker' });
+    manager.afterSessionEnded({ index: 1, positionSeconds: 12, wasPlaying: false });
+    expect(manager.handOffToLocalAfterSessionEnd).not.toHaveBeenCalled();
+    // Not by itself: a picker opened as the session ended left Chrome's dialog half open (prod 21:40:21).
+    expect(openCastPicker).not.toHaveBeenCalled();
+    expect(mockAddToast).toHaveBeenCalledWith("NAD Forstærker didn't answer.", 'error', expect.objectContaining({ actionLabel: 'Cast again' }));
+    mockAddToast.mock.calls[0][2].onAction();
+    expect(openCastPicker).toHaveBeenCalledWith('deaf-join-retry');
+
+    // A later end is an ordinary one again.
+    manager.afterSessionEnded({ index: 1, positionSeconds: 12, wasPlaying: true });
+    expect(manager.handOffToLocalAfterSessionEnd).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Andreas, 2026-10-30: casting from a new device of the same account to the
+   * same Cast device must stay as before (cast-join-left). With the phone's
+   * cast output id lost in a server restart, only the deaf join's name match
+   * knows it is the user's own phone.
+   */
+  it("leaves another of my devices' cast instead of stopping it, known by name after a deaf join", async () => {
+    mockAddToast.mockClear();
+    const { manager, endCurrentSession } = harness({ deaf: true });
+    const check = jest.fn((_name: string, options?: { joinedRunningSession?: boolean }) => options?.joinedRunningSession === true);
+    manager.setCastingElsewhereCheck(check);
+    const started = manager.startPlaybackForCurrentSession('session-started');
+    await jest.advanceTimersByTimeAsync(5100);
+    await started;
+    expect(check).toHaveBeenCalledWith('NAD Forstærker', { joinedRunningSession: true });
+    expect(endCurrentSession).toHaveBeenCalledWith(false);
+    expect(endCurrentSession).not.toHaveBeenCalledWith(true);
+    expect(manager.logCast).toHaveBeenCalledWith('ok', 'cast-join-left', 'reason=session-started:deaf device=NAD Forstærker');
+    // Its own end is the leave: no handoff, and no "didn't answer".
+    manager.afterSessionEnded({ index: 1, positionSeconds: 12, wasPlaying: true });
+    expect(manager.handOffToLocalAfterSessionEnd).not.toHaveBeenCalled();
+    expect(mockAddToast).not.toHaveBeenCalled();
+  });
+
+  it('a receiver that answers the ping is not deaf, however slowly its media shows', async () => {
+    const { manager, endCurrentSession } = harness();
+    const started = manager.startPlaybackForCurrentSession('session-started');
+    await jest.advanceTimersByTimeAsync(1600);
+    await started;
+    expect(manager.handleCastConnected).toHaveBeenCalledTimes(1);
+    expect(endCurrentSession).not.toHaveBeenCalled();
+  });
+});
+
 it('loads nothing over a receiver that says it plays, even if the SDK never shows the media', async () => {
   const { manager } = harness();
   manager.lastAuroraStatus = { type: 'aurora.status', queueEntryId: 'e10', playerState: 'PAUSED' };
@@ -133,7 +225,7 @@ describe('a Cast device another of my devices is casting to', () => {
     const check = jest.fn(() => true);
     manager.setCastingElsewhereCheck(check);
     await manager.startPlaybackForCurrentSession('cast-connected-user-launch');
-    expect(check).toHaveBeenCalledWith('NAD Forstærker');
+    expect(check).toHaveBeenCalledWith('NAD Forstærker', {});
     expect(endCurrentSession).toHaveBeenCalledWith(false);
     expect(manager.hydrateSenderFromRemoteSession).not.toHaveBeenCalled();
     expect(manager.handleCastConnected).not.toHaveBeenCalled();
