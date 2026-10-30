@@ -2508,14 +2508,25 @@
             "type": "string",
             "enum": [
               "private",
-              "invite"
+              "invite",
+              "discoverable"
             ],
-            "description": "private: nobody can join (guests already in stay) and every join link stops working; invite: anyone with a join link can. \"discoverable\" comes later."
+            "description": "private: nobody can join (guests already in stay) and every join link stops working; invite: anyone with a join link can; discoverable: also users nearby (the same public address as one of the owner's devices)."
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "transport",
+                "queue",
+                "replace"
+              ]
+            },
+            "minItems": 1,
+            "description": "The guests' permissions, for the working links and every guest already in, at once. The web app offers three stacked levels: Queue Editor [queue], Playback Control [queue, transport], Music Manager [queue, transport, replace]."
           }
         },
-        "required": [
-          "visibility"
-        ],
         "additionalProperties": false
       },
       "SessionInviteCreate": {
@@ -8764,6 +8775,246 @@
         }
       }
     },
+    "/playback-sessions/nearby": {
+      "get": {
+        "summary": "Discoverable gigs nearby",
+        "description": "Discoverable sessions whose owner has an event stream open from the same public address as this request (docs/listen-together.md, Discovery), other than the caller's own, each as its preview: the owner's name and avatars, nothing about what plays.",
+        "tags": [
+          "Listen together"
+        ],
+        "security": [
+          {
+            "listenerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SessionInvitePreview"
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "properties": {
+                        "requestId": {
+                          "type": "string",
+                          "description": "Request ID echoed in the X-Request-Id response header."
+                        }
+                      },
+                      "required": [
+                        "requestId"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient access; or PLAYBACK_SYNC_DISABLED: playback sync across devices is turned off for this account (the server admin's choice, or the user's where the admin lets each user decide)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Revision or state conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/playback-sessions/{id}/join": {
+      "post": {
+        "summary": "Join a discoverable gig nearby",
+        "description": "Makes the caller a guest at the gig's level (its newest link's permissions), leaving any other session it was a guest in. Not discoverable, or not nearby: 404. Everyone in the session hears playbackSession.memberJoined. Limited per user.",
+        "tags": [
+          "Listen together"
+        ],
+        "security": [
+          {
+            "listenerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PlaybackSession"
+                    },
+                    "meta": {
+                      "type": "object",
+                      "properties": {
+                        "requestId": {
+                          "type": "string",
+                          "description": "Request ID echoed in the X-Request-Id response header."
+                        }
+                      },
+                      "required": [
+                        "requestId"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient access; or PLAYBACK_SYNC_DISABLED: playback sync across devices is turned off for this account (the server admin's choice, or the user's where the admin lets each user decide)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Revision or state conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/playback-sessions/{id}": {
       "get": {
         "summary": "Get a playback session",
@@ -9824,8 +10075,8 @@
     },
     "/playback-sessions/{id}/sharing": {
       "patch": {
-        "summary": "Who may join: private or invite only (owner)",
-        "description": "Private keeps guests already in, but no one new can join, and every join link stops working: opening the session again takes a new link. Guests hear playbackSession.visibilityChanged.",
+        "summary": "Who may join, and what guests may do (owner)",
+        "description": "Private keeps guests already in, but no one new can join, and every join link stops working: opening the session again takes a new link. Discoverable also shows it to users nearby (GET /playback-sessions/nearby). New permissions apply to the working links and to every guest at once. Guests hear playbackSession.visibilityChanged and playbackSession.accessChanged (`{sessionId, permissions}`); users nearby hear playbackSession.discoverable (`{sessionId, discoverable}`, live only).",
         "tags": [
           "Listen together"
         ],
@@ -11211,7 +11462,7 @@
         "tags": [
           "Events"
         ],
-        "description": "Use a short-lived sse token (or a receiver credential, which hears only its own session) in the query string because EventSource cannot set Authorization headers; a full session token is refused. Each event's data is JSON `{id, type, occurredAt, data}`. Types: playbackSession.created / updated / handedOff / deleted (fetch the session when its revision is newer), playbackSession.progress (every accepted output report: `{sessionId, revision, outputId, generation, report}`; live only, never replayed), playlist.changed, annotation.changed, playbackSession.command (to the output: `{sessionId, outputId, generation, requestId, issuedBy, command}`; live only), playbackSession.transferRequested (to the device asked to take over: `{sessionId, revision, targetClientId, requestedBy}`; live only), Listen together: playbackSession.memberJoined (`{sessionId, userId, avatar}`), memberLeft (`{sessionId, userId, reason: left | removed | ended}`), visibilityChanged (`{sessionId, visibility}`), togetherEnded (`{sessionId}`), to the owner and its guests, and invitePrompt (`{sessionId, token, path, preview}`, to a prompted user), devices.changed (`{devices}`: every device of this user with Aurora open, whenever one opens or closes; live only), library.revision, playbackSync.changed (`{enabled}`: whether the playback-session API works for this account now), and resync.required (the replay window was lost: re-fetch everything).",
+        "description": "Use a short-lived sse token (or a receiver credential, which hears only its own session) in the query string because EventSource cannot set Authorization headers; a full session token is refused. Each event's data is JSON `{id, type, occurredAt, data}`. Types: playbackSession.created / updated / handedOff / deleted (fetch the session when its revision is newer), playbackSession.progress (every accepted output report: `{sessionId, revision, outputId, generation, report}`; live only, never replayed), playlist.changed, annotation.changed, playbackSession.command (to the output: `{sessionId, outputId, generation, requestId, issuedBy, command}`; live only), playbackSession.transferRequested (to the device asked to take over: `{sessionId, revision, targetClientId, requestedBy}`; live only), Listen together: playbackSession.memberJoined (`{sessionId, userId, avatar}`), memberLeft (`{sessionId, userId, reason: left | removed | ended}`), visibilityChanged (`{sessionId, visibility}`), togetherEnded (`{sessionId}`) and accessChanged (`{sessionId, permissions}`), to the owner and its guests; discoverable (`{sessionId, discoverable}`, live only) to users nearby; and invitePrompt (`{sessionId, token, path, preview}`, to a prompted user), devices.changed (`{devices}`: every device of this user with Aurora open, whenever one opens or closes; live only), library.revision, playbackSync.changed (`{enabled}`: whether the playback-session API works for this account now), and resync.required (the replay window was lost: re-fetch everything).",
         "security": [
           {
             "listenerAuth": []

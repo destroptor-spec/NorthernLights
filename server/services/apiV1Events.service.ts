@@ -21,7 +21,9 @@ export type ApiV1EventType =
   | 'playbackSession.memberLeft'
   | 'playbackSession.visibilityChanged'
   | 'playbackSession.togetherEnded'
-  | 'playbackSession.invitePrompt';
+  | 'playbackSession.invitePrompt'
+  | 'playbackSession.accessChanged'
+  | 'playbackSession.discoverable';
 
 export interface ApiV1Event {
   id: string;
@@ -93,11 +95,27 @@ export type ConnectedDevice = { clientId: string; name: string | null; kind: Con
 
 // The user's devices with an event stream open now: those remote commands
 // and transfers can reach, and the Connect menu lists (GET /devices).
-const listening = new Map<string, Map<string, { count: number; name: string | null; kind: ConnectedDeviceKind }>>();
+// Each with the address its stream comes from, for gigs nearby (6e).
+const listening = new Map<string, Map<string, { count: number; name: string | null; kind: ConnectedDeviceKind; ip: string | null }>>();
 
 /** The users with Aurora open somewhere now (an event stream open): who can be prompted to join. */
 export function listOnlineUserIds(): string[] {
   return Array.from(listening.keys());
+}
+
+/** The public addresses the user's open streams come from (docs/listen-together.md, Discovery). */
+export function addressesOf(userId: string): Set<string> {
+  const addresses = new Set<string>();
+  for (const device of listening.get(userId)?.values() ?? []) if (device.ip) addresses.add(device.ip);
+  return addresses;
+}
+
+/** The users with a stream open from any of `addresses`: who is "nearby". */
+export function usersAt(addresses: Set<string>): string[] {
+  if (addresses.size === 0) return [];
+  return Array.from(listening.entries())
+    .filter(([, clients]) => Array.from(clients.values()).some((device) => !!device.ip && addresses.has(device.ip)))
+    .map(([userId]) => userId);
 }
 
 /** The user's devices that have Aurora open now, one entry per device. */
@@ -115,7 +133,7 @@ function publishDevicesChanged(userId: string) {
 export function noteClientListening(
   userId: string,
   clientId: string,
-  device: { name?: string | null; kind?: ConnectedDeviceKind } = {},
+  device: { name?: string | null; kind?: ConnectedDeviceKind; ip?: string | null } = {},
 ): () => void {
   const clients = listening.get(userId) ?? new Map();
   const existing = clients.get(clientId);
@@ -123,6 +141,7 @@ export function noteClientListening(
     count: (existing?.count ?? 0) + 1,
     name: device.name ?? existing?.name ?? null,
     kind: device.kind ?? existing?.kind ?? 'browser',
+    ip: device.ip ?? existing?.ip ?? null,
   });
   listening.set(userId, clients);
   if (!existing) publishDevicesChanged(userId);
