@@ -375,9 +375,15 @@ commands just take effect, with text only when they fail.
     as when another app casts to a busy device, the cast there ends
     gracefully and the new one starts. The sender stops the receiver app,
     leaves the session 1 s later (`cast-join-deaf-leave`) so Chrome lets go
-    of it, and once it has ended opens the picker by itself
-    (`deaf-join-restart`; Chrome starts a cast only from its picker). A
-    refusal within 0.5 s gets Cast again instead.
+    of it, and once it has ended opened the picker by itself.
+  - **v3, after the prod test 2026-10-30 21:40:** leaving worked (Chrome
+    reported the end 0.2 s later), but the picker opened in the same
+    instant answered `session_error` and left Chrome's dialog half open:
+    the next tap on Cast to a device was cancelled, Chrome showed the NAD
+    connected while the app showed nothing. v1 and v2 were reverted on the
+    channel. v3 keeps the stop and the leave, offers Cast again (a tap opens
+    the picker), and reports no "Cast device disconnected" for its own
+    leave.
 - **Before joining,** discovery and links show only the preview: the
   owner's name and initials.
 - **A join link is a bearer link within the server** (decided): anyone on the
