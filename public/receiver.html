@@ -1448,6 +1448,12 @@
             setMediaToken: function(token) { currentAuthToken = token; },
             origin: window.location.origin,
             marker: function(name, detail) { postDiagnosticMarker(name, detail); },
+            // The device's own volume, so a remote's slider can show and set it.
+            volume: function() {
+              var system = context.getSystemVolume();
+              return system && typeof system.level === 'number' ? system.level : null;
+            },
+            setVolume: function(level) { context.setSystemVolumeLevel(level); },
             onStopped: function(reason) {
               if (reason === 'expired') followEndedTip = 'Open Aurora to keep playing.';
               syncUi(true);
@@ -1458,6 +1464,15 @@
       } catch (followerError) {
         sessionFollower = null;
         postServerLog('warn', '[' + LOG_TAG + '] receiver-session-follow unavailable', safeStringify(followerError));
+      }
+      try {
+        if (sessionFollower) {
+          context.addEventListener(cast.framework.system.EventType.SYSTEM_VOLUME_CHANGED, function() {
+            sessionFollower.noteVolumeChanged();
+          });
+        }
+      } catch (volumeListenerError) {
+        log('warn', LOG_TAG, 'volume listener failed: ' + safeStringify(volumeListenerError));
       }
 
       function handleSessionFollow(event, data) {

@@ -9,8 +9,9 @@
  * - keeps its CAF queue window in line with the session's queue, in one batch
  *   per change (remove what no longer follows, insert what is missing), and
  *   never removes the item that plays: it jumps on first;
- * - carries out remote commands (play, pause, seek, next, previous, jump, load);
- * - reports what it plays, and renews its own credential;
+ * - carries out remote commands (play, pause, seek, next, previous, jump,
+ *   load, setVolume);
+ * - reports what it plays and its volume, and renews its own credential;
  * - stops when another device takes over, and plays out what it has when the
  *   credential runs out, the session is deleted or sync is turned off.
  *
@@ -124,6 +125,8 @@
    *   origin: string              the receiver page's origin
    *   marker(name, detail)        server log line
    *   onStopped(reason)           UI: following ended (expired, replaced, …)
+   *   volume(): number|null       the device's volume, 0–1 (optional)
+   *   setVolume(level)            set it (optional)
    * }
    */
   function createFollower(env) {
@@ -690,6 +693,14 @@
               else done(false, 'revision-not-seen');
             });
           }
+        } else if (type === 'setVolume') {
+          var level = Number(command.level);
+          if (!env.setVolume || !isFinite(level)) {
+            done(false, env.setVolume ? 'invalid-level' : 'unsupported');
+          } else {
+            env.setVolume(Math.min(1, Math.max(0, level)));
+            done(true);
+          }
         } else {
           done(false, 'unknown');
         }
@@ -729,6 +740,17 @@
       }
     }
 
+    /** The device's volume, when it can tell (a remote's volume slider follows it). */
+    function currentVolume() {
+      var level = null;
+      try {
+        level = env.volume ? env.volume() : null;
+      } catch (error) {
+        return null; // a report never fails for it
+      }
+      return typeof level === 'number' && isFinite(level) ? Math.min(1, Math.max(0, level)) : null;
+    }
+
     function reportSoon() {
       if (!state) return;
       reportTimer = clearTimer(reportTimer);
@@ -749,6 +771,8 @@
         queueEntryId: entry,
         positionMs: Math.max(0, Math.round((position || 0) * 1000))
       };
+      var volume = currentVolume();
+      if (volume !== null) body.volume = volume;
       request('POST', SESSIONS_PATH + encodeURIComponent(grant.sessionId) + '/reports', body).then(function () {
         reportFailures = 0;
         lastReportedEntry = entry;
@@ -811,7 +835,9 @@
       takeHandover: takeHandover,
       stop: stop,
       following: following,
-      notePlayerChanged: notePlayerChanged
+      notePlayerChanged: notePlayerChanged,
+      // The device's volume changed (a remote, the Google Home app, its own buttons).
+      noteVolumeChanged: reportSoon
     };
   }
 
