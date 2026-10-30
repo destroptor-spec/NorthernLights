@@ -1,5 +1,5 @@
 import { CastPlaybackConfirmation } from './castPlaybackConfirmation';
-import { CastVolumeGate } from './castVolume';
+import { VolumeGate } from './volumeGate';
 import {
     boundedQueueRequest, queueWindowEntries, castQueueCallback, CastQueueInsertAcks, planWindowEdit, applyWindowEdit, adoptableWindow,
     CAST_QUEUE_MAX_ITEMS, CAST_QUEUE_INSERT_MAX_ITEMS, CAST_QUEUE_LOW_WATER, CAST_QUEUE_KEEP_PREVIOUS,
@@ -297,10 +297,10 @@ export class CastManager {
     // Session id that already received the fresh-session startup volume, so
     // reconcile retries can't re-clamp after the user adjusts the volume.
     private startupVolumeSessionId: string | null = null;
-    private readonly volumeGate = new CastVolumeGate(
+    private readonly volumeGate = new VolumeGate(
         (level) => this.sendVolume(level),
-        () => {
-            if (this.isConnected()) this.onVolumeChange?.(this.player.volumeLevel);
+        (timedOut) => {
+            if (timedOut && this.isConnected()) this.onVolumeChange?.(this.player.volumeLevel);
         },
     );
     private userSessionIntentTimer: ReturnType<typeof setTimeout> | null = null;

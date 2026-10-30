@@ -95,6 +95,7 @@ sessionFollower.start(usePlayerStore, {
       next: () => store().nextTrack(),
       previous: () => store().prevTrack(),
       seek: (seconds) => playbackManager.seek(seconds),
+      setVolume: (level) => store().setVolume(level),
       playlist: () => store().playlist,
       playAtIndex: (index) => store().playAtIndex(index),
       playQueue: (tracks, index) => store().playSessionQueue(tracks, index),

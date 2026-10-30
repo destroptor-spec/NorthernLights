@@ -9601,6 +9601,11 @@ button.connect-line:disabled {
 .seek-locked {
   pointer-events: none;
 }
+.player-volume-slider:disabled,
+.mobile-now-volume-slider:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
 .mobile-player-pill-btn:disabled {
   cursor: default;
   opacity: 0.45;

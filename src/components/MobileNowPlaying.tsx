@@ -1,6 +1,7 @@
 import { usePlayerStore } from '../store/index';
 import { useFollowedDeviceLabel } from '../hooks/useFollowedDeviceName';
 import { useDisplayedPlaying } from '../hooks/useDisplayedPlaying';
+import { useDisplayedVolume } from '../hooks/useDisplayedVolume';
 import { hasNextTrack } from '../utils/queue';
 import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
@@ -131,7 +132,7 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
   const mayReplace = useGuestMay('replace');
   const audioOutputActive = usePlayerStore((s) => s.audioOutputActive);
   const audioOutputDeviceLabel = usePlayerStore((s) => s.audioOutputDeviceLabel);
-  const volume = usePlayerStore((s) => s.volume);
+  const { volume, remote: remoteVolume, locked: volumeLocked } = useDisplayedVolume();
   const followedDeviceLabel = useFollowedDeviceLabel();
   const followedSilent = usePlayerStore((s) => !!s.sessionFollow?.silent);
   const setVolume = usePlayerStore((s) => s.setVolume);
@@ -393,11 +394,13 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
         {/* Cast volume: on modern Android the hardware volume keys reach the
             receiver (external changes sync back via CastManager's
             VOLUME_LEVEL_CHANGED listener), so no on-screen control renders.
-            Platforms without that routing get this slider instead. */}
-        {castConnected && showCastVolume && (
+            Platforms without that routing get this slider instead. The
+            hardware keys never reach a device this one controls, so that
+            one's volume always gets the slider. */}
+        {((castConnected && showCastVolume) || remoteVolume) && (
           <div className="mobile-now-volume">
             <div className="mobile-now-volume-label">
-              <span>Cast volume</span>
+              <span>{remoteVolume ? 'Volume' : 'Cast volume'}</span>
               <span className="text-[var(--color-primary)]">{Math.round(volume * 100)}%</span>
             </div>
             <input
@@ -407,8 +410,9 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
               step="0.01"
               value={volume}
               onChange={(event) => setVolume(parseFloat(event.target.value))}
+              disabled={volumeLocked}
               className="mobile-now-volume-slider"
-              aria-label="Cast volume"
+              aria-label={remoteVolume ? 'Volume' : 'Cast volume'}
             />
           </div>
         )}

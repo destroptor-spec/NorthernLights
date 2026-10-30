@@ -1153,6 +1153,19 @@ and device chip (store `routeToPlayingDevice`, `remoteControlOutputId`,
 through `seekTo`; Pause only reaches a chosen device and never asks); (4) a casting device that is taken over stops casting and
 follows.
 
+**Volume (Andreas, 2026-10-30).** The output reports its volume
+(`report.volume`, kept in server memory per grant, no schema change), and
+`setVolume { level }` is a `transport` command: every one of the user's own
+devices, and a guest from Playback Control. On the controlling device the
+volume slider shows and sets the chosen device's volume (`setVolume` in the
+store routes to it; `selectDisplayedVolume`, `useDisplayedVolume`); on a
+phone it gets a slider, since the hardware keys never reach it. A drag is
+sent at most every 250 ms, and the device's reports of earlier steps don't
+pull the slider back (`VolumeGate`, `src/utils/volumeGate.ts`, which also
+fixed the same rubberbanding with a Cast receiver, #206). A device that
+reports no volume (a receiver that follows the session on its own, until
+`receiver-follow.js` reports one) has the slider disabled.
+
 **PR 5 (who turns sync on, decided with Andreas 2026-10-13):** not a per-device
 user setting.
 - The admin chooses in Settings → System → Service: **Off** (the default),

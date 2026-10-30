@@ -14,6 +14,7 @@ import { createUuid } from './uuid';
 export type RemoteAction =
   | { type: 'play' | 'pause' | 'next' | 'previous' }
   | { type: 'seek'; seconds: number }
+  | { type: 'setVolume'; level: number }
   /** A track in this device's copy of the session queue. */
   | { type: 'jump'; track: TrackInfo }
   /** Something new: replace the session queue and start `startIndex`. */
@@ -35,6 +36,9 @@ export async function sendRemoteAction(action: RemoteAction, target: FollowedOut
     switch (action.type) {
       case 'seek':
         command = { type: 'seek', positionMs: Math.max(0, Math.round(action.seconds * 1000)) };
+        break;
+      case 'setVolume':
+        command = { type: 'setVolume', level: Math.min(1, Math.max(0, action.level)) };
         break;
       case 'jump':
         if (!action.track.queueEntryId) return 'failed';

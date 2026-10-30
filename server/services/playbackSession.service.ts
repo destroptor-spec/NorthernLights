@@ -169,6 +169,8 @@ const TERMINAL_OUTPUT_STATES = new Set(['stopped', 'idle', 'error']);
  * `receiver` output needs no hint: its id names its Cast session.
  */
 const castSessionIds = new Map<string, { generation: number; castSessionId: string }>();
+/** The output's last reported volume, by session; in memory like castSessionIds. */
+const outputVolumes = new Map<string, { generation: number; volume: number }>();
 
 const RECEIVER_OUTPUT_PREFIX = 'receiver:';
 
@@ -182,6 +184,11 @@ function receiverCastSessionId(outputId: string): string | null {
   return outputId.startsWith(RECEIVER_OUTPUT_PREFIX) ? outputId.slice(RECEIVER_OUTPUT_PREFIX.length) || null : null;
 }
 
+function volumeOf(sessionId: string, generation: number): { volume?: number } {
+  const known = outputVolumes.get(sessionId);
+  return known && known.generation === generation ? { volume: known.volume } : {};
+}
+
 function serializeOutput(row: SessionRow, now = Date.now()): PlaybackOutput | null {
   if (!row.output_id || !row.output_kind || !row.output_claimed_at) return null;
   const reported = row.output_reported_at && row.output_state ? {
@@ -191,6 +198,7 @@ function serializeOutput(row: SessionRow, now = Date.now()): PlaybackOutput | nu
     queueEntryId: row.output_entry_id,
     positionMs: Number(row.output_position_ms) || 0,
     reportedAt: new Date(row.output_reported_at).toISOString(),
+    ...volumeOf(row.id, Number(row.output_generation)),
   } : null;
   const lastHeard = Date.parse(reported?.reportedAt ?? new Date(row.output_claimed_at).toISOString());
   const status = reported && TERMINAL_OUTPUT_STATES.has(reported.state)
@@ -830,6 +838,7 @@ export async function reportPlaybackOutput(input: {
       report.positionMs, currentEntryId, playbackState, changed ? 1 : 0,
     ]);
     await client.query('COMMIT');
+    if (report.volume !== undefined) outputVolumes.set(input.sessionId, { generation: grant.gen, volume: report.volume });
     const revision = Number(updated.rows[0].revision);
     if (changed) await publishToSession(db, input.userId, input.sessionId, 'playbackSession.updated', { sessionId: input.sessionId, revision });
     // Every accepted report, so other devices can show live progress without
@@ -846,6 +855,7 @@ export async function reportPlaybackOutput(input: {
         queueEntryId: report.queueEntryId,
         positionMs: report.positionMs,
         reportedAt: new Date(updated.rows[0].output_reported_at).toISOString(),
+        ...volumeOf(input.sessionId, grant.gen),
       },
     }, { transient: true });
     // entryChanged is for the server (Infinity, Phase 4), not for the reporter.
@@ -895,5 +905,6 @@ export async function deletePlaybackSession(
     if (!current) throw new PlaybackSessionNotFoundError();
     throw new PlaybackSessionRevisionError(current);
   }
+  outputVolumes.delete(sessionId);
   for (const member of audience) publishApiV1Event(member, 'playbackSession.deleted', { sessionId });
 }
