@@ -9549,7 +9549,7 @@ button.connect-line:disabled {
   padding-top: 4px;
 }
 /* The gig's panel (Andreas's mockup, 2026-10-30): everyone in it rides its top
-   edge, then permissions, Open session, Copy link, End gig and Invite. The
+   edge, then permissions, Open session, End gig and Invite. The
    margin (not padding) leaves room for the avatars and is clipped with the
    rest while the fold is shut. */
 .gig-panel {
@@ -9595,9 +9595,6 @@ button.connect-line:disabled {
   font-size: 0.85rem;
   text-align: left;
 }
-button.gig-row {
-  cursor: pointer;
-}
 .gig-row-label {
   flex: 1;
   min-width: 0;
@@ -9608,22 +9605,6 @@ button.gig-row {
 .gig-row-value {
   color: var(--color-text-secondary);
   white-space: nowrap;
-}
-.gig-row-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
-  color: var(--color-text-secondary);
-  transition: background 150ms var(--ease-out), color 150ms var(--ease-out);
-}
-button.gig-row:hover .gig-row-icon {
-  background: color-mix(in srgb, var(--color-text-primary) 14%, transparent);
-  color: var(--color-text-primary);
 }
 .gig-actions {
   display: grid;
@@ -9683,8 +9664,13 @@ button.gig-row:hover .gig-row-icon {
 .account-switch--sm[data-state="on"] .account-switch__thumb {
   transform: translateX(16px);
 }
-/* The guests' level: one rail, three stops, the panel's width. */
+/* The guests' level: one rail, three stops, the panel's width. It fills up to
+   the level, the stops below it lit, since each level includes the ones below
+   (Andreas, 2026-10-30). */
 .gig-level {
+  --gig-fill: 0;
+  --gig-stop-2: var(--color-text-muted);
+  --gig-stop-3: var(--color-text-muted);
   width: 100%;
   height: 20px;
   margin: 2px 0 8px;
@@ -9692,11 +9678,21 @@ button.gig-row:hover .gig-row-icon {
   appearance: none;
   /* The three stops sit where the thumb's centre lands: 7px in, the middle, 7px from the end. */
   background:
-    radial-gradient(circle at 7px 50%, var(--color-text-muted) 2.5px, transparent 3px),
-    radial-gradient(circle at 50% 50%, var(--color-text-muted) 2.5px, transparent 3px),
-    radial-gradient(circle at calc(100% - 7px) 50%, var(--color-text-muted) 2.5px, transparent 3px),
+    radial-gradient(circle at 7px 50%, var(--color-primary) 2.5px, transparent 3px),
+    radial-gradient(circle at 50% 50%, var(--gig-stop-2) 2.5px, transparent 3px),
+    radial-gradient(circle at calc(100% - 7px) 50%, var(--gig-stop-3) 2.5px, transparent 3px),
+    linear-gradient(var(--color-primary), var(--color-primary)) 7px 50% / calc((100% - 14px) * var(--gig-fill)) 3px no-repeat,
     linear-gradient(var(--glass-border), var(--glass-border)) 50% 50% / calc(100% - 14px) 2px no-repeat;
   cursor: pointer;
+}
+.gig-level[data-level="2"] {
+  --gig-fill: 0.5;
+  --gig-stop-2: var(--color-primary);
+}
+.gig-level[data-level="3"] {
+  --gig-fill: 1;
+  --gig-stop-2: var(--color-primary);
+  --gig-stop-3: var(--color-primary);
 }
 .gig-level::-moz-range-track {
   background: transparent;

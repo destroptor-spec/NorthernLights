@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Copy, Users } from 'lucide-react';
+import { Users } from 'lucide-react';
 import type { SessionInvitePreview } from '../../shared/api/v1';
 import { useListenTogetherStore } from '../store/listenTogether';
-import { copyInviteLink, endTogether, prepareInviteLink, setDiscoverable, setGigLevel, shareInviteLink, startGig } from '../utils/listenTogether';
+import { endTogether, prepareInviteLink, setDiscoverable, setGigLevel, shareInviteLink, startGig } from '../utils/listenTogether';
 import { GIG_LEVELS, gigLevelOf, gigRunning, sessionTitle } from '../utils/listenTogetherText';
 import { AvatarStack, SessionPreviewAvatars } from './UserAvatar';
 
@@ -12,8 +12,9 @@ import { AvatarStack, SessionPreviewAvatars } from './UserAvatar';
  * makes the card longer, the devices above untouched, with the gig's panel
  * (Andreas's mockup, 2026-10-30): everyone in it on its top edge, overlapping
  * (tapping them opens the members, GigMembers, and closes the card), "Guest
- * permissions" over three stops, "Open session" (discoverable), "Copy link",
- * then End gig and Invite (the share sheet).
+ * permissions" over three stops, filled up to the level, "Open session"
+ * (discoverable), then End gig and Invite (the share sheet, or a copy of the
+ * link where there is none: no Copy link line, Andreas 2026-10-30).
  */
 export const GigSection: React.FC<{ onDone?: () => void }> = ({ onDone }) => {
   const own = useListenTogetherStore((s) => s.own);
@@ -79,6 +80,7 @@ export const GigSection: React.FC<{ onDone?: () => void }> = ({ onDone }) => {
               max={3}
               step={1}
               value={level}
+              data-level={level}
               aria-labelledby="gig-level-label"
               aria-valuetext={GIG_LEVELS[level - 1].name}
               onChange={(event) => void setGigLevel(Number(event.target.value) as 1 | 2 | 3)}
@@ -98,10 +100,6 @@ export const GigSection: React.FC<{ onDone?: () => void }> = ({ onDone }) => {
                 <span className="account-switch__thumb" />
               </button>
             </div>
-            <button type="button" className="gig-row" onClick={() => void copyInviteLink()}>
-              <span className="gig-row-label">Copy link</span>
-              <span className="gig-row-icon" aria-hidden="true"><Copy size={15} /></span>
-            </button>
 
             <div className="gig-actions">
               <button
