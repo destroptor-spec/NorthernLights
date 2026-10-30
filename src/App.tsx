@@ -10,6 +10,7 @@ import MainContent, { InviteRegister } from './components/MainContent';
 import CastHealthToasts from './components/cast/CastHealthToasts';
 import { PlayWherePrompt } from './components/PlayWherePrompt';
 import { InvitePrompt } from './components/InvitePrompt';
+import { GigMembers } from './components/GigMembers';
 import KeyboardHint from './components/KeyboardHint';
 import { usePlayerStore } from './store/index';
 import { castManager } from './utils/CastManager';
@@ -668,6 +669,7 @@ const App: React.FC = () => {
           <CastHealthToasts />
           <PlayWherePrompt />
           <InvitePrompt />
+          <GigMembers />
 
           {/* Desktop Playback Surface — floats or docks based on user preference */}
           {playlist.length > 0 && (

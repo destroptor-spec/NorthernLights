@@ -4,6 +4,7 @@ import { useListenTogetherStore } from '../../store/listenTogether';
 import * as together from '../../utils/listenTogether';
 import { InvitePrompt } from '../InvitePrompt';
 import { GigSection } from '../GigSection';
+import { GigMembers } from '../GigMembers';
 import { ConnectMenuContent } from '../ConnectMenu';
 import type { CastStatus } from '../../hooks/useCastStatus';
 
@@ -20,6 +21,9 @@ jest.mock('../../utils/listenTogether', () => ({
   setDiscoverable: jest.fn(async () => undefined),
   setGigLevel: jest.fn(async () => undefined),
   copyInviteLink: jest.fn(async () => undefined),
+  shareInviteLink: jest.fn(async () => undefined),
+  prepareInviteLink: jest.fn(),
+  removeGuest: jest.fn(async () => undefined),
   joinNearby: jest.fn(async () => undefined),
   endTogether: jest.fn(async () => undefined),
   leaveSharedSession: jest.fn(async () => undefined),
@@ -35,7 +39,7 @@ const guest = (userId: string, username: string) => ({
 beforeEach(() => {
   jest.clearAllMocks();
   act(() => {
-    useListenTogetherStore.setState({ ownSessionId: null, own: null, shared: null, prompt: null, openedSessionId: null, available: [] });
+    useListenTogetherStore.setState({ ownSessionId: null, own: null, shared: null, prompt: null, openedSessionId: null, available: [], membersOpen: false });
     usePlayerStore.setState({
       sessionFollow: null, remoteControlOutputId: null, castConnected: false, audioOutputSupported: false,
       syncPlaybackAcrossDevices: true, connectedDevices: [],
@@ -85,37 +89,74 @@ describe("the owner's gig", () => {
     expect(mocked.startGig).toHaveBeenCalled();
   });
 
-  it('while it runs: everyone in it overlapping (five, then +N), discoverable, link, level and End', () => {
+  it('while it runs: the panel (Andreas, 2026-10-30), everyone on its edge (three, then +N), level, Open session, link, End gig and Invite', () => {
     act(() => {
       useListenTogetherStore.setState({
         ownSessionId: 's',
-        own: { visibility: 'invite', guests: people(6), ownerAvatar: avatar('o', 'A'), permissions: ['queue'] },
+        own: { visibility: 'invite', guests: people(4), ownerAvatar: avatar('o', 'A'), permissions: ['queue'] },
       });
     });
     const { container } = render(<GigSection />);
     expect(container.querySelector('.connect-gig')!.className).toContain('is-running');
     expect(screen.queryByText('Start a gig')).toBeNull();
-    expect(container.querySelectorAll('.connect-gig .avatar-stack > .user-avatar:not(.avatar-stack-more)')).toHaveLength(5);
+    expect(container.querySelectorAll('.gig-people .avatar-stack > .user-avatar:not(.avatar-stack-more)')).toHaveLength(3);
     expect(screen.getByText('+2')).toBeTruthy();
+    expect(mocked.prepareInviteLink).toHaveBeenCalled();
 
-    const discoverable = screen.getByRole('switch', { name: 'Make discoverable' });
-    expect(discoverable.getAttribute('aria-checked')).toBe('false');
-    fireEvent.click(discoverable);
-    expect(mocked.setDiscoverable).toHaveBeenCalledWith(true);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Copy invite link' }));
-    expect(mocked.copyInviteLink).toHaveBeenCalled();
-
-    const level = screen.getByRole('slider', { name: 'What guests can do' });
+    const level = screen.getByRole('slider', { name: 'Guest permissions' });
     expect(level.getAttribute('aria-valuetext')).toBe('Queue Editor');
     expect(screen.getByText('Queue Editor')).toBeTruthy();
     fireEvent.change(level, { target: { value: '3' } });
     expect(mocked.setGigLevel).toHaveBeenCalledWith(3);
 
-    fireEvent.click(screen.getByRole('button', { name: 'End' }));
+    const discoverable = screen.getByRole('switch', { name: 'Open session' });
+    expect(discoverable.getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(discoverable);
+    expect(mocked.setDiscoverable).toHaveBeenCalledWith(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy link' }));
+    expect(mocked.copyInviteLink).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Invite' }));
+    expect(mocked.shareInviteLink).toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'End gig' }));
     expect(mocked.endTogether).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'End the gig? Tap to confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: 'End for everyone?' }));
     expect(mocked.endTogether).toHaveBeenCalled();
+  });
+
+  it('tapping everyone closes the card and opens the members: the owner, then each guest with Remove', () => {
+    act(() => {
+      useListenTogetherStore.setState({
+        ownSessionId: 's',
+        own: { visibility: 'invite', guests: people(2), ownerAvatar: avatar('o', 'A'), ownerName: 'Andreas', permissions: ['queue'] },
+      });
+    });
+    const onDone = jest.fn();
+    render(<><GigSection onDone={onDone} /><GigMembers /></>);
+    expect(screen.queryByRole('dialog', { name: 'Your gig' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: "Who's in your gig: 3 people" }));
+    expect(onDone).toHaveBeenCalled();
+    const dialog = screen.getByRole('dialog', { name: 'Your gig' });
+    expect(dialog.textContent).toContain('Andreas');
+    expect(dialog.textContent).toContain('Owner');
+    expect(screen.queryByRole('button', { name: 'Remove Andreas' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove guest1' }));
+    expect(mocked.removeGuest).toHaveBeenCalledWith('g1');
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Your gig' })).toBeNull();
+  });
+
+  it('closes the members when the gig ends', () => {
+    act(() => {
+      useListenTogetherStore.setState({ ownSessionId: 's', own: { visibility: 'invite', guests: people(1) }, membersOpen: true });
+    });
+    render(<GigMembers />);
+    expect(screen.getByRole('dialog', { name: 'Your gig' })).toBeTruthy();
+    act(() => { useListenTogetherStore.setState({ own: { visibility: 'private', guests: [] } }); });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(useListenTogetherStore.getState().membersOpen).toBe(false);
   });
 
   it('shows the level the gig is at', () => {
@@ -123,8 +164,8 @@ describe("the owner's gig", () => {
       useListenTogetherStore.setState({ ownSessionId: 's', own: { visibility: 'discoverable', guests: [], permissions: ['queue', 'transport'] } });
     });
     render(<GigSection />);
-    expect(screen.getByRole('slider', { name: 'What guests can do' }).getAttribute('aria-valuetext')).toBe('Playback Control');
-    expect(screen.getByRole('switch', { name: 'Make discoverable' }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByRole('slider', { name: 'Guest permissions' }).getAttribute('aria-valuetext')).toBe('Playback Control');
+    expect(screen.getByRole('switch', { name: 'Open session' }).getAttribute('aria-checked')).toBe('true');
   });
 });
 

@@ -18,6 +18,8 @@ export interface OwnTogether {
   guests: SessionMember[];
   /** The owner's own avatar, first in the gig's line. */
   ownerAvatar?: UserAvatar | null;
+  /** The owner's name, first in the gig's members. */
+  ownerName?: string | null;
   /** The guests' permissions: the gig's newest working link's. */
   permissions?: SessionScope[] | null;
 }
@@ -38,6 +40,8 @@ export interface ListenTogetherState {
   openedSessionId: string | null;
   /** Discoverable gigs nearby ("Available gigs", 6e), as previews. */
   available: SessionInvitePreview[];
+  /** The owner's members list is open (GigMembers): tapping the gig's avatars. */
+  membersOpen: boolean;
 }
 
 const OPENED_KEY = 'aurora-listen-together-opened';
@@ -57,6 +61,7 @@ export const useListenTogetherStore = create<ListenTogetherState>(() => ({
   prompt: null,
   openedSessionId: readOpened(),
   available: [],
+  membersOpen: false,
 }));
 
 useListenTogetherStore.subscribe((state, previous) => {
