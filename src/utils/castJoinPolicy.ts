@@ -10,14 +10,6 @@
 /** Longest wait before treating a silent session as fresh. */
 export const JOIN_MEDIA_WAIT_MS = 1500;
 
-/**
- * Longest wait for any answer at all before calling the session deaf. The
- * sender pings the receiver as it joins (an aurora.control every receiver
- * acknowledges); a healthy one answers within a fraction of a second, the
- * Beoplay A9 within one or two.
- */
-export const JOIN_DEAF_AFTER_MS = 5000;
-
 export type JoinVerdict =
   /** The SDK sees media on the receiver: take it on, load nothing. */
   | 'adopt'
@@ -26,14 +18,7 @@ export type JoinVerdict =
   /** No evidence yet: ask again shortly. */
   | 'wait'
   /** Our receiver says it plays, but the SDK never showed the media: load nothing. */
-  | 'hold'
-  /**
-   * Nothing from the receiver at all, not even the ping's acknowledgement:
-   * this device sends but never hears (prod 2026-10-27 12:33: the desktop
-   * joined the NAD's idle receiver app, loaded, heard nothing, and loaded
-   * again). Load nothing; start over in a new Cast session.
-   */
-  | 'deaf';
+  | 'hold';
 
 const ACTIVE_STATES = new Set(['PLAYING', 'PAUSED', 'BUFFERING']);
 
@@ -41,14 +26,8 @@ export function decideJoin(input: {
   sdkHasMedia: boolean;
   /** The latest aurora.status received since the session connected, if any. */
   receiverStatus: { queueEntryId?: string | null; playerState?: string | null } | null;
-  /**
-   * Anything from the receiver since the session connected (the ping's
-   * acknowledgement, a status). Left out: not known, decided as before.
-   */
-  heardFromReceiver?: boolean;
   elapsedMs: number;
   maxWaitMs?: number;
-  deafAfterMs?: number;
 }): JoinVerdict {
   if (input.sdkHasMedia) return 'adopt';
   const max = input.maxWaitMs ?? JOIN_MEDIA_WAIT_MS;
@@ -57,9 +36,6 @@ export function decideJoin(input: {
     const playing = !!status.queueEntryId && ACTIVE_STATES.has(String(status.playerState || ''));
     if (!playing) return 'fresh';
     return input.elapsedMs < max ? 'wait' : 'hold';
-  }
-  if (input.heardFromReceiver === false) {
-    return input.elapsedMs < (input.deafAfterMs ?? JOIN_DEAF_AFTER_MS) ? 'wait' : 'deaf';
   }
   return input.elapsedMs < max ? 'wait' : 'fresh';
 }

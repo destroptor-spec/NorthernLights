@@ -1,4 +1,4 @@
-import { decideJoin, isOwnLeaveDisconnect, JOIN_DEAF_AFTER_MS, JOIN_MEDIA_WAIT_MS, OWN_LEAVE_QUIET_MS } from '../castJoinPolicy';
+import { decideJoin, isOwnLeaveDisconnect, JOIN_MEDIA_WAIT_MS, OWN_LEAVE_QUIET_MS } from '../castJoinPolicy';
 
 /**
  * Prod 2026-10-13 19:53:48: the desktop's Cast dialog joined the NAD, paused
@@ -31,23 +31,6 @@ describe('decideJoin', () => {
   it('treats a receiver that stays silent for the whole wait as fresh, as before', () => {
     expect(decideJoin({ sdkHasMedia: false, receiverStatus: null, elapsedMs: JOIN_MEDIA_WAIT_MS - 1 })).toBe('wait');
     expect(decideJoin({ sdkHasMedia: false, receiverStatus: null, elapsedMs: JOIN_MEDIA_WAIT_MS })).toBe('fresh');
-  });
-
-  it('goes ahead after the wait when the receiver answered the ping but has nothing to report', () => {
-    expect(decideJoin({ sdkHasMedia: false, receiverStatus: null, heardFromReceiver: true, elapsedMs: JOIN_MEDIA_WAIT_MS })).toBe('fresh');
-  });
-
-  /**
-   * Prod 2026-10-27 12:33: the desktop joined the NAD's idle receiver app,
-   * heard nothing back (no ack, no status, no media status), loaded, and
-   * loaded again 15 s later over its own track.
-   */
-  it('calls a session that never answers deaf, after waiting longer for a slow receiver', () => {
-    expect(decideJoin({ sdkHasMedia: false, receiverStatus: null, heardFromReceiver: false, elapsedMs: JOIN_MEDIA_WAIT_MS })).toBe('wait');
-    expect(decideJoin({ sdkHasMedia: false, receiverStatus: null, heardFromReceiver: false, elapsedMs: JOIN_DEAF_AFTER_MS - 1 })).toBe('wait');
-    expect(decideJoin({ sdkHasMedia: false, receiverStatus: null, heardFromReceiver: false, elapsedMs: JOIN_DEAF_AFTER_MS })).toBe('deaf');
-    // Media the SDK sees is an answer too.
-    expect(decideJoin({ sdkHasMedia: true, receiverStatus: null, heardFromReceiver: false, elapsedMs: JOIN_DEAF_AFTER_MS })).toBe('adopt');
   });
 });
 
