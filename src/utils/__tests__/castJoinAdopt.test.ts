@@ -154,6 +154,30 @@ describe('a joined session that never answers', () => {
     expect(manager.handOffToLocalAfterSessionEnd).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * Andreas, 2026-10-30: casting from a new device of the same account to the
+   * same Cast device must stay as before (cast-join-left). With the phone's
+   * cast output id lost in a server restart, only the deaf join's name match
+   * knows it is the user's own phone.
+   */
+  it("leaves another of my devices' cast instead of stopping it, known by name after a deaf join", async () => {
+    mockAddToast.mockClear();
+    const { manager, endCurrentSession } = harness({ deaf: true });
+    const check = jest.fn((_name: string, options?: { joinedRunningSession?: boolean }) => options?.joinedRunningSession === true);
+    manager.setCastingElsewhereCheck(check);
+    const started = manager.startPlaybackForCurrentSession('session-started');
+    await jest.advanceTimersByTimeAsync(5100);
+    await started;
+    expect(check).toHaveBeenCalledWith('NAD Forstærker', { joinedRunningSession: true });
+    expect(endCurrentSession).toHaveBeenCalledWith(false);
+    expect(endCurrentSession).not.toHaveBeenCalledWith(true);
+    expect(manager.logCast).toHaveBeenCalledWith('ok', 'cast-join-left', 'reason=session-started:deaf device=NAD Forstærker');
+    // Its own end is the leave: no handoff, and no "didn't answer".
+    manager.afterSessionEnded({ index: 1, positionSeconds: 12, wasPlaying: true });
+    expect(manager.handOffToLocalAfterSessionEnd).not.toHaveBeenCalled();
+    expect(mockAddToast).not.toHaveBeenCalled();
+  });
+
   it('a receiver that answers the ping is not deaf, however slowly its media shows', async () => {
     const { manager, endCurrentSession } = harness();
     const started = manager.startPlaybackForCurrentSession('session-started');
@@ -201,7 +225,7 @@ describe('a Cast device another of my devices is casting to', () => {
     const check = jest.fn(() => true);
     manager.setCastingElsewhereCheck(check);
     await manager.startPlaybackForCurrentSession('cast-connected-user-launch');
-    expect(check).toHaveBeenCalledWith('NAD Forstærker');
+    expect(check).toHaveBeenCalledWith('NAD Forstærker', {});
     expect(endCurrentSession).toHaveBeenCalledWith(false);
     expect(manager.hydrateSenderFromRemoteSession).not.toHaveBeenCalled();
     expect(manager.handleCastConnected).not.toHaveBeenCalled();

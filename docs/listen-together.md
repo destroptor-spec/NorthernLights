@@ -390,6 +390,14 @@ commands just take effect, with text only when they fail.
     channel. v3 keeps the stop and the leave, offers Cast again (a tap opens
     the picker), and reports no "Cast device disconnected" for its own
     leave.
+  - **The user's own devices are never stopped (Andreas, 2026-10-30):**
+    before stopping, a deaf join asks again whether another of the user's
+    devices casts to that device, by its name alone (a deaf join is always
+    into a session already running there, and the server forgets a cast
+    output's Cast session id in a restart; a locked phone counts too). If one
+    does, the desktop leaves and becomes its remote, as `cast-join-left`
+    does (`reason=…:deaf`). Without sync there is nothing to ask, and the
+    stop and Cast again stay.
 - **Before joining,** discovery and links show only the preview: the
   owner's name and initials.
 - **A join link is a bearer link within the server** (decided): anyone on the
