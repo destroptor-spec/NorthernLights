@@ -365,6 +365,25 @@ commands just take effect, with text only when they fail.
     devices out of the owner's Cast session (leave on join, as
     `cast-join-left` does). The owner's own devices need a fix for a joined
     session that never answers: leave it and start a new one.
+  - **Built 2026-10-30 (Andreas: restart, then Cast again):** the log of
+    2026-10-27 12:31–12:34 shows the phone stopping its cast, the NAD's
+    receiver app staying on idle, the desktop joining it at 12:33:09 and
+    hearing nothing back. As it joins, the sender now pings the receiver (an
+    `aurora.control` with an action no receiver knows, which every receiver
+    acknowledges) and waits up to 5 s for any answer. None: it loads
+    nothing, stops that receiver app (`cast-join-deaf`), hands nothing back
+    to itself, and shows "<device> didn't answer." with Cast again, which
+    opens the picker for a new session. Sender only (`castJoinPolicy.ts`,
+    `CastManager`).
+  - **v2, after the prod test 2026-10-30 21:03** (the desktop joined a cast
+    from a phone signed in to another account; the stop ended it, Chrome
+    never confirmed the end, and its picker then failed in 6 ms). Andreas:
+    as when another app casts to a busy device, the cast there ends
+    gracefully and the new one starts. The sender stops the receiver app,
+    leaves the session 1 s later (`cast-join-deaf-leave`) so Chrome lets go
+    of it, and once it has ended opens the picker by itself
+    (`deaf-join-restart`; Chrome starts a cast only from its picker). A
+    refusal within 0.5 s gets Cast again instead.
 - **Before joining,** discovery and links show only the preview: the
   owner's name and initials.
 - **A join link is a bearer link within the server** (decided): anyone on the

@@ -12,7 +12,7 @@ import { usePlayerStore } from '../store';
 import { getAuroraClientId, mintScopedToken, signArtworkLinks } from '../api/auroraApi';
 import { CastMediaToken, withCastToken } from './castMediaToken';
 import { describeThisDevice } from './deviceName';
-import { decideJoin, isOwnLeaveDisconnect } from './castJoinPolicy';
+import { decideJoin, isOwnLeaveDisconnect, JOIN_DEAF_AFTER_MS } from './castJoinPolicy';
 import {
     POSITION_TICK_MS,
     RECEIVER_MESSAGE_MAX_BYTES,
@@ -85,6 +85,12 @@ export interface CastHealthStatus {
 }
 
 const SESSION_STORAGE_KEY = 'cast_session_id';
+/** The join's ping (cast-join-deaf): an action no receiver knows, which every receiver acknowledges. */
+const JOIN_PING_ACTION = 'ping';
+/** A deaf session: how long after stopping it this device leaves it (stopDeafSession). */
+const DEAF_LEAVE_AFTER_MS = 1000;
+/** A picker answer this quick is Chrome refusing it, not the listener closing it. */
+const DEAF_PICKER_REFUSED_MS = 500;
 // The window's entry IDs, so a reloaded or recovered sender can adopt it.
 const QUEUE_WINDOW_STORAGE_KEY = 'aurora-cast-queue-window-v1';
 // A LOAD not acknowledged by then is treated as sent, never resent blindly.
@@ -287,6 +293,8 @@ export class CastManager {
     // the SDK relay had already staled. See #56.
     private lastAuroraStatus: AuroraReceiverStatus | null = null;
     private lastAuroraStatusAt = 0;
+    /** Anything from the receiver on the Aurora channel, current session only (the join's deaf check). */
+    private lastReceiverAnswerAt = 0;
     private readonly auroraStatusFreshMs = 20000;
     private readonly remoteEvidenceWindowMs = 60000;
     private freshSessionStartedAt = 0;
@@ -1112,6 +1120,17 @@ export class CastManager {
     }
 
     private afterSessionEnded(snapshot: CastEndSnapshot | null) {
+        if (this.stoppedDeafDevice) {
+            const device = this.stoppedDeafDevice;
+            this.stoppedDeafDevice = '';
+            this.resetCastEndIntent();
+            this.logCast('ok', 'cast-ended-handoff skipped', 'reason=deaf-join');
+            if (usePlayerStore.getState().playbackState === 'playing') {
+                usePlayerStore.setState({ playbackState: 'paused', isBuffering: false });
+            }
+            this.restartAfterDeafSession(device);
+            return;
+        }
         if (this.stoppedBecauseReplaced) {
             this.stoppedBecauseReplaced = false;
             this.resetCastEndIntent();
@@ -1173,7 +1192,7 @@ export class CastManager {
      * progress"). A picker that never answers is let go after
      * CAST_PICKER_PENDING_MAX_MS.
      */
-    public openCastPicker(reason: string): 'opened' | 'pending' | 'unavailable' {
+    public openCastPicker(reason: string, onAnswer?: (outcome: string, ms: number) => void): 'opened' | 'pending' | 'unavailable' {
         const context = this.castContext;
         if (!context || typeof context.requestSession !== 'function' || this.isConnected()) {
             this.logCast('warn', 'cast-picker', `reason=${reason} result=unavailable state=${this.state}`);
@@ -1192,6 +1211,7 @@ export class CastManager {
             this.castPickerPendingSince = 0;
             this.logCast(outcome === 'connected' ? 'ok' : 'warn', 'cast-picker-answered', `reason=${reason} outcome=${outcome} ms=${Date.now() - since}`);
             this.notifyStateChange();
+            onAnswer?.(outcome, Date.now() - since);
         };
         let request: Promise<unknown>;
         try {
@@ -1560,6 +1580,7 @@ export class CastManager {
                 } catch {
                     return; // malformed payload — ignore rather than throw in a listener
                 }
+                if (session === this.castContext?.getCurrentSession?.()) this.lastReceiverAnswerAt = Date.now();
                 if (status && status.type === 'aurora.status') {
                     if (session !== this.castContext?.getCurrentSession?.()) return;
                     this.diagnosticsStatusSession = session;
@@ -1600,6 +1621,8 @@ export class CastManager {
                     this.receiverFollowAcks.acknowledge(status as unknown as ReceiverFollowAck);
                 } else if (status && (status as { type?: string }).type === 'aurora.control.ack') {
                     const ack = status as unknown as { action?: string; ok?: boolean; detail?: string; requestId?: number };
+                    // The join's ping: answering at all is all it asks (an unknown action to the receiver).
+                    if (ack.action === JOIN_PING_ACTION) return;
                     this.logCast(
                         ack.ok ? 'ok' : 'warn',
                         `Cast ${ack.action || 'control'} acknowledged by receiver`,
@@ -3257,13 +3280,22 @@ export class CastManager {
         if (!session) return 'stop';
         const startedAt = Date.now();
         this.sendMediaGetStatus(session);
+        // Every receiver answers this; a session that never does is deaf.
+        this.sendJoinPing(session);
+        let pingedAgain = false;
         for (;;) {
             if (this.castContext?.getCurrentSession?.() !== session) return 'stop';
             const media = this.getHydratableMediaSession();
             const elapsedMs = Date.now() - startedAt;
+            const heardFromReceiver = this.lastReceiverAnswerAt >= startedAt;
+            if (!heardFromReceiver && !pingedAgain && elapsedMs >= JOIN_DEAF_AFTER_MS / 2) {
+                pingedAgain = true;
+                this.sendJoinPing(session);
+            }
             const verdict = decideJoin({
                 sdkHasMedia: this.hasActiveRemoteMediaSession(media),
                 receiverStatus: this.lastAuroraStatusAt >= startedAt ? this.lastAuroraStatus : null,
+                heardFromReceiver,
                 elapsedMs,
             });
             if (verdict === 'adopt') {
@@ -3278,9 +3310,83 @@ export class CastManager {
                 if (elapsedMs > 0) this.logCast('ok', 'cast-join-none', `reason=${reason} waitedMs=${elapsedMs}`);
                 return null;
             }
+            if (verdict === 'deaf') {
+                this.logCast('warn', 'cast-join-deaf', `reason=${reason} waitedMs=${elapsedMs}`);
+                this.stopDeafSession();
+                return 'stop';
+            }
             await this.delay(100);
         }
     }
+
+    private sendJoinPing(session: any) {
+        try {
+            const sent = session.sendMessage(getAuroraStatusNamespace(session), {
+                type: 'aurora.control', action: JOIN_PING_ACTION, requestId: ++this.auroraControlRequestId,
+            });
+            if (sent && typeof sent.catch === 'function') sent.catch(() => undefined);
+        } catch {
+            // Not sent: no answer will come, and the wait decides as for a deaf session.
+        }
+    }
+
+    /**
+     * A joined Cast session that never answers (cast-join-deaf). Andreas,
+     * 2026-10-30: as when another app casts to a busy device, the cast there
+     * ends gracefully and a new one starts. So: stop that receiver app (its
+     * own senders, such as another account's phone, hear the end), then
+     * leave, since Chrome may never confirm a stop it cannot hear (prod
+     * 2026-10-30 21:03:30, cast-end-unconfirmed), and while it holds the dead
+     * session its picker fails at once (21:03:35, error-cancel in 6 ms). Once
+     * ended, afterSessionEnded opens the picker for the new cast. Nothing is
+     * handed back here: nothing played here.
+     */
+    private stopDeafSession() {
+        if (!this.castContext) return;
+        this.stoppedDeafDevice = this.getCastDeviceName() || 'The Cast device';
+        this.userSessionRequestPending = false;
+        this.clearUserSessionIntentTimer();
+        this.freshSessionStartedAt = 0;
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+        const sid = this.getCurrentSessionId();
+        try {
+            this.suppressRemoteEndedDuringDisconnect = true;
+            this.endCastSession('deaf-join');
+        } catch (error) {
+            this.logCast('warn', 'cast-join-deaf-stop-failed', this.describeError(error));
+        }
+        // The stop goes out first; then let go of the session here.
+        setTimeout(() => {
+            if (!sid || this.getCurrentSessionId() !== sid) return;
+            this.logCast('ok', 'cast-join-deaf-leave', `sid=${sid}`);
+            try {
+                this.castContext?.endCurrentSession?.(false);
+            } catch (error) {
+                this.logCast('warn', 'cast-join-deaf-leave-failed', this.describeError(error));
+            }
+        }, DEAF_LEAVE_AFTER_MS);
+    }
+
+    /**
+     * After a deaf session ended: the picker for the new cast, opened by
+     * itself. Chrome may refuse it (no recent tap, or a session it still
+     * holds): an answer within DEAF_PICKER_REFUSED_MS is that, not the
+     * listener closing it, and Cast again (a tap) opens it instead.
+     */
+    private restartAfterDeafSession(device: string) {
+        const offerCastAgain = () => usePlayerStore.getState().addToast(`${device} didn't answer.`, 'error', {
+            actionLabel: 'Cast again',
+            onAction: () => { this.openCastPicker('deaf-join-retry'); },
+            duration: 10000,
+        });
+        const opened = this.openCastPicker('deaf-join-restart', (outcome, ms) => {
+            if (outcome !== 'connected' && ms < DEAF_PICKER_REFUSED_MS) offerCastAgain();
+        });
+        if (opened !== 'opened') offerCastAgain();
+    }
+
+    /** The device of a deaf session this device stopped (stopDeafSession), until its end is handled. */
+    private stoppedDeafDevice = '';
 
     private applyFreshSessionStartupVolume(reason: string) {
         const sessionId = this.getCurrentSessionId();
@@ -4890,7 +4996,7 @@ export class CastManager {
      * The desktop kept showing the cast, and Stop casting, Play here and Play
      * there all did nothing until a reload.
      */
-    private endCastSession(reason: 'user-stop' | 'replaced') {
+    private endCastSession(reason: 'user-stop' | 'replaced' | 'deaf-join') {
         const sid = this.getCurrentSessionId();
         if (this.castEndWatch) clearTimeout(this.castEndWatch.timer);
         this.castEndWatch = sid
