@@ -376,19 +376,27 @@ Gig"), where the spec said "{owner}'s session".
   device, other devices.
 - **Below the border, a line like Output:** the Users icon with "Start a
   gig" on the left, "Listen together" on the right.
-- **Starting a gig makes the card longer**, with no device pushed out:
-  - "Make discoverable", with a switch like the ones in Settings, off by
-    default. Off: only the link lets people in. On: users nearby see it too.
-  - "Copy invite link", with a copy icon. Tapping it copies the link and
-    shows the toast "Link copied!".
-  - the guests' level: one line with three stops (above), starting at 1.
-  - "End", last.
-- **While a gig runs,** the line shows the avatars of everyone in it,
-  overlapping, in place of "Start a gig": five at most, then "+2" for seven.
+- **Starting a gig makes the card longer**, with no device pushed out. The
+  line gives way to the gig's panel (Andreas's mockup, 2026-10-30):
+  - everyone in it, overlapping on the panel's top edge: three at most, then
+    "+2" for five. Tapping them closes the card and opens **Your gig**, a
+    modal with the owner first, then each guest with Remove (`GigMembers`,
+    `DELETE /playback-sessions/:id/members/:userId`). The removed guest hears
+    "<owner> removed you."; the link still works for them.
+  - "Guest permissions", with the level's name on the right, over one line
+    with three stops (above), starting at 1. The line fills up to the level,
+    the stops below it lit: each level includes the ones below.
+  - "Open session", with a switch like the ones in Settings, off by default
+    (discoverable). Off: only the link lets people in. On: users nearby see
+    it too.
+  - "End gig" (a second tap confirms: "End for everyone?") and "Invite":
+    the share sheet with the link (read ahead, so the sheet opens on the
+    tap), or a copy with the toast "Link copied!" where there is no share
+    sheet (desktop Chrome on Linux). It replaced the "Copy link" line
+    (Andreas, 2026-10-30).
 - **Other users** see discoverable gigs nearby in their Connect card under
   "Available gigs", each with its preview and Join.
-- **Deferred:** the "Online now" invite list, and removing one guest (End
-  removes everyone); the API keeps both.
+- **Deferred:** the "Online now" invite list (the API keeps it).
 - **Built 2026-10-29** (`GigSection`, `AvailableGigs`, `useGuestMay`): this
   replaces 6c-2's sheet (Private / Invite only, people online, guests with
   Remove). A guest's Play/Pause, skip and seek are disabled below Playback

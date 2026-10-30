@@ -1,17 +1,42 @@
 import React from 'react';
 import type { UserAvatar as Avatar } from '../../shared/api/v1';
+import { avatarAuroraColors } from '../utils/coverGradient';
 import { previewLabel } from '../utils/listenTogetherText';
 
 /**
  * A user's avatar: the picture when the server has one (later: Gravatar or
  * an upload, served through Aurora), else the initial, as on the account
- * page (docs/listen-together.md, "Avatars in API v1").
+ * page (docs/listen-together.md, "Avatars in API v1"), on the user's own
+ * aurora colors (avatarAuroraColors).
  */
-export const UserAvatar: React.FC<{ avatar: Avatar; size?: 'xs' | 'sm' | 'md' | 'lg'; className?: string }> = ({ avatar, size = 'md', className = '' }) => (
-  <span className={`user-avatar user-avatar--${size} ${className}`} aria-hidden="true">
-    {avatar.pictureUrl ? <img src={avatar.pictureUrl} alt="" /> : avatar.initial}
-  </span>
-);
+export const UserAvatar: React.FC<{ avatar: Avatar; size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl'; className?: string }> = ({ avatar, size = 'md', className = '' }) => {
+  if (avatar.pictureUrl) {
+    return (
+      <span className={`user-avatar user-avatar--${size} ${className}`} aria-hidden="true">
+        <img src={avatar.pictureUrl} alt="" />
+      </span>
+    );
+  }
+  const [from, to] = avatarAuroraColors(avatar.userId);
+  return (
+    <span
+      className={`user-avatar user-avatar--${size} is-aurora ${className}`}
+      style={{ '--avatar-from': from, '--avatar-to': to } as React.CSSProperties}
+      aria-hidden="true"
+    >
+      {avatar.initial}
+    </span>
+  );
+};
+
+/**
+ * The signed-in user's own avatar (the header's user menu, Settings →
+ * Account), built as the server builds everyone's (avatarFor), so it has the
+ * same colors there as in a gig.
+ */
+export function ownAvatar(user: { id: string; username: string }): Avatar {
+  return { userId: user.id, initial: (Array.from(user.username.trim())[0] || '?').toUpperCase(), pictureUrl: null };
+}
 
 /**
  * Avatars overlapping, at most `max`, then "+N" for the rest (the gig line:
