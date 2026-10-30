@@ -392,10 +392,14 @@ Gig"), where the spec said "{owner}'s session".
 - **Built 2026-10-29** (`GigSection`, `AvailableGigs`, `useGuestMay`): this
   replaces 6c-2's sheet (Private / Invite only, people online, guests with
   Remove). A guest's Play/Pause, skip and seek are disabled below Playback
-  Control; starting something new is ignored below Music Manager. Repeat,
-  shuffle and Infinity are disabled on a guest's device for now: changed on a
-  device that controls another, they don't reach the session yet (the same
-  holds for the owner's own remote devices).
+  Control; starting something new is ignored below Music Manager.
+- **Repeat, shuffle and Infinity from any device** (2026-10-30): changed on a
+  device that doesn't play (a guest's, or the owner's own remote), they go
+  to the session as a `setTransport` patch (`sync-settings-sent`), and the
+  device that plays takes them in with the queue (`adoptSessionSettings`; a
+  Cast device gets the repeat mode). A device that doesn't play shows the
+  session's. For a guest, repeat and shuffle need Queue Editor (every level)
+  and Infinity Music Manager; a refused change shows the session's again.
 
 ## Plan
 
