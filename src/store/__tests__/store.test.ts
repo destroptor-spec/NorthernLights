@@ -245,6 +245,17 @@ describe('Music Store Logic', () => {
         expect(usePlayerStore.getState().remoteControlOutputId).toBeNull();
       });
 
+      it("does nothing beyond the gig's level (its controls are disabled)", async () => {
+        useListenTogetherStore.setState({ shared: { sessionId: 'shared', ownerName: 'Andreas', owner: null, permissions: ['queue'] } });
+        following();
+        await usePlayerStore.getState().pause();
+        await usePlayerStore.getState().nextTrack();
+        expect(sendRemoteAction).not.toHaveBeenCalled();
+        useListenTogetherStore.setState({ shared: { sessionId: 'shared', ownerName: 'Andreas', owner: null, permissions: ['queue', 'transport'] } });
+        await usePlayerStore.getState().pause();
+        expect(sent()).toEqual([{ type: 'pause' }]);
+      });
+
       it('never takes the session over here, whatever asks', async () => {
         following();
         usePlayerStore.getState().openPlayWhere();
@@ -257,7 +268,7 @@ describe('Music Store Logic', () => {
         await usePlayerStore.getState().resume();
         expect(playAtIndex).not.toHaveBeenCalled();
         expect(sendRemoteAction).not.toHaveBeenCalled();
-        expect(usePlayerStore.getState().toasts.map((t) => t.message)).toContain("Nothing is playing in Andreas' session.");
+        expect(usePlayerStore.getState().toasts.map((t) => t.message)).toContain("Nothing is playing in Andreas' Gig.");
       });
     });
 

@@ -389,6 +389,13 @@ Gig"), where the spec said "{owner}'s session".
   "Available gigs", each with its preview and Join.
 - **Deferred:** the "Online now" invite list, and removing one guest (End
   removes everyone); the API keeps both.
+- **Built 2026-10-29** (`GigSection`, `AvailableGigs`, `useGuestMay`): this
+  replaces 6c-2's sheet (Private / Invite only, people online, guests with
+  Remove). A guest's Play/Pause, skip and seek are disabled below Playback
+  Control; starting something new is ignored below Music Manager. Repeat,
+  shuffle and Infinity are disabled on a guest's device for now: changed on a
+  device that controls another, they don't reach the session yet (the same
+  holds for the owner's own remote devices).
 
 ## Plan
 

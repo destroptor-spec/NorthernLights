@@ -1,17 +1,19 @@
 import type { PlaybackSession, SessionInvitePreview, UserAvatar } from '../../shared/api/v1';
 import { AuroraApiError } from '../api/auroraApi';
 import * as api from '../api/listenTogether';
+import { createPlaybackSession } from '../api/playbackSessions';
 import { usePlayerStore } from '../store/index';
-import { useListenTogetherStore as store } from '../store/listenTogether';
+import { useListenTogetherStore as store, type SessionScope } from '../store/listenTogether';
 import { isFollowedOutputPlaying } from './sessionFollow';
 import { sendRemoteAction } from './sessionRemote';
-import { previewLabel, sessionTitle } from './listenTogetherText';
+import { GIG_LEVELS, previewLabel, sessionTitle } from './listenTogetherText';
 
-// Listen together in the web app (docs/listen-together.md, 6c): the owner's
-// sheet in Connect, invitations (prompts and /listen/<token> links), and
-// which session this user is a guest in. The device a guest joins on shows
-// that session (6d): it follows it like another device's playback, and
-// sends what is done here to the device that plays it.
+// Listen together in the web app (docs/listen-together.md): the owner's gig
+// in Connect (its line, discoverable, link, level, End), invitations
+// (prompts and /listen/<token> links), gigs nearby ("Available gigs", 6e),
+// and which session this user is a guest in. The device a guest joins on
+// shows that session (6d): it follows it like another device's playback,
+// and sends what is done here to the device that plays it.
 
 const auth = () => usePlayerStore.getState().getAuthHeader();
 const me = () => usePlayerStore.getState().currentUser?.id ?? null;
@@ -60,6 +62,25 @@ export function noteSharedSession(session: PlaybackSession | null): void {
     return;
   }
   noteSharedSessionId(session.id);
+  notePermissions(session.id, session.access?.permissions ?? null);
+}
+
+/** What this user may do in the shared session (its gig level). */
+function notePermissions(sessionId: string, permissions: SessionScope[] | null) {
+  const shared = store.getState().shared;
+  if (shared?.sessionId !== sessionId || !permissions) return;
+  if (shared.permissions && shared.permissions.join() === permissions.join()) return;
+  store.setState({ shared: { ...shared, permissions } });
+}
+
+/**
+ * Whether this device may do what needs `scope` (a guest's level). Always
+ * on the user's own session; on a shared one, by the gig's level.
+ */
+export function guestMay(scope: SessionScope): boolean {
+  const { openedSessionId, shared } = store.getState();
+  if (!openedSessionId || !shared?.permissions) return true;
+  return shared.permissions.includes(scope);
 }
 
 /** Whether `sessionId` is the session this user is a guest in: its events aren't this user's own. */
@@ -132,27 +153,49 @@ export async function openSharedSession(): Promise<void> {
 function noteSharedSessionId(sessionId: string, owner?: { name: string; avatar: UserAvatar }): void {
   const current = store.getState().shared;
   if (current?.sessionId === sessionId && (current.ownerName || !owner)) return;
-  store.setState({ shared: { sessionId, ownerName: owner?.name ?? null, owner: owner?.avatar ?? null } });
+  const permissions = current?.sessionId === sessionId ? current.permissions ?? null : null;
+  store.setState({ shared: { sessionId, ownerName: owner?.name ?? null, owner: owner?.avatar ?? null, permissions } });
   if (owner) return;
   void api.listSessionMembers(auth(), sessionId).then((members) => {
-    if (store.getState().shared?.sessionId !== sessionId) return;
-    store.setState({ shared: { sessionId, ownerName: members.owner.username, owner: members.owner.avatar } });
+    const latest = store.getState().shared;
+    if (latest?.sessionId !== sessionId) return;
+    store.setState({ shared: { ...latest, ownerName: members.owner.username, owner: members.owner.avatar } });
   }).catch(() => {
     // Shown without the owner's name until the next read.
   });
 }
 
-/** Re-reads who is in the user's own session. */
+/** Re-reads who is in the user's own session, and its gig's level. */
 export async function refreshOwn(): Promise<void> {
   const sessionId = store.getState().ownSessionId;
   if (!sessionId) return;
   try {
-    const members = await api.listSessionMembers(auth(), sessionId);
+    const open = store.getState().own?.visibility !== 'private';
+    const [members, links] = await Promise.all([
+      api.listSessionMembers(auth(), sessionId),
+      open ? api.listSessionInvites(auth(), sessionId) : Promise.resolve([]),
+    ]);
     const own = store.getState().own;
     if (store.getState().ownSessionId !== sessionId) return;
-    store.setState({ own: { visibility: own?.visibility ?? 'private', guests: members.guests } });
+    store.setState({
+      own: {
+        visibility: own?.visibility ?? 'private',
+        guests: members.guests,
+        ownerAvatar: members.owner.avatar,
+        permissions: links[0]?.permissions ?? own?.permissions ?? null,
+      },
+    });
   } catch {
-    // The sheet keeps what it showed; the next event reads again.
+    // The card keeps what it showed; the next event reads again.
+  }
+}
+
+/** Discoverable gigs nearby ("Available gigs"), other than the one this user is in. */
+export async function refreshNearby(): Promise<void> {
+  try {
+    store.setState({ available: await api.listNearbyGigs(auth()) });
+  } catch {
+    // Keeps what it showed.
   }
 }
 
@@ -179,8 +222,16 @@ export function onTogetherEvent(type: string, data: Record<string, unknown>): vo
         clearShared();
         const owner = shared.ownerName ?? 'The owner';
         if (data.reason === 'removed') toast(`${owner} removed you.`, 'info');
-        else if (data.reason === 'ended') toast(`${owner} ended listening together.`, 'info');
+        else if (data.reason === 'ended') toast(`${owner} ended the gig.`, 'info');
       }
+      return;
+    case 'playbackSession.accessChanged':
+      // The owner moved the gig's level: it applies here at once.
+      if (sessionId && Array.isArray(data.permissions)) notePermissions(sessionId, data.permissions as SessionScope[]);
+      if (isOwn && own && Array.isArray(data.permissions)) store.setState({ own: { ...own, permissions: data.permissions as SessionScope[] } });
+      return;
+    case 'playbackSession.discoverable':
+      void refreshNearby();
       return;
     case 'playbackSession.visibilityChanged':
       if (isOwn && own && typeof data.visibility === 'string') {
@@ -188,7 +239,7 @@ export function onTogetherEvent(type: string, data: Record<string, unknown>): vo
       }
       return;
     case 'playbackSession.togetherEnded':
-      if (isOwn) store.setState({ own: { visibility: 'private', guests: [] } });
+      if (isOwn) store.setState({ own: { ...own, visibility: 'private', guests: [], permissions: null } });
       return;
   }
 }
@@ -224,16 +275,32 @@ export async function joinInvite(): Promise<boolean> {
   // Closes at once: joining just takes effect (no status text while it works).
   store.setState({ prompt: null });
   try {
-    const session = await api.joinSessionByInvite(auth(), prompt.token);
-    if (session.access?.role === 'guest') {
-      noteSharedSessionId(session.id, { name: preview.ownerName, avatar: preview.owner });
-      // The device joined on shows the session.
-      await openSharedSession();
-    }
+    await joined(await api.joinSessionByInvite(auth(), prompt.token), preview);
     return true;
   } catch (error) {
     toast(failure(error, preview.ownerName));
     return false;
+  }
+}
+
+/** Joined: the session is the shared one, and the device joined on shows it. */
+async function joined(session: PlaybackSession, preview: SessionInvitePreview) {
+  if (session.access?.role !== 'guest') return;
+  noteSharedSessionId(session.id, { name: preview.ownerName, avatar: preview.owner });
+  notePermissions(session.id, session.access.permissions);
+  await openSharedSession();
+}
+
+/** Joins a gig from "Available gigs". */
+export async function joinNearby(preview: SessionInvitePreview): Promise<void> {
+  try {
+    await joined(await api.joinNearbyGig(auth(), preview.sessionId), preview);
+    store.setState({ available: store.getState().available.filter((gig) => gig.sessionId !== preview.sessionId) });
+  } catch (error) {
+    toast(error instanceof AuroraApiError && error.status === 404
+      ? `${sessionTitle(preview.ownerName)} isn't available any more.`
+      : failure(error, preview.ownerName));
+    void refreshNearby();
   }
 }
 
@@ -254,7 +321,7 @@ export async function leaveSharedSession(): Promise<void> {
   }
 }
 
-// --- The owner -----------------------------------------------------------
+// --- The owner: the gig ------------------------------------------------
 
 async function ownAction<T>(run: (sessionId: string) => Promise<T>, message: string): Promise<T | null> {
   const sessionId = store.getState().ownSessionId;
@@ -267,56 +334,70 @@ async function ownAction<T>(run: (sessionId: string) => Promise<T>, message: str
   }
 }
 
-export async function setSharing(visibility: 'private' | 'invite'): Promise<void> {
-  const session = await ownAction((id) => api.setSessionSharing(auth(), id, visibility), "Couldn't change who can join.");
-  const own = store.getState().own;
-  if (session && own) store.setState({ own: { ...own, visibility: session.visibility ?? visibility } });
+function setOwn(change: Partial<NonNullable<ReturnType<typeof store.getState>['own']>>) {
+  const own = store.getState().own ?? { visibility: 'private' as const, guests: [] };
+  store.setState({ own: { ...own, ...change } });
 }
 
 /**
- * The session's join link: the newest working one while it is open to
- * invites; a fresh one when it is private (closing it revoked the old ones).
+ * Starts a gig: a link at the first level opens the session to it (private
+ * until then). A user who never played anything here has no session yet,
+ * so one is made.
  */
-async function joinLink(sessionId: string) {
-  const open = store.getState().own?.visibility !== 'private';
-  const [newest] = open ? await api.listSessionInvites(auth(), sessionId) : [];
-  const link = newest ?? await api.createSessionInvite(auth(), sessionId);
-  // Making a link opens a private session to invites.
-  const own = store.getState().own;
-  if (own && own.visibility === 'private') store.setState({ own: { ...own, visibility: 'invite' } });
-  return link;
-}
-
-/** The join link as a full URL, for copying or sharing. */
-export async function inviteUrl(): Promise<string | null> {
-  const link = await ownAction((id) => joinLink(id), "Couldn't make an invite link.");
-  return link ? listenUrl(link.path) : null;
-}
-
-/** Prompts an online user with the session's join link. */
-export async function inviteUser(userId: string): Promise<boolean> {
-  const result = await ownAction(async (id) => {
-    const link = await joinLink(id);
-    return api.promptSessionInvite(auth(), id, link.token, [userId]);
-  }, "Couldn't send the invite.");
-  return !!result && result.prompted > 0;
-}
-
-export async function removeGuest(userId: string): Promise<void> {
-  const done = await ownAction((id) => api.removeSessionMember(auth(), id, userId).then(() => true), "Couldn't remove them.");
-  const own = store.getState().own;
-  if (done && own) store.setState({ own: { ...own, guests: own.guests.filter((guest) => guest.avatar.userId !== userId) } });
-}
-
-export async function endTogether(): Promise<void> {
-  const session = await ownAction((id) => api.endListeningTogether(auth(), id), "Couldn't end listening together.");
-  if (session) store.setState({ own: { visibility: 'private', guests: [] } });
-}
-
-export async function loadOnlineUsers() {
-  try {
-    return await api.listOnlineUsers(auth());
-  } catch {
-    return [];
+export async function startGig(): Promise<void> {
+  if (!store.getState().ownSessionId) {
+    try {
+      noteOwnSession(await createPlaybackSession(auth(), 'Listening'));
+    } catch {
+      toast("Couldn't start the gig.");
+      return;
+    }
   }
+  const first = GIG_LEVELS[0].scopes;
+  const link = await ownAction((id) => api.createSessionInvite(auth(), id, first), "Couldn't start the gig.");
+  if (!link) return;
+  setOwn({ visibility: 'invite', permissions: link.permissions });
+  // The line shows everyone in the gig, the owner first.
+  void refreshOwn();
+}
+
+/** "Make discoverable": users nearby see the gig too (on), or only the link lets people in (off). */
+export async function setDiscoverable(on: boolean): Promise<void> {
+  const visibility = on ? 'discoverable' : 'invite';
+  setOwn({ visibility });
+  const session = await ownAction((id) => api.setSessionSharing(auth(), id, { visibility }), "Couldn't change who can find the gig.");
+  setOwn({ visibility: session?.visibility ?? (on ? 'invite' : 'discoverable') });
+}
+
+/** The guests' level, for the link and every guest already in, at once. */
+export async function setGigLevel(level: 1 | 2 | 3): Promise<void> {
+  const before = store.getState().own?.permissions ?? null;
+  const permissions = GIG_LEVELS[level - 1].scopes;
+  setOwn({ permissions });
+  const session = await ownAction((id) => api.setSessionSharing(auth(), id, { permissions }), "Couldn't change what guests can do.");
+  if (!session) setOwn({ permissions: before });
+}
+
+/** Copies the gig's link (its newest working one, or a new one at its level), with a toast. */
+export async function copyInviteLink(): Promise<void> {
+  const link = await ownAction(async (id) => {
+    const [newest] = await api.listSessionInvites(auth(), id);
+    return newest ?? api.createSessionInvite(auth(), id, store.getState().own?.permissions ?? GIG_LEVELS[0].scopes);
+  }, "Couldn't make an invite link.");
+  if (!link) return;
+  const url = listenUrl(link.path);
+  try {
+    await navigator.clipboard.writeText(url);
+    toast('Link copied!', 'info');
+  } catch {
+    // No clipboard here (an insecure origin, a refused permission): the share sheet, if there is one.
+    if (typeof navigator.share === 'function') await navigator.share({ title: 'Listen together', url }).catch(() => undefined);
+    else toast("Couldn't copy the link.");
+  }
+}
+
+/** Ends the gig: everyone out, links dead, private again. The music plays on. */
+export async function endTogether(): Promise<void> {
+  const session = await ownAction((id) => api.endListeningTogether(auth(), id), "Couldn't end the gig.");
+  if (session) setOwn({ visibility: 'private', guests: [], permissions: null });
 }

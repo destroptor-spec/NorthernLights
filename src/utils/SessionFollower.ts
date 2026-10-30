@@ -127,6 +127,8 @@ const SESSION_EVENTS = [
   'playbackSession.visibilityChanged',
   'playbackSession.togetherEnded',
   'playbackSession.invitePrompt',
+  'playbackSession.accessChanged',
+  'playbackSession.discoverable',
 ] as const;
 const TOGETHER_EVENTS: ReadonlySet<string> = new Set([
   'playbackSession.memberJoined',
@@ -134,6 +136,8 @@ const TOGETHER_EVENTS: ReadonlySet<string> = new Set([
   'playbackSession.visibilityChanged',
   'playbackSession.togetherEnded',
   'playbackSession.invitePrompt',
+  'playbackSession.accessChanged',
+  'playbackSession.discoverable',
 ]);
 
 interface ProgressData {

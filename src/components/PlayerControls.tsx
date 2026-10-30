@@ -4,6 +4,7 @@ import { usePlayerStore } from '../store/index';
 import { selectDisplayedPlaying } from '../utils/sessionFollow';
 import { useFollowedDeviceLabel } from '../hooks/useFollowedDeviceName';
 import { useDisplayedPlaying } from '../hooks/useDisplayedPlaying';
+import { useGuestMay, useShowingShared } from '../hooks/useGuestMay';
 import { hasNextTrack } from '../utils/queue';
 import { usePlaybackTimeStore } from '../store/playbackTime';
 import { useVolumeSync } from '../hooks/useVolumeSync';
@@ -247,6 +248,8 @@ const InlineWaveformImpl: React.FC = () => {
   const handleSeek = React.useCallback((time: number) => {
     usePlayerStore.getState().seekTo(time);
   }, []);
+  // A guest below Playback Control can't seek: the bar only shows where it is.
+  const mayTransport = useGuestMay('transport');
 
   // The WaveformProgressBar internally handles container resize via
   // ResizeObserver, so dock/undock will redraw the existing peaks at the
@@ -264,7 +267,7 @@ const InlineWaveformImpl: React.FC = () => {
 
   return (
     <div className="player-waveform" data-placement={placement}>
-      <div className="player-waveform-canvas">
+      <div className={`player-waveform-canvas${mayTransport ? '' : ' seek-locked'}`}>
         {currentTrack?.url ? (
           <WaveformProgressBar
             audioUrl={audioUrl}
@@ -335,6 +338,10 @@ export const PlayerControls: React.FC = () => {
   const toggleShuffle = usePlayerStore((state) => state.toggleShuffle);
   const cycleRepeatAction = usePlayerStore((state) => state.cycleRepeat);
   const toggleInfinityMode = usePlayerStore((state) => state.toggleInfinityMode);
+  // A guest in a gig: its level decides; repeat, shuffle and Infinity don't
+  // reach the gig from here yet, so they rest (no text, as elsewhere).
+  const mayTransport = useGuestMay('transport');
+  const showingShared = useShowingShared();
 
   const isPlaying = useDisplayedPlaying();
 
@@ -499,16 +506,18 @@ export const PlayerControls: React.FC = () => {
       <div className="player-transport">
         <button
           onClick={toggleShuffle}
+          disabled={showingShared}
           aria-label={shuffle ? 'Shuffle on' : 'Shuffle off'}
           aria-pressed={shuffle}
           className={transportBtnClass}
-          style={{ opacity: shuffle ? 1 : 0.4 }}
+          style={{ opacity: showingShared ? 0.25 : shuffle ? 1 : 0.4 }}
         >
           {shuffle ? <IconShuffle /> : <IconSequential />}
         </button>
 
         <button
           onClick={prevTrackAction}
+          disabled={!mayTransport}
           aria-label="Previous track"
           className={transportBtnClass}
         >
@@ -518,8 +527,8 @@ export const PlayerControls: React.FC = () => {
         <button
           onClick={togglePlay}
           aria-label={isBuffering ? 'Loading' : isPlaying ? 'Pause' : 'Play'}
-          className={playBtnClass}
-          disabled={isBuffering}
+          className={`${playBtnClass}${mayTransport ? '' : ' opacity-40 pointer-events-none'}`}
+          disabled={isBuffering || !mayTransport}
         >
           {isBuffering ? (
             <svg
@@ -554,7 +563,7 @@ export const PlayerControls: React.FC = () => {
 
         <button
           onClick={() => void nextTrackAction()}
-          disabled={!canSkipNext}
+          disabled={!canSkipNext || !mayTransport}
           aria-label="Next track"
           className={transportBtnClass}
         >
@@ -563,10 +572,11 @@ export const PlayerControls: React.FC = () => {
 
         <button
           onClick={cycleRepeatAction}
+          disabled={showingShared}
           aria-label={repeat === 'one' ? 'Repeat one' : repeat === 'all' ? 'Repeat all' : 'Repeat off'}
           aria-pressed={repeat !== 'none'}
           className={transportBtnClass}
-          style={{ opacity: repeat === 'none' ? 0.4 : 1 }}
+          style={{ opacity: showingShared ? 0.25 : repeat === 'none' ? 0.4 : 1 }}
         >
           {repeat === 'one' ? <IconRepeatOne /> : <IconRepeatAll />}
         </button>
@@ -594,9 +604,10 @@ export const PlayerControls: React.FC = () => {
       <div className="player-far">
         <button
           onClick={toggleInfinityMode}
+          disabled={showingShared}
           aria-label={isInfinityMode ? 'Infinity Mode on' : 'Infinity Mode off'}
           aria-pressed={isInfinityMode}
-          className={auxBtnClass}
+          className={`${auxBtnClass}${showingShared ? ' opacity-40 pointer-events-none' : ''}`}
           style={{
             opacity: isInfinityMode ? 1 : 0.55,
             color: isInfinityMode ? 'var(--color-primary)' : undefined,

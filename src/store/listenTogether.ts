@@ -1,17 +1,25 @@
 import { create } from 'zustand';
-import type { SessionInvitePreview, SessionMember, UserAvatar } from '../../shared/api/v1';
+import type { SESSION_SCOPES, SessionInvitePreview, SessionMember, UserAvatar } from '../../shared/api/v1';
+
+export type SessionScope = typeof SESSION_SCOPES[number];
 
 /** The session this user is a guest in (one at a time). Its owner is filled in once read. */
 export interface SharedSession {
   sessionId: string;
   ownerName: string | null;
   owner: UserAvatar | null;
+  /** What this user may do in it (its gig level), once read. */
+  permissions?: SessionScope[] | null;
 }
 
-/** The owner's view of its own session: who may join, and who is in. */
+/** The owner's view of its own session: who may join, who is in, and the gig's level. */
 export interface OwnTogether {
   visibility: 'private' | 'invite' | 'discoverable';
   guests: SessionMember[];
+  /** The owner's own avatar, first in the gig's line. */
+  ownerAvatar?: UserAvatar | null;
+  /** The guests' permissions: the gig's newest working link's. */
+  permissions?: SessionScope[] | null;
 }
 
 export interface ListenTogetherState {
@@ -28,6 +36,8 @@ export interface ListenTogetherState {
    * Per device, kept across reloads.
    */
   openedSessionId: string | null;
+  /** Discoverable gigs nearby ("Available gigs", 6e), as previews. */
+  available: SessionInvitePreview[];
 }
 
 const OPENED_KEY = 'aurora-listen-together-opened';
@@ -46,6 +56,7 @@ export const useListenTogetherStore = create<ListenTogetherState>(() => ({
   shared: null,
   prompt: null,
   openedSessionId: readOpened(),
+  available: [],
 }));
 
 useListenTogetherStore.subscribe((state, previous) => {
