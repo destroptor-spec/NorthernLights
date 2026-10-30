@@ -4,7 +4,7 @@ import { usePlayerStore } from '../store/index';
 import { selectDisplayedPlaying } from '../utils/sessionFollow';
 import { useFollowedDeviceLabel } from '../hooks/useFollowedDeviceName';
 import { useDisplayedPlaying } from '../hooks/useDisplayedPlaying';
-import { useGuestMay, useShowingShared } from '../hooks/useGuestMay';
+import { useGuestMay } from '../hooks/useGuestMay';
 import { hasNextTrack } from '../utils/queue';
 import { usePlaybackTimeStore } from '../store/playbackTime';
 import { useVolumeSync } from '../hooks/useVolumeSync';
@@ -338,10 +338,11 @@ export const PlayerControls: React.FC = () => {
   const toggleShuffle = usePlayerStore((state) => state.toggleShuffle);
   const cycleRepeatAction = usePlayerStore((state) => state.cycleRepeat);
   const toggleInfinityMode = usePlayerStore((state) => state.toggleInfinityMode);
-  // A guest in a gig: its level decides; repeat, shuffle and Infinity don't
-  // reach the gig from here yet, so they rest (no text, as elsewhere).
+  // A guest in a gig: its level decides (no text, as elsewhere). Repeat and
+  // shuffle are queue settings; Infinity starts new music.
   const mayTransport = useGuestMay('transport');
-  const showingShared = useShowingShared();
+  const mayQueue = useGuestMay('queue');
+  const mayReplace = useGuestMay('replace');
 
   const isPlaying = useDisplayedPlaying();
 
@@ -506,11 +507,11 @@ export const PlayerControls: React.FC = () => {
       <div className="player-transport">
         <button
           onClick={toggleShuffle}
-          disabled={showingShared}
+          disabled={!mayQueue}
           aria-label={shuffle ? 'Shuffle on' : 'Shuffle off'}
           aria-pressed={shuffle}
           className={transportBtnClass}
-          style={{ opacity: showingShared ? 0.25 : shuffle ? 1 : 0.4 }}
+          style={{ opacity: !mayQueue ? 0.25 : shuffle ? 1 : 0.4 }}
         >
           {shuffle ? <IconShuffle /> : <IconSequential />}
         </button>
@@ -572,11 +573,11 @@ export const PlayerControls: React.FC = () => {
 
         <button
           onClick={cycleRepeatAction}
-          disabled={showingShared}
+          disabled={!mayQueue}
           aria-label={repeat === 'one' ? 'Repeat one' : repeat === 'all' ? 'Repeat all' : 'Repeat off'}
           aria-pressed={repeat !== 'none'}
           className={transportBtnClass}
-          style={{ opacity: showingShared ? 0.25 : repeat === 'none' ? 0.4 : 1 }}
+          style={{ opacity: !mayQueue ? 0.25 : repeat === 'none' ? 0.4 : 1 }}
         >
           {repeat === 'one' ? <IconRepeatOne /> : <IconRepeatAll />}
         </button>
@@ -604,10 +605,10 @@ export const PlayerControls: React.FC = () => {
       <div className="player-far">
         <button
           onClick={toggleInfinityMode}
-          disabled={showingShared}
+          disabled={!mayReplace}
           aria-label={isInfinityMode ? 'Infinity Mode on' : 'Infinity Mode off'}
           aria-pressed={isInfinityMode}
-          className={`${auxBtnClass}${showingShared ? ' opacity-40 pointer-events-none' : ''}`}
+          className={`${auxBtnClass}${mayReplace ? '' : ' opacity-40 pointer-events-none'}`}
           style={{
             opacity: isInfinityMode ? 1 : 0.55,
             color: isInfinityMode ? 'var(--color-primary)' : undefined,

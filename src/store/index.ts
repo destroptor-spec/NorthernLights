@@ -929,6 +929,13 @@ export interface PlayerState {
    */
   adoptSessionQueue: (tracks: TrackInfo[] | null, index: number, positionSeconds: number) => void;
   /**
+   * The session's repeat, shuffle and Infinity, set on another device (a
+   * remote one, or a guest's): shown here, and on the device that plays,
+   * played by. A Cast device gets the repeat mode; only the device that
+   * plays tops Infinity up.
+   */
+  adoptSessionSettings: (settings: { repeat: 'none' | 'all' | 'one'; shuffle: boolean; infinity: boolean }) => void;
+  /**
    * This device is the session's output (it plays, or casts): take in the
    * session's queue, which another device changed (Phase 3). What plays
    * keeps playing.
@@ -3164,6 +3171,14 @@ export const usePlayerStore = create<PlayerState>()(
             isBuffering: false,
           });
           persistContinuitySnapshot(true);
+        },
+
+        adoptSessionSettings: (settings: { repeat: 'none' | 'all' | 'one'; shuffle: boolean; infinity: boolean }) => {
+          const state = get();
+          if (state.repeat === settings.repeat && state.shuffle === settings.shuffle && state.isInfinityMode === settings.infinity) return;
+          set({ repeat: settings.repeat, shuffle: settings.shuffle, isInfinityMode: settings.infinity });
+          if (state.repeat !== settings.repeat && castManager.isConnected()) void castManager.setRepeatMode(settings.repeat);
+          if (settings.infinity && !state.isInfinityMode && !isFollowingAnotherDevice(get())) void get().ensureInfinityQueue();
         },
 
         adoptSessionQueueAsOutput: (incoming: TrackInfo[], currentEntryId: string | null) => {

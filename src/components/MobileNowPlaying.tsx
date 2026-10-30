@@ -6,7 +6,7 @@ import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { X, Infinity as InfinityIcon, ListMusic, ListX, ChevronUp, FileText } from 'lucide-react';
 import ProgressBar from './ProgressBar';
-import { useGuestMay, useShowingShared } from '../hooks/useGuestMay';
+import { useGuestMay } from '../hooks/useGuestMay';
 import { useSwipe } from '../hooks/useSwipe';
 import { castManager } from '../utils/CastManager';
 import { LyricsPanel } from './LyricsPanel';
@@ -124,10 +124,11 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
   const cycleRepeat = usePlayerStore((s) => s.cycleRepeat);
   const isInfinityMode = usePlayerStore((s) => s.isInfinityMode);
   const toggleInfinityMode = usePlayerStore((s) => s.toggleInfinityMode);
-  // A guest in a gig: its level decides; repeat, shuffle and Infinity don't
-  // reach the gig from here yet, so they rest (no text, as elsewhere).
+  // A guest in a gig: its level decides (no text, as elsewhere). Repeat and
+  // shuffle are queue settings; Infinity starts new music.
   const mayTransport = useGuestMay('transport');
-  const showingShared = useShowingShared();
+  const mayQueue = useGuestMay('queue');
+  const mayReplace = useGuestMay('replace');
   const audioOutputActive = usePlayerStore((s) => s.audioOutputActive);
   const audioOutputDeviceLabel = usePlayerStore((s) => s.audioOutputDeviceLabel);
   const volume = usePlayerStore((s) => s.volume);
@@ -417,7 +418,7 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
           <button
             type="button"
             onClick={toggleShuffle}
-            disabled={showingShared}
+            disabled={!mayQueue}
             aria-label={shuffle ? 'Turn shuffle off' : 'Turn shuffle on'}
             aria-pressed={shuffle}
             className={`mobile-player-control-btn mobile-player-control-btn-md ${shuffle ? 'is-active' : ''}`}
@@ -463,7 +464,7 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
           <button
             type="button"
             onClick={cycleRepeat}
-            disabled={showingShared}
+            disabled={!mayQueue}
             aria-label={repeat === 'one' ? 'Repeat one is on. Cycle repeat' : repeat === 'all' ? 'Repeat all is on. Cycle repeat' : 'Repeat is off. Cycle repeat'}
             aria-pressed={repeat !== 'none'}
             className={`mobile-player-control-btn mobile-player-control-btn-md ${repeat !== 'none' ? 'is-active' : ''}`}
@@ -497,7 +498,7 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
           <button
             type="button"
             onClick={toggleInfinityMode}
-            disabled={showingShared}
+            disabled={!mayReplace}
             aria-label={isInfinityMode ? 'Turn Infinity Mode off' : 'Turn Infinity Mode on'}
             aria-pressed={isInfinityMode}
             className={`mobile-player-pill-btn ${isInfinityMode ? 'is-active' : ''}`}
