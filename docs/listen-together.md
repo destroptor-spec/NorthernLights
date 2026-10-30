@@ -1,6 +1,12 @@
 # Listen together (Phase 6)
 
-**Status:** spec, not started. Andreas's direction and answers 2026-10-27.
+**Status:** built, 2026-10-27 to 10-30 (6a–6e: #188–#204, then #205–#209
+for remote settings and volume, the gig's panel and removing one guest).
+Deferred: 6f (per-invite toggles) and the "Online now" list. Open: the
+owner's side of the deaf joiner (its own Cast PR), and the device checks
+under **Done when** (Plan), rows 28–30 of
+[cast-design-checklist.md](cast-design-checklist.md). Andreas's direction
+and answers 2026-10-27.
 Builds on [playback_sessions.md](playback_sessions.md)
 (Phases 0–5) and [cast-receiver-output.md](cast-receiver-output.md).
 
