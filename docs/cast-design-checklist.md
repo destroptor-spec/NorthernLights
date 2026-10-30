@@ -324,6 +324,9 @@ Run these against at least one Chromecast and one Google TV target when availabl
 | 25 | Row 22, then on the desktop use Play next, remove and reorder in the queue | The NAD's queue (and the phone's) follow within a second or two, without interrupting the song | `sync-queue-edit-sent` from the desktop, then `receiver-window-reconciled reason=updated` |
 | 26 | Row 22, then on the desktop choose "On this device" (or play something there) | The NAD stops; the desktop plays | `receiver-follow-stopped reason=replaced` from the receiver |
 | 27 | Rows 22–25 on the Beoplay A9 and on the speaker group | As on the NAD (the A9 is slower, so allow it a few seconds more) | as above, for each device |
+| 28 | Listen together (Phase 6, done when): row 22, start a gig at Playback Control, a second account joins on its phone; lock the owner's phone, then on the guest's phone pause, skip, tap a queue entry, add a song and move the volume | Each reaches the NAD within 2 s; the guest's volume slider follows the NAD, also when the volume changes on the NAD's own remote | `receiver-command-applied type=… ok=true` from the receiver for each, including `type=setVolume` |
+| 29 | Row 28, then the owner removes the guest in "Your gig" (tap the avatars) | The guest's phone says "<owner> removed you." and goes back to its own music, paused; its controls no longer reach the NAD | no `receiver-command-applied` after the removal for the guest's taps |
+| 30 | Row 28, then the owner ends the gig (End gig, then "End for everyone?") | The NAD plays on with the owner's music; the guest's phone goes back to its own | `receiver-follow-stopped` absent |
 
 ### Sync playback markers
 
