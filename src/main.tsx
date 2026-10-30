@@ -76,7 +76,13 @@ sessionFollower.start(usePlayerStore, {
   onTogetherEvent,
   mirror: sessionMirror,
   toTracks: sessionQueueTracks,
-  adoptPlayingQueue: (session) => usePlayerStore.getState().adoptSessionQueueAsOutput(sessionQueueTracks(session), session.currentEntryId),
+  // Another device changed the session this device plays: its queue, and
+  // its repeat, shuffle and Infinity (a remote device's or a guest's toggle).
+  adoptPlayingQueue: (session) => {
+    const store = usePlayerStore.getState();
+    store.adoptSessionQueueAsOutput(sessionQueueTracks(session), session.currentEntryId);
+    store.adoptSessionSettings({ repeat: session.repeatMode, shuffle: session.shuffle, infinity: session.infinity });
+  },
   setPlaybackTime: (currentTime, duration) => setPlaybackTimeState({ currentTime, duration }),
   onPlaybackSyncChanged: () => void usePlayerStore.getState().refreshPlaybackSync(),
   diagnostic: (level, marker, detail) => castManager.logSyncEvent(level, marker, detail),
