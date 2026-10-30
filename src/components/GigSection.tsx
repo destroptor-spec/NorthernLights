@@ -1,28 +1,36 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Copy, Users } from 'lucide-react';
 import type { SessionInvitePreview } from '../../shared/api/v1';
 import { useListenTogetherStore } from '../store/listenTogether';
-import { copyInviteLink, endTogether, setDiscoverable, setGigLevel, startGig } from '../utils/listenTogether';
-import { GIG_LEVELS, gigLevelOf, sessionTitle } from '../utils/listenTogetherText';
+import { copyInviteLink, endTogether, prepareInviteLink, setDiscoverable, setGigLevel, shareInviteLink, startGig } from '../utils/listenTogether';
+import { GIG_LEVELS, gigLevelOf, gigRunning, sessionTitle } from '../utils/listenTogetherText';
 import { AvatarStack, SessionPreviewAvatars } from './UserAvatar';
 
 /**
- * The owner's gig, at the foot of the Connect card (Andreas, 2026-10-29):
- * a line like Output, "Start a gig" on the left and "Listen together" on the
- * right. Starting one makes the card longer, the devices above untouched:
- * "Make discoverable", "Copy invite link", the guests' level (three stops),
- * and End. While it runs, the line shows everyone in it, overlapping.
+ * The owner's gig, at the foot of the Connect card: a line like Output,
+ * "Start a gig" on the left and "Listen together" on the right. Starting one
+ * makes the card longer, the devices above untouched, with the gig's panel
+ * (Andreas's mockup, 2026-10-30): everyone in it on its top edge, overlapping
+ * (tapping them opens the members, GigMembers, and closes the card), "Guest
+ * permissions" over three stops, "Open session" (discoverable), "Copy link",
+ * then End gig and Invite (the share sheet).
  */
-export const GigSection: React.FC = () => {
+export const GigSection: React.FC<{ onDone?: () => void }> = ({ onDone }) => {
   const own = useListenTogetherStore((s) => s.own);
+  const ownSessionId = useListenTogetherStore((s) => s.ownSessionId);
   const [starting, setStarting] = useState(false);
   const [endArmed, setEndArmed] = useState(false);
-  const running = !!own && (own.visibility !== 'private' || own.guests.length > 0);
+  const running = gigRunning(own);
   const people = running
-    ? [...(own.ownerAvatar ? [own.ownerAvatar] : []), ...own.guests.map((guest) => guest.avatar)]
+    ? [...(own!.ownerAvatar ? [own!.ownerAvatar] : []), ...own!.guests.map((guest) => guest.avatar)]
     : [];
   const level = gigLevelOf(own?.permissions);
   const discoverable = own?.visibility === 'discoverable';
+
+  // Invite opens the share sheet at once only with the link already read.
+  useEffect(() => {
+    if (running) prepareInviteLink();
+  }, [running, ownSessionId]);
 
   const start = async () => {
     if (starting) return;
@@ -36,13 +44,7 @@ export const GigSection: React.FC = () => {
 
   return (
     <div className={`connect-gig${running ? ' is-running' : ''}`}>
-      {running ? (
-        <div className="connect-line" aria-label={`Your gig: ${people.length} ${people.length === 1 ? 'person' : 'people'}`}>
-          <Users size={15} aria-hidden="true" className="shrink-0" />
-          <span className="connect-line-label"><AvatarStack avatars={people} max={5} size="xs" /></span>
-          <span className="connect-line-value">Listen together</span>
-        </div>
-      ) : (
+      {!running && (
         <button type="button" className="connect-line" disabled={starting} onClick={() => void start()}>
           <Users size={15} aria-hidden="true" className="shrink-0" />
           <span className="connect-line-label">Start a gig</span>
@@ -53,26 +55,23 @@ export const GigSection: React.FC = () => {
       {/* Folds open (grid rows 0fr → 1fr) as the gig starts, and shut as it ends. */}
       <div className="connect-gig-body" inert={!running}>
         <div className="connect-gig-inner">
-          <div className="connect-line">
-            <span className="connect-line-label" id="gig-discoverable">Make discoverable</span>
+          <div className="gig-panel">
             <button
               type="button"
-              role="switch"
-              aria-checked={discoverable}
-              aria-labelledby="gig-discoverable"
-              className="account-switch account-switch--sm"
-              data-state={discoverable ? 'on' : 'off'}
-              onClick={() => void setDiscoverable(!discoverable)}
+              className="gig-people"
+              aria-label={`Who's in your gig: ${people.length} ${people.length === 1 ? 'person' : 'people'}`}
+              onClick={() => {
+                onDone?.();
+                useListenTogetherStore.setState({ membersOpen: true });
+              }}
             >
-              <span className="account-switch__thumb" />
+              <AvatarStack avatars={people} max={3} size="sm" />
             </button>
-          </div>
-          <button type="button" className="connect-line" onClick={() => void copyInviteLink()}>
-            <span className="connect-line-label">Copy invite link</span>
-            <Copy size={15} aria-hidden="true" className="connect-line-icon" />
-          </button>
-          <div className="connect-line">
-            <span className="connect-line-label">{GIG_LEVELS[level - 1].name}</span>
+
+            <div className="gig-row">
+              <span className="gig-row-label" id="gig-level-label">Guest permissions</span>
+              <span className="gig-row-value">{GIG_LEVELS[level - 1].name}</span>
+            </div>
             <input
               type="range"
               className="gig-level"
@@ -80,26 +79,51 @@ export const GigSection: React.FC = () => {
               max={3}
               step={1}
               value={level}
-              aria-label="What guests can do"
+              aria-labelledby="gig-level-label"
               aria-valuetext={GIG_LEVELS[level - 1].name}
               onChange={(event) => void setGigLevel(Number(event.target.value) as 1 | 2 | 3)}
             />
+
+            <div className="gig-row">
+              <span className="gig-row-label" id="gig-discoverable">Open session</span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={discoverable}
+                aria-labelledby="gig-discoverable"
+                className="account-switch account-switch--sm"
+                data-state={discoverable ? 'on' : 'off'}
+                onClick={() => void setDiscoverable(!discoverable)}
+              >
+                <span className="account-switch__thumb" />
+              </button>
+            </div>
+            <button type="button" className="gig-row" onClick={() => void copyInviteLink()}>
+              <span className="gig-row-label">Copy link</span>
+              <span className="gig-row-icon" aria-hidden="true"><Copy size={15} /></span>
+            </button>
+
+            <div className="gig-actions">
+              <button
+                type="button"
+                className={`btn btn-sm ${endArmed ? 'btn-danger-fill' : 'btn-danger'}`}
+                onClick={() => {
+                  // Ends it for everyone: the first tap asks.
+                  if (!endArmed) {
+                    setEndArmed(true);
+                    return;
+                  }
+                  setEndArmed(false);
+                  void endTogether();
+                }}
+              >
+                {endArmed ? 'End for everyone?' : 'End gig'}
+              </button>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => void shareInviteLink()}>
+                Invite
+              </button>
+            </div>
           </div>
-          <button
-            type="button"
-            className={`btn btn-sm ${endArmed ? 'btn-danger-fill' : 'btn-danger'} connect-gig-end`}
-            onClick={() => {
-              // Ends it for everyone: the first tap asks.
-              if (!endArmed) {
-                setEndArmed(true);
-                return;
-              }
-              setEndArmed(false);
-              void endTogether();
-            }}
-          >
-            {endArmed ? 'End the gig? Tap to confirm' : 'End'}
-          </button>
         </div>
       </div>
     </div>

@@ -30,3 +30,8 @@ export function previewLabel(ownerName: string, guests: number): string {
   if (guests === 0) return ownerName;
   return `${ownerName} and ${guests} ${guests === 1 ? 'other' : 'others'}`;
 }
+
+/** The owner's gig runs: open to a link or nearby, or someone is still in it. */
+export function gigRunning(own: { visibility: string; guests: readonly unknown[] } | null | undefined): boolean {
+  return !!own && (own.visibility !== 'private' || own.guests.length > 0);
+}

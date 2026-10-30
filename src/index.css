@@ -9538,10 +9538,126 @@ button.connect-line:disabled {
   display: flex;
   flex-direction: column;
 }
-.connect-gig-end {
+.connect-gig.is-running {
+  padding-top: 4px;
+}
+/* The gig's panel (Andreas's mockup, 2026-10-30): everyone in it rides its top
+   edge, then permissions, Open session, Copy link, End gig and Invite. The
+   margin (not padding) leaves room for the avatars and is clipped with the
+   rest while the fold is shut. */
+.gig-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  margin: 20px 0 2px;
+  padding: 22px 16px 14px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--color-text-primary) 5%, transparent);
+}
+.gig-people {
+  position: absolute;
+  top: 0;
+  left: 14px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: none;
+  cursor: pointer;
+  transition: transform 150ms var(--ease-out);
+}
+.gig-people:hover {
+  transform: translateY(-50%) scale(1.04);
+}
+.gig-people:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+}
+.gig-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
+  min-height: 40px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+}
+button.gig-row {
+  cursor: pointer;
+}
+.gig-row-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gig-row-value {
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+.gig-row-icon {
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
-  margin-top: 4px;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+  color: var(--color-text-secondary);
+  transition: background 150ms var(--ease-out), color 150ms var(--ease-out);
+}
+button.gig-row:hover .gig-row-icon {
+  background: color-mix(in srgb, var(--color-text-primary) 14%, transparent);
+  color: var(--color-text-primary);
+}
+.gig-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+.gig-actions .btn {
+  justify-content: center;
+}
+/* Who's in the gig (GigMembers): the owner, then each guest with Remove. */
+/* Focus starts on the dialog itself, which shows no ring for it. */
+.gig-members:focus-visible {
+  outline: none;
+}
+.gig-members-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.gig-member {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+}
+.gig-member-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+  color: var(--color-text-primary);
+}
+.gig-member-role {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
 }
 @media (prefers-reduced-motion: reduce) {
   .connect-gig-body { transition: none; }
@@ -9560,10 +9676,11 @@ button.connect-line:disabled {
 .account-switch--sm[data-state="on"] .account-switch__thumb {
   transform: translateX(16px);
 }
-/* The guests' level: one rail, three stops. */
+/* The guests' level: one rail, three stops, the panel's width. */
 .gig-level {
-  width: 96px;
+  width: 100%;
   height: 20px;
+  margin: 2px 0 8px;
   flex-shrink: 0;
   appearance: none;
   /* The three stops sit where the thumb's centre lands: 7px in, the middle, 7px from the end. */
