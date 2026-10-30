@@ -114,7 +114,7 @@ it('loads after the wait when the receiver stays silent, as before', async () =>
  * Picking the NAD again by hand started a new session, which worked.
  */
 describe('a joined session that never answers', () => {
-  it('pings, waits for a slow receiver, then stops that receiver app instead of loading', async () => {
+  it('pings, waits for a slow receiver, then stops that receiver app instead of loading, and leaves it', async () => {
     mockAddToast.mockClear();
     const { manager, session, endCurrentSession } = harness({ deaf: true });
     const pings = () => session.sendMessage.mock.calls.filter(([, message]) => (message as { action?: string })?.action === 'ping');
@@ -126,18 +126,34 @@ describe('a joined session that never answers', () => {
     await jest.advanceTimersByTimeAsync(2500);
     await started;
     expect(manager.handleCastConnected).not.toHaveBeenCalled();
+    // The stop first: the other senders there hear the end (prod 2026-10-30 21:03:27).
     expect(endCurrentSession).toHaveBeenCalledWith(true);
+    expect(endCurrentSession).not.toHaveBeenCalledWith(false);
     expect(manager.logCast).toHaveBeenCalledWith('warn', 'cast-join-deaf', expect.stringMatching(/^reason=session-started waitedMs=5\d\d\d$/));
     expect(manager.userSessionRequestPending).toBe(false);
+    // Then let go of it here: Chrome may never confirm a stop it can't hear (21:03:30).
+    await jest.advanceTimersByTimeAsync(1000);
+    expect(endCurrentSession).toHaveBeenLastCalledWith(false);
+  });
 
-    // Its end hands nothing back here, and offers Cast again, which opens the picker.
-    const openCastPicker = jest.fn();
-    Object.assign(manager, { openCastPicker });
+  it('once ended, hands nothing back here and opens the picker for the new cast; Cast again if Chrome refuses it', () => {
+    mockAddToast.mockClear();
+    const { manager } = harness({ deaf: true });
+    const openCastPicker = jest.fn((_reason: string, _onAnswer?: (outcome: string, ms: number) => void) => 'opened');
+    Object.assign(manager, { openCastPicker, stoppedDeafDevice: 'NAD Forstærker' });
     manager.afterSessionEnded({ index: 1, positionSeconds: 12, wasPlaying: false });
     expect(manager.handOffToLocalAfterSessionEnd).not.toHaveBeenCalled();
+    expect(openCastPicker).toHaveBeenCalledWith('deaf-join-restart', expect.any(Function));
+
+    // The listener closing the picker: nothing more.
+    openCastPicker.mock.calls[0][1]!('error-cancel', 3000);
+    expect(mockAddToast).not.toHaveBeenCalled();
+    // Chrome refusing it at once (21:03:35, 6 ms): Cast again, a tap that opens it.
+    openCastPicker.mock.calls[0][1]!('error-cancel', 6);
     expect(mockAddToast).toHaveBeenCalledWith("NAD Forstærker didn't answer.", 'error', expect.objectContaining({ actionLabel: 'Cast again' }));
     mockAddToast.mock.calls[0][2].onAction();
-    expect(openCastPicker).toHaveBeenCalledWith('deaf-join-retry');
+    expect(openCastPicker).toHaveBeenLastCalledWith('deaf-join-retry');
+
     // A later end is an ordinary one again.
     manager.afterSessionEnded({ index: 1, positionSeconds: 12, wasPlaying: true });
     expect(manager.handOffToLocalAfterSessionEnd).toHaveBeenCalledTimes(1);
