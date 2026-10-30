@@ -1126,6 +1126,12 @@ session instead of joining, which must not count; prod 22:16:20), the device lea
 device as the remote target, so it controls the Cast device through the
 device casting to it.
 
+Whether or not sync knows of another device there, a joined session that
+never answers this device (no acknowledgement of the join's ping, no status,
+no media status within 5 s) is not loaded into: the sender stops that
+receiver app and offers Cast again (`cast-join-deaf`, 2026-10-30; see
+[listen-together.md](listen-together.md), the deaf joiner).
+
 Relay limits (prod 2026-10-14, phone casting and locked, desktop as remote):
 Android stretches a background tab's timers, so the playing device reports at
 once after a command, not on a timer. A Cast output silent for over a minute

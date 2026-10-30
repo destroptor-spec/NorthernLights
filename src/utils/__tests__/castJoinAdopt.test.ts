@@ -1,7 +1,8 @@
 import { CastManager } from '../CastManager';
 
 jest.mock('../PlaybackManager', () => ({ playbackManager: {} }));
-jest.mock('../../store', () => ({ usePlayerStore: { getState: () => ({ authToken: 'jwt' }), setState: jest.fn() } }));
+const mockAddToast = jest.fn();
+jest.mock('../../store', () => ({ usePlayerStore: { getState: () => ({ authToken: 'jwt', addToast: mockAddToast }), setState: jest.fn() } }));
 
 /**
  * Prod 2026-10-13 19:53:48–49 (desktop joins the NAD, paused on "Slidin'"
@@ -23,10 +24,18 @@ type Harness = {
   logCast: jest.Mock;
   lastAuroraStatus: unknown;
   lastAuroraStatusAt: number;
+  lastReceiverAnswerAt: number;
 };
 
-function harness() {
-  const session = { getSessionId: () => '1ecdcfad', sendMessage: jest.fn().mockResolvedValue(undefined) };
+/** `deaf`: the receiver never answers this device (one-way join); otherwise it acknowledges the join's ping. */
+function harness(options: { deaf?: boolean } = {}) {
+  const session = {
+    getSessionId: () => '1ecdcfad',
+    sendMessage: jest.fn((_ns: string, message: { type?: string; action?: string }) => {
+      if (!options.deaf && message?.type === 'aurora.control' && message.action === 'ping') manager.lastReceiverAnswerAt = Date.now();
+      return Promise.resolve(undefined);
+    }),
+  };
   const endCurrentSession = jest.fn();
   let media: unknown = null;
   const manager = Object.create(CastManager.prototype) as Harness;
@@ -51,7 +60,9 @@ function harness() {
     logCast: jest.fn(),
     lastAuroraStatus: null,
     lastAuroraStatusAt: 0,
+    lastReceiverAnswerAt: 0,
     watchdogMediaRequestId: 0,
+    auroraControlRequestId: 0,
   });
   return { manager, session, endCurrentSession, setMedia: (next: unknown) => { media = next; } };
 }
@@ -94,6 +105,52 @@ it('loads after the wait when the receiver stays silent, as before', async () =>
   await jest.advanceTimersByTimeAsync(200);
   await started;
   expect(manager.handleCastConnected).toHaveBeenCalledTimes(1);
+});
+
+/**
+ * Prod 2026-10-27 12:33: the desktop joined the NAD's idle receiver app (the
+ * phone had stopped casting), heard nothing back, loaded its queue, and
+ * loaded it again 15 s later over its own track ("playback-unconfirmed").
+ * Picking the NAD again by hand started a new session, which worked.
+ */
+describe('a joined session that never answers', () => {
+  it('pings, waits for a slow receiver, then stops that receiver app instead of loading', async () => {
+    mockAddToast.mockClear();
+    const { manager, session, endCurrentSession } = harness({ deaf: true });
+    const pings = () => session.sendMessage.mock.calls.filter(([, message]) => (message as { action?: string })?.action === 'ping');
+    const started = manager.startPlaybackForCurrentSession('session-started');
+    expect(pings()).toHaveLength(1);
+    await jest.advanceTimersByTimeAsync(2600);
+    expect(pings()).toHaveLength(2); // once more, in case the first was lost
+    expect(manager.handleCastConnected).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(2500);
+    await started;
+    expect(manager.handleCastConnected).not.toHaveBeenCalled();
+    expect(endCurrentSession).toHaveBeenCalledWith(true);
+    expect(manager.logCast).toHaveBeenCalledWith('warn', 'cast-join-deaf', expect.stringMatching(/^reason=session-started waitedMs=5\d\d\d$/));
+    expect(manager.userSessionRequestPending).toBe(false);
+
+    // Its end hands nothing back here, and offers Cast again, which opens the picker.
+    const openCastPicker = jest.fn();
+    Object.assign(manager, { openCastPicker });
+    manager.afterSessionEnded({ index: 1, positionSeconds: 12, wasPlaying: false });
+    expect(manager.handOffToLocalAfterSessionEnd).not.toHaveBeenCalled();
+    expect(mockAddToast).toHaveBeenCalledWith("NAD Forstærker didn't answer.", 'error', expect.objectContaining({ actionLabel: 'Cast again' }));
+    mockAddToast.mock.calls[0][2].onAction();
+    expect(openCastPicker).toHaveBeenCalledWith('deaf-join-retry');
+    // A later end is an ordinary one again.
+    manager.afterSessionEnded({ index: 1, positionSeconds: 12, wasPlaying: true });
+    expect(manager.handOffToLocalAfterSessionEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it('a receiver that answers the ping is not deaf, however slowly its media shows', async () => {
+    const { manager, endCurrentSession } = harness();
+    const started = manager.startPlaybackForCurrentSession('session-started');
+    await jest.advanceTimersByTimeAsync(1600);
+    await started;
+    expect(manager.handleCastConnected).toHaveBeenCalledTimes(1);
+    expect(endCurrentSession).not.toHaveBeenCalled();
+  });
 });
 
 it('loads nothing over a receiver that says it plays, even if the SDK never shows the media', async () => {
