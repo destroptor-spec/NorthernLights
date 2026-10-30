@@ -136,23 +136,18 @@ describe('a joined session that never answers', () => {
     expect(endCurrentSession).toHaveBeenLastCalledWith(false);
   });
 
-  it('once ended, hands nothing back here and opens the picker for the new cast; Cast again if Chrome refuses it', () => {
+  it('once ended, hands nothing back here and offers Cast again, whose tap opens the picker', () => {
     mockAddToast.mockClear();
     const { manager } = harness({ deaf: true });
-    const openCastPicker = jest.fn((_reason: string, _onAnswer?: (outcome: string, ms: number) => void) => 'opened');
+    const openCastPicker = jest.fn(() => 'opened');
     Object.assign(manager, { openCastPicker, stoppedDeafDevice: 'NAD Forstærker' });
     manager.afterSessionEnded({ index: 1, positionSeconds: 12, wasPlaying: false });
     expect(manager.handOffToLocalAfterSessionEnd).not.toHaveBeenCalled();
-    expect(openCastPicker).toHaveBeenCalledWith('deaf-join-restart', expect.any(Function));
-
-    // The listener closing the picker: nothing more.
-    openCastPicker.mock.calls[0][1]!('error-cancel', 3000);
-    expect(mockAddToast).not.toHaveBeenCalled();
-    // Chrome refusing it at once (21:03:35, 6 ms): Cast again, a tap that opens it.
-    openCastPicker.mock.calls[0][1]!('error-cancel', 6);
+    // Not by itself: a picker opened as the session ended left Chrome's dialog half open (prod 21:40:21).
+    expect(openCastPicker).not.toHaveBeenCalled();
     expect(mockAddToast).toHaveBeenCalledWith("NAD Forstærker didn't answer.", 'error', expect.objectContaining({ actionLabel: 'Cast again' }));
     mockAddToast.mock.calls[0][2].onAction();
-    expect(openCastPicker).toHaveBeenLastCalledWith('deaf-join-retry');
+    expect(openCastPicker).toHaveBeenCalledWith('deaf-join-retry');
 
     // A later end is an ordinary one again.
     manager.afterSessionEnded({ index: 1, positionSeconds: 12, wasPlaying: true });

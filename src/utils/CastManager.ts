@@ -89,8 +89,6 @@ const SESSION_STORAGE_KEY = 'cast_session_id';
 const JOIN_PING_ACTION = 'ping';
 /** A deaf session: how long after stopping it this device leaves it (stopDeafSession). */
 const DEAF_LEAVE_AFTER_MS = 1000;
-/** A picker answer this quick is Chrome refusing it, not the listener closing it. */
-const DEAF_PICKER_REFUSED_MS = 500;
 // The window's entry IDs, so a reloaded or recovered sender can adopt it.
 const QUEUE_WINDOW_STORAGE_KEY = 'aurora-cast-queue-window-v1';
 // A LOAD not acknowledged by then is treated as sent, never resent blindly.
@@ -1128,7 +1126,7 @@ export class CastManager {
             if (usePlayerStore.getState().playbackState === 'playing') {
                 usePlayerStore.setState({ playbackState: 'paused', isBuffering: false });
             }
-            this.restartAfterDeafSession(device);
+            this.offerCastAgainAfterDeafSession(device);
             return;
         }
         if (this.stoppedBecauseReplaced) {
@@ -1192,7 +1190,7 @@ export class CastManager {
      * progress"). A picker that never answers is let go after
      * CAST_PICKER_PENDING_MAX_MS.
      */
-    public openCastPicker(reason: string, onAnswer?: (outcome: string, ms: number) => void): 'opened' | 'pending' | 'unavailable' {
+    public openCastPicker(reason: string): 'opened' | 'pending' | 'unavailable' {
         const context = this.castContext;
         if (!context || typeof context.requestSession !== 'function' || this.isConnected()) {
             this.logCast('warn', 'cast-picker', `reason=${reason} result=unavailable state=${this.state}`);
@@ -1211,7 +1209,6 @@ export class CastManager {
             this.castPickerPendingSince = 0;
             this.logCast(outcome === 'connected' ? 'ok' : 'warn', 'cast-picker-answered', `reason=${reason} outcome=${outcome} ms=${Date.now() - since}`);
             this.notifyStateChange();
-            onAnswer?.(outcome, Date.now() - since);
         };
         let request: Promise<unknown>;
         try {
@@ -2564,7 +2561,8 @@ export class CastManager {
                         this.state = 'NOT_CONNECTED';
                         // Leaving another device's Cast session on purpose
                         // (cast-join-left) disconnects too; that is no failure.
-                        if (isOwnLeaveDisconnect(this.leftJoinedSessionAt, Date.now())) this.setHealthStatus('idle', '');
+                        // So does stopping and leaving a deaf session (cast-join-deaf).
+                        if (isOwnLeaveDisconnect(this.leftJoinedSessionAt, Date.now()) || isOwnLeaveDisconnect(this.deafSessionStoppedAt, Date.now())) this.setHealthStatus('idle', '');
                         else this.setHealthStatus('error', 'Cast device disconnected.');
                         this.notifyStateChange();
                     }
@@ -3338,12 +3336,15 @@ export class CastManager {
      * leave, since Chrome may never confirm a stop it cannot hear (prod
      * 2026-10-30 21:03:30, cast-end-unconfirmed), and while it holds the dead
      * session its picker fails at once (21:03:35, error-cancel in 6 ms). Once
-     * ended, afterSessionEnded opens the picker for the new cast. Nothing is
-     * handed back here: nothing played here.
+     * ended, afterSessionEnded offers Cast again: Chrome starts a cast only
+     * from its picker, opened by a tap (a picker opened by itself as the
+     * session ended left Chrome's dialog half open, prod 21:40:21). Nothing
+     * is handed back here: nothing played here.
      */
     private stopDeafSession() {
         if (!this.castContext) return;
         this.stoppedDeafDevice = this.getCastDeviceName() || 'The Cast device';
+        this.deafSessionStoppedAt = Date.now();
         this.userSessionRequestPending = false;
         this.clearUserSessionIntentTimer();
         this.freshSessionStartedAt = 0;
@@ -3367,26 +3368,19 @@ export class CastManager {
         }, DEAF_LEAVE_AFTER_MS);
     }
 
-    /**
-     * After a deaf session ended: the picker for the new cast, opened by
-     * itself. Chrome may refuse it (no recent tap, or a session it still
-     * holds): an answer within DEAF_PICKER_REFUSED_MS is that, not the
-     * listener closing it, and Cast again (a tap) opens it instead.
-     */
-    private restartAfterDeafSession(device: string) {
-        const offerCastAgain = () => usePlayerStore.getState().addToast(`${device} didn't answer.`, 'error', {
+    /** After a deaf session ended: Cast again, whose tap opens the picker for the new cast. */
+    private offerCastAgainAfterDeafSession(device: string) {
+        usePlayerStore.getState().addToast(`${device} didn't answer.`, 'error', {
             actionLabel: 'Cast again',
             onAction: () => { this.openCastPicker('deaf-join-retry'); },
             duration: 10000,
         });
-        const opened = this.openCastPicker('deaf-join-restart', (outcome, ms) => {
-            if (outcome !== 'connected' && ms < DEAF_PICKER_REFUSED_MS) offerCastAgain();
-        });
-        if (opened !== 'opened') offerCastAgain();
     }
 
     /** The device of a deaf session this device stopped (stopDeafSession), until its end is handled. */
     private stoppedDeafDevice = '';
+    /** When it stopped one, so the disconnect that follows is not reported as a failure. */
+    private deafSessionStoppedAt = 0;
 
     private applyFreshSessionStartupVolume(reason: string) {
         const sessionId = this.getCurrentSessionId();
