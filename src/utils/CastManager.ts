@@ -84,6 +84,12 @@ export interface CastHealthStatus {
 }
 
 const SESSION_STORAGE_KEY = 'cast_session_id';
+/**
+ * Whether another of the user's devices casts to this Cast device (sync).
+ * `joinedRunningSession`: the join proved deaf, so it joined a session already
+ * running there, and the device's name is enough.
+ */
+type CastingElsewhereCheck = (castDeviceName: string, options?: { joinedRunningSession?: boolean }) => boolean;
 /** The join's ping (cast-join-deaf): an action no receiver knows, which every receiver acknowledges. */
 const JOIN_PING_ACTION = 'ping';
 /** A deaf session: how long after stopping it this device leaves it (stopDeafSession). */
@@ -1062,11 +1068,11 @@ export class CastManager {
         return result.ok;
     }
 
-    public setCastingElsewhereCheck(check: ((castDeviceName: string) => boolean) | null) {
+    public setCastingElsewhereCheck(check: CastingElsewhereCheck | null) {
         this.castingElsewhereCheck = check;
     }
 
-    private castingElsewhereCheck: ((castDeviceName: string) => boolean) | null = null;
+    private castingElsewhereCheck: CastingElsewhereCheck | null = null;
     /** This sender left a session another device casts, on purpose: no handoff. */
     private leftJoinedSession = false;
     /** When it left, so the disconnect that follows is not reported as a failure. */
@@ -1074,11 +1080,11 @@ export class CastManager {
     /** The Cast session it left: never recovered or rejoined as "stale". */
     private leftJoinedSessionId = '';
 
-    private leaveIfCastingElsewhere(reason: string): boolean {
+    private leaveIfCastingElsewhere(reason: string, options: { joinedRunningSession?: boolean } = {}): boolean {
         // Already leaving (the connect and the session-start paths both ask).
         if (this.leftJoinedSession) return true;
         const name = this.getCastDeviceName();
-        if (!name || !this.castContext?.getCurrentSession?.() || !this.castingElsewhereCheck?.(name)) {
+        if (!name || !this.castContext?.getCurrentSession?.() || !this.castingElsewhereCheck?.(name, options)) {
             // Staying connected, possibly to a session left earlier (the other
             // device has stopped casting there since): recover it as usual.
             if (this.isLeftJoinedSession(this.getCurrentSessionId())) this.leftJoinedSessionId = '';
@@ -3301,6 +3307,11 @@ export class CastManager {
             }
             if (verdict === 'deaf') {
                 this.logCast('warn', 'cast-join-deaf', `reason=${reason} waitedMs=${elapsedMs}`);
+                // Another of this user's devices casting there is never stopped:
+                // leave and control it from here, as cast-join-left does. Being
+                // deaf, this was a join, so the device's name is enough (a cast
+                // output's Cast session id is lost in a server restart).
+                if (this.leaveIfCastingElsewhere(`${reason}:deaf`, { joinedRunningSession: true })) return 'stop';
                 this.stopDeafSession();
                 return 'stop';
             }
