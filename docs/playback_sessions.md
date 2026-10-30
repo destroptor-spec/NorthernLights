@@ -1162,9 +1162,13 @@ store routes to it; `selectDisplayedVolume`, `useDisplayedVolume`); on a
 phone it gets a slider, since the hardware keys never reach it. A drag is
 sent at most every 250 ms, and the device's reports of earlier steps don't
 pull the slider back (`VolumeGate`, `src/utils/volumeGate.ts`, which also
-fixed the same rubberbanding with a Cast receiver, #206). A device that
-reports no volume (a receiver that follows the session on its own, until
-`receiver-follow.js` reports one) has the slider disabled.
+fixed the same rubberbanding with a Cast receiver, #206). A receiver that
+follows the session on its own reports the device's system volume
+(`getSystemVolume`, again soon after `SYSTEM_VOLUME_CHANGED`, so a change
+from Google Home or the speaker's own buttons shows) and sets it for
+`setVolume` (`setSystemVolumeLevel`); before that a gig on the NAD left every
+guest's slider disabled (Andreas, 2026-10-30). A device that reports no
+volume (an older receiver page) has the slider disabled.
 
 **PR 5 (who turns sync on, decided with Andreas 2026-10-13):** not a per-device
 user setting.

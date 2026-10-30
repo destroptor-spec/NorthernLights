@@ -55,7 +55,10 @@ class FakeEventSource {
   emit(type: string, data: Record<string, unknown>) { this.listeners.get(type)?.({ data: JSON.stringify({ data }) }); }
 }
 
-function harness(options: { caf?: number[]; current?: number; session?: ReturnType<typeof sessionOf>; mediaToken?: string; lagMs?: number } = {}) {
+function harness(options: {
+  caf?: number[]; current?: number; session?: ReturnType<typeof sessionOf>; mediaToken?: string; lagMs?: number;
+  volume?: () => number | null; setVolume?: (level: number) => void;
+} = {}) {
   FakeEventSource.instances = [];
   let nextItemId = 100;
   const item = (n: number) => ({ itemId: nextItemId++, media: { customData: { queueEntryId: uuid(n) } } });
@@ -111,6 +114,8 @@ function harness(options: { caf?: number[]; current?: number; session?: ReturnTy
     origin: 'https://aurora.example',
     marker: (name: string, detail: string) => markers.push(`${name} ${detail}`),
     onStopped,
+    ...(options.volume ? { volume: options.volume } : {}),
+    ...(options.setVolume ? { setVolume: options.setVolume } : {}),
   });
   const handover = {
     sessionId: 'session-1', outputId: 'receiver:cast-77', generation: 3, token: 'receiver-token',
@@ -308,6 +313,52 @@ describe('commands', () => {
     expect(h.player.load).toHaveBeenCalledTimes(1);
     expect(h.player.load.mock.calls[0][0].queueData.items.map((i: any) => i.media.customData.queueEntryId))
       .toEqual([uuid(18), uuid(19), uuid(20)]);
+  });
+});
+
+describe('the volume (a remote\'s slider, Andreas 2026-10-30)', () => {
+  const command = (h: ReturnType<typeof harness>, cmd: Record<string, unknown>) =>
+    h.stream().emit('playbackSession.command', { sessionId: 'session-1', outputId: 'receiver:cast-77', generation: 3, command: cmd });
+  const lastReport = (h: ReturnType<typeof harness>) =>
+    JSON.parse(h.calls('POST', '/api/v1/playback-sessions/session-1/reports').at(-1)![1].body);
+
+  it('reports the device volume, and again soon after it changes', async () => {
+    let level = 0.4;
+    const h = harness({ volume: () => level });
+    h.follower.start(h.handover);
+    await jest.advanceTimersByTimeAsync(300);
+    expect(lastReport(h).volume).toBe(0.4);
+    level = 0.65;
+    h.follower.noteVolumeChanged();
+    await jest.advanceTimersByTimeAsync(300);
+    expect(h.calls('POST', '/api/v1/playback-sessions/session-1/reports')).toHaveLength(2);
+    expect(lastReport(h).volume).toBe(0.65);
+  });
+
+  it('sets it from a setVolume command, clamped, and refuses a level that is no number', async () => {
+    const setVolume = jest.fn();
+    const h = harness({ volume: () => 0.5, setVolume });
+    h.follower.start(h.handover);
+    await h.settle();
+    command(h, { type: 'setVolume', level: 0.3 });
+    command(h, { type: 'setVolume', level: 1.4 });
+    command(h, { type: 'setVolume', level: 'loud' });
+    expect(setVolume.mock.calls).toEqual([[0.3], [1]]);
+    expect(h.markers.join('\n')).toContain('receiver-command-applied type=setVolume ok=false invalid-level');
+  });
+
+  it('reports without it when the device cannot tell, and still reports when reading it throws', async () => {
+    const none = harness();
+    none.follower.start(none.handover);
+    await jest.advanceTimersByTimeAsync(300);
+    expect(lastReport(none)).not.toHaveProperty('volume');
+    command(none, { type: 'setVolume', level: 0.3 });
+    expect(none.markers.join('\n')).toContain('receiver-command-applied type=setVolume ok=false unsupported');
+
+    const broken = harness({ volume: () => { throw new Error('not ready'); } });
+    broken.follower.start(broken.handover);
+    await jest.advanceTimersByTimeAsync(300);
+    expect(lastReport(broken)).toEqual({ seq: 1, state: 'playing', queueEntryId: uuid(1), positionMs: 42_000 });
   });
 });
 
