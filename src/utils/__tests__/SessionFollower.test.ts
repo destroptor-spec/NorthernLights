@@ -91,6 +91,12 @@ function setup(
       set({ ...(tracks ? { playlist: tracks } : {}), currentIndex: index, playbackState: 'paused' });
     }),
     setSessionFollow: (follow: FollowedOutput | null) => { if (get().sessionFollow !== follow) set({ sessionFollow: follow }); },
+    repeat: 'none',
+    shuffle: false,
+    isInfinityMode: false,
+    adoptSessionSettings: jest.fn(({ repeat, shuffle, infinity }: { repeat: 'none' | 'all' | 'one'; shuffle: boolean; infinity: boolean }) => {
+      set({ repeat, shuffle, isInfinityMode: infinity });
+    }),
     ...initial,
   }));
   const follower = new SessionFollower();
@@ -190,6 +196,22 @@ describe('following another device', () => {
     setPlaybackTime.mockClear();
     await jest.advanceTimersByTimeAsync(5_000);
     expect(setPlaybackTime).not.toHaveBeenCalled();
+  });
+
+  it("takes the playing device's volume from its reports, and keeps it when a report has none", async () => {
+    const { store, source, connect } = setup();
+    await connect();
+    expect(store.getState().sessionFollow).not.toHaveProperty('volume');
+    source().emit('playbackSession.progress', {
+      sessionId: 'session-1', revision: 12, outputId: 'phone', generation: 4,
+      report: { state: 'playing', queueEntryId: uuid(2), positionMs: 31_000, volume: 0.35 },
+    });
+    expect(store.getState().sessionFollow).toMatchObject({ volume: 0.35 });
+    source().emit('playbackSession.progress', {
+      sessionId: 'session-1', revision: 12, outputId: 'phone', generation: 4,
+      report: { state: 'playing', queueEntryId: uuid(2), positionMs: 32_000 },
+    });
+    expect(store.getState().sessionFollow).toMatchObject({ volume: 0.35, positionMs: 32_000 });
   });
 
   it('only moves the current track when the queue is the same', async () => {
@@ -695,5 +717,43 @@ describe('showing a shared session on this device (Listen together, 6d)', () => 
     await connect();
     expect(onSharedSession).toHaveBeenLastCalledWith(null);
     expect(store.getState().sessionFollow?.sessionId).toBe('session-1');
+  });
+});
+
+describe('repeat, shuffle and Infinity from a device that does not play', () => {
+  it("shows the session's settings, without sending them back", async () => {
+    const { api, store, connect } = setup({}, sessionOf([1, 2, 3], { repeatMode: 'all', shuffle: true, infinity: true }));
+    await connect();
+    expect(store.getState()).toMatchObject({ repeat: 'all', shuffle: true, isInfinityMode: true });
+    expect(api.patchPlaybackSession).not.toHaveBeenCalled();
+  });
+
+  it('sends a change made here to the session', async () => {
+    const { api, store, connect, diagnostic } = setup({}, sessionOf([1, 2, 3]));
+    await connect();
+    store.setState({ repeat: 'one' });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(api.patchPlaybackSession).toHaveBeenCalledWith(expect.anything(), 'session-1', expect.objectContaining({
+      expectedRevision: 12,
+      operations: [{ type: 'setTransport', repeatMode: 'one', shuffle: false, infinity: false }],
+    }));
+    expect(diagnostic).toHaveBeenCalledWith('ok', 'sync-settings-sent', 'repeat=one shuffle=false infinity=false');
+  });
+
+  it("shows the session's settings again when the change is refused (a guest's level)", async () => {
+    const { api, store, connect } = setup({}, sessionOf([1, 2, 3]));
+    await connect();
+    api.patchPlaybackSession.mockRejectedValueOnce(new AuroraApiError('no', 403, 'SESSION_SCOPE_DENIED'));
+    store.setState({ isInfinityMode: true });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(store.getState().isInfinityMode).toBe(false);
+  });
+
+  it('leaves them to the mirror on the device that plays', async () => {
+    const { api, store, connect } = setup({ playbackState: 'playing' }, sessionOf([1, 2, 3]));
+    await connect();
+    store.setState({ shuffle: true });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(api.patchPlaybackSession).not.toHaveBeenCalled();
   });
 });

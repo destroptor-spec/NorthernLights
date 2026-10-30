@@ -1030,6 +1030,12 @@
                     "type": "string",
                     "format": "date-time",
                     "description": "Server time the report was accepted; interpolate from here while playing."
+                  },
+                  "volume": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "The output's volume, 0 to 1, when it reports one (not kept across a server restart; the next report brings it back)."
                   }
                 },
                 "required": [
@@ -2319,6 +2325,12 @@
             "type": "integer",
             "minimum": 0
           },
+          "volume": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "The output's volume, 0 to 1. Optional; an output that sends it can be given setVolume commands."
+          },
           "outputId": {
             "type": "string",
             "maxLength": 160,
@@ -2471,6 +2483,29 @@
               "entryId"
             ],
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "setVolume"
+                ]
+              },
+              "level": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "0 to 1."
+              }
+            },
+            "required": [
+              "type",
+              "level"
+            ],
+            "additionalProperties": false,
+            "description": "Change the output's volume. Sent only to an output that reports its volume."
           },
           {
             "type": "object",

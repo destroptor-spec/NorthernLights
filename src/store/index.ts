@@ -26,7 +26,8 @@ import { readSessionAuth, writeSessionAuth, clearSessionAuth } from '../utils/se
 import { sessionMirror } from '../utils/SessionMirror';
 import { requestPlaybackTransfer } from '../api/playbackSessions';
 import type { ConnectedDevice } from '../../shared/api/v1';
-import { followedPositionMs, type FollowedOutput } from '../utils/sessionFollow';
+import { followedPositionMs, selectRemoteVolumeTarget, type FollowedOutput } from '../utils/sessionFollow';
+import { VolumeGate } from '../utils/volumeGate';
 import { sendRemoteAction, startOnFollowingReceiver, type RemoteAction } from '../utils/sessionRemote';
 import { sessionFollower } from '../utils/SessionFollower';
 import { isPlaybackSyncEnabled, parsePlaybackSyncMode, type PlaybackSyncMode } from '../../shared/playbackSync';
@@ -152,6 +153,8 @@ let pendingLocalStart: { index: number; positionSeconds: number } | null = null;
 let takeOverConfirmed = false;
 // A device that carried out a remote command reports within this time.
 const REMOTE_COMMAND_CONFIRM_MS = 5_000;
+/** A dragged volume goes to the controlled device at most this often (one request each). */
+const REMOTE_VOLUME_INTERVAL_MS = 250;
 // What the listener did when "Play where?" opened, both ways it can go.
 let pendingPlayWhere: { remote: RemoteAction | null; local: () => Promise<void> } | null = null;
 
@@ -760,6 +763,11 @@ export interface PlayerState {
    */
   remoteControlOutputId: string | null;
   /**
+   * The volume the controlled device is being set to, until it reports it
+   * (selectDisplayedVolume). Not persisted.
+   */
+  remoteVolumeIntent: number | null;
+  /**
    * "Play where?" is open: an action here while another device plays.
    * `silent`: that device is not responding, so only "here" is offered.
    */
@@ -928,6 +936,13 @@ export interface PlayerState {
    * continues from `positionSeconds`.
    */
   adoptSessionQueue: (tracks: TrackInfo[] | null, index: number, positionSeconds: number) => void;
+  /**
+   * The session's repeat, shuffle and Infinity, set on another device (a
+   * remote one, or a guest's): shown here, and on the device that plays,
+   * played by. A Cast device gets the repeat mode; only the device that
+   * plays tops Infinity up.
+   */
+  adoptSessionSettings: (settings: { repeat: 'none' | 'all' | 'one'; shuffle: boolean; infinity: boolean }) => void;
   /**
    * This device is the session's output (it plays, or casts): take in the
    * session's queue, which another device changed (Phase 3). What plays
@@ -1220,6 +1235,17 @@ export const usePlayerStore = create<PlayerState>()(
         }, REMOTE_COMMAND_CONFIRM_MS);
       };
 
+      // The volume slider on a device that controls another one (Andreas,
+      // 2026-10-30: all the user's own devices; a guest from Playback Control).
+      const remoteVolume = new VolumeGate(
+        (level) => {
+          const target = selectRemoteVolumeTarget(get());
+          if (target) void sendToPlayingDevice({ type: 'setVolume', level }, target);
+        },
+        () => set({ remoteVolumeIntent: null }),
+        { intervalMs: REMOTE_VOLUME_INTERVAL_MS },
+      );
+
       // An action on an idle device while another device plays the session
       // (docs/playback_sessions.md, "Device choice and remote control"). It
       // goes to that device when the listener chose it, opens "Play where?"
@@ -1502,6 +1528,7 @@ export const usePlayerStore = create<PlayerState>()(
         syncPlaybackAcrossDevices: false as boolean,
         sessionFollow: null as FollowedOutput | null,
         remoteControlOutputId: null as string | null,
+        remoteVolumeIntent: null as number | null,
         playWherePrompt: null as { outputName: string; silent?: boolean } | null,
         settingsTarget: null as { tab: string; section?: string } | null,
         connectedDevices: [] as ConnectedDevice[],
@@ -3166,6 +3193,14 @@ export const usePlayerStore = create<PlayerState>()(
           persistContinuitySnapshot(true);
         },
 
+        adoptSessionSettings: (settings: { repeat: 'none' | 'all' | 'one'; shuffle: boolean; infinity: boolean }) => {
+          const state = get();
+          if (state.repeat === settings.repeat && state.shuffle === settings.shuffle && state.isInfinityMode === settings.infinity) return;
+          set({ repeat: settings.repeat, shuffle: settings.shuffle, isInfinityMode: settings.infinity });
+          if (state.repeat !== settings.repeat && castManager.isConnected()) void castManager.setRepeatMode(settings.repeat);
+          if (settings.infinity && !state.isInfinityMode && !isFollowingAnotherDevice(get())) void get().ensureInfinityQueue();
+        },
+
         adoptSessionQueueAsOutput: (incoming: TrackInfo[], currentEntryId: string | null) => {
           const state = get();
           const same = state.playlist.length === incoming.length
@@ -3203,11 +3238,16 @@ export const usePlayerStore = create<PlayerState>()(
             ? (follow && !follow.silent ? follow.outputId : null)
             : undefined;
           if (!follow) pendingPlayWhere = null;
+          const sameOutput = !!follow && follow.outputId === get().sessionFollow?.outputId;
+          if (!sameOutput) remoteVolume.dispose();
           set({
             sessionFollow: follow,
             ...(follow ? {} : { playWherePrompt: null }),
             ...(guestTarget !== undefined ? { remoteControlOutputId: guestTarget } : keepTarget ? {} : { remoteControlOutputId: null }),
+            ...(sameOutput ? {} : { remoteVolumeIntent: null }),
           });
+          // Its report of a volume this device is still setting is an echo (VolumeGate).
+          if (sameOutput && follow!.volume !== undefined) remoteVolume.receiverReports(follow!.volume);
         },
 
         playSessionQueue: async (tracks: TrackInfo[], index: number) => {
@@ -3340,6 +3380,16 @@ export const usePlayerStore = create<PlayerState>()(
         },
 
         setVolume: (v: number) => {
+          const remote = selectRemoteVolumeTarget(get());
+          if (remote) {
+            const permissions = useListenTogetherStore.getState().openedSessionId
+              ? useListenTogetherStore.getState().shared?.permissions : undefined;
+            if (permissions && !permissions.includes('transport')) return;
+            const level = Math.max(0, Math.min(1, v));
+            set({ remoteVolumeIntent: level });
+            remoteVolume.set(level);
+            return;
+          }
           playbackManager.setVolume(v);
           set({ volume: v });
         },

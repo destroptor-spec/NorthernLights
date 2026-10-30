@@ -1,12 +1,13 @@
 import { usePlayerStore } from '../store/index';
 import { useFollowedDeviceLabel } from '../hooks/useFollowedDeviceName';
 import { useDisplayedPlaying } from '../hooks/useDisplayedPlaying';
+import { useDisplayedVolume } from '../hooks/useDisplayedVolume';
 import { hasNextTrack } from '../utils/queue';
 import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { X, Infinity as InfinityIcon, ListMusic, ListX, ChevronUp, FileText } from 'lucide-react';
 import ProgressBar from './ProgressBar';
-import { useGuestMay, useShowingShared } from '../hooks/useGuestMay';
+import { useGuestMay } from '../hooks/useGuestMay';
 import { useSwipe } from '../hooks/useSwipe';
 import { castManager } from '../utils/CastManager';
 import { LyricsPanel } from './LyricsPanel';
@@ -124,13 +125,14 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
   const cycleRepeat = usePlayerStore((s) => s.cycleRepeat);
   const isInfinityMode = usePlayerStore((s) => s.isInfinityMode);
   const toggleInfinityMode = usePlayerStore((s) => s.toggleInfinityMode);
-  // A guest in a gig: its level decides; repeat, shuffle and Infinity don't
-  // reach the gig from here yet, so they rest (no text, as elsewhere).
+  // A guest in a gig: its level decides (no text, as elsewhere). Repeat and
+  // shuffle are queue settings; Infinity starts new music.
   const mayTransport = useGuestMay('transport');
-  const showingShared = useShowingShared();
+  const mayQueue = useGuestMay('queue');
+  const mayReplace = useGuestMay('replace');
   const audioOutputActive = usePlayerStore((s) => s.audioOutputActive);
   const audioOutputDeviceLabel = usePlayerStore((s) => s.audioOutputDeviceLabel);
-  const volume = usePlayerStore((s) => s.volume);
+  const { volume, remote: remoteVolume, locked: volumeLocked } = useDisplayedVolume();
   const followedDeviceLabel = useFollowedDeviceLabel();
   const followedSilent = usePlayerStore((s) => !!s.sessionFollow?.silent);
   const setVolume = usePlayerStore((s) => s.setVolume);
@@ -392,11 +394,13 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
         {/* Cast volume: on modern Android the hardware volume keys reach the
             receiver (external changes sync back via CastManager's
             VOLUME_LEVEL_CHANGED listener), so no on-screen control renders.
-            Platforms without that routing get this slider instead. */}
-        {castConnected && showCastVolume && (
+            Platforms without that routing get this slider instead. The
+            hardware keys never reach a device this one controls, so that
+            one's volume always gets the slider. */}
+        {((castConnected && showCastVolume) || remoteVolume) && (
           <div className="mobile-now-volume">
             <div className="mobile-now-volume-label">
-              <span>Cast volume</span>
+              <span>{remoteVolume ? 'Volume' : 'Cast volume'}</span>
               <span className="text-[var(--color-primary)]">{Math.round(volume * 100)}%</span>
             </div>
             <input
@@ -406,8 +410,9 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
               step="0.01"
               value={volume}
               onChange={(event) => setVolume(parseFloat(event.target.value))}
+              disabled={volumeLocked}
               className="mobile-now-volume-slider"
-              aria-label="Cast volume"
+              aria-label={remoteVolume ? 'Volume' : 'Cast volume'}
             />
           </div>
         )}
@@ -417,7 +422,7 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
           <button
             type="button"
             onClick={toggleShuffle}
-            disabled={showingShared}
+            disabled={!mayQueue}
             aria-label={shuffle ? 'Turn shuffle off' : 'Turn shuffle on'}
             aria-pressed={shuffle}
             className={`mobile-player-control-btn mobile-player-control-btn-md ${shuffle ? 'is-active' : ''}`}
@@ -463,7 +468,7 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
           <button
             type="button"
             onClick={cycleRepeat}
-            disabled={showingShared}
+            disabled={!mayQueue}
             aria-label={repeat === 'one' ? 'Repeat one is on. Cycle repeat' : repeat === 'all' ? 'Repeat all is on. Cycle repeat' : 'Repeat is off. Cycle repeat'}
             aria-pressed={repeat !== 'none'}
             className={`mobile-player-control-btn mobile-player-control-btn-md ${repeat !== 'none' ? 'is-active' : ''}`}
@@ -497,7 +502,7 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
           <button
             type="button"
             onClick={toggleInfinityMode}
-            disabled={showingShared}
+            disabled={!mayReplace}
             aria-label={isInfinityMode ? 'Turn Infinity Mode off' : 'Turn Infinity Mode on'}
             aria-pressed={isInfinityMode}
             className={`mobile-player-pill-btn ${isInfinityMode ? 'is-active' : ''}`}

@@ -1,4 +1,5 @@
 import { CastPlaybackConfirmation } from './castPlaybackConfirmation';
+import { VolumeGate } from './volumeGate';
 import {
     boundedQueueRequest, queueWindowEntries, castQueueCallback, CastQueueInsertAcks, planWindowEdit, applyWindowEdit, adoptableWindow,
     CAST_QUEUE_MAX_ITEMS, CAST_QUEUE_INSERT_MAX_ITEMS, CAST_QUEUE_LOW_WATER, CAST_QUEUE_KEEP_PREVIOUS,
@@ -296,6 +297,12 @@ export class CastManager {
     // Session id that already received the fresh-session startup volume, so
     // reconcile retries can't re-clamp after the user adjusts the volume.
     private startupVolumeSessionId: string | null = null;
+    private readonly volumeGate = new VolumeGate(
+        (level) => this.sendVolume(level),
+        (timedOut) => {
+            if (timedOut && this.isConnected()) this.onVolumeChange?.(this.player.volumeLevel);
+        },
+    );
     private userSessionIntentTimer: ReturnType<typeof setTimeout> | null = null;
     private staleTransportRecoveryPromise: Promise<boolean> | null = null;
     private mediaStatusRefreshPromise: Promise<any | null> | null = null;
@@ -2607,6 +2614,8 @@ export class CastManager {
             this.playerController.addEventListener(
                 cast.framework.RemotePlayerEventType.VOLUME_LEVEL_CHANGED,
                 () => {
+                    // Echoes of this sender's own steps would drag the slider back.
+                    if (!this.volumeGate.receiverReports(this.player.volumeLevel)) return;
                     this.onVolumeChange?.(this.player.volumeLevel);
                     void this.refreshMediaSessionStatus('volume-level-changed')
                         .then((mediaSession) => this.hydrateSenderFromRemoteSession(mediaSession, 'volume-level-changed'));
@@ -4780,6 +4789,10 @@ export class CastManager {
     }
 
     public setVolume(volumeLevel: number) {
+        if (this.playerController) this.volumeGate.set(volumeLevel);
+    }
+
+    private sendVolume(volumeLevel: number) {
         try {
             if (this.playerController) {
                 this.player.volumeLevel = volumeLevel;

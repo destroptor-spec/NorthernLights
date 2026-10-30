@@ -35,6 +35,10 @@ export interface FollowerPlayerState {
   getAuthHeader: () => Record<string, string>;
   adoptSessionQueue: (tracks: TrackInfo[] | null, index: number, positionSeconds: number) => void;
   setSessionFollow: (follow: FollowedOutput | null) => void;
+  repeat?: 'none' | 'all' | 'one';
+  shuffle?: boolean;
+  isInfinityMode?: boolean;
+  adoptSessionSettings?: (settings: { repeat: 'none' | 'all' | 'one'; shuffle: boolean; infinity: boolean }) => void;
 }
 
 export interface FollowerStore {
@@ -145,12 +149,15 @@ interface ProgressData {
   revision: number;
   outputId: string;
   generation: number;
-  report: { state: FollowedOutput['state']; queueEntryId: string | null; positionMs: number };
+  report: { state: FollowedOutput['state']; queueEntryId: string | null; positionMs: number; volume?: number };
 }
 
 const sameEntries = (playlist: TrackInfo[], session: PlaybackSession) =>
   playlist.length === session.queue.length
   && session.queue.every((entry, index) => playlist[index]?.queueEntryId === entry.queueEntryId);
+
+const settingsOf = (state: Pick<FollowerPlayerState, 'repeat' | 'shuffle' | 'isInfinityMode'>) =>
+  `${state.repeat}/${!!state.shuffle}/${!!state.isInfinityMode}`;
 
 export class SessionFollower {
   private store: FollowerStore | null = null;
@@ -263,6 +270,60 @@ export class SessionFollower {
     }
     // An edit made here, not this follower taking the session's queue.
     if (state.playlist !== previous.playlist && !this.rendering && this.editsGoToSession(state)) this.scheduleQueueEdit();
+    // Repeat, shuffle or Infinity changed here, on a device that doesn't play:
+    // they are the session's, so they go to it (the device that plays takes them in).
+    if (!this.rendering && this.session && !this.busy(state) && settingsOf(state) !== settingsOf(previous)) void this.sendSettings();
+  }
+
+  /**
+   * Sends this device's repeat, shuffle and Infinity to the session it shows.
+   * Once more at a newer revision when another change won; refused (a guest
+   * whose level lacks them), the session's settings show here again.
+   */
+  private async sendSettings(): Promise<void> {
+    const state = this.store?.getState();
+    const session = this.session;
+    if (!state || !session || state.repeat === undefined) return;
+    const operation = {
+      type: 'setTransport' as const,
+      repeatMode: state.repeat,
+      shuffle: !!state.shuffle,
+      infinity: !!state.isInfinityMode,
+    };
+    if (operation.repeatMode === session.repeatMode && operation.shuffle === session.shuffle && operation.infinity === session.infinity) return;
+    let expectedRevision = session.revision;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const updated = await this.api.patchPlaybackSession(state.getAuthHeader(), session.id, {
+          expectedRevision, requestId: createUuid(), operations: [operation],
+        } as Parameters<typeof sessionApi.patchPlaybackSession>[2]);
+        this.options!.diagnostic?.('ok', 'sync-settings-sent', `repeat=${operation.repeatMode} shuffle=${operation.shuffle} infinity=${operation.infinity}`);
+        if (this.session?.id === updated.id && updated.revision > this.session.revision) this.session = updated;
+        return;
+      } catch (error) {
+        const current = currentSessionFromError(error);
+        if (attempt === 0 && current && error instanceof AuroraApiError && error.code === 'REVISION_CONFLICT') {
+          expectedRevision = current.revision;
+          continue;
+        }
+        this.options!.diagnostic?.('warn', 'sync-settings-refused', `code=${error instanceof AuroraApiError ? error.code : 'network'}`);
+        this.adoptSettings(current ?? this.session);
+        return;
+      }
+    }
+  }
+
+  /** Shows the session's repeat, shuffle and Infinity here, without sending them back. */
+  private adoptSettings(session: PlaybackSession | null) {
+    const state = this.store?.getState();
+    if (!state?.adoptSessionSettings || !session) return;
+    const wasRendering = this.rendering;
+    this.rendering = true;
+    try {
+      state.adoptSessionSettings({ repeat: session.repeatMode, shuffle: session.shuffle, infinity: session.infinity });
+    } finally {
+      this.rendering = wasRendering;
+    }
   }
 
   /**
@@ -512,6 +573,7 @@ export class SessionFollower {
       entryId: data.report.queueEntryId,
       positionMs: data.report.positionMs,
       anchorMs: Date.now(),
+      ...(data.report.volume !== undefined ? { volume: data.report.volume } : {}),
     };
     this.render();
   }
@@ -657,6 +719,8 @@ export class SessionFollower {
         state.adoptSessionQueue(tracks, index, positionMs / 1000);
         this.options!.setPlaybackTime(positionMs / 1000, duration || 0);
       }
+      // What repeat, shuffle and Infinity are, wherever the session plays.
+      this.adoptSettings(session);
       this.store.getState().setSessionFollow(this.follow);
       if (isFollowedOutputPlaying(this.follow)) this.startTicker();
       else this.stopTicker();

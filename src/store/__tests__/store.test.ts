@@ -1,5 +1,5 @@
 import { restorePersistedPlayerState, usePlayerStore } from '../index';
-import { selectDisplayedPlaybackState, selectDisplayedPlaying } from '../../utils/sessionFollow';
+import { selectDisplayedPlaybackState, selectDisplayedPlaying, selectDisplayedVolume } from '../../utils/sessionFollow';
 import { sendRemoteAction, startOnFollowingReceiver } from '../../utils/sessionRemote';
 import { castManager } from '../../utils/CastManager';
 import { sessionMirror } from '../../utils/SessionMirror';
@@ -55,6 +55,30 @@ describe('Music Store Logic', () => {
     const url = new URL(track.url!);
     expect(url.searchParams.get('quality')).toBe('auto');
     expect(url.searchParams.get('token')).toBe('media-token');
+  });
+
+  describe("the session's repeat, shuffle and Infinity, set on another device", () => {
+    afterEach(() => jest.restoreAllMocks());
+
+    it('plays by them here, and tells a Cast device the repeat mode', () => {
+      const ensureInfinityQueue = jest.fn(async () => undefined);
+      jest.spyOn(castManager, 'isConnected').mockReturnValue(true);
+      const setRepeatMode = jest.spyOn(castManager, 'setRepeatMode').mockResolvedValue(undefined as never);
+      usePlayerStore.setState({ repeat: 'none', shuffle: false, isInfinityMode: false, sessionFollow: null, playbackState: 'playing', ensureInfinityQueue } as never);
+      usePlayerStore.getState().adoptSessionSettings({ repeat: 'all', shuffle: true, infinity: true });
+      expect(usePlayerStore.getState()).toMatchObject({ repeat: 'all', shuffle: true, isInfinityMode: true });
+      expect(setRepeatMode).toHaveBeenCalledWith('all');
+      expect(ensureInfinityQueue).toHaveBeenCalled();
+    });
+
+    it('changes nothing when they are the same', () => {
+      const setRepeatMode = jest.spyOn(castManager, 'setRepeatMode').mockResolvedValue(undefined as never);
+      usePlayerStore.setState({ repeat: 'one', shuffle: false, isInfinityMode: false });
+      const before = usePlayerStore.getState();
+      usePlayerStore.getState().adoptSessionSettings({ repeat: 'one', shuffle: false, infinity: false });
+      expect(usePlayerStore.getState()).toBe(before);
+      expect(setRepeatMode).not.toHaveBeenCalled();
+    });
   });
 
   describe('Next on the last track', () => {
@@ -256,6 +280,18 @@ describe('Music Store Logic', () => {
         expect(sent()).toEqual([{ type: 'pause' }]);
       });
 
+      it("changes the volume there from Playback Control (Andreas, 2026-10-30)", () => {
+        jest.useFakeTimers();
+        useListenTogetherStore.setState({ shared: { sessionId: 'shared', ownerName: 'Andreas', owner: null, permissions: ['queue'] } });
+        following({ volume: 0.5 });
+        usePlayerStore.getState().setVolume(0.2);
+        expect(sendRemoteAction).not.toHaveBeenCalled();
+        expect(selectDisplayedVolume(usePlayerStore.getState())).toBe(0.5);
+        useListenTogetherStore.setState({ shared: { sessionId: 'shared', ownerName: 'Andreas', owner: null, permissions: ['queue', 'transport'] } });
+        usePlayerStore.getState().setVolume(0.2);
+        expect(sent()).toEqual([{ type: 'setVolume', level: 0.2 }]);
+      });
+
       it('never takes the session over here, whatever asks', async () => {
         following();
         usePlayerStore.getState().openPlayWhere();
@@ -269,6 +305,51 @@ describe('Music Store Logic', () => {
         expect(playAtIndex).not.toHaveBeenCalled();
         expect(sendRemoteAction).not.toHaveBeenCalled();
         expect(usePlayerStore.getState().toasts.map((t) => t.message)).toContain("Nothing is playing in Andreas' Gig.");
+      });
+    });
+
+    describe('the volume slider', () => {
+      let setVolume: jest.SpyInstance;
+      beforeEach(() => {
+        jest.useFakeTimers();
+        setVolume = jest.spyOn(playbackManager, 'setVolume').mockImplementation(() => {});
+        usePlayerStore.setState({ volume: 1, remoteVolumeIntent: null } as never);
+      });
+
+      it("sets the controlled device's volume, showing where it is dragged until that device confirms it", () => {
+        following({ volume: 0.5 });
+        usePlayerStore.setState({ remoteControlOutputId: 'desktop' });
+        expect(selectDisplayedVolume(usePlayerStore.getState())).toBe(0.5);
+
+        usePlayerStore.getState().setVolume(0.3);
+        usePlayerStore.getState().setVolume(0.2);
+        expect(sent()).toEqual([{ type: 'setVolume', level: 0.3 }]);
+        expect(selectDisplayedVolume(usePlayerStore.getState())).toBe(0.2);
+        // Its report of the first step is an echo: the slider stays put.
+        usePlayerStore.getState().setSessionFollow(follow({ volume: 0.3 }));
+        expect(selectDisplayedVolume(usePlayerStore.getState())).toBe(0.2);
+
+        jest.advanceTimersByTime(250);
+        expect(sent()).toEqual([{ type: 'setVolume', level: 0.3 }, { type: 'setVolume', level: 0.2 }]);
+        usePlayerStore.getState().setSessionFollow(follow({ volume: 0.2 }));
+        expect(usePlayerStore.getState().remoteVolumeIntent).toBeNull();
+        // A change made on that device itself shows here.
+        usePlayerStore.getState().setSessionFollow(follow({ volume: 0.8 }));
+        expect(selectDisplayedVolume(usePlayerStore.getState())).toBe(0.8);
+        // This device's own volume is untouched.
+        expect(usePlayerStore.getState().volume).toBe(1);
+        expect(setVolume).not.toHaveBeenCalled();
+      });
+
+      it("is this device's own until a device is chosen, or when the chosen one reports no volume", () => {
+        following({ volume: 0.5 });
+        usePlayerStore.getState().setVolume(0.4);
+        usePlayerStore.setState({ remoteControlOutputId: 'desktop' });
+        usePlayerStore.getState().setSessionFollow(follow());
+        usePlayerStore.getState().setVolume(0.6);
+        expect(sendRemoteAction).not.toHaveBeenCalled();
+        expect(setVolume.mock.calls).toEqual([[0.4], [0.6]]);
+        expect(selectDisplayedVolume(usePlayerStore.getState())).toBe(0.6);
       });
     });
 

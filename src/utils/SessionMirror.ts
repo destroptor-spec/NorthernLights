@@ -36,6 +36,8 @@ export interface MirroredPlayerState {
   playbackState: 'playing' | 'paused' | 'stopped';
   isBuffering: boolean;
   castConnected: boolean;
+  /** 0 to 1; reported, so the user's other devices can show and change it. */
+  volume?: number;
   getAuthHeader: () => Record<string, string>;
 }
 
@@ -425,7 +427,8 @@ export class SessionMirror {
       || state.isInfinityMode !== previous.isInfinityMode) {
       this.scheduleFlush(FLUSH_DELAY_MS);
     }
-    if (state.playbackState !== previous.playbackState || state.isBuffering !== previous.isBuffering || state.currentIndex !== previous.currentIndex) {
+    if (state.playbackState !== previous.playbackState || state.isBuffering !== previous.isBuffering || state.currentIndex !== previous.currentIndex
+      || state.volume !== previous.volume) {
       this.reportSoon();
     }
   }
@@ -732,6 +735,7 @@ export class SessionMirror {
       state: state.isBuffering && state.playbackState !== 'stopped' ? 'buffering' : state.playbackState,
       queueEntryId: entryId && isUuid(entryId) ? entryId : null,
       positionMs: Math.max(0, Math.round((this.options!.getPositionSeconds() || 0) * 1000)),
+      ...(typeof state.volume === 'number' && Number.isFinite(state.volume) ? { volume: Math.min(1, Math.max(0, state.volume)) } : {}),
     };
     try {
       await this.api.reportPlaybackOutput(grant.credential, grant.sessionId, report);
