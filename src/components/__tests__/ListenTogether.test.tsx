@@ -5,7 +5,7 @@ import * as together from '../../utils/listenTogether';
 import { InvitePrompt } from '../InvitePrompt';
 import { GigSection } from '../GigSection';
 import { GigMembers } from '../GigMembers';
-import { UserAvatar } from '../UserAvatar';
+import { ownAvatar, UserAvatar } from '../UserAvatar';
 import { ConnectMenuContent } from '../ConnectMenu';
 import type { CastStatus } from '../../hooks/useCastStatus';
 
@@ -86,6 +86,10 @@ describe('avatars', () => {
     expect(first.style.getPropertyValue('--avatar-from')).toMatch(/^#[0-9a-f]{6}$/);
     expect(again.getAttribute('style')).toBe(first.getAttribute('style'));
     expect(picture.className).not.toContain('is-aurora');
+  });
+
+  it("the user's own avatar (header, Settings) is built as the server builds it, so its colors match", () => {
+    expect(ownAvatar({ id: 'u-1', username: ' åse' })).toEqual({ userId: 'u-1', initial: 'Å', pictureUrl: null });
   });
 });
 
