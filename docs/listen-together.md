@@ -384,15 +384,16 @@ Gig"), where the spec said "{owner}'s session".
     `DELETE /playback-sessions/:id/members/:userId`). The removed guest hears
     "<owner> removed you."; the link still works for them.
   - "Guest permissions", with the level's name on the right, over one line
-    with three stops (above), starting at 1.
+    with three stops (above), starting at 1. The line fills up to the level,
+    the stops below it lit: each level includes the ones below.
   - "Open session", with a switch like the ones in Settings, off by default
     (discoverable). Off: only the link lets people in. On: users nearby see
     it too.
-  - "Copy link", with a round copy button. Tapping it copies the link and
-    shows the toast "Link copied!".
   - "End gig" (a second tap confirms: "End for everyone?") and "Invite":
     the share sheet with the link (read ahead, so the sheet opens on the
-    tap), or a copy where there is no share sheet (desktop Chrome on Linux).
+    tap), or a copy with the toast "Link copied!" where there is no share
+    sheet (desktop Chrome on Linux). It replaced the "Copy link" line
+    (Andreas, 2026-10-30).
 - **Other users** see discoverable gigs nearby in their Connect card under
   "Available gigs", each with its preview and Join.
 - **Deferred:** the "Online now" invite list (the API keeps it).

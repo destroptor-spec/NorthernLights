@@ -101,7 +101,7 @@ describe("the owner's gig", () => {
     expect(mocked.startGig).toHaveBeenCalled();
   });
 
-  it('while it runs: the panel (Andreas, 2026-10-30), everyone on its edge (three, then +N), level, Open session, link, End gig and Invite', () => {
+  it('while it runs: the panel (Andreas, 2026-10-30), everyone on its edge (three, then +N), level, Open session, End gig and Invite', () => {
     act(() => {
       useListenTogetherStore.setState({
         ownSessionId: 's',
@@ -117,6 +117,7 @@ describe("the owner's gig", () => {
 
     const level = screen.getByRole('slider', { name: 'Guest permissions' });
     expect(level.getAttribute('aria-valuetext')).toBe('Queue Editor');
+    expect(level.dataset.level).toBe('1'); // the rail fills up to it
     expect(screen.getByText('Queue Editor')).toBeTruthy();
     fireEvent.change(level, { target: { value: '3' } });
     expect(mocked.setGigLevel).toHaveBeenCalledWith(3);
@@ -126,8 +127,7 @@ describe("the owner's gig", () => {
     fireEvent.click(discoverable);
     expect(mocked.setDiscoverable).toHaveBeenCalledWith(true);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Copy link' }));
-    expect(mocked.copyInviteLink).toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Copy link' })).toBeNull(); // Invite does it
     fireEvent.click(screen.getByRole('button', { name: 'Invite' }));
     expect(mocked.shareInviteLink).toHaveBeenCalled();
 
