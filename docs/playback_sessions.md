@@ -1129,7 +1129,8 @@ device casting to it.
 Whether or not sync knows of another device there, a joined session that
 never answers this device (no acknowledgement of the join's ping, no status,
 no media status within 5 s) is not loaded into: the sender stops that
-receiver app and offers Cast again (`cast-join-deaf`, 2026-10-30; see
+receiver app, leaves it, and opens the picker for a new cast (`cast-join-deaf`,
+2026-10-30; see
 [listen-together.md](listen-together.md), the deaf joiner).
 
 Relay limits (prod 2026-10-14, phone casting and locked, desktop as remote):
