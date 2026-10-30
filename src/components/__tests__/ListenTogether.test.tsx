@@ -5,6 +5,7 @@ import * as together from '../../utils/listenTogether';
 import { InvitePrompt } from '../InvitePrompt';
 import { GigSection } from '../GigSection';
 import { GigMembers } from '../GigMembers';
+import { UserAvatar } from '../UserAvatar';
 import { ConnectMenuContent } from '../ConnectMenu';
 import type { CastStatus } from '../../hooks/useCastStatus';
 
@@ -74,6 +75,17 @@ describe('the invitation', () => {
     render(<InvitePrompt />);
     expect(screen.getByText('+2')).toBeTruthy();
     expect(screen.queryByText('F')).toBeNull();
+  });
+});
+
+describe('avatars', () => {
+  it('each user has their own aurora colors, the same wherever they show; a picture shows as it is', () => {
+    const { container } = render(<><UserAvatar avatar={avatar('u-1', 'A')} /><UserAvatar avatar={avatar('u-1', 'A')} /><UserAvatar avatar={{ userId: 'u-2', initial: 'B', pictureUrl: '/p.jpg' }} /></>);
+    const [first, again, picture] = Array.from(container.querySelectorAll<HTMLElement>('.user-avatar'));
+    expect(first.className).toContain('is-aurora');
+    expect(first.style.getPropertyValue('--avatar-from')).toMatch(/^#[0-9a-f]{6}$/);
+    expect(again.getAttribute('style')).toBe(first.getAttribute('style'));
+    expect(picture.className).not.toContain('is-aurora');
   });
 });
 
