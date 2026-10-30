@@ -9,7 +9,7 @@ import { previewLabel } from '../utils/listenTogetherText';
  * page (docs/listen-together.md, "Avatars in API v1"), on the user's own
  * aurora colors (avatarAuroraColors).
  */
-export const UserAvatar: React.FC<{ avatar: Avatar; size?: 'xs' | 'sm' | 'md' | 'lg'; className?: string }> = ({ avatar, size = 'md', className = '' }) => {
+export const UserAvatar: React.FC<{ avatar: Avatar; size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl'; className?: string }> = ({ avatar, size = 'md', className = '' }) => {
   if (avatar.pictureUrl) {
     return (
       <span className={`user-avatar user-avatar--${size} ${className}`} aria-hidden="true">
@@ -28,6 +28,15 @@ export const UserAvatar: React.FC<{ avatar: Avatar; size?: 'xs' | 'sm' | 'md' | 
     </span>
   );
 };
+
+/**
+ * The signed-in user's own avatar (the header's user menu, Settings →
+ * Account), built as the server builds everyone's (avatarFor), so it has the
+ * same colors there as in a gig.
+ */
+export function ownAvatar(user: { id: string; username: string }): Avatar {
+  return { userId: user.id, initial: (Array.from(user.username.trim())[0] || '?').toUpperCase(), pictureUrl: null };
+}
 
 /**
  * Avatars overlapping, at most `max`, then "+N" for the rest (the gig line:

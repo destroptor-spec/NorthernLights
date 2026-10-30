@@ -2283,16 +2283,6 @@ a:focus-visible > .genre-card .genre-card__label {
 .account-profile__avatar {
   position: relative;
   z-index: 1;
-  width: 76px;
-  height: 76px;
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  border: 1px solid color-mix(in srgb, var(--color-text-primary) 18%, var(--glass-border));
-  background: color-mix(in srgb, var(--color-surface-variant) 86%, transparent);
-  color: var(--color-text-primary);
-  font-size: 2rem;
   font-weight: 800;
   box-shadow: 0 12px 28px color-mix(in srgb, var(--color-bg-primary) 44%, transparent);
 }
@@ -9442,6 +9432,7 @@ a:focus-visible > .genre-card .genre-card__label {
 .user-avatar--sm { width: 28px; height: 28px; font-size: 0.8rem; }
 .user-avatar--md { width: 36px; height: 36px; font-size: 0.95rem; }
 .user-avatar--lg { width: 56px; height: 56px; font-size: 1.4rem; }
+.user-avatar--xl { width: 76px; height: 76px; font-size: 2rem; }
 /* Before joining: the owner on its own, the guests stacked. */
 .session-preview-avatars {
   display: flex;
