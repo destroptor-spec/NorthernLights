@@ -74,7 +74,10 @@ export function patchNeed(patch: PlaybackSessionPatch): SessionNeed {
   return { kind: 'scopes', scopes: [...scopes] };
 }
 
-/** A remote command: `load` starts something new (replace); the rest move through the queue (transport). */
+/**
+ * A remote command: `load` starts something new (replace); the rest move
+ * through the queue, and set the volume (transport: Playback Control).
+ */
 export function commandNeed(command: PlaybackCommandRequest['command']): SessionNeed {
   return { kind: 'scopes', scopes: [command.type === 'load' ? 'replace' : 'transport'] };
 }

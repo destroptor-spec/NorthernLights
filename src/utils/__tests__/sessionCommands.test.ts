@@ -17,6 +17,7 @@ function player(overrides: Partial<CommandPlayer> = {}) {
     next: jest.fn(async () => { calls.push('next'); }),
     previous: jest.fn(async () => { calls.push('previous'); }),
     seek: jest.fn((s: number) => { calls.push(`seek:${s}`); }),
+    setVolume: jest.fn((level: number) => { calls.push(`volume:${level}`); }),
     playlist: () => [track(1), track(2), track(3)],
     playAtIndex: jest.fn(async (i: number) => { calls.push(`play:${i}`); }),
     playQueue: jest.fn(async (tracks: TrackInfo[], i: number) => { calls.push(`queue:${tracks.map((t) => t.id).join(',')}@${i}`); }),
@@ -34,6 +35,12 @@ it('carries out the transport commands on this device (and so on its Cast device
     expect(await applySessionCommand('s1', command, p)).toBe(true);
   }
   expect(calls).toEqual(['resume', 'pause', 'next', 'previous', 'seek:42.5']);
+});
+
+it('sets the volume here (and so on its Cast device)', async () => {
+  const { p, calls } = player();
+  expect(await applySessionCommand('s1', { type: 'setVolume', level: 0.35 }, p)).toBe(true);
+  expect(calls).toEqual(['volume:0.35']);
 });
 
 it('jumps to a queue entry, and ignores one this queue does not have', async () => {

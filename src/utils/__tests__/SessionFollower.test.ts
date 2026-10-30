@@ -198,6 +198,22 @@ describe('following another device', () => {
     expect(setPlaybackTime).not.toHaveBeenCalled();
   });
 
+  it("takes the playing device's volume from its reports, and keeps it when a report has none", async () => {
+    const { store, source, connect } = setup();
+    await connect();
+    expect(store.getState().sessionFollow).not.toHaveProperty('volume');
+    source().emit('playbackSession.progress', {
+      sessionId: 'session-1', revision: 12, outputId: 'phone', generation: 4,
+      report: { state: 'playing', queueEntryId: uuid(2), positionMs: 31_000, volume: 0.35 },
+    });
+    expect(store.getState().sessionFollow).toMatchObject({ volume: 0.35 });
+    source().emit('playbackSession.progress', {
+      sessionId: 'session-1', revision: 12, outputId: 'phone', generation: 4,
+      report: { state: 'playing', queueEntryId: uuid(2), positionMs: 32_000 },
+    });
+    expect(store.getState().sessionFollow).toMatchObject({ volume: 0.35, positionMs: 32_000 });
+  });
+
   it('only moves the current track when the queue is the same', async () => {
     const { store, api, source, connect } = setup({
       playlist: [1, 2, 3].map((n) => ({ id: `track-${n}`, path: `p${n}`, queueEntryId: uuid(n) })),

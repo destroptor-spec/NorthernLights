@@ -149,7 +149,7 @@ interface ProgressData {
   revision: number;
   outputId: string;
   generation: number;
-  report: { state: FollowedOutput['state']; queueEntryId: string | null; positionMs: number };
+  report: { state: FollowedOutput['state']; queueEntryId: string | null; positionMs: number; volume?: number };
 }
 
 const sameEntries = (playlist: TrackInfo[], session: PlaybackSession) =>
@@ -573,6 +573,7 @@ export class SessionFollower {
       entryId: data.report.queueEntryId,
       positionMs: data.report.positionMs,
       anchorMs: Date.now(),
+      ...(data.report.volume !== undefined ? { volume: data.report.volume } : {}),
     };
     this.render();
   }
