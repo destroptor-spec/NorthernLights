@@ -21,7 +21,9 @@ I cast to my speaker. Another person casts to it and takes it over.
   only).
   - The same holds if my phone was locked or closed during the takeover. When
     it comes back it does not take on the other person's music.
-  - My other devices show nothing playing on the speaker any more.
+  - My other devices show nothing playing on the speaker any more, and
+    nothing about who took it: that's a different user (Andreas,
+    2026-11-02).
 - **Unchanged:** another device of mine casting to the same speaker still
   becomes its remote (`cast-join-left`). I never take over from myself.
 
@@ -79,8 +81,9 @@ stop and Cast again stay.
 
 - **Claim and hand over.** B claims a receiver output for its own session on
   this Cast session, as the phone does after its first load today. It then
-  sends `aurora.session.follow` with `takeover: true` and its position. No
-  acknowledgement is awaited; it's sent up to three times.
+  sends `aurora.session.follow` with `takeover: true` and its position: where
+  it was locally when it started casting, as a cast does today (Andreas,
+  2026-11-02). No acknowledgement is awaited; it's sent up to three times.
 - **Confirmed through the server:** the receiver's first report on B's grant.
 - **B stays connected and casts "through the server".** The Cast icon and
   device name show as for any cast.
@@ -164,10 +167,10 @@ fresh cast today (picker about 2 s, join wait 1.5 s, load about 3 s).
 | T5 | The idle receiver app (the phone stopped casting less than 5 minutes ago), then the desktop picks the NAD | B's music plays within about 8 s, with no Cast again | — |
 | T6 | T1 on the A9 and on Stue TV | As T1 (the A9 may take a few seconds longer) | As T1 |
 
-## Open questions
+## Decided (Andreas, 2026-11-02)
 
-- **Where B starts.** Should B's music start on the speaker at the position
-  B was at locally (as a cast does today), or at the start of the track?
-- **Who took over.** Should A's other devices say who took the speaker
-  ("Bo is playing on the NAD")? The spec says nothing for now, which keeps
-  the "no messages" rule.
+- **Where B starts:** at the position B was at locally when it started
+  casting, as a cast does today.
+- **Who took over:** not shown anywhere. It's a different user, and A's
+  devices treat it as such: the speaker simply isn't playing A's music any
+  more.
