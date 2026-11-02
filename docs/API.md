@@ -69,7 +69,7 @@ App keys are listener-scoped, stored as SHA-256 digests, shown only when created
 Those four operations require a normal web JWT; an app key cannot mint or manage other app keys.
 Short-lived `media` and `sse` JWTs remain scoped credentials even when supplied in an `Authorization` header. They are accepted only by their matching artwork/event transports and can never satisfy the normal-web-session requirement for app-key management or pairing approval.
 
-The same rule now holds on the legacy `/api` surface: a scoped token is accepted only on the endpoints mapped to its scope — `media` on `/api/stream/*`, `/api/art` and `/api/cast/log`; `sse` on `/api/library/scan/status`, `/api/admin/mbdb/status` and `/api/settings/models/progress` — and is refused with `403` anywhere else, including admin routes. Scoped tokens are signed with the same secret as a full session and are distinguished solely by their `scope` claim, so this is enforced explicitly in `requireAuth` rather than implied by signature verification.
+The same rule now holds on the legacy `/api` surface: a scoped token is accepted only on the endpoints mapped to its scope — `media` on `/api/stream/*`, `/api/art`, `/api/cast/log` and `/api/cast/status`; `sse` on `/api/library/scan/status`, `/api/admin/mbdb/status` and `/api/settings/models/progress` — and is refused with `403` anywhere else, including admin routes. Scoped tokens are signed with the same secret as a full session and are distinguished solely by their `scope` claim, so this is enforced explicitly in `requireAuth` rather than implied by signature verification.
 
 ### Browser-assisted pairing
 
@@ -273,7 +273,7 @@ Keys are scoped to the session, kept for 24 hours and capped at the newest 1,000
 
 `GET /api/v1/events` is a user-scoped Server-Sent Events stream for playback-session, playlist, annotation, and library-revision changes. Browser `EventSource` callers first mint a short-lived `sse` token using `POST /api/v1/auth/scoped-token`, then pass it in the `token` query parameter. Native clients may use a normal bearer header. Scanner/auto-walk changes and mutations made through Aurora web or OpenSubsonic publish the same invalidations, so a dedicated client does not stay stale when another surface changes state.
 
-The query parameter accepts only an `sse` token or a receiver credential; a full session token is refused there. With an `sse` token, `clientId` names the device the stream belongs to (see Remote control). `playbackSync.changed` (`{ enabled }`) says whether the playback-session API works for this account now (see Playback sessions). Session events are `playbackSession.created`, `updated`, `handedOff` and `deleted` (fetch the session when the revision is newer than yours), plus `playbackSession.progress` (see Reports). Listen together adds `playbackSession.memberJoined` (`{ sessionId, userId, avatar }`), `memberLeft` (`{ sessionId, userId, reason: left | removed | ended }`), `visibilityChanged` (`{ sessionId, visibility }`) and `togetherEnded` (`{ sessionId }`), which reach the owner and every guest, and `invitePrompt` (`{ sessionId, token, path, preview }`) to a prompted user.
+The query parameter accepts only an `sse` token or a receiver credential; a full session token is refused there. With an `sse` token, `clientId` names the device the stream belongs to (see Remote control). `playbackSync.changed` (`{ enabled }`) says whether the playback-session API works for this account now (see Playback sessions). Session events are `playbackSession.created`, `updated`, `handedOff` and `deleted` (fetch the session when the revision is newer than yours), plus `playbackSession.progress` (see Reports). `cast.status` (`{ castSessionId, status }`, live only) carries a Cast receiver's status to the user whose media it plays (see `POST /api/cast/status`), so a sender with a one-way Cast connection hears the receiver. Listen together adds `playbackSession.memberJoined` (`{ sessionId, userId, avatar }`), `memberLeft` (`{ sessionId, userId, reason: left | removed | ended }`), `visibilityChanged` (`{ sessionId, visibility }`) and `togetherEnded` (`{ sessionId }`), which reach the owner and every guest, and `invitePrompt` (`{ sessionId, token, path, preview }`) to a prompted user.
 
 Reconnect with `Last-Event-ID`. If the in-memory replay window no longer includes that ID, Aurora emits `resync.required`; refetch affected resources and sessions. SSE is a cache-invalidation signal, not a complete event-sourced history. Progress events are not part of the replay window, so a client whose last seen event was one of them gets `resync.required`.
 
@@ -1409,6 +1409,19 @@ Write ChromeCast receiver logs to the server.
     "message": "MediaCodecVideoRenderer: Decoder initialization failed"
   }
   ```
+
+### [POST] `/api/cast/status`
+The Cast receiver's status, relayed to the devices of the user whose media
+token signs the post ([cast-takeover.md](./cast-takeover.md)). A sender whose
+Cast connection is one-way hears the receiver this way. The receiver posts
+the `aurora.status` it broadcasts, at most one a second. The server passes it
+on, live only, as `cast.status` on `/api/v1/events` to that user and nobody
+else, with sync on or off.
+- **Auth:** a `media` token (the one the receiver plays with) or a session.
+- **Body:** `{ castSessionId, status }`, where `castSessionId` is the
+  receiver's Cast session id and `status` an `aurora.status` object of at
+  most 4 KB.
+- **Answers:** `204`; `400` for anything else; `429` above 30 posts in 10 s.
 
 ---
 

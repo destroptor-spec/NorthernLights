@@ -34,7 +34,7 @@ describe('requireAuth scope enforcement', () => {
 
   describe('full sessions are unaffected', () => {
     it.each([
-      '/api/stream/abc/playlist.m3u8', '/api/art', '/api/cast/log',
+      '/api/stream/abc/playlist.m3u8', '/api/art', '/api/cast/log', '/api/cast/status',
       '/api/recommend', '/api/settings', '/api/library/scan/status',
     ])('a session token is accepted on %s', async (path) => {
       const { allowed } = await run(path, session);
@@ -48,6 +48,7 @@ describe('requireAuth scope enforcement', () => {
       ['/api/stream/abc/segment000.ts', media],
       ['/api/art', media],
       ['/api/cast/log', media],
+      ['/api/cast/status', media],
       ['/api/library/scan/status', sse],
       ['/api/admin/mbdb/status', sse],
       ['/api/settings/models/progress', sse],
