@@ -108,8 +108,14 @@ I cast to my speaker. Another person casts to it and takes it over.
 ### 4. The replaced device (A)
 
 - **When it happens:** a status (heard directly or relayed) names a
-  `castingClientId` other than this device while it casts, and, with sync on,
-  not another device of the same user.
+  `castingClientId` other than this device while it's in that Cast session.
+  - **Exception:** not while the user has just asked to cast (20 s after the
+    tap) and the receiver hasn't named this device yet. Those statuses name
+    the device it's about to replace.
+  - **Why there's no same-user exception:** with sync on, your own other
+    devices never load over you (`cast-join-left`), so the receiver never
+    names them.
+  - **Built:** #220 (PR 3).
 - **What A does:**
   - leaves the Cast session (`endCurrentSession(false)`, never a stop, since
     B's music plays there);
