@@ -92,7 +92,8 @@ it('hands the session over and settles on the receiver ack, never logging the to
     const { manager, sent, status } = harness({ answer: (message) => ({ type: 'aurora.session.follow.ack', requestId: message.requestId, ok: true }) });
     status(['session-follow']);
     await expect(manager.handOverSessionToReceiver(handover, 'claim')).resolves.toBe(true);
-    expect(sent).toEqual([{ ns: NS, message: { type: 'aurora.session.follow', requestId: 1, ...handover } }]);
+    // Naming this device: the one casting there from now on (docs/cast-takeover.md).
+    expect(sent).toEqual([{ ns: NS, message: { type: 'aurora.session.follow', requestId: 1, ...handover, castingClientId: expect.any(String) } }]);
     expect(manager.logCast).toHaveBeenLastCalledWith('ok', 'receiver-session-handover', 'sid=cast-77 reason=claim generation=3 result=acked attempts=1');
     expect(JSON.stringify(manager.logCast.mock.calls)).not.toContain('receiver-secret-token');
 });
