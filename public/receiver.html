@@ -1797,12 +1797,77 @@
         }
       }
 
+      // After a short outage of the route to the server (prod 2026-11-02, A9)
+      // a receiver kept stalling at segment boundaries for an hour while the
+      // server had every segment ready, until a new cast session reloaded
+      // this page. Time each segment from request to data so the next case
+      // shows whether fetches were slow or the player stalled despite fast
+      // ones. Diagnostics only: nothing about playback changes. The audio
+      // stream fetches its segments one after another, so requests and
+      // responses pair up in order; Shaka runs the request handler again for
+      // a retry, which counts as another attempt at the same segment.
+      var SEGMENT_SLOW_MS = 3000;
+      var SEGMENT_SLOW_LOG_INTERVAL_MS = 10000;
+      var SEGMENT_PENDING_MAX_AGE_MS = 60000;
+      var pendingSegments = [];
+      var segmentSlowLastLoggedAt = 0;
+      var segmentSlowSuppressed = 0;
+
+      function segmentName(url) {
+        try {
+          return new URL(url, window.location.href).pathname.split('/').pop() || '?';
+        } catch (e) {
+          return '?';
+        }
+      }
+
+      function noteSegmentRequest(url) {
+        var now = Date.now();
+        var name = segmentName(url);
+        pendingSegments = pendingSegments.filter(function(entry) {
+          return now - entry.startedAt < SEGMENT_PENDING_MAX_AGE_MS;
+        });
+        var last = pendingSegments[pendingSegments.length - 1];
+        if (last && last.name === name) {
+          last.attempts += 1;
+          return;
+        }
+        pendingSegments.push({ name: name, startedAt: now, attempts: 1 });
+        if (pendingSegments.length > 8) pendingSegments.shift();
+      }
+
+      function noteSegmentReceived(segment) {
+        var entry = pendingSegments.shift();
+        if (!entry) return;
+        var now = Date.now();
+        var ms = now - entry.startedAt;
+        if (ms < SEGMENT_SLOW_MS) return;
+        if (now - segmentSlowLastLoggedAt < SEGMENT_SLOW_LOG_INTERVAL_MS) {
+          segmentSlowSuppressed += 1;
+          return;
+        }
+        segmentSlowLastLoggedAt = now;
+        var currentTime = playerManager.getCurrentTimeSec ? playerManager.getCurrentTimeSec() : 0;
+        postDiagnosticMarker('receiver-segment-slow',
+          'segment=' + entry.name +
+          ' ms=' + ms +
+          ' bytes=' + (segment && segment.byteLength !== undefined ? segment.byteLength : '?') +
+          ' attempts=' + entry.attempts +
+          ' suppressed=' + segmentSlowSuppressed +
+          ' state=' + currentPlayerState +
+          ' time=' + Math.floor(currentTime || 0));
+        segmentSlowSuppressed = 0;
+      }
+
       var playbackConfig = new cast.framework.PlaybackConfig();
       playbackConfig.manifestRequestHandler = function(requestInfo) {
         applyAuth(requestInfo, 'Manifest');
       };
       playbackConfig.segmentRequestHandler = function(requestInfo) {
         applyAuth(requestInfo, 'Segment');
+        try {
+          noteSegmentRequest(requestInfo && requestInfo.url);
+        } catch (e) { /* diagnostics must never break playback */ }
       };
       playbackConfig.manifestHandler = function(manifest, responseInfo) {
         if (VERBOSE_NETWORK_LOGS) {
@@ -1816,6 +1881,9 @@
           var detail = responseInfo && responseInfo.headers ? ' headers received' : ' response received';
           logAndPost('ok', LOG_TAG, 'Segment' + detail);
         }
+        try {
+          noteSegmentReceived(segment);
+        } catch (e) { /* diagnostics must never break playback */ }
         return segment;
       };
 
