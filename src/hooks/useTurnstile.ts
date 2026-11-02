@@ -9,17 +9,23 @@ import {
 export type TurnstileStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 // Manages one Turnstile widget inside `containerRef` while `active` is true.
-// Tokens are single-use: call reset() after every failed submit. A script or
-// widget failure yields status 'error' — callers should warn but keep submit
-// enabled (the server enforces the captcha either way).
+// Tokens are single-use: call reset() after every failed submit. `pending` is
+// true while the captcha is on and no token has arrived yet: callers keep
+// submit disabled then, because the server refuses a request without one. A
+// submit made before the challenge finished used to fail, reset the widget and
+// start the wait over; on a phone that kept a user out for good (prod
+// 2026-10-29, 12 `captcha_missing` in a row). A script or widget failure
+// yields status 'error'; reset() tries again.
 export function useTurnstile(
   enabled: boolean,
   siteKey: string,
   containerRef: React.RefObject<HTMLElement | null>,
   active: boolean,
-): { token: string | null; status: TurnstileStatus; reset: () => void } {
+): { token: string | null; status: TurnstileStatus; pending: boolean; reset: () => void } {
   const [token, setToken] = useState<string | null>(null);
   const [status, setStatus] = useState<TurnstileStatus>('idle');
+  // Bumped to load the script again after it failed to load.
+  const [attempt, setAttempt] = useState(0);
   const widgetIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -75,12 +81,18 @@ export function useTurnstile(
       }
       setToken(null);
     };
-  }, [enabled, siteKey, active, containerRef]);
+  }, [enabled, siteKey, active, containerRef, attempt]);
 
   const reset = useCallback(() => {
     setToken(null);
-    if (widgetIdRef.current) resetTurnstileWidget(widgetIdRef.current);
+    if (widgetIdRef.current) {
+      resetTurnstileWidget(widgetIdRef.current);
+      setStatus(current => (current === 'error' ? 'ready' : current));
+    } else {
+      setAttempt(n => n + 1);
+    }
   }, []);
 
-  return { token, status, reset };
+  const pending = enabled && !!siteKey && active && !token;
+  return { token, status, pending, reset };
 }

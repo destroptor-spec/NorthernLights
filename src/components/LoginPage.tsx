@@ -144,6 +144,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               onChange={e => setUsername(e.target.value)}
               placeholder="username"
               autoComplete="username"
+              // Usernames are matched exactly: no auto-capitals or autocorrect.
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               tabIndex={step === 'username' ? 0 : -1}
               className="w-full bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary/50 transition-ui text-[var(--color-text-primary)] placeholder-[var(--color-text-muted)]"
             />
@@ -207,9 +211,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 </p>
               )}
               {turnstile.status === 'error' && (
-                <p className="text-xs text-[var(--color-text-muted)] text-center mt-1">
-                  Verification couldn't load — sign-in may fail.
-                </p>
+                <div className="flex flex-col items-center gap-1 mt-1">
+                  <p className="text-xs text-[var(--color-text-muted)]">Verification didn't complete.</p>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={turnstile.reset}>
+                    Try again
+                  </button>
+                </div>
               )}
             </div>
           )}
@@ -230,7 +237,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           {/* Submit */}
           <button
             type="submit"
-            disabled={step === 'username' ? !username.trim() : (!password || isLoading)}
+            disabled={step === 'username' ? !username.trim() : (!password || isLoading || turnstile.pending)}
             className="btn btn-primary btn-lg w-full mt-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {step === 'username' ? (
