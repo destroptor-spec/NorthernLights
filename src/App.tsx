@@ -25,7 +25,7 @@ import { useToast } from './hooks/useToast';
 import { playbackManager } from './utils/PlaybackManager';
 import { GlobalScanningIndicator } from './components/GlobalScanningIndicator';
 import { applyPendingPwaUpdate } from './utils/pwaUpdate';
-import { getServerDatabaseHealth, isServerDatabaseConnected, pollDecision } from './utils/serverHealth';
+import { getServerDatabaseHealth, pollDecision } from './utils/serverHealth';
 
 const SetupWizard = React.lazy(() => import('./components/SetupWizard').then(module => ({ default: module.SetupWizard })));
 const LoginPage = React.lazy(() => import('./components/LoginPage').then(module => ({ default: module.LoginPage })));
@@ -127,6 +127,8 @@ const App: React.FC = () => {
     dbConnectedRef.current = val;
     _setDbConnected(val);
   }, []);
+  // False while the server doesn't answer at all; the app then runs as it does offline.
+  const [serverReachable, setServerReachable] = React.useState(true);
   const [isDatabaseStarting, setIsDatabaseStarting] = React.useState(false);
   const needsSetup = usePlayerStore(state => state.needsSetup);
   const setupAdminCreated = usePlayerStore(state => state.setupAdminCreated);
@@ -188,9 +190,11 @@ const App: React.FC = () => {
 
   // Health check function accessible from render
   const checkHealth = React.useCallback(async () => {
-    const connected = await isServerDatabaseConnected();
-    setDbConnected(connected);
-    return connected;
+    const health = await getServerDatabaseHealth();
+    // No answer says nothing about the database: keep its status unknown.
+    if (health !== 'unreachable') setDbConnected(health === 'connected');
+    setServerReachable(health !== 'unreachable');
+    return health === 'connected';
   }, []);
 
   // Trigger an initial library fetch, apply theme, and subscribe to scan events
@@ -228,11 +232,13 @@ const App: React.FC = () => {
       }
       const decision = pollDecision(health, { connected: previouslyConnected, unreachableStreak });
       unreachableStreak = decision.unreachableStreak;
-      const ok = decision.connected;
-      setDbConnected(ok);
+      const ok = decision.connected === true;
+      setDbConnected(decision.connected);
+      setServerReachable(decision.reachable);
 
-      // Only trigger a sync if we just became healthy (transition from false to true)
-      if (ok && previouslyConnected === false) {
+      // Only trigger a sync if we just became healthy (from down, or from a
+      // server that never answered since this page opened)
+      if (ok && previouslyConnected !== true) {
         const { needsSetup } = usePlayerStore.getState();
         if (needsSetup === null) {
           await checkSetupStatus();
@@ -307,6 +313,9 @@ const App: React.FC = () => {
 
   // Offline detection
   const isOnline = useOnlineStatus();
+  // A server that stopped answering is treated like being offline: whatever
+  // already plays keeps going, and the cached app stays usable.
+  const canReachServer = isOnline && serverReachable;
   const { addToast } = useToast();
   const prevOnlineRef = React.useRef(isOnline);
   const pendingUpdate = usePlayerStore(state => state.pendingUpdate);
@@ -501,12 +510,11 @@ const App: React.FC = () => {
     );
   }
 
-  // If the server reports the database is down (or is unreachable while we're
-  // ONLINE), show the recovery control panel. When the browser is offline this
-  // same dbConnected===false can just mean the health fetch couldn't leave the
-  // device — that's not a DB outage, so fall through to the cached app instead
-  // of trapping the user on the recovery screen.
-  if (dbConnected === false && !isDatabaseStarting && isOnline) {
+  // If the server reports the database is down, show the recovery control
+  // panel. Offline, or with a server that doesn't answer, there's no database
+  // status to go by, so fall through to the cached app instead of trapping the
+  // user on the recovery screen.
+  if (dbConnected === false && !isDatabaseStarting && canReachServer) {
     return (
       <React.Suspense fallback={<FullPageFallback label="Loading database tools..." />}>
         <DatabaseControl
@@ -516,7 +524,7 @@ const App: React.FC = () => {
     );
   }
 
-  if (dbConnected === true && needsSetup === null && setupStatusError && isOnline) {
+  if (dbConnected === true && needsSetup === null && setupStatusError && canReachServer) {
     return (
       <main className="setup-status-error">
         <section className="setup-status-error__panel" role="alert">
@@ -535,9 +543,10 @@ const App: React.FC = () => {
   // 1. We are explicitly starting the database
   // 2. We don't know the connection status yet
   // 3. We are connected but don't know the setup status yet
-  // Online-only: offline we can't verify health/setup at all, so spinning here
-  // would hang forever. Fall through to the cached app (or login) instead.
-  if ((isDatabaseStarting || dbConnected === null || (dbConnected === true && needsSetup === null)) && isOnline) {
+  // Only while the server answers: offline, or with a server that doesn't
+  // answer, we can't verify health/setup at all, so spinning here would hang
+  // forever. Fall through to the cached app (or login) instead.
+  if ((isDatabaseStarting || dbConnected === null || (dbConnected === true && needsSetup === null)) && canReachServer) {
       const showStartingLabel = isDatabaseStarting;
       const showConnectingLabel = dbConnected === null;
       const showSetupLabel = dbConnected === true && needsSetup === null;
@@ -651,14 +660,18 @@ const App: React.FC = () => {
 
           {/* One notice under the top bar. Offline wins: "Playing on" another
               device can't be true while this one can't reach the server. */}
-          {!isOnline ? (
+          {!canReachServer ? (
             <div
               role="status"
               aria-live="polite"
               className="flex items-center justify-center gap-2 px-4 py-1.5 text-xs sm:text-sm font-medium text-amber-950 bg-amber-400/90 dark:text-amber-100 dark:bg-amber-500/20 border-b border-amber-500/30"
             >
               <WifiOff className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-              <span>You're offline — playing from cache. Library updates and search are paused.</span>
+              <span>
+                {isOnline
+                  ? "Can't reach the server — trying again. Library updates and search are paused."
+                  : "You're offline — playing from cache. Library updates and search are paused."}
+              </span>
             </div>
           ) : (
             <DeviceStrip />
