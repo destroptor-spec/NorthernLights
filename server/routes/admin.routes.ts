@@ -138,7 +138,15 @@ router.put('/users/:id', adminMutationRateLimit, requireAdmin, async (req, res) 
     const { username, password, role } = req.body;
 
     const fields: any = {};
-    if (username) fields.username = username;
+    if (username) {
+      // Usernames are case-insensitive, so a rename can't take another
+      // account's name in different capitals; it may recase its own.
+      const existing = await getUserByUsername(username);
+      if (existing && existing.id !== id) {
+        return res.status(409).json({ error: 'Username already taken' });
+      }
+      fields.username = username;
+    }
     if (password) {
       if (password.length < MIN_PASSWORD_LENGTH) {
         return res.status(400).json({ error: `Password must be ${MIN_PASSWORD_LENGTH}+ characters` });
