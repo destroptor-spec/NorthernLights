@@ -39,7 +39,10 @@ const adminUser = { userId: 'me', username: 'andreas', role: 'admin' };
 
 beforeEach(() => {
   jest.clearAllMocks();
-  jest.mocked(getUserByUsername).mockResolvedValue({ id: 'me', username: 'andreas', role: 'admin', password_hash: 'h' } as never);
+  // Like the database: usernames match whatever their case.
+  jest.mocked(getUserByUsername).mockImplementation(async (name: string) => (
+    name.toLowerCase() === 'andreas' ? { id: 'me', username: 'andreas', role: 'admin', password_hash: 'h' } : null
+  ) as never);
 });
 
 describe('DELETE /api/auth/delete-account', () => {
@@ -92,6 +95,17 @@ describe('Admin → Users', () => {
     jest.mocked(changeProtectedAccount).mockResolvedValue('done');
     await call(adminRouter, 'put', '/users/:id', { user: adminUser, params: { id: 'u2' }, body: { role: 'user', username: 'renamed' } });
     expect(updateUser).toHaveBeenCalledWith('u2', { username: 'renamed' });
+  });
+
+  it('refuses a rename into another account\'s name in other capitals', async () => {
+    const res = await call(adminRouter, 'put', '/users/:id', { user: adminUser, params: { id: 'u2' }, body: { username: 'ANDREAS' } });
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(updateUser).not.toHaveBeenCalled();
+  });
+
+  it('lets an account change the capitals of its own name', async () => {
+    await call(adminRouter, 'put', '/users/:id', { user: adminUser, params: { id: 'me' }, body: { username: 'Andreas' } });
+    expect(updateUser).toHaveBeenCalledWith('me', { username: 'Andreas' });
   });
 
   it('promotes without the guard', async () => {

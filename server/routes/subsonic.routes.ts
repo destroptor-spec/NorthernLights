@@ -1269,10 +1269,13 @@ async function handleSystem(req: Request, res: Response, method: string, ctx: Su
       const requested = getParam(req, 'username');
       let username = ctx.username;
       let role = ctx.role;
-      if (requested && requested !== ctx.username) {
+      if (requested && requested.toLowerCase() !== ctx.username.toLowerCase()) {
         // Only an admin may inspect another user; mirror Subsonic's 50.
         if (ctx.role !== 'admin') return sendError(req, res, 50, 'Not authorized to get details for another user');
-        const other = await db.query('SELECT username, role FROM users WHERE username = $1', [requested]);
+        const other = await db.query(
+          'SELECT username, role FROM users WHERE lower(username) = lower($1) ORDER BY (username = $1) DESC LIMIT 1',
+          [requested],
+        );
         if (!other.rows[0]) return sendError(req, res, 70, 'User not found');
         username = other.rows[0].username;
         role = other.rows[0].role;
