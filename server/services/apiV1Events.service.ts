@@ -23,7 +23,9 @@ export type ApiV1EventType =
   | 'playbackSession.togetherEnded'
   | 'playbackSession.invitePrompt'
   | 'playbackSession.accessChanged'
-  | 'playbackSession.discoverable';
+  | 'playbackSession.discoverable'
+  // The Cast receiver's status, relayed to the caster's devices (docs/cast-takeover.md)
+  | 'cast.status';
 
 export interface ApiV1Event {
   id: string;

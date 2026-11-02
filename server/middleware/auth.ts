@@ -106,7 +106,8 @@ function getScopedTokenScopeForPath(path: string): ScopedTokenScope | null {
   if (
     path.startsWith('/api/stream') ||
     path === '/api/art' ||
-    path === '/api/cast/log'
+    path === '/api/cast/log' ||
+    path === '/api/cast/status'
   ) {
     return 'media';
   }
