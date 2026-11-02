@@ -53,8 +53,8 @@ export function resolveClientIp(
   }
 }
 
-const mode = getTrustedProxyMode();
-
+// Read on every call, not once when this module loads: a module-level copy
+// was taken before .env was loaded and pinned prod to 'direct'.
 export function getTrustedClientIp(req: Request): string {
-  return resolveClientIp(mode, req.headers, req.socket?.remoteAddress);
+  return resolveClientIp(getTrustedProxyMode(), req.headers, req.socket?.remoteAddress);
 }

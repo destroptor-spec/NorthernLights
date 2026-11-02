@@ -343,9 +343,12 @@ export const InviteRegister: React.FC = () => {
                 </p>
               )}
               {turnstile.status === 'error' && (
-                <p className="text-xs text-[var(--color-text-muted)] text-center mt-1">
-                  Verification couldn't load — registration may fail.
-                </p>
+                <div className="flex flex-col items-center gap-1 mt-1">
+                  <p className="text-xs text-[var(--color-text-muted)]">Verification didn't complete.</p>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={turnstile.reset}>
+                    Try again
+                  </button>
+                </div>
               )}
             </div>
           )}
@@ -365,7 +368,8 @@ export const InviteRegister: React.FC = () => {
               password.length < MIN_PASSWORD_LENGTH ||
               !confirmPassword ||
               !passwordsMatch ||
-              isLoading
+              isLoading ||
+              turnstile.pending
             }
             className="btn btn-primary btn-lg w-full mt-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
