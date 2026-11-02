@@ -13,7 +13,9 @@
  *   load, setVolume);
  * - reports what it plays and its volume, and renews its own credential;
  * - stops when another device takes over, and plays out what it has when the
- *   credential runs out, the session is deleted or sync is turned off.
+ *   credential runs out, the session is deleted or sync is turned off;
+ * - lets go of the session when another device's LOAD takes the receiver
+ *   over (release), with a last report on its grant.
  *
  * Written for the oldest receiver in use (Beoplay A9: Chrome 62): ES5 style,
  * no Promise.prototype.finally, no AbortController, no optional chaining.
@@ -282,6 +284,32 @@
         }
         done(start(handover));
       });
+    }
+
+    /**
+     * Another device's LOAD takes this receiver over (docs/cast-takeover.md):
+     * a last report on this grant, so the session's devices see its output
+     * end where it was, then stop following. The player plays on: the LOAD
+     * that took over is about to play.
+     */
+    function release(reason) {
+      if (!state) return;
+      var grant = state;
+      var position = env.playerManager.getCurrentTimeSec ? env.playerManager.getCurrentTimeSec() : 0;
+      seq += 1;
+      var body = {
+        seq: seq,
+        state: 'stopped',
+        reason: reason,
+        queueEntryId: currentEntry(),
+        positionMs: Math.max(0, Math.round((position || 0) * 1000))
+      };
+      try {
+        request('POST', SESSIONS_PATH + encodeURIComponent(grant.sessionId) + '/reports', body).then(null, function () {
+          // Unreported, the output goes quiet; the session's devices see that instead.
+        });
+      } catch (error) { /* stop anyway */ }
+      stop(reason);
     }
 
     function stop(reason) {
@@ -834,6 +862,7 @@
       start: start,
       takeHandover: takeHandover,
       stop: stop,
+      release: release,
       following: following,
       notePlayerChanged: notePlayerChanged,
       // The device's volume changed (a remote, the Google Home app, its own buttons).

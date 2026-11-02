@@ -257,6 +257,31 @@ describe('following', () => {
   });
 });
 
+/**
+ * docs/cast-takeover.md: another device's LOAD takes the receiver over. The
+ * session it followed hears where its output ended, and the player plays on
+ * (the LOAD that took over is about to play).
+ */
+describe('released by a takeover', () => {
+  it('reports a last stopped/taken-over on its grant, stops following, and leaves the player alone', async () => {
+    const h = harness();
+    h.follower.start(h.handover);
+    await h.settle();
+    h.follower.release('taken-over');
+    expect(h.follower.following()).toBe(false);
+    const [, init] = h.calls('POST', '/api/v1/playback-sessions/session-1/reports').at(-1)!;
+    expect(init.headers.Authorization).toBe('Bearer receiver-token');
+    expect(JSON.parse(init.body)).toEqual({ seq: expect.any(Number), state: 'stopped', reason: 'taken-over', queueEntryId: uuid(1), positionMs: 42_000 });
+    expect(h.player.stop).not.toHaveBeenCalled();
+    expect(h.markers.join('\n')).toContain('receiver-follow-stopped reason=taken-over');
+    expect(h.onStopped).toHaveBeenCalledWith('taken-over');
+    // Nothing more goes out on that grant.
+    const reports = h.calls('POST', '/api/v1/playback-sessions/session-1/reports').length;
+    await jest.advanceTimersByTimeAsync(30_000);
+    expect(h.calls('POST', '/api/v1/playback-sessions/session-1/reports')).toHaveLength(reports);
+  });
+});
+
 describe('commands', () => {
   const command = (h: ReturnType<typeof harness>, cmd: Record<string, unknown>) =>
     h.stream().emit('playbackSession.command', { sessionId: 'session-1', outputId: 'receiver:cast-77', generation: 3, command: cmd });
