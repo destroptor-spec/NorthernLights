@@ -1,183 +1,173 @@
-# Cast takeover in one press (spec)
+# Cast takeover (spec)
 
-**Status:** spec for Andreas's approval, 2026-10-30. Nothing is built.
-It follows #211 (the deaf-join safety net) and needs `receiver.html` and
-`receiver-follow.js` changes, so it follows the Cast care rules: one issue
-per PR, sender side first, and each PR tested on the NAD, the A9 and Stue TV.
+**Status:** spec for Andreas's approval, revised 2026-11-02 around his
+"grandma test". Nothing is built. It replaces #211's fallback (stop, then
+Cast again) for everything except the rarest cases, and needs
+`receiver-follow.js` and `receiver.html` changes. So the Cast care rules
+apply: one issue per PR, and each PR tested on the NAD, the A9 and Stue TV.
 
-## Why
+## The outcome (Andreas, 2026-11-02)
 
-Picking the NAD on the desktop while another Aurora cast plays there (another
-account's phone, or an idle receiver app left running) takes two presses
-today, even with #211: the cast is stopped, then "Cast again" opens the
-picker. Spotify takes one press: picking a device that plays Spotify closes
-Spotify and starts Aurora.
+I cast to my speaker. Another person casts to it and takes it over.
 
-The difference is the Cast platform, not the app.
-- **Different apps:** the Cast device stops Spotify and launches Aurora's
-  receiver.
-- **Same app:** a device already running Aurora's receiver hands the joining
-  sender that running instance. Chrome joins it, and a sender can't force a
-  fresh launch.
-- **The join is deaf:** desktop Chrome joining a session another device
-  started gets a one-way connection (2026-10-13, 2026-10-27,
-  2026-10-30 21:03 and 21:40). Everything it sends reaches the receiver. The
-  pings, loads and stops all arrived. Nothing the receiver sends comes back.
-- **A new cast needs the picker:** Chrome starts one only from its picker,
-  opened by a tap. Opening it without one left Chrome's dialog half open
-  (21:40:21).
+- **For them** it is seamless and quick, like casting any other app.
+  - One press in the picker, and their music plays on the speaker within
+    about 5 seconds, a normal cast's time.
+  - Their app shows an ordinary cast: the Cast icon is lit, the device is
+    named, play, pause, skip, seek and volume work, and Stop casting works.
+  - Chrome's own Cast dialog agrees with the app.
+- **For me** my app just goes back to not casting, paused here on the track
+  and position the speaker was at. There's no toast and no message (logged
+  only).
+  - The same holds if my phone was locked or closed during the takeover. When
+    it comes back it does not take on the other person's music.
+  - My other devices show nothing playing on the speaker any more.
+- **Unchanged:** another device of mine casting to the same speaker still
+  becomes its remote (`cast-join-left`). I never take over from myself.
 
-## Goal (Andreas, 2026-10-30)
+## Why it isn't simple
 
-"As if a different app would cast: end cast, start the new one." One press:
-whoever picked the device last plays there. The cast it replaces ends
-gracefully. Its phone logs the takeover and gets **no toast**: it stops
-playing and drops every "casting" sign in the UI.
+- **Same app joins.** A Cast device already running Aurora's receiver hands a
+  joining sender that running instance. Spotify is replaced in one press only
+  because it's a different app.
+- **The join is deaf.** Desktop Chrome joining a session another device
+  started gets a one-way connection (2026-10-13, 2026-10-27, 2026-10-30,
+  2026-11-02). Its messages reach the receiver, nothing comes back.
+- **Chrome is deaf to the end too.** After a deaf join, stopping or leaving
+  ends the session for the app, but Chrome's own Cast dialog keeps "casting
+  to the NAD" for about 1.5 minutes. Its picker is refused until then
+  (2026-11-02 21:42 and 21:47). So the new caster must not leave and pick
+  again: it has to stay connected.
+- **The receiver doesn't start on its own.** A receiver that starts following
+  a session while nothing is loaded loads nothing ("nothing to line up" in
+  `reconcile`).
 
-## Idea
+## Design
 
-The deaf direction doesn't matter if the joining device never needs to hear
-the receiver. Since Phase 5 a receiver can play a playback session on its own:
-- **Commands** reach it through the server.
-- **Reports** go back through the server.
-- **The handover** is a single sender-to-receiver message
-  (`aurora.session.follow`).
+The new caster keeps the Cast connection it got and hands the receiver its
+own session through it. That direction always works. Its status then comes
+through the server, where the receiver reports. That's the Phase 5 path, and
+it doesn't care whether the connection is deaf.
 
-So the joining device can use the one-way connection to hand the receiver its
-own session, then leave the Cast session and control the NAD through the
-server, like your phone does when the NAD plays on its own.
+### 1. Deciding, as the session connects
 
-## Flow
+The new caster (B) decides at once, without waiting for the receiver:
 
-The desktop (account B) picks the NAD. The NAD's receiver app runs, either
-idle or following account A's session.
+1. **One of my own devices casts there** (sync on: my session's output is
+   this device, by name, active or quiet): leave and become its remote, as
+   today (`cast-join-left`, including #211's name check).
+2. **This device's own receiver session** (a reload or recovery rejoining
+   it): rejoin as today.
+3. **Another account's session plays there:** take over (below). B learns
+   this from the server: a new
+   `GET /api/v1/cast-sessions/:castSessionId` answers `{ inUse: boolean }`.
+   It means "some other account's output is on this Cast session" and
+   reveals nothing else. It's additive to API v1, with no schema change: the
+   server already knows receiver outputs' Cast session ids, and cast
+   outputs' ids in memory.
+4. **Nobody's** (a fresh launch, or an idle receiver app): cast as today.
+   - **Fresh launch:** LOAD over Cast, then the Phase 5 handover after the
+     first LOAD.
+   - **Deaf join of an idle receiver app:** the 2026-10-27 case, rare. After
+     #211's 5 s ping check, take over instead of stopping. This is the only
+     case that waits.
 
-1. **Join and detect deafness.** Chrome joins; the desktop pings and hears
-   nothing for 5 s (#211's `cast-join-deaf`). A join that hears the receiver
-   is unchanged.
-   - **Then ask again whether it's one of your own devices.** A deaf join
-     is always into a session already running there, so the device's name is
-     enough: your own session casting to that device, a locked phone
-     included. If so, the desktop leaves and becomes the remote
-     (`cast-join-left reason=…:deaf`, #211), and there's no takeover. Your
-     own devices are never taken over or stopped (Andreas, 2026-10-30).
-2. **Claim.** Instead of stopping the receiver, the desktop claims a receiver
-   output for its own session, as the phone does after its first load today:
-   `kind: 'receiver'`, the joined Cast session's id, and a receiver
-   credential.
-3. **Hand over, with `takeover: true`.** The desktop sends
-   `aurora.session.follow`, which reaches the receiver.
-   - The new flag is set only on this path: right after the user picked the
-     device in the picker and the join proved deaf.
-   - No acknowledgement will come back. The desktop sends it up to three
-     times, as today, and doesn't wait for an ack.
-4. **Receiver takes over.**
-   - **If it follows another session (A's):** it reports a final
-     `state: 'stopped', reason: 'taken-over'` on A's grant, which ends A's
-     output on the server. It broadcasts `aurora.follow.replaced`
-     `{ sessionId: A's }` on the Aurora channel, then starts following B's
-     session.
-   - **If it follows nothing (the 2026-10-27 idle case):** it simply starts.
-   - **Today's 6a-1 check stays for every handover without `takeover`.** A
-     refresh or a retried claim still can't take a receiver from a session
-     that plays there.
-5. **The desktop confirms through the server.** The first report from the
-   receiver on B's grant, seen in B's session (`playbackSession.progress` or
-   the session read), is the confirmation. Then the desktop leaves the Cast
-   session (`endCurrentSession(false)`, which Chrome handles; see #211 v2) and
-   becomes the NAD's remote: B's session plays on `receiver:<castSessionId>`,
-   and "Play where?" is already answered.
-6. **A's phone, still a sender in that Cast session, hears
-   `aurora.follow.replaced`** with its own session id. It:
-   - leaves the Cast session (`endCurrentSession(false)`: never stops it,
-     B's music plays there now);
-   - pauses, with no handoff to local playback;
-   - clears every casting sign: the Cast icon, "Playing on NAD", the device
-     strip and Now Playing's device line;
-   - logs `cast-taken-over`, with no toast.
+Sync off: there's no session to hand over, so today's behaviour and #211's
+stop and Cast again stay.
 
-   A's other devices see A's output stop through the server (step 4's final
-   report), as for any stop.
+### 2. The takeover (B's side)
 
-## Fallbacks
+- **Claim and hand over.** B claims a receiver output for its own session on
+  this Cast session, as the phone does after its first load today. It then
+  sends `aurora.session.follow` with `takeover: true` and its position. No
+  acknowledgement is awaited; it's sent up to three times.
+- **Confirmed through the server:** the receiver's first report on B's grant.
+- **B stays connected and casts "through the server".** The Cast icon and
+  device name show as for any cast.
+  - **Commands:** play, pause, skip, seek, queue taps and volume go to the
+    receiver output through the server (the Phase 5 commands, #208 for
+    volume).
+  - **State and progress:** from the receiver's reports.
+  - **Switched off:** Cast-media watchdogs, playback confirmation and
+    transport recovery. In this mode silence on the Cast connection is
+    expected.
+- **Stop casting (the app's or Chrome's dialog):** reaches the receiver over
+  the same connection. B goes back to playing locally, paused, as for any
+  stop.
+- **No confirmation within 10 s:** #211's stop and Cast again, the last
+  fallback.
 
-- **No confirmation within 10 s** (the receiver refused, is too old, or the
-  claim failed): fall back to #211 v3. The desktop stops the receiver, leaves,
-  and offers "Cast again".
-- **The receiver predates the takeover flag:** it refuses (6a-1) and the
-  fallback applies. The receiver ships before the senders use the flag, so
-  this only happens on a stale receiver page.
-- **One of your own devices casts there** (sync on, same account): nothing
-  changes. The existing `cast-join-left` check runs first. If it misses (the
-  server has forgotten a cast output's Cast session id in a restart), the
-  deaf join's name check catches it. Either way the desktop leaves and
-  becomes the remote. A takeover only ever replaces another account's cast,
-  or an idle receiver app.
-- **Sync off:** there's no session to hand over or compare against, so a
-  deaf join keeps #211's stop and Cast again.
+### 3. The receiver
 
-## Safety
+On a handover with `takeover: true`:
+1. **End the old session:** if it follows another session (A's), report a
+   final `stopped` with reason `taken-over` on A's grant, then stop following
+   it.
+2. **Start the new one:** follow B's session and load its current entry at
+   the given position. That's needed because an idle receiver doesn't start
+   by itself.
+3. **Say whose it is:** `aurora.status` carries the followed session's id
+   (`followSessionId`, opaque), so any sender can tell whose session plays
+   there.
 
-- **Same reach as Cast itself.** Only a device on the same network that
-  picked the NAD in Chrome's picker can send the handover, and it carries a
-  credential for the sender's own session. A takeover from another account is
-  what Cast allows Spotify today: whoever casts last plays.
-- **6a-1's guard holds.** A handover without `takeover` (a background
-  refresh, a credential renewal, a stale claim) is checked with the server
-  and refused while another session plays there, as today.
-- **A's session is never changed by B.** A's queue stays as it was. Only A's
-  output ends, reported by the receiver on A's own grant.
+A handover without `takeover` keeps today's 6a-1 check: it's refused while
+another session still plays there. A background refresh, a renewal or a
+stale claim can never take a receiver.
+
+### 4. The replaced phone (A's side)
+
+- **While attached and hearing:** when `aurora.status` names a
+  `followSessionId` that isn't A's session, A's phone
+  - leaves the Cast session (`endCurrentSession(false)`, never a stop, since
+    B's music plays there now);
+  - goes back to local, paused on the track and position the receiver was
+    at (today's paused handoff, as when a cast is stopped elsewhere,
+    checklist row 12);
+  - clears every casting sign;
+  - logs `cast-taken-over`, with no toast.
+- **When it wakes or reloads later:**
+  - A's session output already ended with `taken-over` (server).
+  - A rejoin finds the receiver following another session.
+  - Either way A leaves the same way and doesn't hydrate the receiver's
+    media.
+- **A's other devices:** they see A's output stop through the server, as for
+  any stop.
+
+## Speed budget
+
+Picker to SESSION_STARTED is about 1.5 s. Then the in-use check takes about
+0.2 s, the claim and handover about 0.5 s, and the receiver reading the
+session and loading about 2 s. That's music in roughly 4–5 s, the same as a
+fresh cast today (picker about 2 s, join wait 1.5 s, load about 3 s).
 
 ## PRs, in order
 
-1. **Receiver** (`receiver-follow.js`, `receiver.html`):
-   - `takeover: true` skips the other-session check: report
-     `stopped`/`taken-over` on the old grant, then start the new one.
-   - Broadcast `aurora.follow.replaced` with the old session id.
-   - Markers: `receiver-follow-taken-over`, `receiver-handover-takeover`.
-   - Unit tests in `receiverFollow.test.ts`.
-   - On its own this PR changes nothing for users, because no sender sends the
-     flag yet.
-2. **The replaced phone** (`CastManager`): on `aurora.follow.replaced` for its
-   own session, leave, pause, clear the Cast state, and log `cast-taken-over`,
-   with no toast. Testable with PR 1 by casting from B's phone (its join hears
-   the receiver), so the takeover is forced from a test build or console.
-3. **The joining desktop** (`CastManager`, `SessionMirror`):
-   - On `cast-join-deaf`: claim, hand over with `takeover`, confirm through
-     the server, leave, and become the remote.
-   - Fall back to v3 after 10 s without confirmation.
-   - Markers: `cast-takeover-sent`, `cast-takeover-confirmed`,
-     `cast-takeover-fallback`.
+1. **Server:** `GET /api/v1/cast-sessions/:castSessionId`, with tests,
+   `docs/API.md` and `api:generate`. Changes nothing by itself.
+2. **Receiver:** `takeover: true` (final report on the old grant, follow,
+   load at the position), plus `followSessionId` in `aurora.status`. Tests in
+   `receiverFollow.test.ts`. Changes nothing by itself: no sender sets the
+   flag.
+3. **Replaced phone (A):** leave on another `followSessionId`, live and on
+   wake. Paused locally, no toast.
+4. **New caster (B):** the in-use check, the takeover, casting through the
+   server, and the deaf-idle case. #211's fallback stays last.
 
-No server or schema change: receiver claims, reports with `reason` and
-`playbackSession.progress` exist. API v1 is unchanged. The receiver's message
-is Aurora-channel only.
+## Grandma checks
 
-## Checks on devices
-
-- **Another account, one press:** A's phone casts to the NAD; on the desktop
-  (B), pick the NAD.
-  - The NAD switches to B's music within about 8 s.
-  - A's phone stops casting with no toast.
-  - The desktop shows "Playing on NAD" and its controls work.
-- **Idle receiver app, one press:** the 2026-10-27 case. Cast from the phone,
-  stop casting, then pick the NAD on the desktop within 5 minutes. B's music
-  starts, with no "Cast again".
-- **Same account:** with sync on, the phone casts and the desktop picks the
-  NAD. As today: `cast-join-left`, the desktop becomes the remote. Also
-  right after a deploy (the server has forgotten the phone's Cast session
-  id) and with the phone locked: `cast-join-left reason=…:deaf`, and the
-  phone's music plays on.
-- **Receivers:** the same on the A9 (slower) and Stue TV.
-- **Fallback:** a receiver page from before PR 1. You get "Cast again" after
-  about 15 s, nothing stuck.
+| # | Steps | B (new caster) | A (replaced) |
+|---|---|---|---|
+| T1 | A's phone (account A) casts to the NAD. On the desktop (account B), pick the NAD | B's music plays within about 5 s. The desktop shows casting to the NAD; pause, skip, seek and volume work; Chrome's dialog says casting | The phone shows not casting, paused on its track, with no toast |
+| T2 | T1 with A's phone locked; unlock it a minute later | As T1 | On unlock the phone shows not casting and paused, not B's music |
+| T3 | After T1, B taps Stop casting (app, or Chrome's dialog) | The NAD stops; the desktop shows not casting, paused | — |
+| T4 | Same account: the phone casts and the desktop picks the NAD | As today: the desktop becomes the remote, the phone plays on | — |
+| T5 | The idle receiver app (the phone stopped casting less than 5 minutes ago), then the desktop picks the NAD | B's music plays within about 8 s, with no Cast again | — |
+| T6 | T1 on the A9 and on Stue TV | As T1 (the A9 may take a few seconds longer) | As T1 |
 
 ## Open questions
 
-- **Wait time.** The 5 s deafness wait plus the takeover: is about 8 s from
-  picking the NAD to B's music acceptable, or should the ping wait be shorter
-  for the NAD, with a longer one kept for the A9?
-- **Root cause.** Why desktop Chrome is deaf on these joins is still unknown.
-  One suspect is the desktop's "Failed to initialize Google Cast API …
-  AutoJoinPolicy" error at startup. If that ever gets fixed, the takeover
-  still works, because it never needs the receiver's replies.
+- **Where B starts.** Should B's music start on the speaker at the position
+  B was at locally (as a cast does today), or at the start of the track?
+- **Who took over.** Should A's other devices say who took the speaker
+  ("Bo is playing on the NAD")? The spec says nothing for now, which keeps
+  the "no messages" rule.
