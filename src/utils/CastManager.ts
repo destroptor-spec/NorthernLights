@@ -71,6 +71,8 @@ export interface AuroraReceiverStatus {
   caps?: string[];
   /** Phase 5: it follows a playback session right now (absent from older receivers). */
   following?: boolean;
+  /** The device whose cast plays there (docs/cast-takeover.md); absent from older receivers. */
+  castingClientId?: string | null;
   ts?: number;
 }
 
@@ -84,6 +86,12 @@ export interface CastHealthStatus {
 }
 
 const SESSION_STORAGE_KEY = 'cast_session_id';
+/**
+ * After a tap on Cast, how long statuses naming another device are taken for
+ * the cast this device is about to replace, not for a takeover of its own
+ * (docs/cast-takeover.md): a join waits 1.5 s, then loads.
+ */
+const TAKEOVER_JOIN_GRACE_MS = 20_000;
 // The window's entry IDs, so a reloaded or recovered sender can adopt it.
 const QUEUE_WINDOW_STORAGE_KEY = 'aurora-cast-queue-window-v1';
 // A LOAD not acknowledged by then is treated as sent, never resent blindly.
@@ -1104,7 +1112,62 @@ export class CastManager {
         return this.leftJoinedSession;
     }
 
+    /**
+     * The receiver names whose cast plays there (castingClientId,
+     * docs/cast-takeover.md). Another device's LOAD took it over: like a cast
+     * replaced by another app, this device leaves the Cast session (never a
+     * stop: the new cast plays there), goes back to playing here, paused
+     * where its own cast was, and says nothing (Andreas, 2026-11-02). Also
+     * when it wakes or reloads later and hears it first.
+     *
+     * Not while this device is joining to cast there itself, until the
+     * receiver names it: the statuses before its own LOAD name the device it
+     * replaces.
+     */
+    private stepBackIfTakenOver(status: AuroraReceiverStatus, sessionId: string): boolean {
+        const casting = typeof status.castingClientId === 'string' ? status.castingClientId : '';
+        if (!casting || !sessionId) return false;
+        if (casting === getAuroraClientId()) {
+            this.namedCasterSid = sessionId;
+            return false;
+        }
+        if (this.takenOverSid === sessionId) return true;
+        if (this.leftJoinedSession || !this.castContext?.getCurrentSession?.()) return false;
+        if (this.namedCasterSid !== sessionId && Date.now() - this.userCastIntentAt < TAKEOVER_JOIN_GRACE_MS) return false;
+        this.takenOverSid = sessionId;
+        this.takenOverAt = Date.now();
+        this.castEndSnapshotAtStop = this.captureCastEndSnapshot();
+        this.userSessionRequestPending = false;
+        this.clearUserSessionIntentTimer();
+        this.freshSessionStartedAt = 0;
+        this.preserveSessionOnNextEnd = false;
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+        this.logCast('ok', 'cast-taken-over', `sid=${sessionId}`);
+        try {
+            // false: leave the session, do not stop the receiver.
+            this.castContext.endCurrentSession(false);
+        } catch (error) {
+            this.logCast('warn', 'cast-taken-over-leave-failed', this.describeError(error));
+        }
+        return true;
+    }
+
+    /** The Cast session another device's LOAD took over (stepBackIfTakenOver), until its end is handled. */
+    private takenOverSid = '';
+    /** When, so the disconnect that follows is not reported as a failure. */
+    private takenOverAt = 0;
+    /** The Cast session in which the receiver named this device as the one casting. */
+    private namedCasterSid = '';
+    /** When the user last asked to cast (a launcher or picker tap). */
+    private userCastIntentAt = 0;
+
     private afterSessionEnded(snapshot: CastEndSnapshot | null) {
+        if (this.takenOverSid) {
+            this.takenOverSid = '';
+            // Back here, paused where its own cast was: no toast, no message.
+            this.handOffToLocalAfterSessionEnd(snapshot, { paused: true });
+            return;
+        }
         if (this.stoppedBecauseReplaced) {
             this.stoppedBecauseReplaced = false;
             this.resetCastEndIntent();
@@ -1128,7 +1191,7 @@ export class CastManager {
     }
 
     /** Hands playback back to this device after its Cast session ended for good. */
-    private handOffToLocalAfterSessionEnd(snapshot: CastEndSnapshot | null) {
+    private handOffToLocalAfterSessionEnd(snapshot: CastEndSnapshot | null, options: { paused?: boolean } = {}) {
         const userStopRequested = this.userStopRequested;
         const dialogOpenedAt = this.userCastDialogAt;
         this.resetCastEndIntent();
@@ -1138,8 +1201,8 @@ export class CastManager {
         }
         const now = Date.now();
         const visible = typeof document === 'undefined' || document.visibilityState === 'visible';
-        const play = shouldContinuePlayingAfterCast({ userStopRequested, dialogOpenedAt, now, wasPlaying: snapshot.wasPlaying, visible });
-        this.logCast('ok', 'cast-ended-handoff', `play=${play} wasPlaying=${snapshot.wasPlaying} userStop=${userStopRequested} dialog=${dialogOpenedAt ? 'recent' : 'none'} dialogAgoMs=${dialogOpenedAt ? now - dialogOpenedAt : 'none'} visible=${visible} index=${snapshot.index} position=${snapshot.positionSeconds.toFixed(1)}`);
+        const play = !options.paused && shouldContinuePlayingAfterCast({ userStopRequested, dialogOpenedAt, now, wasPlaying: snapshot.wasPlaying, visible });
+        this.logCast('ok', 'cast-ended-handoff', `${options.paused ? 'reason=taken-over ' : ''}play=${play} wasPlaying=${snapshot.wasPlaying} userStop=${userStopRequested} dialog=${dialogOpenedAt ? 'recent' : 'none'} dialogAgoMs=${dialogOpenedAt ? now - dialogOpenedAt : 'none'} visible=${visible} index=${snapshot.index} position=${snapshot.positionSeconds.toFixed(1)}`);
         void usePlayerStore.getState().continueLocallyAfterCast(snapshot.index, snapshot.positionSeconds, play);
     }
 
@@ -1211,6 +1274,7 @@ export class CastManager {
 
     public noteUserCastLaunchIntent(reason: string = 'launcher') {
         if (this.isConnected()) return;
+        this.userCastIntentAt = Date.now();
 
         // Warn immediately on click; the native launcher opens its own device
         // picker that we can't cancel, so the hard stop lives in the fresh
@@ -1555,6 +1619,8 @@ export class CastManager {
                 }
                 if (status && status.type === 'aurora.status') {
                     if (session !== this.castContext?.getCurrentSession?.()) return;
+                    // Another device's cast plays there now: step back, take nothing on.
+                    if (this.stepBackIfTakenOver(status, sessionId)) return;
                     this.diagnosticsStatusSession = session;
                     if (status.caps?.includes('control') && this.auroraControlCapLoggedSid !== sessionId) {
                         this.auroraControlCapLoggedSid = sessionId;
@@ -2534,7 +2600,8 @@ export class CastManager {
                         this.state = 'NOT_CONNECTED';
                         // Leaving another device's Cast session on purpose
                         // (cast-join-left) disconnects too; that is no failure.
-                        if (isOwnLeaveDisconnect(this.leftJoinedSessionAt, Date.now())) this.setHealthStatus('idle', '');
+                        // So does stepping back from a cast another device took over.
+                        if (isOwnLeaveDisconnect(this.leftJoinedSessionAt, Date.now()) || isOwnLeaveDisconnect(this.takenOverAt, Date.now())) this.setHealthStatus('idle', '');
                         else this.setHealthStatus('error', 'Cast device disconnected.');
                         this.notifyStateChange();
                     }
