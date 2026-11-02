@@ -24,6 +24,8 @@ export interface ReceiverHandover {
   quality?: string;
   /** The sender's 12-hour Cast media token, for the items the receiver builds (6a-2). */
   mediaToken?: string;
+  /** This device's id: the one casting there from now on (docs/cast-takeover.md). */
+  castingClientId?: string;
 }
 
 export interface ReceiverFollowMessage extends ReceiverHandover {

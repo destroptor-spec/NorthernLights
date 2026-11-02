@@ -47,14 +47,15 @@ it('our receiver: no token in the URL or the media customData; the Cast token in
   const info = m.buildMediaInfo(track);
   expect(info.contentId).not.toContain('token=');
   expect(info.customData.token).toBeUndefined();
-  expect(m.loadRequestCustomData(track.url)).toEqual({ token: 'cast-12h' });
+  // With this device's id, so the receiver knows whose cast plays (docs/cast-takeover.md).
+  expect(m.loadRequestCustomData(track.url)).toEqual({ token: 'cast-12h', castingClientId: expect.any(String) });
   // Artwork keeps a token until it has signed links (6a-4): the Cast one.
   expect(info.metadata.images[0].url).toContain('token=cast-12h');
   expect(JSON.stringify(info)).not.toContain('login-30d');
 });
 
 it("the LOAD request falls back to the URL's own token when no Cast token could be minted", () => {
-  expect(manager(null).loadRequestCustomData(track.url)).toEqual({ token: 'login-30d' });
+  expect(manager(null).loadRequestCustomData(track.url)).toEqual({ token: 'login-30d', castingClientId: expect.any(String) });
 });
 
 it('the default receiver fetches the URL as given: it keeps a token, the Cast one', () => {

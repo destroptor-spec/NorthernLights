@@ -82,6 +82,8 @@ export interface SessionFollowerOptions {
   clientName?: () => string;
   /** The user's devices with Aurora open: read when the stream opens, then live (devices.changed). */
   onDevices?: (devices: ConnectedDevice[]) => void;
+  /** A Cast receiver's status, relayed by the server (cast.status, docs/cast-takeover.md). */
+  onCastStatus?: (castSessionId: unknown, status: unknown) => void;
   /** The user's own session as last read, or none (Listen together: the owner's sheet). */
   onOwnSession?: (session: PlaybackSession | null) => void;
   /**
@@ -121,6 +123,7 @@ const SESSION_EVENTS = [
   'playbackSync.changed',
   'resync.required',
   'devices.changed',
+  'cast.status',
   'playbackSession.transferRequested',
   'playbackSession.memberJoined',
   'playbackSession.memberLeft',
@@ -184,10 +187,19 @@ export class SessionFollower {
   castingElsewhere(
     castDeviceName: string,
     castSessionId: string | null,
-    options: { joinedRunningSession?: boolean } = {},
+    options: { joinedRunningSession?: boolean; castingClientId?: string } = {},
   ): { outputId: string } | null {
     const output = this.session?.output;
     if (!output || !this.options || output.id === this.options.clientId()) return null;
+    // The receiver named the device casting there (docs/cast-takeover.md):
+    // is it the one this session's Cast output belongs to? That is the
+    // device that claimed it as a Cast output, or handed it to the receiver.
+    if (options.castingClientId) {
+      const caster = output.kind === 'receiver' ? this.session!.ownerClientId : output.id;
+      const live = output.status === 'active' || output.status === 'unreachable';
+      if (!isCastOutput(output) || !live || caster !== options.castingClientId || caster === this.options.clientId()) return null;
+      return { outputId: output.id };
+    }
     // A join that proved deaf (cast-join-deaf) joined a session already
     // running there, never a new one, so the device's name is enough: the
     // server may have lost a cast output's Cast session id in a restart. A
@@ -454,6 +466,9 @@ export class SessionFollower {
         return;
       case 'devices.changed':
         if (Array.isArray(data.devices)) this.options!.onDevices?.(data.devices as ConnectedDevice[]);
+        return;
+      case 'cast.status':
+        this.options!.onCastStatus?.(data.castSessionId, data.status);
         return;
       case 'playbackSession.transferRequested':
         if (!sessionId || data.targetClientId !== myId) return;

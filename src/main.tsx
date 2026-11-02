@@ -19,6 +19,7 @@ import { getPlaybackSession } from './api/playbackSessions';
 import { playbackManager } from './utils/PlaybackManager';
 import type { PlaybackSession } from '../shared/api/v1';
 import { castManager } from './utils/CastManager';
+import { CastStatusStream } from './utils/castStatusStream';
 import { getPlaybackTimeSnapshot, setPlaybackTimeState } from './store/playbackTime';
 import { describeThisDevice } from './utils/deviceName';
 import { logPlaybackInfo } from './utils/playbackDebug';
@@ -67,6 +68,9 @@ sessionFollower.start(usePlayerStore, {
   clientId: getAuroraClientId,
   clientName: describeThisDevice,
   onDevices: (devices) => usePlayerStore.getState().setConnectedDevices(devices),
+  // The receiver's relayed status (docs/cast-takeover.md): heard by a sender
+  // whose Cast connection is one-way.
+  onCastStatus: (castSessionId, status) => castManager.receiveRelayedStatus(castSessionId, status),
   onTransferRequested: () => void usePlayerStore.getState().playHereOnTransfer(),
   // Listen together (6c): the owner's sheet, invitations, the session this user is a guest in.
   onOwnSession: noteOwnSession,
@@ -122,6 +126,12 @@ useListenTogetherStore.subscribe((state, previous) => {
 // casting to: this device leaves that Cast session again and controls it from
 // here instead ("Play where?" → that device), since a second sender is
 // unreliable (CastManager.setCastingElsewhereCheck).
+// With sync off the follower opens no event stream: this one carries the
+// receiver's relayed status while the device casts (docs/cast-takeover.md).
+const castStatusStream = new CastStatusStream({ onStatus: (castSessionId, status) => castManager.receiveRelayedStatus(castSessionId, status) });
+castStatusStream.update(usePlayerStore.getState());
+usePlayerStore.subscribe((state) => castStatusStream.update(state));
+
 castManager.setCastingElsewhereCheck((castDeviceName, options) => {
   if (!usePlayerStore.getState().syncPlaybackAcrossDevices) return false;
   const other = sessionFollower.castingElsewhere(castDeviceName, castManager.getCastSessionId() || null, options);
