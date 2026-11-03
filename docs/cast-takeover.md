@@ -1,9 +1,25 @@
 # Cast takeover (spec)
 
-**Status:** spec for Andreas's approval, reworked 2026-11-02 around a status
-relay. Nothing is built. It replaces #211's fallback (stop, then Cast again),
-and needs `receiver.html` changes. So the Cast care rules apply: one issue per
-PR, and each PR tested on the NAD, the A9 and Stue TV.
+**Status:** built, 2026-11-02 to 11-03: #218 (server relay), #219
+(receiver), #220 (the replaced device), #221 (the new caster), on #211
+(the join ping). T1 passed on prod 2026-11-03 10:27 (Andreas):
+- the desktop on another account took over the phone's cast within a couple
+  of seconds;
+- the phone went to not casting, paused, with no toast;
+- the progress bar moved, and seek, pause, play, skip and queue changes all
+  worked;
+- no restart, no toasts.
+T4 (same account) passed 2026-11-03 09:59. Still to run: T2, T3, T5–T8.
+Merge order into main: #218, #219, #211, #220, #221.
+
+**Deaf takeovers, as built:** the desktop is often deaf on a session it
+didn't start (and sometimes on its own). It loads after 3 s, hears the
+receiver through the relay, and counts a status for the very entry it loads
+as the LOAD's acceptance. It counts "following" naming it as the handover's
+answer. Once the receiver names it, it reconnects to the same session by id
+(`cast-takeover-reconnect`, the stale-transport recovery: leave, then
+`requestSessionById`), as Chrome does after a reload. After that the page
+hears everything directly (prod 2026-11-03 10:27:21).
 
 ## The outcome (Andreas, 2026-11-02)
 
