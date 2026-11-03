@@ -11,7 +11,7 @@ import { playbackManager } from './PlaybackManager';
 import { usePlayerStore } from '../store';
 import { getAuroraClientId, mintScopedToken, signArtworkLinks } from '../api/auroraApi';
 import { CastMediaToken, withCastToken } from './castMediaToken';
-import { describeThisDevice } from './deviceName';
+import { describeThisDevice, isPhoneOrTablet } from './deviceName';
 import { decideJoin, decideTakeoverJoin, isOwnLeaveDisconnect, JOIN_DEAF_AFTER_MS } from './castJoinPolicy';
 import {
     POSITION_TICK_MS,
@@ -125,6 +125,8 @@ const CAST_LOAD_ACK_TIMEOUT_MS = 12000;
  * after about 10.5 s (#40, 2026-10-11).
  */
 const CAST_PICKER_PENDING_MAX_MS = 30_000;
+/** A picker answered error-cancel faster than this was refused, not cancelled by hand (prod: ~20 ms). */
+const CAST_PICKER_REFUSED_MS = 1000;
 /**
  * How long Chrome gets to report the end of a Cast session this device asked
  * to end before it is ended here regardless (endCastSessionLocally).
@@ -483,6 +485,7 @@ export class CastManager {
             this.playbackRetry = null;
         }
         if (this.state === 'CONNECTED') {
+            this.castRefreshNeeded = false;
             this.startStatusWatchdog();
         } else {
             this.stopStatusWatchdog();
@@ -1174,7 +1177,11 @@ export class CastManager {
         this.freshSessionStartedAt = 0;
         this.preserveSessionOnNextEnd = false;
         localStorage.removeItem(SESSION_STORAGE_KEY);
-        this.logCast('ok', 'cast-taken-over', `sid=${sessionId}`);
+        // Desktop Chrome keeps a cast this page started (or joined at a tap)
+        // attached to the tab while that session lives: its picker is refused
+        // until the page reloads (docs/cast-takeover.md, Known limit).
+        if (this.userCastIntentAt > 0 && !isPhoneOrTablet()) this.castRefreshNeeded = true;
+        this.logCast('ok', 'cast-taken-over', `sid=${sessionId}${this.castRefreshNeeded ? ' refresh-needed=1' : ''}`);
         try {
             // false: leave the session, do not stop the receiver.
             this.castContext.endCurrentSession(false);
@@ -1191,6 +1198,21 @@ export class CastManager {
             && Date.now() - this.userCastIntentAt < TAKEOVER_JOIN_GRACE_MS;
     }
 
+    /**
+     * Chrome still holds this tab's cast after a takeover, so casting again
+     * from here takes a page reload: the Connect card offers it in place of
+     * "Cast to a device" (Andreas, 2026-11-03). Ends with the page, or when a
+     * cast connects after all.
+     */
+    private castRefreshNeeded = false;
+    public needsRefreshToCast(): boolean {
+        return this.castRefreshNeeded;
+    }
+    /** The Connect card's refresh: reloads the page, which frees Chrome's hold (the log is sent with keepalive). */
+    public reloadToCastAgain(reason: string) {
+        this.logCast('ok', 'cast-refresh-to-cast', `reason=${reason}`);
+        window.location.reload();
+    }
     /** The Cast session another device's LOAD took over (stepBackIfTakenOver), until its end is handled. */
     private takenOverSid = '';
     /** When, so the disconnect that follows is not reported as a failure. */
@@ -1296,7 +1318,11 @@ export class CastManager {
         const settle = (outcome: string) => {
             if (this.castPickerPendingSince !== since) return;
             this.castPickerPendingSince = 0;
-            this.logCast(outcome === 'connected' ? 'ok' : 'warn', 'cast-picker-answered', `reason=${reason} outcome=${outcome} ms=${Date.now() - since}`);
+            const ms = Date.now() - since;
+            // Refused at once, after a takeover on this page: Chrome holds the
+            // tab's old cast (no one cancels a picker that fast by hand).
+            if (outcome === 'error-cancel' && ms < CAST_PICKER_REFUSED_MS && this.takenOverAt > 0) this.castRefreshNeeded = true;
+            this.logCast(outcome === 'connected' ? 'ok' : 'warn', 'cast-picker-answered', `reason=${reason} outcome=${outcome} ms=${ms}${this.castRefreshNeeded ? ' refresh-needed=1' : ''}`);
             this.notifyStateChange();
         };
         let request: Promise<unknown>;

@@ -10,6 +10,8 @@ export interface CastStatus {
   /** Connecting, rejoining or recovering, or the device picker is open. */
   busy: boolean;
   deviceName: string;
+  /** Chrome still holds this tab's cast after a takeover: casting again takes a page reload. */
+  needsRefresh: boolean;
 }
 
 /**
@@ -23,6 +25,7 @@ export function useCastStatus(surface: string): CastStatus {
   const [health, setHealth] = useState<CastHealthStatus>(castManager.getHealthStatus());
   const [pickerPending, setPickerPending] = useState(() => castManager.isCastPickerPending());
   const [deviceName, setDeviceName] = useState(castManager.getCastDeviceName());
+  const [needsRefresh, setNeedsRefresh] = useState(() => castManager.needsRefreshToCast());
 
   useEffect(() => {
     const handleCastReady = () => {
@@ -37,6 +40,7 @@ export function useCastStatus(surface: string): CastStatus {
       setCastState(nextState);
       setPickerPending(castManager.isCastPickerPending());
       setDeviceName(nextState === 'CONNECTED' ? castManager.getCastDeviceName() : '');
+      setNeedsRefresh(castManager.needsRefreshToCast());
     });
     const unsubscribeHealth = castManager.addHealthChangeListener((next) => {
       setHealth(next);
@@ -57,5 +61,5 @@ export function useCastStatus(surface: string): CastStatus {
     castManager.logCastButtonState(`visible=${available} api=${apiLoaded} state=${castState} device=${deviceName || 'none'} size=${surface}`);
   }, [apiLoaded, available, castState, deviceName, surface]);
 
-  return { available, connected, busy, deviceName };
+  return { available, connected, busy, deviceName, needsRefresh };
 }

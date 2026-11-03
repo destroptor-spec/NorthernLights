@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ConnectedDevice } from '../../shared/api/v1';
-import { Cast, Check, ChevronRight, Loader2, LogOut, MonitorSmartphone, MonitorSpeaker, Speaker, Users } from 'lucide-react';
+import { Cast, Check, ChevronRight, Loader2, LogOut, MonitorSmartphone, MonitorSpeaker, RotateCw, Speaker, Users } from 'lucide-react';
 import { usePlayerStore } from '../store/index';
 import { castManager } from '../utils/CastManager';
 import { sessionMirror } from '../utils/SessionMirror';
@@ -237,6 +237,7 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
     sessionMirror.notePlayIntent();
     onDone();
   };
+  const refreshToCast = () => castManager.reloadToCastAgain('connect-menu');
   // Hands the music back here (cast-ended-handoff), like the Cast dialog's Stop.
   const stopCasting = () => pick('stop-casting', () => { void castManager.disconnect(); });
 
@@ -295,7 +296,17 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
 
       <div className={`connect-options${chosen ? ' has-choice' : ''}`}>
         {/* Cast first, always: casting from here, or a Cast device that plays. */}
-        {cast.available && !view.castDevice && (
+        {/* After a takeover Chrome keeps this tab's old cast until the page
+            reloads; its picker is refused (docs/cast-takeover.md, Known limit). */}
+        {cast.needsRefresh && !view.castDevice && (
+          <ConnectOption
+            icon={<RotateCw size={18} />}
+            title="Cast to a device"
+            detail="To cast again, refresh your session"
+            onClick={chosen ? undefined : refreshToCast}
+          />
+        )}
+        {cast.available && !cast.needsRefresh && !view.castDevice && (
           <ConnectOption
             icon={cast.busy ? <Loader2 size={18} className="connect-spinner" /> : <Cast size={18} />}
             title="Cast to a device"

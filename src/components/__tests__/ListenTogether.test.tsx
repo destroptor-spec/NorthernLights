@@ -10,7 +10,7 @@ import { ConnectMenuContent } from '../ConnectMenu';
 import type { CastStatus } from '../../hooks/useCastStatus';
 
 jest.mock('../../hooks/useCastStatus', () => ({
-  useCastStatus: (): CastStatus => ({ available: false, connected: false, busy: false, deviceName: '' }),
+  useCastStatus: (): CastStatus => ({ available: false, connected: false, busy: false, deviceName: '', needsRefresh: false }),
 }));
 jest.mock('../../utils/listenTogether', () => ({
   ...jest.requireActual('../../utils/listenTogether'),
