@@ -102,6 +102,8 @@ export interface CastingElsewhereOptions {
 }
 /** A deaf takeover with nothing heard, even through the relay, by then falls back to #211's stop. */
 const TAKEOVER_RELAY_WAIT_MS = 12_000;
+/** The stale-transport recovery run after a deaf takeover, to reconnect as a reload would. */
+const DEAF_TAKEOVER_RECONNECT = 'deaf-takeover';
 /** The join's ping (cast-join-deaf): an action no receiver knows, which every receiver acknowledges. */
 const JOIN_PING_ACTION = 'ping';
 /** A deaf session: how long after stopping it this device leaves it (stopDeafSession). */
@@ -1528,7 +1530,9 @@ export class CastManager {
                 }
                 this.logCast('ok', `Recovered stale Cast transport: ${reason}`);
                 this.logCast('ok', 'stale-transport-recovered', `reason=${reason}`);
-                this.setHealthStatus('recovered', 'Cast control reconnected.', this.getCastDeviceName());
+                // Nothing to tell after a takeover's reconnect: casting simply works.
+                if (reason === DEAF_TAKEOVER_RECONNECT) this.setHealthStatus('idle', '');
+                else this.setHealthStatus('recovered', 'Cast control reconnected.', this.getCastDeviceName());
                 return true;
             }
 
@@ -1540,12 +1544,15 @@ export class CastManager {
                 this.deadTransportSkipLogged = false;
                 this.logCast('error', `Stale Cast transport still dead after rejoin: ${reason}`);
                 this.logCast('error', 'stale-transport-dead', `reason=${reason}`);
-                this.setHealthStatus('error', 'Lost connection to the Cast device.', reason);
+                // After a takeover the relay still carries the receiver: no error to show.
+                if (reason === DEAF_TAKEOVER_RECONNECT) this.setHealthStatus('idle', '');
+                else this.setHealthStatus('error', 'Lost connection to the Cast device.', reason);
                 return false;
             }
 
             this.logCast('error', `Timed out recovering stale Cast transport: ${reason}`);
-            this.setHealthStatus('error', 'Cast control timed out while reconnecting.', reason);
+            if (reason === DEAF_TAKEOVER_RECONNECT) this.setHealthStatus('idle', '');
+            else this.setHealthStatus('error', 'Cast control timed out while reconnecting.', reason);
             return false;
         })().finally(() => {
             this.staleTransportRecoveryPromise = null;
@@ -1661,6 +1668,7 @@ export class CastManager {
             this.lastAuroraStatusAt = Date.now();
             return;
         }
+        if (this.deafTakeoverSid === sessionId && status.castingClientId === getAuroraClientId()) this.reconnectAfterDeafTakeover(sessionId);
         this.diagnosticsStatusSession = session;
         if (status.caps?.includes('control') && this.auroraControlCapLoggedSid !== sessionId) {
             this.auroraControlCapLoggedSid = sessionId;
@@ -3500,8 +3508,10 @@ export class CastManager {
                 // over: being deaf, this joined a running session, so the
                 // device's name is enough (#211).
                 if (this.leaveIfCastingElsewhere(`${reason}:deaf`, { joinedRunningSession: true })) return 'stop';
-                // Load anyway: the receiver is heard through the server's relay.
+                // Load anyway: the receiver is heard through the server's relay,
+                // and reconnected to once it names this device.
                 this.takeoverKeepsVolume = true;
+                this.deafTakeoverSid = this.getCurrentSessionId();
                 this.logCast('ok', 'cast-takeover', `reason=${reason} waitedMs=${elapsedMs} deaf=true`);
                 this.watchRelayAfterDeafTakeover();
                 return null;
@@ -3539,6 +3549,23 @@ export class CastManager {
 
     /** Taking over a cast that plays there: keep its volume (no fresh-session startup volume). */
     private takeoverKeepsVolume = false;
+    /** The Cast session this device took over deaf, until it reconnects (reconnectAfterDeafTakeover). */
+    private deafTakeoverSid = '';
+
+    /**
+     * A deaf takeover, once the receiver names this device (its LOAD has
+     * landed): reconnect to the same Cast session by id, as Chrome does after
+     * a reload. After a reload the page heard everything again (prod
+     * 2026-11-03 10:09:20); without it, the progress bar stood still, skips
+     * and queue additions fell back to reloading the queue, and playback was
+     * confirmed only through the relay (10:08:09–10:09:05). Quiet: the
+     * relay keeps it going whether or not this works.
+     */
+    private reconnectAfterDeafTakeover(sessionId: string) {
+        this.deafTakeoverSid = '';
+        this.logCast('ok', 'cast-takeover-reconnect', `sid=${sessionId}`);
+        setTimeout(() => { void this.recoverStaleTransport(DEAF_TAKEOVER_RECONNECT); }, 0);
+    }
 
     private sendJoinPing(session: any) {
         try {
