@@ -76,6 +76,7 @@ function harness(answers: Record<string, unknown> | null) {
     leftJoinedSession: false,
     receiverFollowListeners: [],
     receiverFollowStateListeners: [],
+    recoverStaleTransport: jest.fn().mockResolvedValue(true),
   });
   return { manager, session, endCurrentSession, setMedia: (next: unknown) => { media = next; } };
 }
@@ -146,6 +147,13 @@ describe('a deaf join', () => {
     manager.receiveRelayedStatus(SID, { type: 'aurora.status', castingClientId: 'web:desktop-b', playerState: 'PLAYING', ts: Date.now() });
     expect(manager.applyAuroraStatus).toHaveBeenCalledTimes(1);
     expect(manager.logCast).toHaveBeenCalledWith('ok', 'cast-status-relayed', `sid=${SID}`);
+    // Its LOAD has landed: reconnect by id, as a reload does (prod 2026-11-03 10:09:20), once.
+    await jest.advanceTimersByTimeAsync(0);
+    const recover = (manager as unknown as { recoverStaleTransport: jest.Mock }).recoverStaleTransport;
+    expect(recover).toHaveBeenCalledWith('deaf-takeover');
+    manager.receiveRelayedStatus(SID, { type: 'aurora.status', castingClientId: 'web:desktop-b', playerState: 'PLAYING', ts: Date.now() + 1 });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(recover).toHaveBeenCalledTimes(1);
     await jest.advanceTimersByTimeAsync(13_000);
     expect(endCurrentSession).not.toHaveBeenCalled();
   });
