@@ -65,6 +65,15 @@ export class ReceiverFollowAcks {
     const requestId = Number(ack.requestId);
     this.waiting.get(requestId)?.(ack.ok === true);
   }
+
+  /**
+   * Answers every handover still waiting: the receiver's status says it
+   * follows this device's session, which is what an ack would have said
+   * (docs/cast-takeover.md: a deaf sender hears statuses only, relayed).
+   */
+  acknowledgeWaiting(ok: boolean): void {
+    for (const resolve of Array.from(this.waiting.values())) resolve(ok);
+  }
 }
 
 export type HandoverResult = { ok: boolean; attempts: number; outcome: 'acked' | 'refused' | 'unanswered' | 'send-failed' };
