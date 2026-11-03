@@ -32,6 +32,7 @@ import {
   type AdaptiveRenditionName,
 } from '../services/adaptiveHlsStream.service';
 import { writeCastReceiverLog, writeHlsServerLog, writeHlsSessionLog } from '../services/debugLogger.service';
+import { relayCastStatus } from '../services/castStatusRelay.service';
 import { logHls, logFfmpeg } from '../services/loggingConfig';
 import { createRateLimiter } from '../middleware/rateLimit';
 
@@ -342,6 +343,20 @@ router.post('/cast/log', (req, res) => {
   const session = sanitizeCastLogValue(typeof req.body?.session === 'string' ? req.body.session : '');
 
   writeCastReceiverLog(`[${level}] [${source}]${session ? ` [${session}]` : ''} ${message}${detail ? ` :: ${detail}` : ''}`);
+  res.sendStatus(204);
+});
+
+// The receiver's status, relayed as cast.status to the user whose media token
+// signs it (docs/cast-takeover.md). The receiver posts at most one a second.
+router.post('/cast/status', createRateLimiter({
+  keyPrefix: 'cast-status',
+  windowMs: 10 * 1000,
+  max: 30,
+  message: 'Too many Cast status posts.',
+}), (req, res) => {
+  const userId = (req as any).user?.userId as string | undefined;
+  if (!userId) return res.sendStatus(401);
+  if (relayCastStatus(userId, req.body) === 'invalid') return res.status(400).json({ error: 'Invalid Cast status' });
   res.sendStatus(204);
 });
 

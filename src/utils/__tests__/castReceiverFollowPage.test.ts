@@ -27,6 +27,7 @@ function startReceiver(withFollower: boolean, loadFirst = true) {
   };
   const context = {
     getPlayerManager: () => player, addEventListener: jest.fn(),
+    getApplicationData: () => ({ sessionId: 'cast-77' }),
     addCustomMessageListener: jest.fn(), sendCustomMessage: jest.fn(), start: jest.fn(), stop: jest.fn(),
   };
   const cast = { framework: {
@@ -77,7 +78,14 @@ function startReceiver(withFollower: boolean, loadFirst = true) {
   const loggedLines = () => fetch.mock.calls
     .filter(([url]) => String(url).startsWith('/api/cast/log'))
     .map(([, init]) => JSON.parse((init as unknown as { body: string }).body) as { message: string; detail: string });
-  return { namespace, receive, context, player, fetch, streams, load, firstLoad, caps, status, session, loggedLines };
+  const relayed = () => fetch.mock.calls
+    .filter(([url]) => String(url).startsWith('/api/cast/status'))
+    .map(([url, init]) => ({
+      token: new URL(String(url), 'https://music.example.test').searchParams.get('token'),
+      ...(JSON.parse((init as unknown as { body: string }).body) as { castSessionId: string; status: Record<string, unknown> }),
+    }));
+  const timers = sandbox.setTimeout as jest.Mock;
+  return { namespace, receive, context, player, fetch, streams, load, firstLoad, caps, status, session, loggedLines, relayed, timers };
 }
 
 const handover = {
@@ -238,4 +246,97 @@ test("refuses another session's handover while its own still plays here (6a)", a
   expect(r.context.sendCustomMessage).toHaveBeenCalledWith(r.namespace, 'guest', { type: 'aurora.session.follow.ack', requestId: 6, ok: false });
   expect(r.streams).toEqual(['/api/v1/events?token=receiver-secret']);
   expect(JSON.stringify(r.loggedLines())).not.toContain('guest-secret');
+});
+
+/**
+ * docs/cast-takeover.md, PR 2: the receiver says whose cast plays, a LOAD
+ * from another device takes over, and its status also goes to the server for
+ * senders whose Cast connection is one-way.
+ */
+describe('whose cast plays here', () => {
+  const loadFrom = (r: ReturnType<typeof startReceiver>, clientId: string | null, token: string, extra: Record<string, unknown> = {}) => r.load({
+    media: { contentId: `https://music.example.test/api/stream/${token}/playlist.m3u8`, customData: { queueEntryId: `e-${token}`, ...extra }, metadata: { title: token } },
+    customData: { token, ...(clientId ? { castingClientId: clientId } : {}) },
+  });
+
+  test('names the device of the last LOAD that named itself; CAF advances and older senders change nothing', () => {
+    const r = startReceiver(true);
+    expect(r.status().castingClientId).toBeNull();
+    loadFrom(r, 'web:phone-a', 'token-a');
+    expect(r.status().castingClientId).toBe('web:phone-a');
+    // CAF moving to the next item, and an older sender, name nobody.
+    r.load({ media: { contentId: 'https://music.example.test/api/stream/next/playlist.m3u8', customData: { queueEntryId: 'e2' }, metadata: { title: 'Next' } } });
+    loadFrom(r, null, 'token-old');
+    expect(r.status().castingClientId).toBe('web:phone-a');
+    expect(r.loggedLines().some((line) => line.message.includes('receiver-cast-taken-over'))).toBe(false);
+  });
+
+  test('takes the device that hands a session over as the one casting', () => {
+    const r = startReceiver(true);
+    r.receive({ senderId: 'phone', data: { ...handover, castingClientId: 'web:phone-a' } });
+    expect(r.status().castingClientId).toBe('web:phone-a');
+  });
+
+  test("relays each status to the server with the media token of what plays, at most one a second", () => {
+    // No status is relayed before a LOAD gives the receiver a token.
+    const r = startReceiver(true, false);
+    r.status();
+    expect(r.relayed()).toEqual([]);
+    r.timers.mockClear();
+    loadFrom(r, 'web:phone-a', 'token-a');
+    // The LOAD's own status goes at once.
+    const atLoad = r.relayed();
+    expect(atLoad).toHaveLength(1);
+    expect(atLoad[0]).toMatchObject({ token: 'token-a', castSessionId: 'cast-77', status: { type: 'aurora.status', castingClientId: 'web:phone-a' } });
+    // Never the token itself in what is relayed.
+    expect(JSON.stringify(atLoad[0].status)).not.toContain('token-a');
+
+    // Two more within the second: held, and only the latest goes when its turn comes.
+    r.status();
+    r.status();
+    expect(r.relayed()).toHaveLength(1);
+    const held = r.timers.mock.calls.filter(([, ms]) => typeof ms === 'number' && ms > 0 && ms <= 1000);
+    expect(held).toHaveLength(1);
+    (held[0][0] as () => void)();
+    const after = r.relayed();
+    expect(after).toHaveLength(2);
+    expect(after[1]).toMatchObject({ token: 'token-a', status: { reason: 'diagnostics' } });
+  });
+
+  test("another device's LOAD lets go of the session it follows, and tells the replaced user", async () => {
+    // Prod 2026-10-30 21:03 and 2026-11-02 21:47: another account's desktop
+    // picked the NAD while a phone's session played there.
+    const r = startReceiver(true);
+    r.receive({ senderId: 'phone', data: { ...handover, castingClientId: 'web:phone-a' } });
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    expect(r.status().following).toBe(true);
+    r.fetch.mockClear();
+
+    loadFrom(r, 'web:desktop-b', 'token-b');
+
+    const report = r.fetch.mock.calls.find(([url]) => url === '/api/v1/playback-sessions/session-1/reports');
+    expect(report).toBeDefined();
+    const [, init] = report as unknown as [string, { headers: Record<string, string>; body: string }];
+    expect(init.headers.Authorization).toBe('Bearer receiver-secret');
+    expect(JSON.parse(init.body)).toMatchObject({ state: 'stopped', reason: 'taken-over' });
+    // The replaced user's devices hear, with their own token, who casts now.
+    const toReplaced = r.relayed().filter((post) => post.token === 'media-token');
+    expect(toReplaced.some((post) => post.status.castingClientId === 'web:desktop-b' && post.status.following === false)).toBe(true);
+    expect(r.loggedLines().some((line) => line.message.includes('receiver-cast-taken-over'))).toBe(true);
+    // From now on its status names the new device and goes to the new user.
+    const after = r.status();
+    expect(after).toMatchObject({ castingClientId: 'web:desktop-b', following: false });
+    expect(r.player.stop).not.toHaveBeenCalled();
+  });
+
+  test('a LOAD from the device already casting, or one the follower builds, takes nothing over', async () => {
+    const r = startReceiver(true);
+    r.receive({ senderId: 'phone', data: { ...handover, castingClientId: 'web:phone-a' } });
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    loadFrom(r, 'web:phone-a', 'media-token');
+    loadFrom(r, 'web:other', 'media-token', { auroraFollow: true });
+    expect(r.status().following).toBe(true);
+    expect(r.fetch.mock.calls.some(([url, init]) => url === '/api/v1/playback-sessions/session-1/reports'
+      && JSON.parse((init as unknown as { body: string }).body).reason === 'taken-over')).toBe(false);
+  });
 });

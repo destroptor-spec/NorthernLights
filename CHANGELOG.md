@@ -2,13 +2,36 @@
 
 ## [Unreleased]
 
-### Aurora Listener API
-- Added the versioned `/api/v1` listener API for first-party Aurora web and dedicated desktop/mobile clients, with explicit path-free Zod DTOs, consistent data/error envelopes, request IDs, cursor pagination, capability discovery, and a generated OpenAPI 3.1 contract.
-- Added separate listener-scoped `aurora_app_` credentials with digest-only storage, manual create/rotate/revoke/delete lifecycle, and browser-assisted one-time pairing using a request secret plus verifier challenge. Aurora app keys remain isolated from OpenSubsonic keys and browser/admin routes.
-- Added listener library, search, lyrics, artwork, playlists, Hub/discovery, annotations, playback reporting, preferences, source resolution, Range-capable direct streaming, and short-lived media/SSE tokens.
-- Added durable server-backed playback sessions with stable queue-entry IDs, optimistic revisions, explicit client handoff, and user-scoped SSE invalidation/replay events.
-- Migrated central web library indexes and playlist reads/writes to the shared v1 client contract. Settings now separates Aurora Apps from OpenSubsonic keys, and `/pair?code=…` provides a focused approval screen.
-- Re-audited `docs/API.md`, documented the compatibility boundaries between `/api/v1`, `/rest`, and internal `/api`, and checked in `docs/openapi/aurora-v1.json` with generation/drift-check scripts. Offline retention is deliberately advertised as unavailable while stable IDs, library revisions, ETags, and byte ranges reserve a compatible future path.
+### Features
+- **Connect and playback across devices:** See where music is playing, control it from another device, transfer playback, and share queue edits across devices.
+- **Listen Together:** Invite people to a shared listening session with join links, guest controls, and discoverable gigs with configurable participation levels.
+- **Independent Cast playback:** Chromecast can follow the shared queue and keep Infinity Mode playing after the sending app closes or goes to sleep.
+- **Aurora Listener API:** Added a versioned API for web, desktop, and mobile clients, with app pairing, dedicated app keys, library browsing, playlists, discovery, playback control, and live updates.
+- **Database backups:** Export and restore the database for backups, server moves, and rebuilt installations.
+- **Artist review tools:** Review artist names and combined credits with previews, keep or split decisions, and undo support.
+
+### Improvements
+- **Infinity Mode:** Recommendations continue from the end of the queue, avoid queued tracks and repeats, and use server-managed top-ups across playback devices.
+- **Library loading:** Library sections appear progressively while larger collections load.
+- **Artist metadata:** Improved use of per-person file tags, MusicBrainz identities, artwork fallbacks, and image and biography provider preferences.
+- **Listening history:** Playback reports update plays, skips, and scrobbles across devices; failed scrobbles retry after network errors. OpenSubsonic likes can optionally sync to connected providers.
+- **Interface:** Refined Connect menus, mobile queue interactions, compact Settings navigation, typography, Hub artwork, and receiver presentation.
+- **Diagnostics:** Added clearer playback, scanner, Cast, and streaming logs with controls for diagnostic verbosity.
+
+### Bug fixes
+- **Cast reliability:** Fixed queue changes, rapid skips, seeking, progress updates, artwork, reconnection, session handovers, and recovery when the Cast SDK loses media status.
+- **Playback synchronization:** Fixed unintended playback takeovers, stale remote controls, and queue conflicts. The currently playing track is protected from removal.
+- **Local playback:** Improved next-track preparation at Source quality and fixed end-of-queue, repeat, and skip-reporting behavior.
+- **Library scanning:** Prevented inaccessible folders from causing track deletion, hardened analysis workers, corrected analysis coverage, and fixed artist-tag splitting.
+- **Artwork and video:** Fixed missing artist images across Hub and library views, video matching and retry behavior, and mobile background-video playback.
+- **PWA updates:** Fixed update activation getting stuck, stale or broken asset caching, and cross-origin image caching issues.
+- **Accounts and server startup:** Fixed invite expiry and reuse, sign-in submission before captcha completion, environment configuration loading, and misleading database recovery screens. Usernames are now case-insensitive.
+- **API and discovery:** Fixed pagination with UUID identifiers, playlist metadata, Hub regeneration feedback, and Wrapped period boundaries in local time.
+
+### Security
+- Restricted media, event-stream, and receiver credentials to their intended uses; hardened pairing, streaming rate limits, and artwork cache access.
+- Isolated Cast media credentials from login credentials and session broadcasts, and added image-specific signed artwork links.
+- Protected the server owner and last administrator from unsafe account changes; closing a shared listening session invalidates its invitation links.
 
 ## [v1.0.0-rc.6] - 2026-07-14
 

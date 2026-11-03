@@ -122,9 +122,9 @@ useListenTogetherStore.subscribe((state, previous) => {
 // casting to: this device leaves that Cast session again and controls it from
 // here instead ("Play where?" → that device), since a second sender is
 // unreliable (CastManager.setCastingElsewhereCheck).
-castManager.setCastingElsewhereCheck((castDeviceName) => {
+castManager.setCastingElsewhereCheck((castDeviceName, options) => {
   if (!usePlayerStore.getState().syncPlaybackAcrossDevices) return false;
-  const other = sessionFollower.castingElsewhere(castDeviceName, castManager.getCastSessionId() || null);
+  const other = sessionFollower.castingElsewhere(castDeviceName, castManager.getCastSessionId() || null, options);
   if (!other) return false;
   usePlayerStore.setState({ remoteControlOutputId: other.outputId });
   return true;
