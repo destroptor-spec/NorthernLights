@@ -1682,6 +1682,12 @@ export class CastManager {
             this.receiverFollowListeners.forEach((listener) => listener());
         }
         const following = status.following;
+        // Following this device's session is the handover's answer, also when
+        // the ack itself never comes (a deaf join: prod 2026-11-03 10:08:24
+        // and 10:16:19, the handover was taken for failed after 15 s).
+        if (following === true && (!status.castingClientId || status.castingClientId === getAuroraClientId())) {
+            this.receiverFollowAcks.acknowledgeWaiting(true);
+        }
         if (typeof following === 'boolean' && this.receiverFollowsSession()) {
             this.receiverFollowStateListeners.forEach((listener) => listener(following));
         }
@@ -1771,6 +1777,15 @@ export class CastManager {
      * snapshot, which is local state.
      */
     private applyAuroraStatus(status: AuroraReceiverStatus) {
+        // The receiver reporting the very entry this device loads proves the
+        // LOAD landed, also when its acknowledgement never comes (a deaf
+        // join, heard through the relay: prod 2026-11-03 10:16:03, the LOAD
+        // played, went unconfirmed for 15 s and was sent again, restarting
+        // the track). Entry ids are this queue's own.
+        if (this.playbackConfirmation.unconfirmed && !this.confirmationLoadAccepted && status.queueEntryId
+            && status.queueEntryId === this.playbackConfirmation.entryId) {
+            this.confirmationLoadAccepted = true;
+        }
         if (this.playbackConfirmation.unconfirmed && !this.confirmationLoadAccepted && status.queueEntryId !== this.playbackConfirmation.entryId) return;
         if (this.playbackConfirmation.unconfirmed && status.queueEntryId && status.queueEntryId !== this.playbackConfirmation.entryId) {
             // Ignore the preceding item's late status; a different selection is
