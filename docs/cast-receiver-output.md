@@ -285,6 +285,12 @@ them the receiver runs today's code path, unchanged.
   stop, since no sender may be connected to stop it. A take-over by a sender
   in its own Cast session (a `cast` or `receiver` claim naming its Cast
   session) is not a reason to stop.
+- **Taken over by another device's LOAD** (2026-11-02,
+  [cast-takeover.md](cast-takeover.md)): a LOAD whose request names another
+  `castingClientId` than the device casting here ends following. The session
+  gets a last report (`stopped`, reason `taken-over`), and the player plays
+  on into that LOAD. CAF's own queue advances and the follower's own loads
+  name nobody and change nothing. Marker: `receiver-cast-taken-over`.
 - **Expiry** (401 on its own calls, past `renewableUntil`): stop following,
   play out the window, then the idle state *Open Aurora to keep playing*.
   Never stop mid-track, never fall back to another credential.
