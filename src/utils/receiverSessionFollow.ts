@@ -24,6 +24,8 @@ export interface ReceiverHandover {
   quality?: string;
   /** The sender's 12-hour Cast media token, for the items the receiver builds (6a-2). */
   mediaToken?: string;
+  /** This device's id: the one casting there from now on (docs/cast-takeover.md). */
+  castingClientId?: string;
 }
 
 export interface ReceiverFollowMessage extends ReceiverHandover {
@@ -62,6 +64,15 @@ export class ReceiverFollowAcks {
   acknowledge(ack: ReceiverFollowAck): void {
     const requestId = Number(ack.requestId);
     this.waiting.get(requestId)?.(ack.ok === true);
+  }
+
+  /**
+   * Answers every handover still waiting: the receiver's status says it
+   * follows this device's session, which is what an ack would have said
+   * (docs/cast-takeover.md: a deaf sender hears statuses only, relayed).
+   */
+  acknowledgeWaiting(ok: boolean): void {
+    for (const resolve of Array.from(this.waiting.values())) resolve(ok);
   }
 }
 

@@ -1,5 +1,6 @@
 import { CastManager } from '../CastManager';
 import { ReceiverFollowAcks } from '../receiverSessionFollow';
+import { getAuroraClientId } from '../../api/auroraApi';
 
 jest.mock('../PlaybackManager', () => ({ playbackManager: {} }));
 jest.mock('../../store', () => ({ usePlayerStore: { getState: () => ({ playlist: [], currentIndex: 0 }), setState: jest.fn() } }));
@@ -92,7 +93,8 @@ it('hands the session over and settles on the receiver ack, never logging the to
     const { manager, sent, status } = harness({ answer: (message) => ({ type: 'aurora.session.follow.ack', requestId: message.requestId, ok: true }) });
     status(['session-follow']);
     await expect(manager.handOverSessionToReceiver(handover, 'claim')).resolves.toBe(true);
-    expect(sent).toEqual([{ ns: NS, message: { type: 'aurora.session.follow', requestId: 1, ...handover } }]);
+    // Naming this device: the one casting there from now on (docs/cast-takeover.md).
+    expect(sent).toEqual([{ ns: NS, message: { type: 'aurora.session.follow', requestId: 1, ...handover, castingClientId: expect.any(String) } }]);
     expect(manager.logCast).toHaveBeenLastCalledWith('ok', 'receiver-session-handover', 'sid=cast-77 reason=claim generation=3 result=acked attempts=1');
     expect(JSON.stringify(manager.logCast.mock.calls)).not.toContain('receiver-secret-token');
 });
@@ -231,4 +233,34 @@ describe('once the receiver follows the session (PR E)', () => {
         following.setReceiverFollowsSession(false);
         expect(following.receiverFollowsSession()).toBe(false);
     });
+});
+
+/**
+ * Prod 2026-11-03 10:08:24 and 10:16:19 (docs/cast-takeover.md): a deaf
+ * sender handed the session over, the receiver took it, but the ack never
+ * came, and after 15 s the handover was taken for failed.
+ */
+it("takes the receiver's status, following this device's session, for the handover's answer", async () => {
+    const { manager, raw, status, sent } = harness();
+    status(['session-follow']);
+    const result = manager.handOverSessionToReceiver(handover, 'claim');
+    for (let i = 0; i < 10 && sent.length === 0; i += 1) await Promise.resolve();
+    expect(sent).toHaveLength(1);
+    raw({ type: 'aurora.status', caps: ['control', 'session-follow'], queueEntryId: 'entry-1', following: true, castingClientId: getAuroraClientId() });
+    await expect(result).resolves.toBe(true);
+});
+
+it("does not take another device's session for this one's", async () => {
+    jest.useFakeTimers();
+    try {
+        const { manager, raw, status } = harness();
+        status(['session-follow']);
+        const result = manager.handOverSessionToReceiver(handover, 'claim');
+        await Promise.resolve();
+        raw({ type: 'aurora.status', caps: ['control', 'session-follow'], queueEntryId: 'entry-1', following: true, castingClientId: 'web:someone-else' });
+        await jest.advanceTimersByTimeAsync(20_000);
+        await expect(result).resolves.toBe(false);
+    } finally {
+        jest.useRealTimers();
+    }
 });
