@@ -233,7 +233,7 @@ for the deaf check.
 |---|---|---|---|
 | T1 | A's phone (account A) casts to the NAD. On the desktop (account B), pick the NAD | B's music plays from where B was, within about 6 s. The desktop shows casting to the NAD; pause, skip, seek and volume work; Chrome's dialog says casting | The phone shows not casting, paused on its track, with no toast |
 | T2 | T1 with A's phone locked; unlock it a minute later | As T1 | On unlock the phone shows not casting and paused, not B's music |
-| T3 | After T1, B taps Stop casting (app, or Chrome's dialog) | The NAD stops; the desktop shows not casting, paused | — |
+| T3 | After T1, B taps Stop casting (app, or Chrome's dialog) | The NAD stops; the desktop shows not casting and keeps playing here from the same track, as any Stop does (#102; Andreas, 2026-11-05) | — |
 | T4 | Sync on, same account: the phone casts and the desktop picks the NAD | As today: the desktop becomes the remote, the phone plays on | — |
 | T5 | The idle receiver app: the phone's last song ends (repeat off; don't tap Stop, which closes the app), and within 5 minutes the desktop picks the NAD. On a speaker, Chrome's Cast dialog still lists Aurora under it | B's music plays within about 6 s, with no Cast again | Shows not casting |
 | T6 | T1 on the A9 and on Stue TV | As T1 (the A9 may take a few seconds longer) | As T1 |
