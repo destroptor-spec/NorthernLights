@@ -11,6 +11,7 @@
 - no restart, no toasts.
 T4 (same account) passed 2026-11-03 09:59. Still to run: T2, T3, T5–T8.
 Merge order into main: #218, #219, #211, #220, #221.
+The refresh after a takeover on desktop Chrome: see Known limit.
 
 **Deaf takeovers, as built:** the desktop is often deaf on a session it
 didn't start (and sometimes on its own). It loads after 3 s, hears the
@@ -20,6 +21,11 @@ answer. Once the receiver names it, it reconnects to the same session by id
 (`cast-takeover-reconnect`, the stale-transport recovery: leave, then
 `requestSessionById`), as Chrome does after a reload. After that the page
 hears everything directly (prod 2026-11-03 10:27:21).
+The 12 s wait for anything relayed (else #211's stop and Cast again) starts
+at its first LOAD in that session, since the receiver relays to whoever
+loaded last. T5 on prod 2026-11-05 10:36 failed on this: the desktop had
+nothing playing, loaded 11 s after joining, and was stopped 30 ms before
+the relayed status naming it arrived, which left Chrome holding the tab.
 
 ## The outcome (Andreas, 2026-11-02)
 
@@ -143,6 +149,43 @@ I cast to my speaker. Another person casts to it and takes it over.
   same way before hydrating anything. It never takes on B's music.
   - With sync on, A's session output has also ended with `taken-over`.
 
+## Known limit: desktop Chrome after a takeover (can't be solved)
+
+Found on prod 2026-11-03 (T1 the other way round). The desktop (account A)
+casts to the NAD, and the phone (account B) takes over. The desktop steps
+back as built, but Chrome keeps the tab attached to that Cast session for as
+long as it lives:
+
+- Chrome's Cast dialog still lists the NAD as casting from this tab, with
+  only "Stop casting";
+- the app's picker is refused at once (`cast-picker-answered
+  outcome=error-cancel`, about 20 ms), so the desktop can't cast anywhere,
+  not even to another device.
+
+There's no way out from the page:
+
+- `endCurrentSession(false)` (leave) is what leaves the hold behind;
+- only ending the session frees it, and that also stops B's music;
+- reloading the receiver keeps the same session, so it changes nothing.
+
+A page reload does free it (Andreas, 2026-11-03: F5 resets Chrome's Cast
+dialog). Spotify avoids this by not casting from Chrome at all.
+
+**What the app does:** after a takeover, the Connect card shows "Cast to a
+device · To cast again, refresh your session" (refresh icon) in place of the
+usual row. A tap reloads the page (`cast-refresh-to-cast`).
+
+The row appears:
+- at once, on a desktop that cast from this page (a Cast tap in this page's
+  life) and was then taken over (`cast-taken-over … refresh-needed=1`);
+- or when the picker is refused in under 1 s on a page that has cast
+  (phones included, should they ever hold on too). That also covers a
+  session that ended under the page some other way (prod 2026-11-05
+  10:37:57: refused in 10 ms after #211's stop, no takeover).
+
+It goes with the reload, or when a cast connects after all. A page that
+only woke or reloaded into the taken-over session doesn't get the row.
+
 ## Speed
 
 Picker to SESSION_STARTED is about 1.5 s, the join wait 1.5 s, and the load
@@ -174,7 +217,7 @@ for the deaf check.
 | T2 | T1 with A's phone locked; unlock it a minute later | As T1 | On unlock the phone shows not casting and paused, not B's music |
 | T3 | After T1, B taps Stop casting (app, or Chrome's dialog) | The NAD stops; the desktop shows not casting, paused | — |
 | T4 | Sync on, same account: the phone casts and the desktop picks the NAD | As today: the desktop becomes the remote, the phone plays on | — |
-| T5 | The idle receiver app (the phone stopped casting less than 5 minutes ago), then the desktop picks the NAD | B's music plays within about 6 s, with no Cast again | — |
+| T5 | The idle receiver app: the phone's last song ends (repeat off; don't tap Stop, which closes the app), and within 5 minutes the desktop picks the NAD. On a speaker, Chrome's Cast dialog still lists Aurora under it | B's music plays within about 6 s, with no Cast again | Shows not casting |
 | T6 | T1 on the A9 and on Stue TV | As T1 (the A9 may take a few seconds longer) | As T1 |
 | T7 | Sync off: T1 between two devices of the same account | As T1 | As T1 |
 | T8 | Sync off: T2 between two devices of the same account | As T2 | As T2 |

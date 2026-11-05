@@ -10,7 +10,7 @@ import { playbackManager } from './PlaybackManager';
 import { usePlayerStore } from '../store';
 import { getAuroraClientId, mintScopedToken, signArtworkLinks } from '../api/auroraApi';
 import { CastMediaToken, withCastToken } from './castMediaToken';
-import { describeThisDevice } from './deviceName';
+import { describeThisDevice, isPhoneOrTablet } from './deviceName';
 import { decideJoin, decideTakeoverJoin, isOwnLeaveDisconnect, JOIN_DEAF_AFTER_MS } from './castJoinPolicy';
 import {
     POSITION_TICK_MS,
@@ -109,6 +109,16 @@ const TAKEOVER_RELAY_WAIT_MS = 12_000;
  * NAD's ordinary idle close of a later cast at 10:50:28 showed the toast.
  */
 const DEAF_STOP_END_WINDOW_MS = 30_000;
+/** An idle status this soon after this device's own LOAD is that LOAD on its way, not the queue ending. */
+const MEDIA_END_AFTER_LOAD_MS = 10_000;
+/**
+ * How long the receiver must stay idle with nothing loaded to count as the
+ * queue's end. Between two tracks it is idle for a moment too (prod
+ * 2026-11-05 10:02:36: LOADING → IDLE → BUFFERING within 230 ms).
+ */
+const MEDIA_END_CONFIRM_MS = 2000;
+/** Recovery reason prefix for a dead connection found after the queue ended. */
+const MEDIA_ENDED_RECONNECT = 'media-ended:';
 /** The stale-transport recovery run after a deaf takeover, to reconnect as a reload would. */
 const DEAF_TAKEOVER_RECONNECT = 'deaf-takeover';
 /** The join's ping (cast-join-deaf): an action no receiver knows, which every receiver acknowledges. */
@@ -131,6 +141,8 @@ const CAST_LOAD_ACK_TIMEOUT_MS = 12000;
  * after about 10.5 s (#40, 2026-10-11).
  */
 const CAST_PICKER_PENDING_MAX_MS = 30_000;
+/** A picker answered error-cancel faster than this was refused, not cancelled by hand (prod: ~20 ms). */
+const CAST_PICKER_REFUSED_MS = 1000;
 /**
  * How long Chrome gets to report the end of a Cast session this device asked
  * to end before it is ended here regardless (endCastSessionLocally).
@@ -483,6 +495,8 @@ export class CastManager {
             this.playbackRetry = null;
         }
         if (this.state === 'CONNECTED') {
+            this.castRefreshNeeded = false;
+            this.castConnectedOnPage = true;
             this.startStatusWatchdog();
         } else {
             this.stopStatusWatchdog();
@@ -729,6 +743,7 @@ export class CastManager {
      */
     private concludeRemoteMediaGone(eventSilenceMs: number, probedMs: number) {
         this.remoteMediaConcludedGone = true;
+        this.noteRemoteMediaEnded('watchdog');
         this.mediaSessionProbeStartedAt = 0;
         this.logCast('warn', 'Cast remote media gone; releasing local playing state', `eventSilenceMs=${eventSilenceMs} probedMs=${probedMs} msSinceEvidence=${Date.now() - this.lastRemoteEvidenceAt}`);
         try {
@@ -1019,7 +1034,134 @@ export class CastManager {
      */
     public receiverFollowsSession(): boolean {
         const sid = this.getCurrentSessionId();
-        return !!sid && this.isConnected() && this.receiverFollowingSid === sid;
+        // Its queue ended: nothing follows there any more, this device loads again.
+        return !!sid && this.isConnected() && this.receiverFollowingSid === sid && this.mediaEndedSid !== sid;
+    }
+
+    /**
+     * The receiver's queue ended in this Cast session (prod 2026-11-05 11:15,
+     * phone: a single cast, the phone asleep, woken just as it ended). Still
+     * connected and idle, as after any cast (Andreas, 2026-11-05); the
+     * receiver closes its app after 5 minutes of that. The SDK may still hold
+     * the old media: every status request and Play/Pause on it answered
+     * session_error, and song taps went to a receiver no longer following.
+     * From here Pause just shows paused, and Play or a song casts the queue
+     * again. Ends with new media in the session (another LOAD).
+     */
+    private mediaEndedSid = '';
+    /** Since when the receiver has said it is idle with nothing loaded (0: it hasn't). */
+    private receiverIdleSince = 0;
+    private receiverIdleRecheck: ReturnType<typeof setTimeout> | null = null;
+    /** The Cast session in which media of this device played (its LOAD, or media seen there). */
+    private mediaSeenSid = '';
+    /** When this device last started a LOAD: an idle status right after it is that LOAD on its way, not an end. */
+    private lastQueueLoadStartedAt = 0;
+
+    /**
+     * The receiver says what plays: idle with no entry, after media played
+     * in this session, is the queue's end; any entry again is new media
+     * (this device's LOAD or another's). A fresh join, before anything
+     * played there, is not an end.
+     */
+    private noteReceiverPlayback(status: AuroraReceiverStatus) {
+        const sid = this.getCurrentSessionId();
+        if (!sid) return;
+        const idleWithNothing = status.playerState === 'IDLE' && !status.queueEntryId;
+        if (!idleWithNothing) {
+            this.receiverIdleSince = 0;
+            if (status.queueEntryId && status.playerState !== 'IDLE') {
+                this.mediaSeenSid = sid;
+                if (this.mediaEndedSid === sid) {
+                    this.mediaEndedSid = '';
+                    this.logCast('ok', 'cast-media-ended-cleared', `reason=receiver-playing sid=${sid}`);
+                }
+            }
+            return;
+        }
+        if (this.mediaSeenSid !== sid || this.mediaEndedSid === sid) return;
+        const now = Date.now();
+        if (!this.receiverIdleSince) {
+            this.receiverIdleSince = now;
+            // Ask again once it should have moved on, were it between tracks.
+            if (this.receiverIdleRecheck) clearTimeout(this.receiverIdleRecheck);
+            this.receiverIdleRecheck = setTimeout(() => {
+                this.receiverIdleRecheck = null;
+                const session = this.castContext?.getCurrentSession?.();
+                if (session && this.receiverIdleSince && this.getCurrentSessionId() === sid) this.requestReceiverStatus(session);
+            }, MEDIA_END_CONFIRM_MS + 100);
+            return;
+        }
+        if (now - this.receiverIdleSince >= MEDIA_END_CONFIRM_MS) this.noteRemoteMediaEnded('receiver-idle');
+    }
+
+    private noteRemoteMediaEnded(reason: string) {
+        const sid = this.getCurrentSessionId();
+        if (!sid || this.mediaEndedSid === sid || !this.isConnected()) return;
+        if (this.queueLoadingSession || Date.now() - this.lastQueueLoadStartedAt < MEDIA_END_AFTER_LOAD_MS) return;
+        this.mediaEndedSid = sid;
+        this.playbackConfirmation.cancel();
+        this.playbackRetry = null;
+        this.logCast('ok', 'cast-media-ended', `reason=${reason} sid=${sid}`);
+        usePlayerStore.setState({ isBuffering: false });
+        try {
+            this.publishPlayState(false);
+        } catch { /* ignore */ }
+    }
+
+    /**
+     * The Cast connection can't be got back, and nothing played there: the
+     * receiver closed its idle app (after 5 minutes, IDLE_STOP_MS) while this
+     * device slept, so no SESSION_ENDED reached it. That is the cast's normal
+     * end, not a failure: end it here, quietly, as SESSION_ENDED would (prod
+     * 2026-11-05 11:52: the phone kept "casting", Play failed, song taps went
+     * to the gone receiver, and Retry could not help).
+     */
+    private endIfClosedWhileIdle(sessionId: string | null | undefined, how: 'dead' | 'timeout'): boolean {
+        const sid = sessionId || this.getCurrentSessionId();
+        if (!sid || this.mediaEndedSid !== sid) return false;
+        this.logCast('ok', 'cast-closed-while-idle', `sid=${sid} transport=${how}`);
+        this.clearDeadTransport();
+        this.endCastSessionLocally(sid, 'closed-while-idle', { anyState: true });
+        return true;
+    }
+
+    /**
+     * After the queue ended the SDK may hold no media at all, so the
+     * reconcile's media refresh sends nothing and can't find the connection
+     * dead. Ask the session itself. If it's dead, recovery rejoins it, or, if
+     * the receiver closed its idle app meanwhile, ends the cast here quietly
+     * (endIfClosedWhileIdle). Prod 2026-11-05 13:49 (phone, after
+     * the NAD's 13:42 idle close): every unlock logged "Cast session exists
+     * without active media", and the phone kept "Casting from NAD".
+     * Null: not this case, or the connection is alive; the reconcile carries on.
+     */
+    private async checkTransportAfterMediaEnded(session: any, reason: string): Promise<boolean | null> {
+        if (!this.isRemoteMediaEnded()) return null;
+        const probe = await probeCastTransport(session, {
+            requestId: this.nextMediaRequestId(),
+            isDisconnected: (error) => this.isDisconnectedPresentationError(error),
+        });
+        if (probe !== 'dead') return null;
+        this.logCast('warn', 'cast-media-ended-transport-dead', `reason=${reason}`);
+        return this.recoverStaleTransport(`${MEDIA_ENDED_RECONNECT}${reason}`);
+    }
+
+    private isRemoteMediaEnded(): boolean {
+        const sid = this.getCurrentSessionId();
+        return !!sid && this.mediaEndedSid === sid;
+    }
+
+    /** Play after the queue ended: cast this device's queue again, from the start of its track. */
+    private castQueueAgain(label: string) {
+        if (this.queueLoadingSession || Date.now() - this.lastQueueLoadStartedAt < MEDIA_END_AFTER_LOAD_MS) {
+            this.logCast('ok', 'cast-media-ended-replay', `via=${label} skipped=load-under-way`);
+            return;
+        }
+        const state = usePlayerStore.getState();
+        const index = state.currentIndex ?? (state.playlist.length ? 0 : null);
+        this.logCast('ok', 'cast-media-ended-replay', `via=${label} index=${index ?? 'none'}`);
+        if (index === null) return;
+        void state.playAtIndex(index);
     }
 
     /** SessionMirror: the receiver took the session (or this device no longer holds it for the receiver). */
@@ -1174,7 +1316,11 @@ export class CastManager {
         this.freshSessionStartedAt = 0;
         this.preserveSessionOnNextEnd = false;
         localStorage.removeItem(SESSION_STORAGE_KEY);
-        this.logCast('ok', 'cast-taken-over', `sid=${sessionId}`);
+        // Desktop Chrome keeps a cast this page started (or joined at a tap)
+        // attached to the tab while that session lives: its picker is refused
+        // until the page reloads (docs/cast-takeover.md, Known limit).
+        if (this.userCastIntentAt > 0 && !isPhoneOrTablet()) this.castRefreshNeeded = true;
+        this.logCast('ok', 'cast-taken-over', `sid=${sessionId}${this.castRefreshNeeded ? ' refresh-needed=1' : ''}`);
         try {
             // false: leave the session, do not stop the receiver.
             this.castContext.endCurrentSession(false);
@@ -1191,6 +1337,23 @@ export class CastManager {
             && Date.now() - this.userCastIntentAt < TAKEOVER_JOIN_GRACE_MS;
     }
 
+    /**
+     * Chrome still holds this tab's cast after a takeover, so casting again
+     * from here takes a page reload: the Connect card offers it in place of
+     * "Cast to a device" (Andreas, 2026-11-03). Ends with the page, or when a
+     * cast connects after all.
+     */
+    private castRefreshNeeded = false;
+    /** This page has had a Cast session: only then can Chrome hold a cast for it. */
+    private castConnectedOnPage = false;
+    public needsRefreshToCast(): boolean {
+        return this.castRefreshNeeded;
+    }
+    /** The Connect card's refresh: reloads the page, which frees Chrome's hold (the log is sent with keepalive). */
+    public reloadToCastAgain(reason: string) {
+        this.logCast('ok', 'cast-refresh-to-cast', `reason=${reason}`);
+        window.location.reload();
+    }
     /** The Cast session another device's LOAD took over (stepBackIfTakenOver), until its end is handled. */
     private takenOverSid = '';
     /** When, so the disconnect that follows is not reported as a failure. */
@@ -1300,7 +1463,13 @@ export class CastManager {
         const settle = (outcome: string) => {
             if (this.castPickerPendingSince !== since) return;
             this.castPickerPendingSince = 0;
-            this.logCast(outcome === 'connected' ? 'ok' : 'warn', 'cast-picker-answered', `reason=${reason} outcome=${outcome} ms=${Date.now() - since}`);
+            const ms = Date.now() - since;
+            // Refused at once, on a page that has cast: Chrome holds the tab's
+            // old cast (no one cancels a picker that fast by hand). After a
+            // takeover, or after its own session ended under it (prod
+            // 2026-11-05 10:37:57, refused in 10 ms).
+            if (outcome === 'error-cancel' && ms < CAST_PICKER_REFUSED_MS && this.castConnectedOnPage) this.castRefreshNeeded = true;
+            this.logCast(outcome === 'connected' ? 'ok' : 'warn', 'cast-picker-answered', `reason=${reason} outcome=${outcome} ms=${ms}${this.castRefreshNeeded ? ' refresh-needed=1' : ''}`);
             this.notifyStateChange();
         };
         let request: Promise<unknown>;
@@ -1541,12 +1710,14 @@ export class CastManager {
                 }
                 this.logCast('ok', `Recovered stale Cast transport: ${reason}`);
                 this.logCast('ok', 'stale-transport-recovered', `reason=${reason}`);
-                // Nothing to tell after a takeover's reconnect: casting simply works.
-                if (reason === DEAF_TAKEOVER_RECONNECT) this.setHealthStatus('idle', '');
+                // Nothing to tell after a takeover's reconnect, or an idle
+                // cast's after its queue ended: casting simply works.
+                if (reason === DEAF_TAKEOVER_RECONNECT || reason.startsWith(MEDIA_ENDED_RECONNECT)) this.setHealthStatus('idle', '');
                 else this.setHealthStatus('recovered', 'Cast control reconnected.', this.getCastDeviceName());
                 return true;
             }
 
+            if (this.endIfClosedWhileIdle(sessionId, transportStillDead ? 'dead' : 'timeout')) return false;
             if (transportStillDead) {
                 // rejoinSessionPending stays set, as on the timeout path below:
                 // if requestSessionById() does deliver later, it must hydrate
@@ -1788,6 +1959,7 @@ export class CastManager {
      * snapshot, which is local state.
      */
     private applyAuroraStatus(status: AuroraReceiverStatus) {
+        this.noteReceiverPlayback(status);
         // The receiver reporting the very entry this device loads proves the
         // LOAD landed, also when its acknowledgement never comes (a deaf
         // join, heard through the relay: prod 2026-11-03 10:16:03, the LOAD
@@ -1978,6 +2150,15 @@ export class CastManager {
      * RemotePlayer's local state coherent.
      */
     private tryTransportViaMediaSession(label: string, intent: 'play' | 'pause' | 'toggle'): boolean {
+        if (this.isRemoteMediaEnded()) {
+            // Nothing plays there: Pause just shows paused, Play casts again.
+            if (intent === 'pause') {
+                try { this.publishPlayState(false); } catch { /* ignore */ }
+            } else {
+                this.castQueueAgain(label);
+            }
+            return true;
+        }
         const mediaSession = this.getMediaSession();
         const hasMediaSession = !!mediaSession && typeof mediaSession.play === 'function' && typeof mediaSession.pause === 'function';
         // With no media session the controller has nothing to act on either,
@@ -2257,6 +2438,9 @@ export class CastManager {
                 this.recoverStaleTransportAutomatically(`media-status:${reason}`, error);
             } else if (this.isDisconnectedPresentationError(error)) {
                 this.logCast('ok', 'media-status-error-transport-alive', `reason=${reason}`);
+                // The media moved on: ask the receiver what plays now, which
+                // says whether its queue ended (noteReceiverPlayback).
+                if (session) this.requestReceiverStatus(session);
             }
         });
     }
@@ -2380,6 +2564,9 @@ export class CastManager {
                     this.scheduleFreshSessionPlayback(`reconcile-user-launch:${reason}`);
                     return true;
                 }
+
+                const afterEnd = await this.checkTransportAfterMediaEnded(session, reason);
+                if (afterEnd !== null) return afterEnd;
 
                 this.logCast('warn', `Cast session exists without active media: ${reason}`, this.describeRemotePlayer());
                 this.setHealthStatus('warning', 'Cast session connected without active media.', reason);
@@ -3315,6 +3502,8 @@ export class CastManager {
         // (prod 2026-10-14 19:59:24).
         if (this.leftJoinedSession || this.isEndedLocally()) return false;
         mediaSession = this.getHydratableMediaSession(mediaSession);
+        // The queue ended there: the SDK's old media is not what plays.
+        if (this.isRemoteMediaEnded()) return false;
         if (!mediaSession || !this.hasActiveRemoteMediaSession(mediaSession)) return false;
 
         // With no Cast session there is nothing to hydrate from: the remote
@@ -3539,7 +3728,8 @@ export class CastManager {
                 this.takeoverKeepsVolume = true;
                 this.deafTakeoverSid = this.getCurrentSessionId();
                 this.logCast('ok', 'cast-takeover', `reason=${reason} waitedMs=${elapsedMs} deaf=true`);
-                this.watchRelayAfterDeafTakeover();
+                // The wait for the relay starts with this device's LOAD
+                // (watchRelayAfterDeafTakeover), not here.
                 return null;
             }
             await this.delay(100);
@@ -3562,9 +3752,17 @@ export class CastManager {
      * A deaf takeover hears the receiver only through the relay. With nothing
      * at all heard by then (a receiver page from before the relay, or no
      * server), it falls back to #211: stop that receiver app, Cast again.
+     *
+     * Counted from this device's first LOAD in that session, since the
+     * receiver relays to whoever loaded last: before it, nothing can come.
+     * Prod 2026-11-05 10:36 (T5, idle receiver): the desktop had nothing
+     * playing, loaded 11 s after joining, and was stopped 30 ms before the
+     * receiver's relayed status naming it arrived.
      */
     private watchRelayAfterDeafTakeover() {
         const sid = this.getCurrentSessionId();
+        if (!sid || this.deafTakeoverSid !== sid || this.deafTakeoverWatchedSid === sid) return;
+        this.deafTakeoverWatchedSid = sid;
         const since = Date.now();
         setTimeout(() => {
             if (!sid || this.getCurrentSessionId() !== sid || this.lastReceiverAnswerAt >= since) return;
@@ -3577,6 +3775,8 @@ export class CastManager {
     private takeoverKeepsVolume = false;
     /** The Cast session this device took over deaf, until it reconnects (reconnectAfterDeafTakeover). */
     private deafTakeoverSid = '';
+    /** The deaf takeover whose relay wait has started (at its first LOAD). */
+    private deafTakeoverWatchedSid = '';
 
     /**
      * A deaf takeover, once the receiver names this device (its LOAD has
@@ -4250,6 +4450,8 @@ export class CastManager {
         // and are reconciled against the new window once it has landed.
         const editSeqAtCall = this.queueWindowEditSeq;
         this.queueLoadingSession = session;
+        this.lastQueueLoadStartedAt = Date.now();
+        this.mediaSeenSid = this.getCurrentSessionId();
         const requestedEntryId = tracks[startIndex]?.queueEntryId;
         this.confirmationLoadAccepted = false;
         if (!confirmationRetry && requestedEntryId) this.beginPlaybackConfirmation(session, requestedEntryId, startTime);
@@ -4308,6 +4510,7 @@ export class CastManager {
             for (let attempt = 0; attempt < 3; attempt++) {
                 const bounded = boundedQueueRequest(ordered, build, cap);
                 this.logCast('ok', 'Queue load requested', `items=${before.length + bounded.entries.length} previous=${before.length} startIndex=${index} startTime=${time} bytes=${bounded.bytes} attempt=${attempt + 1}`);
+                this.watchRelayAfterDeafTakeover();
                 try {
                     // Through the stale-transport wrapper like every other
                     // command: a tap after waking into a dead transport
@@ -5287,9 +5490,11 @@ export class CastManager {
      * handoff), and keep Chrome's lingering session from being rejoined or
      * hydrated (isEndedLocally). A SESSION_ENDED that comes later only cleans up.
      */
-    private endCastSessionLocally(sid: string, reason: string) {
+    private endCastSessionLocally(sid: string, reason: string, options: { anyState?: boolean } = {}) {
         this.castEndWatch = null;
-        if (this.getCurrentSessionId() !== sid || this.state !== 'CONNECTED') return;
+        // anyState: a dead transport may have let go of the session object already.
+        if ((options.anyState ? this.getCurrentSessionId() || sid : this.getCurrentSessionId()) !== sid
+            || (this.state !== 'CONNECTED' && !options.anyState)) return;
         const session = this.castContext?.getCurrentSession?.() || null;
         this.logCast('warn', 'cast-end-unconfirmed', `reason=${reason} castState=${this.castContext?.getCastState?.() ?? 'unknown'} sessionState=${session?.getSessionState?.() ?? 'unknown'}`);
         try {

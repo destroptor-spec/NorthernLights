@@ -108,3 +108,63 @@ it('changes nothing for a receiver that names nobody, or a session it already le
   expect(manager.stepBackIfTakenOver(statusFrom('web:desktop-b'), 'f611720b')).toBe(false);
   expect(endCurrentSession).not.toHaveBeenCalled();
 });
+
+describe('Chrome still holds the tab after a takeover (docs/cast-takeover.md, Known limit)', () => {
+  const desktop = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
+  const phone = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36';
+  const as = (userAgent: string) => jest.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue(userAgent);
+  afterEach(() => jest.restoreAllMocks());
+
+  const needsRefresh = (manager: Harness) => (manager as unknown as CastManager).needsRefreshToCast();
+
+  it('a desktop that cast from this page needs a refresh to cast again', () => {
+    as(desktop);
+    const { manager } = harness({ userCastIntentAt: Date.now() - 60_000 });
+    Object.assign(manager, { castRefreshNeeded: false });
+    manager.stepBackIfTakenOver(statusFrom('web:desktop-b'), 'f611720b');
+    expect(needsRefresh(manager)).toBe(true);
+    expect(manager.logCast).toHaveBeenCalledWith('ok', 'cast-taken-over', 'sid=f611720b refresh-needed=1');
+  });
+
+  it('not a phone, nor a page that only woke or reloaded into the session', () => {
+    as(phone);
+    const fromPhone = harness({ userCastIntentAt: Date.now() - 60_000 }).manager;
+    Object.assign(fromPhone, { castRefreshNeeded: false });
+    fromPhone.stepBackIfTakenOver(statusFrom('web:desktop-b'), 'f611720b');
+    expect(needsRefresh(fromPhone)).toBe(false);
+
+    as(desktop);
+    const reloaded = harness().manager;
+    Object.assign(reloaded, { castRefreshNeeded: false });
+    reloaded.stepBackIfTakenOver(statusFrom('web:desktop-b'), 'f611720b');
+    expect(needsRefresh(reloaded)).toBe(false);
+  });
+
+  it('a picker refused at once on a page that has cast also says so; a slow cancel by hand does not', async () => {
+    const picker = (answerAfterMs: number, castConnectedOnPage: number) => {
+      const manager = Object.create(CastManager.prototype) as CastManager;
+      let now = 1_000_000;
+      jest.spyOn(Date, 'now').mockImplementation(() => now);
+      Object.assign(manager, {
+        state: 'NOT_CONNECTED', castPickerPendingSince: 0, castRefreshNeeded: false, castConnectedOnPage: castConnectedOnPage > 0,
+        castContext: { requestSession: () => { now += answerAfterMs; return Promise.resolve('cancel'); } },
+        noteUserCastLaunchIntent: jest.fn(), notifyStateChange: jest.fn(), logCast: jest.fn(),
+      });
+      return manager;
+    };
+    const refused = picker(20, 999_000);
+    expect(refused.openCastPicker('connect-menu')).toBe('opened');
+    await Promise.resolve();
+    expect(refused.needsRefreshToCast()).toBe(true);
+
+    const byHand = picker(4000, 999_000);
+    byHand.openCastPicker('connect-menu');
+    await Promise.resolve();
+    expect(byHand.needsRefreshToCast()).toBe(false);
+
+    const neverCast = picker(20, 0);
+    neverCast.openCastPicker('connect-menu');
+    await Promise.resolve();
+    expect(neverCast.needsRefreshToCast()).toBe(false);
+  });
+});
