@@ -110,6 +110,13 @@ export function decideTakeoverJoin(input: {
   receiverStatus: { castingClientId?: string | null } | null;
   /** Anything from the receiver since the session connected. */
   heardFromReceiver: boolean;
+  /**
+   * Heard on this Cast connection itself, not only through the server's
+   * relay. The relay reaches every device of the user who loaded last, so
+   * with two devices of one account a deaf connection hears the other's
+   * relayed status (prod 2026-11-05 22:13, T7). Left out: as heardFromReceiver.
+   */
+  heardDirectly?: boolean;
   myClientId: string;
   /** Whether a device id is another of this user's devices casting there (sync on). */
   isOwnDevice: (clientId: string) => boolean;
@@ -126,8 +133,10 @@ export function decideTakeoverJoin(input: {
       return input.sdkHasMedia || input.elapsedMs >= (input.maxWaitMs ?? JOIN_MEDIA_WAIT_MS) ? 'adopt' : 'wait';
     }
     if (casting && input.isOwnDevice(casting)) return 'leave-own';
+    // Known whose cast it is, but this connection may still hear nothing.
+    if (input.heardDirectly === false) return input.elapsedMs < (input.deafAfterMs ?? TAKEOVER_DEAF_GUESS_MS) ? 'wait' : 'deaf';
     return 'takeover';
   }
-  if (input.heardFromReceiver) return input.elapsedMs < (input.maxWaitMs ?? JOIN_MEDIA_WAIT_MS) ? 'wait' : 'takeover';
+  if (input.heardFromReceiver && input.heardDirectly !== false) return input.elapsedMs < (input.maxWaitMs ?? JOIN_MEDIA_WAIT_MS) ? 'wait' : 'takeover';
   return input.elapsedMs < (input.deafAfterMs ?? TAKEOVER_DEAF_GUESS_MS) ? 'wait' : 'deaf';
 }

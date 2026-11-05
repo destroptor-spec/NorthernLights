@@ -93,4 +93,17 @@ describe('decideTakeoverJoin', () => {
     expect(decideTakeoverJoin({ ...deaf, elapsedMs: JOIN_MEDIA_WAIT_MS })).toBe('wait');
     expect(decideTakeoverJoin({ ...deaf, elapsedMs: TAKEOVER_DEAF_GUESS_MS })).toBe('deaf');
   });
+
+  it("a status heard only through the relay (another of the same account's devices loaded last) is no proof this connection hears: deaf after the same wait (prod 2026-11-05 22:13, T7)", () => {
+    const relayed = { ...base, heardDirectly: false, receiverStatus: { castingClientId: 'web:phone-a' } };
+    expect(decideTakeoverJoin({ ...relayed, elapsedMs: 280 })).toBe('wait');
+    expect(decideTakeoverJoin({ ...relayed, elapsedMs: TAKEOVER_DEAF_GUESS_MS })).toBe('deaf');
+    // Heard on the connection too: a plain takeover at once.
+    expect(decideTakeoverJoin({ ...relayed, heardDirectly: true, elapsedMs: 280 })).toBe('takeover');
+    // Whose cast it is still counts at once: another of my own devices, or my own.
+    expect(decideTakeoverJoin({ ...relayed, isOwnDevice: (id) => id === 'web:phone-a' })).toBe('leave-own');
+    expect(decideTakeoverJoin({ ...relayed, receiverStatus: { castingClientId: 'web:desktop-b' }, elapsedMs: JOIN_MEDIA_WAIT_MS })).toBe('adopt');
+    // Nothing named, only relayed: not taken as heard either.
+    expect(decideTakeoverJoin({ ...base, heardDirectly: false, receiverStatus: null, elapsedMs: TAKEOVER_DEAF_GUESS_MS })).toBe('deaf');
+  });
 });
