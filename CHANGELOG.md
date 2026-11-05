@@ -3,15 +3,17 @@
 ## [Unreleased]
 
 ### Features
-- **Connect and playback across devices:** See where music is playing, control it from another device, transfer playback, and share queue edits across devices.
-- **Listen Together:** Invite people to a shared listening session with join links, guest controls, and discoverable gigs with configurable participation levels.
+- **Connect and playback across devices:** See where music is playing, control it from another device, transfer playback, and share queue edits across devices. A device that isn't playing can also change repeat, shuffle, Infinity Mode, and volume.
+- **Listen Together:** Invite people to a shared listening session with join links, guest controls, and discoverable gigs with configurable participation levels. Each gig has a panel that lists its members, with an option to remove them, and Aurora avatars appear throughout the app.
 - **Independent Cast playback:** Chromecast can follow the shared queue and keep Infinity Mode playing after the sending app closes or goes to sleep.
+- **Cast takeover:** Choosing a Cast device that is already playing another device's music replaces that music, as in other casting apps. The replaced device returns to local playback, paused, with no error, even if it was asleep during the takeover. Desktop Chrome then needs a page refresh before it can cast again, and the Connect menu offers one.
 - **Aurora Listener API:** Added a versioned API for web, desktop, and mobile clients, with app pairing, dedicated app keys, library browsing, playlists, discovery, playback control, and live updates.
 - **Database backups:** Export and restore the database for backups, server moves, and rebuilt installations.
 - **Artist review tools:** Review artist names and combined credits with previews, keep or split decisions, and undo support.
 
 ### Improvements
 - **Infinity Mode:** Recommendations continue from the end of the queue, avoid queued tracks and repeats, and use server-managed top-ups across playback devices.
+- **Cast at the end of the queue:** When the queue finishes, the cast stays connected and idle, and Play starts the queue again on the Cast device. If the Cast device closes after its idle timeout, the sending device ends the cast without an error, including when it was asleep at the time.
 - **Library loading:** Library sections appear progressively while larger collections load.
 - **Artist metadata:** Improved use of per-person file tags, MusicBrainz identities, artwork fallbacks, and image and biography provider preferences.
 - **Listening history:** Playback reports update plays, skips, and scrobbles across devices; failed scrobbles retry after network errors. OpenSubsonic likes can optionally sync to connected providers.
@@ -19,7 +21,7 @@
 - **Diagnostics:** Added clearer playback, scanner, Cast, and streaming logs with controls for diagnostic verbosity.
 
 ### Bug fixes
-- **Cast reliability:** Fixed queue changes, rapid skips, seeking, progress updates, artwork, reconnection, session handovers, and recovery when the Cast SDK loses media status.
+- **Cast reliability:** Fixed queue changes, rapid skips, seeking, progress updates, artwork, reconnection, session handovers, and recovery when the Cast SDK loses media status. The Cast volume slider no longer jumps back while you drag it. After switching a cast between two of your own devices, the new device keeps its progress bar and volume control.
 - **Playback synchronization:** Fixed unintended playback takeovers, stale remote controls, and queue conflicts. The currently playing track is protected from removal.
 - **Local playback:** Improved next-track preparation at Source quality and fixed end-of-queue, repeat, and skip-reporting behavior.
 - **Library scanning:** Prevented inaccessible folders from causing track deletion, hardened analysis workers, corrected analysis coverage, and fixed artist-tag splitting.
