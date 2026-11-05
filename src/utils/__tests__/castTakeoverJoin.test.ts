@@ -158,14 +158,38 @@ describe('a deaf join', () => {
     expect(endCurrentSession).not.toHaveBeenCalled();
   });
 
-  it("falls back to #211's stop and Cast again when nothing at all is heard, not even relayed", async () => {
+  // Its LOAD, as the queue load sends it (handleCastConnected is mocked here).
+  const load = (manager: Harness) => (manager as unknown as { watchRelayAfterDeafTakeover(): void }).watchRelayAfterDeafTakeover();
+
+  it("falls back to #211's stop and Cast again when nothing at all is heard after its LOAD, not even relayed", async () => {
     const { manager, endCurrentSession } = harness(null);
     const started = manager.startPlaybackForCurrentSession('session-started');
     await jest.advanceTimersByTimeAsync(3200);
     await started;
-    await jest.advanceTimersByTimeAsync(12_100);
+    load(manager);
+    load(manager); // a retry of the same LOAD restarts nothing
+    await jest.advanceTimersByTimeAsync(11_900);
+    expect(endCurrentSession).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(200);
     expect(manager.logCast).toHaveBeenCalledWith('warn', 'cast-takeover-unheard', expect.stringContaining(`sid=${SID}`));
+    expect(endCurrentSession).toHaveBeenCalledTimes(1);
     expect(endCurrentSession).toHaveBeenCalledWith(true);
+  });
+
+  it('waits from its LOAD, not from joining: nothing playing here, a song picked later (prod 2026-11-05 10:36, T5)', async () => {
+    const { manager, endCurrentSession } = harness(null);
+    const started = manager.startPlaybackForCurrentSession('session-started');
+    await jest.advanceTimersByTimeAsync(3200);
+    await started;
+    // Nothing to cast yet: no LOAD, so no wait and no stop.
+    await jest.advanceTimersByTimeAsync(11_000);
+    load(manager);
+    await jest.advanceTimersByTimeAsync(1100);
+    manager.receiveRelayedStatus(SID, { type: 'aurora.status', castingClientId: 'web:desktop-b', playerState: 'BUFFERING', ts: Date.now() });
+    await jest.advanceTimersByTimeAsync(13_000);
+    expect(manager.logCast).not.toHaveBeenCalledWith('warn', 'cast-takeover-unheard', expect.anything());
+    expect(endCurrentSession).not.toHaveBeenCalled();
+    expect((manager as unknown as { recoverStaleTransport: jest.Mock }).recoverStaleTransport).toHaveBeenCalledWith('deaf-takeover');
   });
 
   it("still leaves another of my own devices' cast, known by name (#211)", async () => {

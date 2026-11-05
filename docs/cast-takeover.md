@@ -21,6 +21,11 @@ answer. Once the receiver names it, it reconnects to the same session by id
 (`cast-takeover-reconnect`, the stale-transport recovery: leave, then
 `requestSessionById`), as Chrome does after a reload. After that the page
 hears everything directly (prod 2026-11-03 10:27:21).
+The 12 s wait for anything relayed (else #211's stop and Cast again) starts
+at its first LOAD in that session, since the receiver relays to whoever
+loaded last. T5 on prod 2026-11-05 10:36 failed on this: the desktop had
+nothing playing, loaded 11 s after joining, and was stopped 30 ms before
+the relayed status naming it arrived, which left Chrome holding the tab.
 
 ## The outcome (Andreas, 2026-11-02)
 
@@ -212,7 +217,7 @@ for the deaf check.
 | T2 | T1 with A's phone locked; unlock it a minute later | As T1 | On unlock the phone shows not casting and paused, not B's music |
 | T3 | After T1, B taps Stop casting (app, or Chrome's dialog) | The NAD stops; the desktop shows not casting, paused | — |
 | T4 | Sync on, same account: the phone casts and the desktop picks the NAD | As today: the desktop becomes the remote, the phone plays on | — |
-| T5 | The idle receiver app (the phone stopped casting less than 5 minutes ago), then the desktop picks the NAD | B's music plays within about 6 s, with no Cast again | — |
+| T5 | The idle receiver app: the phone's last song ends (repeat off; don't tap Stop, which closes the app), and within 5 minutes the desktop picks the NAD. On a speaker, Chrome's Cast dialog still lists Aurora under it | B's music plays within about 6 s, with no Cast again | Shows not casting |
 | T6 | T1 on the A9 and on Stue TV | As T1 (the A9 may take a few seconds longer) | As T1 |
 | T7 | Sync off: T1 between two devices of the same account | As T1 | As T1 |
 | T8 | Sync off: T2 between two devices of the same account | As T2 | As T2 |
