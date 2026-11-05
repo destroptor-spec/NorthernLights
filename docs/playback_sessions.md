@@ -5,7 +5,8 @@ dependencies, windowing, entry-anchored ops, report ordering, receiver auth,
 playback confirmation), then for patch idempotency keys, evidence-only
 termination of an unreachable output, and server-side output grants.
 **Built:** Phases 0–5, 2026-10-12 to 2026-10-17. The [Migration plan](#migration-plan)
-gives each phase's state and what is still unverified. Phase 6 is not started.
+gives each phase's state and what is still unverified. Phase 6 (Listen
+together) is built, 2026-10-27 to 10-30: [listen-together.md](listen-together.md).
 [What exists today](#what-exists-today) describes the starting point in October.
 **Related:** #56 (receiver-driven state, closed 2026-10-18 after Phase 5), #72
 (mid-song 310, closed), #39 (closed), #40 (launch `invalid_parameter`, open),
