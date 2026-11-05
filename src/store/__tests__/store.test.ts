@@ -57,6 +57,30 @@ describe('Music Store Logic', () => {
     expect(url.searchParams.get('token')).toBe('media-token');
   });
 
+  describe("the session's repeat, shuffle and Infinity, set on another device", () => {
+    afterEach(() => jest.restoreAllMocks());
+
+    it('plays by them here, and tells a Cast device the repeat mode', () => {
+      const ensureInfinityQueue = jest.fn(async () => undefined);
+      jest.spyOn(castManager, 'isConnected').mockReturnValue(true);
+      const setRepeatMode = jest.spyOn(castManager, 'setRepeatMode').mockResolvedValue(undefined as never);
+      usePlayerStore.setState({ repeat: 'none', shuffle: false, isInfinityMode: false, sessionFollow: null, playbackState: 'playing', ensureInfinityQueue } as never);
+      usePlayerStore.getState().adoptSessionSettings({ repeat: 'all', shuffle: true, infinity: true });
+      expect(usePlayerStore.getState()).toMatchObject({ repeat: 'all', shuffle: true, isInfinityMode: true });
+      expect(setRepeatMode).toHaveBeenCalledWith('all');
+      expect(ensureInfinityQueue).toHaveBeenCalled();
+    });
+
+    it('changes nothing when they are the same', () => {
+      const setRepeatMode = jest.spyOn(castManager, 'setRepeatMode').mockResolvedValue(undefined as never);
+      usePlayerStore.setState({ repeat: 'one', shuffle: false, isInfinityMode: false });
+      const before = usePlayerStore.getState();
+      usePlayerStore.getState().adoptSessionSettings({ repeat: 'one', shuffle: false, infinity: false });
+      expect(usePlayerStore.getState()).toBe(before);
+      expect(setRepeatMode).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Next on the last track', () => {
     const queue = () => [{ id: 'a', path: '/a.mp3', title: 'a' }, { id: 'b', path: '/b.mp3', title: 'b' }];
     const stubs = () => {

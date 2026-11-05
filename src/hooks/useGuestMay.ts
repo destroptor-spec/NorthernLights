@@ -9,7 +9,3 @@ export function useGuestMay(scope: SessionScope): boolean {
   return useListenTogetherStore((s) => !s.openedSessionId || !s.shared?.permissions || s.shared.permissions.includes(scope));
 }
 
-/** This device shows a shared session (a gig it joined). */
-export function useShowingShared(): boolean {
-  return useListenTogetherStore((s) => !!s.openedSessionId);
-}
