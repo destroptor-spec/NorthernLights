@@ -102,6 +102,14 @@ export interface CastingElsewhereOptions {
 }
 /** A deaf takeover with nothing heard, even through the relay, by then falls back to #211's stop. */
 const TAKEOVER_RELAY_WAIT_MS = 12_000;
+/** An idle status this soon after this device's own LOAD is that LOAD on its way, not the queue ending. */
+const MEDIA_END_AFTER_LOAD_MS = 10_000;
+/**
+ * How long the receiver must stay idle with nothing loaded to count as the
+ * queue's end. Between two tracks it is idle for a moment too (prod
+ * 2026-11-05 10:02:36: LOADING → IDLE → BUFFERING within 230 ms).
+ */
+const MEDIA_END_CONFIRM_MS = 2000;
 /** The stale-transport recovery run after a deaf takeover, to reconnect as a reload would. */
 const DEAF_TAKEOVER_RECONNECT = 'deaf-takeover';
 /** The join's ping (cast-join-deaf): an action no receiver knows, which every receiver acknowledges. */
@@ -722,6 +730,7 @@ export class CastManager {
      */
     private concludeRemoteMediaGone(eventSilenceMs: number, probedMs: number) {
         this.remoteMediaConcludedGone = true;
+        this.noteRemoteMediaEnded('watchdog');
         this.mediaSessionProbeStartedAt = 0;
         this.logCast('warn', 'Cast remote media gone; releasing local playing state', `eventSilenceMs=${eventSilenceMs} probedMs=${probedMs} msSinceEvidence=${Date.now() - this.lastRemoteEvidenceAt}`);
         try {
@@ -1012,7 +1021,92 @@ export class CastManager {
      */
     public receiverFollowsSession(): boolean {
         const sid = this.getCurrentSessionId();
-        return !!sid && this.isConnected() && this.receiverFollowingSid === sid;
+        // Its queue ended: nothing follows there any more, this device loads again.
+        return !!sid && this.isConnected() && this.receiverFollowingSid === sid && this.mediaEndedSid !== sid;
+    }
+
+    /**
+     * The receiver's queue ended in this Cast session (prod 2026-11-05 11:15,
+     * phone: a single cast, the phone asleep, woken just as it ended). Still
+     * connected and idle, as after any cast (Andreas, 2026-11-05); the
+     * receiver closes its app after 5 minutes of that. The SDK may still hold
+     * the old media: every status request and Play/Pause on it answered
+     * session_error, and song taps went to a receiver no longer following.
+     * From here Pause just shows paused, and Play or a song casts the queue
+     * again. Ends with new media in the session (another LOAD).
+     */
+    private mediaEndedSid = '';
+    /** Since when the receiver has said it is idle with nothing loaded (0: it hasn't). */
+    private receiverIdleSince = 0;
+    private receiverIdleRecheck: ReturnType<typeof setTimeout> | null = null;
+    /** The Cast session in which media of this device played (its LOAD, or media seen there). */
+    private mediaSeenSid = '';
+    /** When this device last started a LOAD: an idle status right after it is that LOAD on its way, not an end. */
+    private lastQueueLoadStartedAt = 0;
+
+    /**
+     * The receiver says what plays: idle with no entry, after media played
+     * in this session, is the queue's end; any entry again is new media
+     * (this device's LOAD or another's). A fresh join, before anything
+     * played there, is not an end.
+     */
+    private noteReceiverPlayback(status: AuroraReceiverStatus) {
+        const sid = this.getCurrentSessionId();
+        if (!sid) return;
+        const idleWithNothing = status.playerState === 'IDLE' && !status.queueEntryId;
+        if (!idleWithNothing) {
+            this.receiverIdleSince = 0;
+            if (status.queueEntryId && status.playerState !== 'IDLE') {
+                this.mediaSeenSid = sid;
+                if (this.mediaEndedSid === sid) {
+                    this.mediaEndedSid = '';
+                    this.logCast('ok', 'cast-media-ended-cleared', `reason=receiver-playing sid=${sid}`);
+                }
+            }
+            return;
+        }
+        if (this.mediaSeenSid !== sid || this.mediaEndedSid === sid) return;
+        const now = Date.now();
+        if (!this.receiverIdleSince) {
+            this.receiverIdleSince = now;
+            // Ask again once it should have moved on, were it between tracks.
+            if (this.receiverIdleRecheck) clearTimeout(this.receiverIdleRecheck);
+            this.receiverIdleRecheck = setTimeout(() => {
+                this.receiverIdleRecheck = null;
+                const session = this.castContext?.getCurrentSession?.();
+                if (session && this.receiverIdleSince && this.getCurrentSessionId() === sid) this.requestReceiverStatus(session);
+            }, MEDIA_END_CONFIRM_MS + 100);
+            return;
+        }
+        if (now - this.receiverIdleSince >= MEDIA_END_CONFIRM_MS) this.noteRemoteMediaEnded('receiver-idle');
+    }
+
+    private noteRemoteMediaEnded(reason: string) {
+        const sid = this.getCurrentSessionId();
+        if (!sid || this.mediaEndedSid === sid || !this.isConnected()) return;
+        if (this.queueLoadingSession || Date.now() - this.lastQueueLoadStartedAt < MEDIA_END_AFTER_LOAD_MS) return;
+        this.mediaEndedSid = sid;
+        this.playbackConfirmation.cancel();
+        this.playbackRetry = null;
+        this.logCast('ok', 'cast-media-ended', `reason=${reason} sid=${sid}`);
+        usePlayerStore.setState({ isBuffering: false });
+        try {
+            this.publishPlayState(false);
+        } catch { /* ignore */ }
+    }
+
+    private isRemoteMediaEnded(): boolean {
+        const sid = this.getCurrentSessionId();
+        return !!sid && this.mediaEndedSid === sid;
+    }
+
+    /** Play after the queue ended: cast this device's queue again, from the start of its track. */
+    private castQueueAgain(label: string) {
+        const state = usePlayerStore.getState();
+        const index = state.currentIndex ?? (state.playlist.length ? 0 : null);
+        this.logCast('ok', 'cast-media-ended-replay', `via=${label} index=${index ?? 'none'}`);
+        if (index === null) return;
+        void state.playAtIndex(index);
     }
 
     /** SessionMirror: the receiver took the session (or this device no longer holds it for the receiver). */
@@ -1777,6 +1871,7 @@ export class CastManager {
      * snapshot, which is local state.
      */
     private applyAuroraStatus(status: AuroraReceiverStatus) {
+        this.noteReceiverPlayback(status);
         // The receiver reporting the very entry this device loads proves the
         // LOAD landed, also when its acknowledgement never comes (a deaf
         // join, heard through the relay: prod 2026-11-03 10:16:03, the LOAD
@@ -1967,6 +2062,15 @@ export class CastManager {
      * RemotePlayer's local state coherent.
      */
     private tryTransportViaMediaSession(label: string, intent: 'play' | 'pause' | 'toggle'): boolean {
+        if (this.isRemoteMediaEnded()) {
+            // Nothing plays there: Pause just shows paused, Play casts again.
+            if (intent === 'pause') {
+                try { this.publishPlayState(false); } catch { /* ignore */ }
+            } else {
+                this.castQueueAgain(label);
+            }
+            return true;
+        }
         const mediaSession = this.getMediaSession();
         const hasMediaSession = !!mediaSession && typeof mediaSession.play === 'function' && typeof mediaSession.pause === 'function';
         // With no media session the controller has nothing to act on either,
@@ -2246,6 +2350,9 @@ export class CastManager {
                 this.recoverStaleTransportAutomatically(`media-status:${reason}`, error);
             } else if (this.isDisconnectedPresentationError(error)) {
                 this.logCast('ok', 'media-status-error-transport-alive', `reason=${reason}`);
+                // The media moved on: ask the receiver what plays now, which
+                // says whether its queue ended (noteReceiverPlayback).
+                if (session) this.requestReceiverStatus(session);
             }
         });
     }
@@ -3304,6 +3411,8 @@ export class CastManager {
         // (prod 2026-10-14 19:59:24).
         if (this.leftJoinedSession || this.isEndedLocally()) return false;
         mediaSession = this.getHydratableMediaSession(mediaSession);
+        // The queue ended there: the SDK's old media is not what plays.
+        if (this.isRemoteMediaEnded()) return false;
         if (!mediaSession || !this.hasActiveRemoteMediaSession(mediaSession)) return false;
 
         // With no Cast session there is nothing to hydrate from: the remote
@@ -4237,6 +4346,9 @@ export class CastManager {
         // and are reconciled against the new window once it has landed.
         const editSeqAtCall = this.queueWindowEditSeq;
         this.queueLoadingSession = session;
+        this.lastQueueLoadStartedAt = Date.now();
+        this.mediaSeenSid = this.getCurrentSessionId();
+        if (this.mediaEndedSid) this.mediaEndedSid = '';
         const requestedEntryId = tracks[startIndex]?.queueEntryId;
         this.confirmationLoadAccepted = false;
         if (!confirmationRetry && requestedEntryId) this.beginPlaybackConfirmation(session, requestedEntryId, startTime);
