@@ -110,6 +110,13 @@ I cast to my speaker. Another person casts to it and takes it over.
 - **Why this is fair:** another account's B never hears the relay before
   loading, because the relay goes to whoever's token plays. So "load mine"
   is exactly last caster wins.
+- **Same account, sync off:** the relay goes to every device of the
+  user whose token plays, so B can hear A's relayed status before loading.
+  That status tells B whose cast it is, but not that B's own Cast connection
+  hears. Only an answer on the connection itself proves that. With none
+  within the same 3 s, the join counts as deaf, as below (prod 2026-11-05
+  22:13, T7). Before this, B took it as a plain takeover and never
+  reconnected, so its progress bar and volume stayed dead.
 - **If B's join is deaf** (#211's ping goes unanswered), B listens for the
   relay. `cast.status` for its own Cast session id is treated exactly like an
   `aurora.status` heard on the Cast connection. That status covers the

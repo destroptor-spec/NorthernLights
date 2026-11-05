@@ -36,6 +36,8 @@ function harness(answers: Record<string, unknown> | null) {
     sendMessage: jest.fn((_ns: string, message: { type?: string; action?: string }) => {
       if (answers && (message?.type === 'aurora.diagnostics' || message?.action === 'ping')) {
         manager.lastReceiverAnswerAt = Date.now();
+        // Answered on the Cast connection itself.
+        (manager as unknown as { lastDirectAnswerAt: number }).lastDirectAnswerAt = Date.now();
         if (message.type === 'aurora.diagnostics') {
           manager.lastAuroraStatus = { type: 'aurora.status', ts: Date.now(), ...answers };
           manager.lastAuroraStatusAt = Date.now();
@@ -67,6 +69,7 @@ function harness(answers: Record<string, unknown> | null) {
     lastAuroraStatus: null,
     lastAuroraStatusAt: 0,
     lastReceiverAnswerAt: 0,
+    lastDirectAnswerAt: 0,
     watchdogMediaRequestId: 0,
     auroraControlRequestId: 0,
     userCastIntentAt: Date.now(),
@@ -156,6 +159,25 @@ describe('a deaf join', () => {
     expect(recover).toHaveBeenCalledTimes(1);
     await jest.advanceTimersByTimeAsync(13_000);
     expect(endCurrentSession).not.toHaveBeenCalled();
+  });
+
+  it("is not taken for heard by a status relayed for another of the same account's devices (prod 2026-11-05 22:13, T7)", async () => {
+    const { manager } = harness(null);
+    const started = manager.startPlaybackForCurrentSession('session-started');
+    await jest.advanceTimersByTimeAsync(280);
+    // The phone (same account) loaded last: the relay brings its status here too.
+    manager.receiveRelayedStatus(SID, { type: 'aurora.status', castingClientId: 'web:phone-a', playerState: 'PLAYING', queueEntryId: 'e10', ts: Date.now() });
+    await jest.advanceTimersByTimeAsync(300);
+    expect(manager.handleCastConnected).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(3000);
+    await started;
+    // Loaded as a deaf takeover: reconnected once the receiver names this device.
+    expect(manager.handleCastConnected).toHaveBeenCalledTimes(1);
+    expect(manager.logCast).toHaveBeenCalledWith('ok', 'cast-takeover', expect.stringContaining('deaf=true'));
+    expect(manager.logCast).not.toHaveBeenCalledWith('ok', 'cast-takeover', expect.stringContaining('casting=other'));
+    manager.receiveRelayedStatus(SID, { type: 'aurora.status', castingClientId: 'web:desktop-b', playerState: 'PLAYING', ts: Date.now() });
+    await jest.advanceTimersByTimeAsync(0);
+    expect((manager as unknown as { recoverStaleTransport: jest.Mock }).recoverStaleTransport).toHaveBeenCalledWith('deaf-takeover');
   });
 
   // Its LOAD, as the queue load sends it (handleCastConnected is mocked here).
