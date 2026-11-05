@@ -173,8 +173,10 @@ usual row. A tap reloads the page (`cast-refresh-to-cast`).
 The row appears:
 - at once, on a desktop that cast from this page (a Cast tap in this page's
   life) and was then taken over (`cast-taken-over … refresh-needed=1`);
-- or when the picker is refused in under 1 s on a page that was taken over
-  (phones included, should they ever hold on too).
+- or when the picker is refused in under 1 s on a page that has cast
+  (phones included, should they ever hold on too). That also covers a
+  session that ended under the page some other way (prod 2026-11-05
+  10:37:57: refused in 10 ms after #211's stop, no takeover).
 
 It goes with the reload, or when a cast connects after all. A page that
 only woke or reloaded into the taken-over session doesn't get the row.

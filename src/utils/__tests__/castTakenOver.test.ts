@@ -140,13 +140,13 @@ describe('Chrome still holds the tab after a takeover (docs/cast-takeover.md, Kn
     expect(needsRefresh(reloaded)).toBe(false);
   });
 
-  it('a picker refused at once after a takeover on this page also says so; a slow cancel by hand does not', async () => {
-    const picker = (answerAfterMs: number, takenOverAt: number) => {
+  it('a picker refused at once on a page that has cast also says so; a slow cancel by hand does not', async () => {
+    const picker = (answerAfterMs: number, castConnectedOnPage: number) => {
       const manager = Object.create(CastManager.prototype) as CastManager;
       let now = 1_000_000;
       jest.spyOn(Date, 'now').mockImplementation(() => now);
       Object.assign(manager, {
-        state: 'NOT_CONNECTED', castPickerPendingSince: 0, castRefreshNeeded: false, takenOverAt,
+        state: 'NOT_CONNECTED', castPickerPendingSince: 0, castRefreshNeeded: false, castConnectedOnPage: castConnectedOnPage > 0,
         castContext: { requestSession: () => { now += answerAfterMs; return Promise.resolve('cancel'); } },
         noteUserCastLaunchIntent: jest.fn(), notifyStateChange: jest.fn(), logCast: jest.fn(),
       });
@@ -162,9 +162,9 @@ describe('Chrome still holds the tab after a takeover (docs/cast-takeover.md, Kn
     await Promise.resolve();
     expect(byHand.needsRefreshToCast()).toBe(false);
 
-    const neverTakenOver = picker(20, 0);
-    neverTakenOver.openCastPicker('connect-menu');
+    const neverCast = picker(20, 0);
+    neverCast.openCastPicker('connect-menu');
     await Promise.resolve();
-    expect(neverTakenOver.needsRefreshToCast()).toBe(false);
+    expect(neverCast.needsRefreshToCast()).toBe(false);
   });
 });
