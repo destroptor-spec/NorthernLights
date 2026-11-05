@@ -486,6 +486,7 @@ export class CastManager {
         }
         if (this.state === 'CONNECTED') {
             this.castRefreshNeeded = false;
+            this.castConnectedOnPage = true;
             this.startStatusWatchdog();
         } else {
             this.stopStatusWatchdog();
@@ -1205,6 +1206,8 @@ export class CastManager {
      * cast connects after all.
      */
     private castRefreshNeeded = false;
+    /** This page has had a Cast session: only then can Chrome hold a cast for it. */
+    private castConnectedOnPage = false;
     public needsRefreshToCast(): boolean {
         return this.castRefreshNeeded;
     }
@@ -1319,9 +1322,11 @@ export class CastManager {
             if (this.castPickerPendingSince !== since) return;
             this.castPickerPendingSince = 0;
             const ms = Date.now() - since;
-            // Refused at once, after a takeover on this page: Chrome holds the
-            // tab's old cast (no one cancels a picker that fast by hand).
-            if (outcome === 'error-cancel' && ms < CAST_PICKER_REFUSED_MS && this.takenOverAt > 0) this.castRefreshNeeded = true;
+            // Refused at once, on a page that has cast: Chrome holds the tab's
+            // old cast (no one cancels a picker that fast by hand). After a
+            // takeover, or after its own session ended under it (prod
+            // 2026-11-05 10:37:57, refused in 10 ms).
+            if (outcome === 'error-cancel' && ms < CAST_PICKER_REFUSED_MS && this.castConnectedOnPage) this.castRefreshNeeded = true;
             this.logCast(outcome === 'connected' ? 'ok' : 'warn', 'cast-picker-answered', `reason=${reason} outcome=${outcome} ms=${ms}${this.castRefreshNeeded ? ' refresh-needed=1' : ''}`);
             this.notifyStateChange();
         };
