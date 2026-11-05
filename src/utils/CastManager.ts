@@ -111,6 +111,13 @@ const MEDIA_END_AFTER_LOAD_MS = 10_000;
  * 2026-11-05 10:02:36: LOADING → IDLE → BUFFERING within 230 ms).
  */
 const MEDIA_END_CONFIRM_MS = 2000;
+/**
+ * The end of a session counts as the deaf stop's (no handoff, "didn't
+ * answer") only this soon after it. Prod 2026-11-05: a stop at 10:37:06
+ * whose end was swallowed by a racing reconnect left the flag set, and the
+ * NAD's ordinary idle close of a later cast at 10:50:28 showed the toast.
+ */
+const DEAF_STOP_END_WINDOW_MS = 30_000;
 /** The stale-transport recovery run after a deaf takeover, to reconnect as a reload would. */
 const DEAF_TAKEOVER_RECONNECT = 'deaf-takeover';
 /** The join's ping (cast-join-deaf): an action no receiver knows, which every receiver acknowledges. */
@@ -1325,6 +1332,10 @@ export class CastManager {
             // Back here, paused where its own cast was: no toast, no message.
             this.handOffToLocalAfterSessionEnd(snapshot, { paused: true });
             return;
+        }
+        if (this.stoppedDeafDevice && Date.now() - this.deafSessionStoppedAt > DEAF_STOP_END_WINDOW_MS) {
+            this.logCast('ok', 'cast-join-deaf-stop-expired', `ageMs=${Date.now() - this.deafSessionStoppedAt}`);
+            this.stoppedDeafDevice = '';
         }
         if (this.stoppedDeafDevice) {
             const device = this.stoppedDeafDevice;
@@ -3738,6 +3749,8 @@ export class CastManager {
      */
     private reconnectAfterDeafTakeover(sessionId: string) {
         this.deafTakeoverSid = '';
+        // Already stopping it (#211's fallback): a reconnect would swallow that end.
+        if (this.stoppedDeafDevice) return;
         this.logCast('ok', 'cast-takeover-reconnect', `sid=${sessionId}`);
         setTimeout(() => { void this.recoverStaleTransport(DEAF_TAKEOVER_RECONNECT); }, 0);
     }

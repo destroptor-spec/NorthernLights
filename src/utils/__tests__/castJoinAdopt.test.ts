@@ -140,7 +140,7 @@ describe('a joined session that never answers', () => {
     mockAddToast.mockClear();
     const { manager } = harness({ deaf: true });
     const openCastPicker = jest.fn(() => 'opened');
-    Object.assign(manager, { openCastPicker, stoppedDeafDevice: 'NAD Forstærker' });
+    Object.assign(manager, { openCastPicker, stoppedDeafDevice: 'NAD Forstærker', deafSessionStoppedAt: Date.now() - 2000 });
     manager.afterSessionEnded({ index: 1, positionSeconds: 12, wasPlaying: false });
     expect(manager.handOffToLocalAfterSessionEnd).not.toHaveBeenCalled();
     // Not by itself: a picker opened as the session ended left Chrome's dialog half open (prod 21:40:21).
@@ -152,6 +152,27 @@ describe('a joined session that never answers', () => {
     // A later end is an ordinary one again.
     manager.afterSessionEnded({ index: 1, positionSeconds: 12, wasPlaying: true });
     expect(manager.handOffToLocalAfterSessionEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it("an end long after the stop is an ordinary one: no \"didn't answer\" (prod 2026-11-05 10:50)", () => {
+    // The stop's own end was swallowed by a racing reconnect (10:37:06); the
+    // NAD's idle close of a later cast came 13 minutes on.
+    mockAddToast.mockClear();
+    const { manager } = harness({ deaf: true });
+    Object.assign(manager, { stoppedDeafDevice: 'NAD Forstærker', deafSessionStoppedAt: Date.now() - 13 * 60_000 });
+    manager.afterSessionEnded({ index: 0, positionSeconds: 0, wasPlaying: false });
+    expect(mockAddToast).not.toHaveBeenCalled();
+    expect(manager.handOffToLocalAfterSessionEnd).toHaveBeenCalledTimes(1);
+    expect(manager.logCast).toHaveBeenCalledWith('ok', 'cast-join-deaf-stop-expired', expect.stringMatching(/^ageMs=\d+$/));
+  });
+
+  it('a deaf takeover being stopped does not also reconnect, which would swallow the end', () => {
+    const { manager } = harness({ deaf: true });
+    const recoverStaleTransport = jest.fn();
+    Object.assign(manager, { recoverStaleTransport, stoppedDeafDevice: 'NAD Forstærker', deafSessionStoppedAt: Date.now() });
+    (manager as unknown as { reconnectAfterDeafTakeover(sid: string): void }).reconnectAfterDeafTakeover('s1');
+    jest.runOnlyPendingTimers();
+    expect(recoverStaleTransport).not.toHaveBeenCalled();
   });
 
   /**
