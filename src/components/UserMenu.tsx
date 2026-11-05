@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { usePlayerStore } from '../store/index';
-import { User, LogOut, ChevronDown, Settings, Download } from 'lucide-react';
+import { LogOut, ChevronDown, Settings, Download } from 'lucide-react';
+import { ownAvatar, UserAvatar } from './UserAvatar';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 
 interface UserMenuProps {
@@ -44,9 +45,7 @@ export const UserMenu: React.FC<UserMenuProps> = ({ onOpenSettings }) => {
         onClick={() => setIsOpen(!isOpen)}
         className="flex items-center gap-2 px-3 h-9 rounded-full bg-[var(--color-surface)] border border-[var(--glass-border)] hover:bg-[var(--color-surface-hover)] transition-ui text-sm"
       >
-        <div className="w-6 h-6 rounded-full bg-primary/20 text-[var(--color-primary)] flex items-center justify-center">
-          <User className="w-3.5 h-3.5" />
-        </div>
+        <UserAvatar avatar={ownAvatar(currentUser)} size="xs" />
         <span className="text-[var(--color-text-primary)] font-medium hidden md:inline">{currentUser.username}</span>
         <ChevronDown className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
       </button>

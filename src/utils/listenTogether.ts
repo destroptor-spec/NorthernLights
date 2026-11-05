@@ -182,6 +182,7 @@ export async function refreshOwn(): Promise<void> {
         visibility: own?.visibility ?? 'private',
         guests: members.guests,
         ownerAvatar: members.owner.avatar,
+        ownerName: members.owner.username,
         permissions: links[0]?.permissions ?? own?.permissions ?? null,
       },
     });
@@ -378,14 +379,28 @@ export async function setGigLevel(level: 1 | 2 | 3): Promise<void> {
   if (!session) setOwn({ permissions: before });
 }
 
-/** Copies the gig's link (its newest working one, or a new one at its level), with a toast. */
-export async function copyInviteLink(): Promise<void> {
+/** The gig's link, once read: Invite opens the share sheet with it at once (see shareInviteLink). */
+let readyInvite: { sessionId: string; url: string } | null = null;
+
+/** The gig's link: its newest working one, or a new one at its level. */
+async function inviteUrl(): Promise<string | null> {
   const link = await ownAction(async (id) => {
     const [newest] = await api.listSessionInvites(auth(), id);
     return newest ?? api.createSessionInvite(auth(), id, store.getState().own?.permissions ?? GIG_LEVELS[0].scopes);
   }, "Couldn't make an invite link.");
-  if (!link) return;
-  const url = listenUrl(link.path);
+  const sessionId = store.getState().ownSessionId;
+  if (!link || !sessionId) return null;
+  readyInvite = { sessionId, url: listenUrl(link.path) };
+  return readyInvite.url;
+}
+
+/** Reads the gig's link ahead of Invite, while the gig runs. */
+export function prepareInviteLink(): void {
+  if (readyInvite?.sessionId === store.getState().ownSessionId) return;
+  void inviteUrl();
+}
+
+async function copyUrl(url: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(url);
     toast('Link copied!', 'info');
@@ -396,8 +411,47 @@ export async function copyInviteLink(): Promise<void> {
   }
 }
 
+/** Copies the gig's link, with a toast. */
+export async function copyInviteLink(): Promise<void> {
+  const url = await inviteUrl();
+  if (url) await copyUrl(url);
+}
+
+/**
+ * Invite: the share sheet with the gig's link (Andreas, 2026-10-30), or a
+ * copy where there is none (desktop Chrome on Linux). The share sheet needs
+ * the tap that opened it, so the link read ahead is used when there is one.
+ */
+export async function shareInviteLink(): Promise<void> {
+  if (typeof navigator.share !== 'function') return copyInviteLink();
+  const ready = readyInvite?.sessionId === store.getState().ownSessionId ? readyInvite!.url : null;
+  const url = ready ?? await inviteUrl();
+  if (!url) return;
+  try {
+    await navigator.share({ title: 'Listen together', url });
+  } catch (error) {
+    // Closed by the user: nothing to do. Refused (the tap expired while the link was read): copy it.
+    if ((error as { name?: string })?.name !== 'AbortError') await copyUrl(url);
+  }
+}
+
+/** The owner removes one guest: gone from the list at once, back if the server refuses. */
+export async function removeGuest(userId: string): Promise<void> {
+  const guest = store.getState().own?.guests.find((member) => member.avatar.userId === userId);
+  if (!guest) return;
+  setOwn({ guests: (store.getState().own?.guests ?? []).filter((member) => member.avatar.userId !== userId) });
+  const removed = await ownAction(
+    (id) => api.removeSessionMember(auth(), id, userId).then(() => true),
+    `Couldn't remove ${guest.username}.`,
+  );
+  if (!removed) void refreshOwn();
+}
+
 /** Ends the gig: everyone out, links dead, private again. The music plays on. */
 export async function endTogether(): Promise<void> {
   const session = await ownAction((id) => api.endListeningTogether(auth(), id), "Couldn't end the gig.");
-  if (session) setOwn({ visibility: 'private', guests: [], permissions: null });
+  if (!session) return;
+  readyInvite = null;
+  setOwn({ visibility: 'private', guests: [], permissions: null });
+  store.setState({ membersOpen: false });
 }

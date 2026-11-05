@@ -3,6 +3,7 @@ import { KeyRound, ShieldAlert, UserRound } from 'lucide-react';
 import { usePlayerStore } from '../../store/index';
 import { useToast } from '../../hooks/useToast';
 import { ConfirmModal } from '../ConfirmModal';
+import { ownAvatar, UserAvatar } from '../UserAvatar';
 import { PromptModal } from '../PromptModal';
 import type { AccountProtection } from '../../../shared/accountProtection';
 
@@ -94,9 +95,11 @@ export const AccountTab: React.FC<AccountTabProps> = ({ onClose }) => {
 
             <section className="account-profile" aria-label="Signed in account">
                 <div className="account-profile__glow" aria-hidden="true"></div>
-                <div className="account-profile__avatar" aria-hidden="true">
-                    {username[0]?.toUpperCase() || 'U'}
-                </div>
+                <UserAvatar
+                    avatar={ownAvatar({ id: currentUser?.id ?? '', username })}
+                    size="xl"
+                    className="account-profile__avatar"
+                />
                 <div className="account-profile__copy">
                     <div className="account-profile__label">
                         <UserRound size={15} aria-hidden="true" />

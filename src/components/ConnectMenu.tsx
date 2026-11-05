@@ -414,7 +414,7 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
       {syncOn && (
         <AvailableGigs gigs={gigs} disabled={!!chosen} onJoin={(gig) => pick(`join:${gig.sessionId}`, () => { void joinNearby(gig); })} />
       )}
-      {syncOn && <GigSection />}
+      {syncOn && <GigSection onDone={onDone} />}
     </div>
   );
 };

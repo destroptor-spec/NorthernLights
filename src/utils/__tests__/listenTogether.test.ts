@@ -8,6 +8,9 @@ import {
   endTogether,
   openSharedSession,
   copyInviteLink,
+  prepareInviteLink,
+  removeGuest,
+  shareInviteLink,
   guestMay,
   joinNearby,
   setDiscoverable,
@@ -48,7 +51,7 @@ beforeEach(() => {
   jest.resetAllMocks();
   addToast = jest.fn();
   usePlayerStore.setState({ currentUser: { id: 'me', username: 'bo', role: 'user' }, addToast, getAuthHeader: () => ({}) } as never);
-  useListenTogetherStore.setState({ ownSessionId: null, own: null, shared: null, prompt: null, openedSessionId: null, available: [] });
+  useListenTogetherStore.setState({ ownSessionId: null, own: null, shared: null, prompt: null, openedSessionId: null, available: [], membersOpen: false });
   usePlayerStore.setState({ playbackState: 'paused', castConnected: false, sessionFollow: null } as never);
   mocked.listSessionMembers.mockResolvedValue(members());
   configureListenTogether(controls);
@@ -164,7 +167,7 @@ describe('the owner', () => {
   });
 
   it("reads who is in the user's own session, and again when someone joins or leaves", async () => {
-    expect(useListenTogetherStore.getState().own).toMatchObject({ visibility: 'private', guests: [guest], ownerAvatar: OWNER });
+    expect(useListenTogetherStore.getState().own).toMatchObject({ visibility: 'private', guests: [guest], ownerAvatar: OWNER, ownerName: 'Andreas' });
     mocked.listSessionMembers.mockResolvedValue(members());
     onTogetherEvent('playbackSession.memberLeft', { sessionId: 'own-1', userId: 'g-1', reason: 'left' });
     await flush();
@@ -206,10 +209,56 @@ describe('the owner', () => {
     expect(mocked.createSessionInvite).not.toHaveBeenCalled();
   });
 
-  it('ending clears the guests and the level, and makes the session private', async () => {
+  it('Invite opens the share sheet with the link read ahead; a closed sheet does nothing, a refused one copies', async () => {
+    const share = jest.fn(async () => undefined);
+    const writeText = jest.fn(async () => undefined);
+    Object.assign(navigator, { share, clipboard: { writeText } });
+    mocked.listSessionInvites.mockResolvedValue([{ token: 'old', path: '/listen/old', permissions: ['queue'], createdAt: '' }]);
+    prepareInviteLink();
+    await flush();
+    mocked.listSessionInvites.mockClear();
+    await shareInviteLink();
+    expect(mocked.listSessionInvites).not.toHaveBeenCalled(); // no wait between the tap and the sheet
+    expect(share).toHaveBeenCalledWith({ title: 'Listen together', url: `${window.location.origin}/listen/old` });
+    share.mockRejectedValueOnce(Object.assign(new Error('closed'), { name: 'AbortError' }));
+    await shareInviteLink();
+    expect(writeText).not.toHaveBeenCalled();
+    share.mockRejectedValueOnce(Object.assign(new Error('no activation'), { name: 'NotAllowedError' }));
+    await shareInviteLink();
+    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/listen/old`);
+    delete (navigator as { share?: unknown }).share;
+  });
+
+  it('Invite copies the link where there is no share sheet', async () => {
+    const writeText = jest.fn(async () => undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    mocked.listSessionInvites.mockResolvedValue([{ token: 'old', path: '/listen/old', permissions: ['queue'], createdAt: '' }]);
+    await shareInviteLink();
+    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/listen/old`);
+    expect(addToast).toHaveBeenLastCalledWith('Link copied!', 'info');
+  });
+
+  it('removes one guest at once, and shows them again if the server refuses', async () => {
+    mocked.removeSessionMember.mockResolvedValue(undefined);
+    await removeGuest('g-1');
+    expect(mocked.removeSessionMember).toHaveBeenCalledWith({}, 'own-1', 'g-1');
+    expect(useListenTogetherStore.getState().own?.guests).toEqual([]);
+
+    useListenTogetherStore.setState({ own: { ...useListenTogetherStore.getState().own!, guests: [guest] } });
+    mocked.removeSessionMember.mockRejectedValue(new Error('offline'));
+    mocked.listSessionMembers.mockResolvedValue(members([guest]));
+    await removeGuest('g-1');
+    await flush();
+    expect(addToast).toHaveBeenLastCalledWith("Couldn't remove bo.", 'error');
+    expect(useListenTogetherStore.getState().own?.guests).toEqual([guest]);
+  });
+
+  it('ending clears the guests and the level, makes the session private, and closes the members', async () => {
+    useListenTogetherStore.setState({ membersOpen: true });
     mocked.endListeningTogether.mockResolvedValue(session('own-1'));
     await endTogether();
     expect(useListenTogetherStore.getState().own).toMatchObject({ visibility: 'private', guests: [], permissions: null });
+    expect(useListenTogetherStore.getState().membersOpen).toBe(false);
   });
 
   it("visibility and level changes from another of the owner's devices show here", () => {

@@ -7,6 +7,23 @@
 // Mirrors the brand spectrum (oxygen green → teal → sky blue → rose pink).
 export const AURORA_FALLBACK_PALETTE = ['#22c983', '#2dd4bf', '#0ea5e9', '#f43f5e'];
 
+// A user's avatar without a picture: two neighbours along the aurora
+// spectrum, green through teal and sky to indigo, violet and rose (Andreas,
+// 2026-10-30: the gig's avatars in aurora colors).
+const AVATAR_AURORA_PAIRS: ReadonlyArray<readonly [string, string]> = [
+  ['#22c983', '#2dd4bf'],
+  ['#2dd4bf', '#0ea5e9'],
+  ['#0ea5e9', '#6366f1'],
+  ['#6366f1', '#a855f7'],
+  ['#a855f7', '#f43f5e'],
+  ['#10b981', '#0ea5e9'],
+];
+
+/** The same two colors for a user wherever their avatar shows. */
+export function avatarAuroraColors(userId: string): readonly [string, string] {
+  return AVATAR_AURORA_PAIRS[hashString(userId) % AVATAR_AURORA_PAIRS.length];
+}
+
 export function hashString(value: string): number {
   let hash = 2166136261;
   for (let i = 0; i < value.length; i++) {
