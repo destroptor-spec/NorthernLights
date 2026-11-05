@@ -338,6 +338,8 @@ export class CastManager {
     private lastAuroraStatusAt = 0;
     /** Anything from the receiver on the Aurora channel, current session only (the join's deaf check). */
     private lastReceiverAnswerAt = 0;
+    /** The same, heard on the Cast connection itself (not relayed). */
+    private lastDirectAnswerAt = 0;
     private readonly auroraStatusFreshMs = 20000;
     private readonly remoteEvidenceWindowMs = 60000;
     private freshSessionStartedAt = 0;
@@ -1985,7 +1987,10 @@ export class CastManager {
                 } catch {
                     return; // malformed payload — ignore rather than throw in a listener
                 }
-                if (session === this.castContext?.getCurrentSession?.()) this.lastReceiverAnswerAt = Date.now();
+                if (session === this.castContext?.getCurrentSession?.()) {
+                    this.lastReceiverAnswerAt = Date.now();
+                    this.lastDirectAnswerAt = this.lastReceiverAnswerAt;
+                }
                 if (status && status.type === 'aurora.status') {
                     if (session !== this.castContext?.getCurrentSession?.()) return;
                     this.onAuroraStatus(session, sessionId, status);
@@ -3781,6 +3786,7 @@ export class CastManager {
                 sdkHasMedia,
                 receiverStatus: status,
                 heardFromReceiver: this.lastReceiverAnswerAt >= startedAt,
+                heardDirectly: sdkHasMedia || this.lastDirectAnswerAt >= startedAt,
                 myClientId,
                 isOwnDevice: (clientId) => !!name && !!this.castingElsewhereCheck?.(name, { castingClientId: clientId }),
                 elapsedMs,
