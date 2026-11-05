@@ -155,6 +155,10 @@ I cast to my speaker. Another person casts to it and takes it over.
     and never a stop). A reconnect into that session is dropped
     (`stale-transport-recovery-dropped … cause=taken-over`), and its
     `SESSION_RESUMED` is ignored.
+  - **Chrome rejoining by itself** (Android auto-join, a few seconds after
+    the takeover, as the page comes back to the front): A leaves that
+    session again, quietly. The end that follows only cleans up (prod
+    2026-11-05 21:53:49, T7: the phone showed "casting to Stue TV").
 
 ## Known limit: desktop Chrome after a takeover (can't be solved)
 

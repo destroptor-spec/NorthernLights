@@ -1350,6 +1350,28 @@ export class CastManager {
         return true;
     }
 
+    /**
+     * Chrome on Android rejoins the session by itself a few seconds after
+     * the takeover (auto-join, as the page comes back to the front). The
+     * SDK then reports this device connected to the other device's cast:
+     * the phone showed "casting to Stue TV", and a tap loaded its queue over
+     * the desktop's (prod 2026-11-05 21:51:18 and 21:53:49, T6/T7). Leave
+     * it again, quietly: its end only cleans up (endedLocallySid).
+     */
+    private leaveResumedSessionSteppedBackFrom(sid: string) {
+        this.logCast('ok', 'SESSION_RESUMED ignored', 'reason=taken-over');
+        this.endedLocallySid = sid;
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+        this.state = 'NOT_CONNECTED';
+        this.notifyStateChange();
+        try {
+            // false: leave the session, do not stop the receiver.
+            this.castContext?.endCurrentSession?.(false);
+        } catch (error) {
+            this.logCast('warn', 'cast-taken-over-leave-failed', this.describeError(error));
+        }
+    }
+
     /** The Cast session this device stepped back from (another device's cast plays there). */
     private steppedBackSid = '';
     /** A reconnect to a session this device stepped back from would join someone else's cast. */
@@ -2801,7 +2823,7 @@ export class CastManager {
                                 break;
                             }
                             if (this.isSteppedBack(this.getCurrentSessionId())) {
-                                this.logCast('ok', 'SESSION_RESUMED ignored', 'reason=taken-over');
+                                this.leaveResumedSessionSteppedBackFrom(this.getCurrentSessionId());
                                 break;
                             }
                             this.resetCastEndIntent();
