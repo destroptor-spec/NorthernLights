@@ -248,3 +248,23 @@ describe('woken after the takeover, with the connection dead (T2, prod 2026-11-0
     expect(setHealthStatus).toHaveBeenLastCalledWith('idle', '');
   });
 });
+
+it('Chrome rejoining a session it stepped back from (Android auto-join): left again, quietly, not shown as casting (prod 2026-11-05 21:53:49, T7)', () => {
+  const { manager, endCurrentSession } = harness();
+  const notifyStateChange = jest.fn();
+  Object.assign(manager, { endedLocallySid: '', notifyStateChange });
+  manager.stepBackIfTakenOver(statusFrom('web:desktop-b'), 'f611720b');
+  manager.afterSessionEnded(snapshot);
+  mockContinueLocally.mockClear();
+  endCurrentSession.mockClear();
+  // SDK: SESSION_RESUMED, castState CONNECTED, in the session stepped back from.
+  (manager as unknown as { state: string }).state = 'CONNECTED';
+  (manager as unknown as { leaveResumedSessionSteppedBackFrom(sid: string): void }).leaveResumedSessionSteppedBackFrom('f611720b');
+  expect((manager as unknown as { state: string }).state).toBe('NOT_CONNECTED');
+  expect(notifyStateChange).toHaveBeenCalled();
+  expect(endCurrentSession).toHaveBeenCalledWith(false);
+  expect(endCurrentSession).not.toHaveBeenCalledWith(true);
+  // Its end only cleans up: no second handoff.
+  expect((manager as unknown as { endedLocallySid: string }).endedLocallySid).toBe('f611720b');
+  expect(mockContinueLocally).not.toHaveBeenCalled();
+});
