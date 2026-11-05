@@ -1305,7 +1305,10 @@ export class CastManager {
             this.namedCasterSid = sessionId;
             return false;
         }
-        if (this.takenOverSid === sessionId) return true;
+        // Stepped back already: the end's handoff clears takenOverSid while
+        // Chrome may still hold the session, and the next status would step
+        // back (and hand off) again (prod 2026-11-05 21:30:17, T2).
+        if (this.takenOverSid === sessionId || this.isSteppedBack(sessionId)) return true;
         if (this.leftJoinedSession || !this.castContext?.getCurrentSession?.()) return false;
         if (this.namedCasterSid !== sessionId && Date.now() - this.userCastIntentAt < TAKEOVER_JOIN_GRACE_MS) return false;
         this.takenOverSid = sessionId;

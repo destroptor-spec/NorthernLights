@@ -208,6 +208,14 @@ describe('woken after the takeover, with the connection dead (T2, prod 2026-11-0
     expect(mockAddToast).not.toHaveBeenCalled();
   });
 
+  it('steps back once: a later status in that session, after the handoff, changes nothing', () => {
+    const { manager } = woken({ leaveThrows: true, reconnecting: true });
+    manager.stepBackIfTakenOver(statusFrom('web:desktop-b'), 'f611720b');
+    expect(manager.stepBackIfTakenOver(statusFrom('web:desktop-b'), 'f611720b')).toBe(true);
+    expect(mockContinueLocally).toHaveBeenCalledTimes(1);
+    expect(manager.logCast.mock.calls.filter(([, marker]) => marker === 'cast-taken-over')).toHaveLength(1);
+  });
+
   it('a reconnect under way is no reason to wait for an end either', () => {
     const { manager, endSession } = woken({ leaveThrows: false, reconnecting: true });
     manager.stepBackIfTakenOver(statusFrom('web:desktop-b'), 'f611720b');
