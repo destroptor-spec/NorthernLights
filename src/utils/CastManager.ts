@@ -103,6 +103,13 @@ export interface CastingElsewhereOptions {
 }
 /** A deaf takeover with nothing heard, even through the relay, by then falls back to #211's stop. */
 const TAKEOVER_RELAY_WAIT_MS = 12_000;
+/**
+ * The end of a session counts as the deaf stop's (no handoff, "didn't
+ * answer") only this soon after it. Prod 2026-11-05: a stop at 10:37:06
+ * whose end was swallowed by a racing reconnect left the flag set, and the
+ * NAD's ordinary idle close of a later cast at 10:50:28 showed the toast.
+ */
+const DEAF_STOP_END_WINDOW_MS = 30_000;
 /** An idle status this soon after this device's own LOAD is that LOAD on its way, not the queue ending. */
 const MEDIA_END_AFTER_LOAD_MS = 10_000;
 /**
@@ -111,13 +118,6 @@ const MEDIA_END_AFTER_LOAD_MS = 10_000;
  * 2026-11-05 10:02:36: LOADING → IDLE → BUFFERING within 230 ms).
  */
 const MEDIA_END_CONFIRM_MS = 2000;
-/**
- * The end of a session counts as the deaf stop's (no handoff, "didn't
- * answer") only this soon after it. Prod 2026-11-05: a stop at 10:37:06
- * whose end was swallowed by a racing reconnect left the flag set, and the
- * NAD's ordinary idle close of a later cast at 10:50:28 showed the toast.
- */
-const DEAF_STOP_END_WINDOW_MS = 30_000;
 /** Recovery reason prefix for a dead connection found after the queue ended. */
 const MEDIA_ENDED_RECONNECT = 'media-ended:';
 /** The stale-transport recovery run after a deaf takeover, to reconnect as a reload would. */
