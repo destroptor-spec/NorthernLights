@@ -1312,7 +1312,10 @@ export class CastManager {
             this.namedCasterSid = sessionId;
             return false;
         }
-        if (this.takenOverSid === sessionId) return true;
+        // Stepped back already: the end's handoff clears takenOverSid while
+        // Chrome may still hold the session, and the next status would step
+        // back (and hand off) again (prod 2026-11-05 21:30:17, T2).
+        if (this.takenOverSid === sessionId || this.isSteppedBack(sessionId)) return true;
         if (this.leftJoinedSession || !this.castContext?.getCurrentSession?.()) return false;
         if (this.namedCasterSid !== sessionId && Date.now() - this.userCastIntentAt < TAKEOVER_JOIN_GRACE_MS) return false;
         this.takenOverSid = sessionId;
@@ -1328,13 +1331,57 @@ export class CastManager {
         // until the page reloads (docs/cast-takeover.md, Known limit).
         if (this.userCastIntentAt > 0 && !isPhoneOrTablet()) this.castRefreshNeeded = true;
         this.logCast('ok', 'cast-taken-over', `sid=${sessionId}${this.castRefreshNeeded ? ' refresh-needed=1' : ''}`);
+        this.steppedBackSid = sessionId;
+        let transportDead = false;
         try {
             // false: leave the session, do not stop the receiver.
             this.castContext.endCurrentSession(false);
         } catch (error) {
+            transportDead = this.isDisconnectedPresentationError(error);
             this.logCast('warn', 'cast-taken-over-leave-failed', this.describeError(error));
         }
+        // Woken after the takeover, the connection is dead: the leave can't be
+        // sent and no SESSION_ENDED comes, and the reconnect already under way
+        // would bring this device back into the new cast, showing its music
+        // (prod 2026-11-05 21:00, T2). End it here, leaving the receiver playing.
+        if (transportDead || this.staleTransportRecoveryPromise) {
+            this.endCastSessionLocally(sessionId, 'taken-over', { anyState: true, keepReceiver: true });
+        }
         return true;
+    }
+
+    /**
+     * Chrome on Android rejoins the session by itself a few seconds after
+     * the takeover (auto-join, as the page comes back to the front). The
+     * SDK then reports this device connected to the other device's cast:
+     * the phone showed "casting to Stue TV", and a tap loaded its queue over
+     * the desktop's (prod 2026-11-05 21:51:18 and 21:53:49, T6/T7). Leave
+     * it again, quietly: its end only cleans up (endedLocallySid).
+     */
+    private leaveResumedSessionSteppedBackFrom(sid: string) {
+        this.logCast('ok', 'SESSION_RESUMED ignored', 'reason=taken-over');
+        this.leaveSessionSteppedBackFrom(sid);
+    }
+
+    /** Out of a session this device stepped back from, shown as not casting; its end only cleans up. */
+    private leaveSessionSteppedBackFrom(sid: string) {
+        this.endedLocallySid = sid;
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+        this.state = 'NOT_CONNECTED';
+        this.notifyStateChange();
+        try {
+            // false: leave the session, do not stop the receiver.
+            this.castContext?.endCurrentSession?.(false);
+        } catch (error) {
+            this.logCast('warn', 'cast-taken-over-leave-failed', this.describeError(error));
+        }
+    }
+
+    /** The Cast session this device stepped back from (another device's cast plays there). */
+    private steppedBackSid = '';
+    /** A reconnect to a session this device stepped back from would join someone else's cast. */
+    private isSteppedBack(sid: string | null | undefined): boolean {
+        return !!sid && sid === this.steppedBackSid;
     }
 
     /** A status of another device's cast while this device, just picked by the user, has not been named yet. */
@@ -1630,6 +1677,23 @@ export class CastManager {
         void this.recoverStaleTransport(reason, error);
     }
 
+    /**
+     * Taken over while this reconnect ran: the cast there is another device's.
+     * Leave it if the reconnect got back in, say nothing (stepBackIfTakenOver
+     * already brought playback back here).
+     */
+    private dropRecoveryAfterStepBack(sessionId: string, reason: string): false {
+        this.rejoinSessionPending = false;
+        this.clearDeadTransport();
+        this.logCast('ok', 'stale-transport-recovery-dropped', `sid=${sessionId} reason=${reason} cause=taken-over`);
+        // Still held by the SDK: shown as casting, the watchdog would start
+        // the next reconnect within seconds (prod 2026-11-05 22:03-22:05,
+        // one dropped every ~7 s).
+        if (this.getCurrentSessionId() === sessionId) this.leaveSessionSteppedBackFrom(sessionId);
+        this.setHealthStatus('idle', '');
+        return false;
+    }
+
     private async recoverStaleTransport(reason: string, error?: unknown): Promise<boolean> {
         if (this.staleTransportRecoveryPromise) return this.staleTransportRecoveryPromise;
 
@@ -1669,6 +1733,7 @@ export class CastManager {
             }
 
             await this.delay(350);
+            if (this.isSteppedBack(sessionId)) return this.dropRecoveryAfterStepBack(sessionId, reason);
 
             try {
                 this.rejoinSessionPending = true;
@@ -1684,6 +1749,7 @@ export class CastManager {
             for (let attempt = 0; attempt < 16; attempt += 1) {
                 await this.delay(250);
                 const session = this.castContext?.getCurrentSession?.() || null;
+                if (this.isSteppedBack(sessionId)) return this.dropRecoveryAfterStepBack(sessionId, reason);
                 if (!session) {
                     transportStillDead = false;
                     continue;
@@ -2719,6 +2785,8 @@ export class CastManager {
 
                         case cast.framework.SessionState.SESSION_STARTED:
                             this.resetCastEndIntent();
+                            // Picked again by the user (a start or a join): casting from here again.
+                            this.steppedBackSid = '';
                             const storedSessionBeforeStart = this.getStoredSessionId();
                             const startedSession = this.castContext.getCurrentSession();
                             const startedSessionId = startedSession?.getSessionId?.() || '';
@@ -2756,6 +2824,10 @@ export class CastManager {
                         case cast.framework.SessionState.SESSION_RESUMED:
                             if (this.isEndedLocally()) {
                                 this.logCast('ok', 'SESSION_RESUMED ignored', 'reason=ended-locally');
+                                break;
+                            }
+                            if (this.isSteppedBack(this.getCurrentSessionId())) {
+                                this.leaveResumedSessionSteppedBackFrom(this.getCurrentSessionId());
                                 break;
                             }
                             this.resetCastEndIntent();
@@ -3509,7 +3581,7 @@ export class CastManager {
         // device's. Taking it on set the store to "playing" for a moment, and
         // the sync mirror claimed the output from the device that casts
         // (prod 2026-10-14 19:59:24).
-        if (this.leftJoinedSession || this.isEndedLocally()) return false;
+        if (this.leftJoinedSession || this.isEndedLocally() || this.isSteppedBack(this.getCurrentSessionId())) return false;
         mediaSession = this.getHydratableMediaSession(mediaSession);
         // The queue ended there: the SDK's old media is not what plays.
         if (this.isRemoteMediaEnded()) return false;
@@ -5503,7 +5575,7 @@ export class CastManager {
      * handoff), and keep Chrome's lingering session from being rejoined or
      * hydrated (isEndedLocally). A SESSION_ENDED that comes later only cleans up.
      */
-    private endCastSessionLocally(sid: string, reason: string, options: { anyState?: boolean } = {}) {
+    private endCastSessionLocally(sid: string, reason: string, options: { anyState?: boolean; keepReceiver?: boolean } = {}) {
         this.castEndWatch = null;
         // anyState: a dead transport may have let go of the session object already.
         if ((options.anyState ? this.getCurrentSessionId() || sid : this.getCurrentSessionId()) !== sid
@@ -5511,7 +5583,8 @@ export class CastManager {
         const session = this.castContext?.getCurrentSession?.() || null;
         this.logCast('warn', 'cast-end-unconfirmed', `reason=${reason} castState=${this.castContext?.getCastState?.() ?? 'unknown'} sessionState=${session?.getSessionState?.() ?? 'unknown'}`);
         try {
-            const retried = session?.endSession?.(true);
+            // keepReceiver: another device's cast plays there; never stop it.
+            const retried = options.keepReceiver ? null : session?.endSession?.(true);
             if (retried && typeof retried.then === 'function') {
                 retried.then(undefined, (error: unknown) => this.logCast('warn', 'cast-end-retry-failed', this.describeError(error)));
             }

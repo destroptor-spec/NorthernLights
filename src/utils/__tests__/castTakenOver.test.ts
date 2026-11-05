@@ -168,3 +168,112 @@ describe('Chrome still holds the tab after a takeover (docs/cast-takeover.md, Kn
     expect(neverCast.needsRefreshToCast()).toBe(false);
   });
 });
+
+describe('woken after the takeover, with the connection dead (T2, prod 2026-11-05 21:00)', () => {
+  const disconnected = Object.assign(new Error("Failed to execute 'send' on 'PresentationConnection': Presentation connection is disconnected."), { name: 'InvalidStateError' });
+  const woken = (options: { leaveThrows: boolean; reconnecting: boolean }) => {
+    const { manager } = harness();
+    const endSession = jest.fn();
+    const endCurrentSession = jest.fn(() => { if (options.leaveThrows) throw disconnected; });
+    const setHealthStatus = jest.fn();
+    Object.assign(manager, {
+      castContext: {
+        getCurrentSession: () => ({ getSessionId: () => 'f611720b', endSession, getSessionState: () => 'SESSION_STARTED' }),
+        getCastState: () => 'CONNECTED',
+        endCurrentSession,
+      },
+      staleTransportRecoveryPromise: options.reconnecting ? Promise.resolve(true) : null,
+      castEndWatch: null,
+      endedLocallySid: '',
+      rejoinSessionPending: true,
+      rejoinHydrationRunId: 0,
+      clearRejoinHydrationTimer: jest.fn(),
+      suppressRemoteEndedDuringDisconnect: false,
+      setHealthStatus,
+      notifyStateChange: jest.fn(),
+      deadTransportSession: null,
+      deadTransportSkipLogged: false,
+    });
+    return { manager, endSession, endCurrentSession, setHealthStatus };
+  };
+  const state = (manager: Harness) => (manager as unknown as { state: string }).state;
+
+  it('the leave cannot be sent: ended here, paused on its own track, no toast, the receiver left playing', () => {
+    const { manager, endSession } = woken({ leaveThrows: true, reconnecting: true });
+    expect(manager.stepBackIfTakenOver(statusFrom('web:desktop-b'), 'f611720b')).toBe(true);
+    expect(manager.logCast).toHaveBeenCalledWith('warn', 'cast-taken-over-leave-failed', expect.any(String));
+    expect(state(manager)).toBe('NOT_CONNECTED');
+    expect(endSession).not.toHaveBeenCalled();
+    expect(mockContinueLocally).toHaveBeenCalledWith(3, 61.5, false);
+    expect(mockAddToast).not.toHaveBeenCalled();
+  });
+
+  it('steps back once: a later status in that session, after the handoff, changes nothing', () => {
+    const { manager } = woken({ leaveThrows: true, reconnecting: true });
+    manager.stepBackIfTakenOver(statusFrom('web:desktop-b'), 'f611720b');
+    expect(manager.stepBackIfTakenOver(statusFrom('web:desktop-b'), 'f611720b')).toBe(true);
+    expect(mockContinueLocally).toHaveBeenCalledTimes(1);
+    expect(manager.logCast.mock.calls.filter(([, marker]) => marker === 'cast-taken-over')).toHaveLength(1);
+  });
+
+  it('a reconnect under way is no reason to wait for an end either', () => {
+    const { manager, endSession } = woken({ leaveThrows: false, reconnecting: true });
+    manager.stepBackIfTakenOver(statusFrom('web:desktop-b'), 'f611720b');
+    expect(state(manager)).toBe('NOT_CONNECTED');
+    expect(endSession).not.toHaveBeenCalled();
+    expect(mockContinueLocally).toHaveBeenCalledWith(3, 61.5, false);
+  });
+
+  it('awake, with the leave sent: SESSION_ENDED does the rest, as before', () => {
+    const { manager } = woken({ leaveThrows: false, reconnecting: false });
+    manager.stepBackIfTakenOver(statusFrom('web:desktop-b'), 'f611720b');
+    expect(state(manager)).toBe('CONNECTED');
+    expect(mockContinueLocally).not.toHaveBeenCalled();
+  });
+
+  it('the reconnect that got back in leaves again, quietly, and nothing of the new cast is taken on', async () => {
+    const { manager, endCurrentSession, setHealthStatus } = woken({ leaveThrows: true, reconnecting: true });
+    manager.stepBackIfTakenOver(statusFrom('web:desktop-b'), 'f611720b');
+    endCurrentSession.mockImplementation(() => undefined);
+    const internals = manager as unknown as {
+      dropRecoveryAfterStepBack(sid: string, reason: string): false;
+      hydrateSenderFromRemoteSession(media: unknown, reason: string): Promise<boolean>;
+      isSteppedBack(sid: string): boolean;
+    };
+    expect(internals.isSteppedBack('f611720b')).toBe(true);
+    await expect(internals.hydrateSenderFromRemoteSession({ playerState: 'PLAYING' }, 'session-resumed')).resolves.toBe(false);
+    expect(internals.dropRecoveryAfterStepBack('f611720b', 'media-status:reconcile')).toBe(false);
+    expect(endCurrentSession).toHaveBeenLastCalledWith(false);
+    expect(manager.logCast).toHaveBeenCalledWith('ok', 'stale-transport-recovery-dropped', 'sid=f611720b reason=media-status:reconcile cause=taken-over');
+    expect(setHealthStatus).toHaveBeenLastCalledWith('idle', '');
+  });
+
+  it('a dropped reconnect still held by the SDK is left and shown as not casting, so the watchdog starts no next one (prod 2026-11-05 22:03)', () => {
+    const { manager } = woken({ leaveThrows: false, reconnecting: false });
+    const internals = manager as unknown as { steppedBackSid: string; endedLocallySid: string; state: string; dropRecoveryAfterStepBack(sid: string, reason: string): false };
+    internals.steppedBackSid = 'f611720b';
+    internals.dropRecoveryAfterStepBack('f611720b', 'media-status:status-watchdog');
+    expect(internals.state).toBe('NOT_CONNECTED');
+    expect(internals.endedLocallySid).toBe('f611720b');
+  });
+});
+
+it('Chrome rejoining a session it stepped back from (Android auto-join): left again, quietly, not shown as casting (prod 2026-11-05 21:53:49, T7)', () => {
+  const { manager, endCurrentSession } = harness();
+  const notifyStateChange = jest.fn();
+  Object.assign(manager, { endedLocallySid: '', notifyStateChange });
+  manager.stepBackIfTakenOver(statusFrom('web:desktop-b'), 'f611720b');
+  manager.afterSessionEnded(snapshot);
+  mockContinueLocally.mockClear();
+  endCurrentSession.mockClear();
+  // SDK: SESSION_RESUMED, castState CONNECTED, in the session stepped back from.
+  (manager as unknown as { state: string }).state = 'CONNECTED';
+  (manager as unknown as { leaveResumedSessionSteppedBackFrom(sid: string): void }).leaveResumedSessionSteppedBackFrom('f611720b');
+  expect((manager as unknown as { state: string }).state).toBe('NOT_CONNECTED');
+  expect(notifyStateChange).toHaveBeenCalled();
+  expect(endCurrentSession).toHaveBeenCalledWith(false);
+  expect(endCurrentSession).not.toHaveBeenCalledWith(true);
+  // Its end only cleans up: no second handoff.
+  expect((manager as unknown as { endedLocallySid: string }).endedLocallySid).toBe('f611720b');
+  expect(mockContinueLocally).not.toHaveBeenCalled();
+});
