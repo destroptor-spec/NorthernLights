@@ -148,6 +148,13 @@ I cast to my speaker. Another person casts to it and takes it over.
 - **Waking later:** the first status it hears names B, so it steps back the
   same way before hydrating anything. It never takes on B's music.
   - With sync on, A's session output has also ended with `taken-over`.
+  - **Woken with a dead connection** (prod 2026-11-05 21:00, T2): the
+    leave can't be sent, so no `SESSION_ENDED` comes, and the reconnect
+    already under way gets back into B's cast and takes on B's music.
+    Then A ends the cast itself (`cast-end-unconfirmed reason=taken-over`,
+    and never a stop). A reconnect into that session is dropped
+    (`stale-transport-recovery-dropped … cause=taken-over`), and its
+    `SESSION_RESUMED` is ignored.
 
 ## Known limit: desktop Chrome after a takeover (can't be solved)
 
