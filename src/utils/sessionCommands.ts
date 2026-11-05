@@ -12,6 +12,7 @@ export interface CommandPlayer {
   next: () => Promise<void>;
   previous: () => Promise<void>;
   seek: (seconds: number) => void;
+  setVolume: (level: number) => void;
   playlist: () => TrackInfo[];
   playAtIndex: (index: number) => Promise<void>;
   /** Replace the queue with these tracks, entry IDs as they are, and play `index`. */
@@ -41,6 +42,9 @@ export async function applySessionCommand(sessionId: string, command: PlaybackCo
       return true;
     case 'seek':
       player.seek(command.positionMs / 1000);
+      return true;
+    case 'setVolume':
+      player.setVolume(Math.min(1, Math.max(0, command.level)));
       return true;
     case 'jump': {
       const index = player.playlist().findIndex((track) => track.queueEntryId === command.entryId);

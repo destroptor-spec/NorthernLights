@@ -250,6 +250,8 @@ export const playbackOutputReportStateSchema = z.object({
   queueEntryId: z.string().uuid().nullable().describe('The entry the output is playing. Position belongs to this entry only.'),
   positionMs: z.number().int().nonnegative(),
   reportedAt: ISO_DATE_TIME.describe('Server time the report was accepted; interpolate from here while playing.'),
+  volume: z.number().min(0).max(1).optional()
+    .describe("The output's volume, 0 to 1, when it reports one (not kept across a server restart; the next report brings it back)."),
 }).meta({ id: 'PlaybackOutputReportState' });
 
 export const playbackOutputSchema = z.object({
@@ -268,7 +270,7 @@ export const playbackOutputSchema = z.object({
 
 /**
  * What a guest may do in a shared session (docs/listen-together.md):
- * transport (play, pause, seek, next, previous, jump), queue (insert, move,
+ * transport (play, pause, seek, next, previous, jump, volume), queue (insert, move,
  * remove, repeat, shuffle), replace (start something new, Infinity). The owner
  * may do everything, and alone chooses where it plays.
  */
@@ -444,6 +446,7 @@ export const playbackOutputReportSchema = z.object({
   reason: z.string().trim().min(1).max(40).optional().describe('Why the output stopped, e.g. "shutdown".'),
   queueEntryId: z.string().uuid().nullable(),
   positionMs: z.number().int().nonnegative(),
+  volume: z.number().min(0).max(1).optional().describe("The output's volume, 0 to 1. Optional; an output that sends it can be given setVolume commands."),
   outputId: z.string().max(160).optional().describe('Optional; must match the output credential.'),
   outputGeneration: z.number().int().positive().optional().describe('Optional; must match the output credential.'),
 }).strict().meta({ id: 'PlaybackOutputReport' });
@@ -483,6 +486,8 @@ export const playbackCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('previous') }).strict(),
   z.object({ type: z.literal('seek'), positionMs: z.number().int().nonnegative() }).strict(),
   z.object({ type: z.literal('jump'), entryId: z.string().uuid().describe('Play this queue entry from its start.') }).strict(),
+  z.object({ type: z.literal('setVolume'), level: z.number().min(0).max(1).describe('0 to 1.') }).strict()
+    .describe('Change the output\'s volume. Sent only to an output that reports its volume.'),
   z.object({
     type: z.literal('load'),
     revision: z.number().int().positive().describe('The output first adopts the session queue at this revision or later.'),

@@ -1,10 +1,10 @@
-import { CastVolumeGate, HOLD_MS, SEND_INTERVAL_MS } from '../castVolume';
+import { HOLD_MS, SEND_INTERVAL_MS, VolumeGate } from '../volumeGate';
 
-describe('CastVolumeGate', () => {
+describe('VolumeGate', () => {
   let clock = 0;
   let sent: number[];
-  let settled: number;
-  let gate: CastVolumeGate;
+  let settled: boolean[];
+  let gate: VolumeGate;
 
   const advance = (ms: number) => {
     clock += ms;
@@ -15,8 +15,8 @@ describe('CastVolumeGate', () => {
     jest.useFakeTimers();
     clock = 1_000_000;
     sent = [];
-    settled = 0;
-    gate = new CastVolumeGate((level) => sent.push(level), () => { settled += 1; }, () => clock);
+    settled = [];
+    gate = new VolumeGate((level) => sent.push(level), (timedOut) => { settled.push(timedOut); }, { now: () => clock });
   });
 
   afterEach(() => {
@@ -50,7 +50,7 @@ describe('CastVolumeGate', () => {
     expect(gate.receiverReports(0.5)).toBe(false); // its own level: nothing to change
     // Settled: a change from elsewhere (Google Home, the TV remote) shows again.
     expect(gate.receiverReports(0.2)).toBe(true);
-    expect(settled).toBe(0);
+    expect(settled).toEqual([false]);
   });
 
   it("doesn't take the level while a newer step still waits to be sent", () => {
@@ -69,8 +69,20 @@ describe('CastVolumeGate', () => {
     gate.set(0.9);
     expect(gate.receiverReports(0.6)).toBe(false);
     advance(HOLD_MS);
-    expect(settled).toBe(1);
+    expect(settled).toEqual([true]);
     expect(gate.receiverReports(0.6)).toBe(true);
+  });
+
+  it('sends at the interval it is given', () => {
+    gate.dispose();
+    gate = new VolumeGate((level) => sent.push(level), () => undefined, { intervalMs: 300, now: () => clock });
+    gate.set(0.1);
+    advance(200);
+    gate.set(0.2);
+    advance(99);
+    expect(sent).toEqual([0.1]);
+    advance(1);
+    expect(sent).toEqual([0.1, 0.2]);
   });
 
   it('passes everything through when this sender changed nothing', () => {

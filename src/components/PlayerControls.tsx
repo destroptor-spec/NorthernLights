@@ -1,9 +1,10 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { usePlayerStore } from '../store/index';
-import { selectDisplayedPlaying } from '../utils/sessionFollow';
+import { selectDisplayedPlaying, selectDisplayedVolume } from '../utils/sessionFollow';
 import { useFollowedDeviceLabel } from '../hooks/useFollowedDeviceName';
 import { useDisplayedPlaying } from '../hooks/useDisplayedPlaying';
+import { useDisplayedVolume } from '../hooks/useDisplayedVolume';
 import { useGuestMay } from '../hooks/useGuestMay';
 import { hasNextTrack } from '../utils/queue';
 import { usePlaybackTimeStore } from '../store/playbackTime';
@@ -301,7 +302,7 @@ const InlineWaveform = React.memo(InlineWaveformImpl);
 export const PlayerControls: React.FC = () => {
   const playbackState = usePlayerStore((state) => state.playbackState);
   const isBuffering = usePlayerStore((state) => state.isBuffering);
-  const volume = usePlayerStore((state) => state.volume);
+  const { volume, locked: volumeLocked } = useDisplayedVolume();
   const shuffle = usePlayerStore((state) => state.shuffle);
   const repeat = usePlayerStore((state) => state.repeat);
   const isInfinityMode = usePlayerStore((state) => state.isInfinityMode);
@@ -362,7 +363,7 @@ export const PlayerControls: React.FC = () => {
     e.preventDefault();
     const state = usePlayerStore.getState();
     const delta = e.deltaY > 0 ? -0.05 : 0.05;
-    state.setVolume(Math.min(1, Math.max(0, state.volume + delta)));
+    state.setVolume(Math.min(1, Math.max(0, selectDisplayedVolume(state) + delta)));
   }, []);
 
   React.useEffect(() => {
@@ -381,10 +382,10 @@ export const PlayerControls: React.FC = () => {
           state.prevTrack();
           break;
         case 'KeyM':
-          state.setVolume(Math.max(0, state.volume - 0.05));
+          state.setVolume(Math.max(0, selectDisplayedVolume(state) - 0.05));
           break;
         case 'Comma':
-          state.setVolume(Math.min(1, state.volume + 0.05));
+          state.setVolume(Math.min(1, selectDisplayedVolume(state) + 0.05));
           break;
         case 'KeyS':
           state.toggleShuffle();
@@ -596,6 +597,7 @@ export const PlayerControls: React.FC = () => {
           step={0.01}
           value={volume}
           onChange={(e) => setVolume(parseFloat(e.target.value))}
+          disabled={volumeLocked}
           className="player-volume-slider"
           aria-label="Volume control"
         />

@@ -30,6 +30,8 @@ export interface FollowedOutput {
    * ownerClientId). "Play there" to that device ends the cast.
    */
   castingClientId?: string;
+  /** Its volume, 0 to 1, when it reports one: then this device can change it. */
+  volume?: number;
 }
 
 /** A report fetched with the session is at most this old when it is anchored. */
@@ -88,6 +90,7 @@ export function followFromSession(session: PlaybackSession, myClientId: string, 
     positionMs: report?.positionMs ?? session.positionMs,
     anchorMs: report ? anchorReportedAt(report.reportedAt, now) : now,
     ...(silent ? { silent: true } : {}),
+    ...(report?.volume !== undefined ? { volume: report.volume } : {}),
     ...(output.kind === 'cast' ? { castingClientId: output.id }
       : output.kind === 'receiver' && session.ownerClientId ? { castingClientId: session.ownerClientId } : {}),
   };
@@ -125,6 +128,21 @@ export function selectRemoteTarget(state: {
 export function selectDisplayedPlaying(state: Parameters<typeof selectRemoteTarget>[0]): boolean {
   const remote = selectRemoteTarget(state);
   return remote ? isFollowedOutputPlaying(remote) : state.playbackState === 'playing';
+}
+
+/** The controlled device, when it reports a volume this one can change. */
+export function selectRemoteVolumeTarget(state: Parameters<typeof selectRemoteTarget>[0]): FollowedOutput | null {
+  const remote = selectRemoteTarget(state);
+  return remote && !remote.silent && remote.volume !== undefined ? remote : null;
+}
+
+/**
+ * What the volume slider shows: the controlled device's volume (where it is
+ * being dragged to, until that device confirms it), else this one's.
+ */
+export function selectDisplayedVolume(state: Parameters<typeof selectRemoteTarget>[0] & { volume: number; remoteVolumeIntent: number | null }): number {
+  const remote = selectRemoteVolumeTarget(state);
+  return remote ? state.remoteVolumeIntent ?? remote.volume! : state.volume;
 }
 
 /**

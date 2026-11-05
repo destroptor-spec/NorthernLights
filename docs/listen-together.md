@@ -109,7 +109,7 @@ Three scopes, checked on the server for every request a guest makes:
 
 | Scope | Covers |
 |---|---|
-| `transport` | play, pause, seek, next, previous, jump to an entry |
+| `transport` | play, pause, seek, next, previous, jump to an entry; volume (Andreas, 2026-10-30) |
 | `queue` | insert, play next, move, remove; repeat and shuffle |
 | `replace` | start something new (replace the queue, `load`), Infinity on/off |
 

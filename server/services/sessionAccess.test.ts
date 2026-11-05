@@ -23,6 +23,7 @@ const OPERATIONS: Array<[string, SessionNeed]> = [
   ['start something new (replaceQueue)', patch([{ type: 'replaceQueue', trackIds: ['t'] }])],
   ['command play', commandNeed({ type: 'play' })],
   ['command next', commandNeed({ type: 'next' })],
+  ['command setVolume', commandNeed({ type: 'setVolume', level: 0.5 })],
   ['command load', commandNeed({ type: 'load', revision: 1, entryId: 'e' })],
   ['claim the output / transfer / refresh / delete', OWNER_ONLY],
 ];
@@ -44,6 +45,8 @@ it('maps each operation to the scope agreed with Andreas (2026-10-27)', () => {
   expect(patch([{ type: 'replaceQueue', trackIds: [] }])).toEqual({ kind: 'scopes', scopes: ['replace'] });
   expect(commandNeed({ type: 'seek', positionMs: 1 })).toEqual({ kind: 'scopes', scopes: ['transport'] });
   expect(commandNeed({ type: 'load', revision: 1, entryId: 'e' })).toEqual({ kind: 'scopes', scopes: ['replace'] });
+  // Volume: Playback Control (2026-10-30).
+  expect(commandNeed({ type: 'setVolume', level: 0.2 })).toEqual({ kind: 'scopes', scopes: ['transport'] });
   // A patch that does two things needs both.
   expect(patch([{ type: 'insert', trackIds: ['t'] }, { type: 'setTransport', currentEntryId: null }]).kind === 'scopes'
     && (patch([{ type: 'insert', trackIds: ['t'] }, { type: 'setTransport', currentEntryId: null }]) as { scopes: string[] }).scopes.sort())

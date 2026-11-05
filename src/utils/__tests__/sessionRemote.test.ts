@@ -20,9 +20,11 @@ it('sends a transport command to the output it means', async () => {
   const { api, deps: d } = deps();
   expect(await sendRemoteAction({ type: 'pause' }, target, d)).toBe('sent');
   expect(await sendRemoteAction({ type: 'seek', seconds: 61.25 }, target, d)).toBe('sent');
+  expect(await sendRemoteAction({ type: 'setVolume', level: 0.45 }, target, d)).toBe('sent');
   expect(api.issuePlaybackCommand.mock.calls.map((call) => (call as unknown[])[2])).toEqual([
     { requestId: expect.any(String), outputId: 'desktop', outputGeneration: 7, command: { type: 'pause' } },
     { requestId: expect.any(String), outputId: 'desktop', outputGeneration: 7, command: { type: 'seek', positionMs: 61_250 } },
+    { requestId: expect.any(String), outputId: 'desktop', outputGeneration: 7, command: { type: 'setVolume', level: 0.45 } },
   ]);
 });
 

@@ -614,6 +614,28 @@ describeDb('playback sessions', () => {
       expect(Date.parse((progress[0].data.report as { reportedAt: string }).reportedAt)).not.toBeNaN();
     });
 
+    it("keeps the output's volume from its reports, for its grant only, and sends it with progress", async () => {
+      const { session, grant } = await playing();
+      const entry = session.queue[0].queueEntryId;
+      const events: Array<{ type: string; data: Record<string, unknown> }> = [];
+      const unsubscribe = subscribeApiV1Events(userId, (event) => events.push(event));
+      try {
+        await reportAs(grant, { seq: 1, state: 'playing', queueEntryId: entry, positionMs: 0, volume: 0.4 });
+        // A report without it keeps the last one.
+        await reportAs(grant, { seq: 2, state: 'playing', queueEntryId: entry, positionMs: 10_000 });
+      } finally {
+        unsubscribe();
+      }
+      const progress = events.filter((event) => event.type === 'playbackSession.progress');
+      expect(progress.map((event) => (event.data.report as { volume?: number }).volume)).toEqual([0.4, 0.4]);
+      expect((await read(session.id)).output!.report).toMatchObject({ seq: 2, volume: 0.4 });
+
+      // Another device takes over: its volume is not the laptop's.
+      const onPhone = await sessions.claimPlaybackOutput({ userId, clientId: 'phone-1234', sessionId: session.id, output: { kind: 'browser' } });
+      await reportAs({ sid: session.id, oid: 'phone-1234', gen: onPhone.output!.generation }, { seq: 1, state: 'playing', queueEntryId: entry, positionMs: 0 });
+      expect((await read(session.id)).output!.report).not.toHaveProperty('volume');
+    });
+
     it('drops a report that is not newer than the last accepted one, such as one from before a seek', async () => {
       const { session, grant } = await playing();
       const entry = session.queue[0].queueEntryId;

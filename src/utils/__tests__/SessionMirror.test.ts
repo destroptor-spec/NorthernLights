@@ -213,6 +213,16 @@ it('reports a track change straight away', async () => {
   expect(api.reportPlaybackOutput).toHaveBeenCalledWith(credential, 'session-1', expect.objectContaining({ queueEntryId: uuid(2) }));
 });
 
+it('reports its volume, and a change of it soon, so other devices can show and change it', async () => {
+  const { api, store } = setup({ volume: 0.6 });
+  await play(store);
+  expect(api.reportPlaybackOutput).toHaveBeenLastCalledWith(credential, 'session-1', expect.objectContaining({ volume: 0.6 }));
+  api.reportPlaybackOutput.mockClear();
+  store.setState({ volume: 0.25 });
+  await jest.advanceTimersByTimeAsync(300);
+  expect(api.reportPlaybackOutput).toHaveBeenCalledWith(credential, 'session-1', expect.objectContaining({ volume: 0.25 }));
+});
+
 it('stops when another device takes the output, until Play is pressed here', async () => {
   const { api, store, mirror } = setup();
   await play(store);
