@@ -168,3 +168,75 @@ describe('Chrome still holds the tab after a takeover (docs/cast-takeover.md, Kn
     expect(neverCast.needsRefreshToCast()).toBe(false);
   });
 });
+
+describe('woken after the takeover, with the connection dead (T2, prod 2026-11-05 21:00)', () => {
+  const disconnected = Object.assign(new Error("Failed to execute 'send' on 'PresentationConnection': Presentation connection is disconnected."), { name: 'InvalidStateError' });
+  const woken = (options: { leaveThrows: boolean; reconnecting: boolean }) => {
+    const { manager } = harness();
+    const endSession = jest.fn();
+    const endCurrentSession = jest.fn(() => { if (options.leaveThrows) throw disconnected; });
+    const setHealthStatus = jest.fn();
+    Object.assign(manager, {
+      castContext: {
+        getCurrentSession: () => ({ getSessionId: () => 'f611720b', endSession, getSessionState: () => 'SESSION_STARTED' }),
+        getCastState: () => 'CONNECTED',
+        endCurrentSession,
+      },
+      staleTransportRecoveryPromise: options.reconnecting ? Promise.resolve(true) : null,
+      castEndWatch: null,
+      endedLocallySid: '',
+      rejoinSessionPending: true,
+      rejoinHydrationRunId: 0,
+      clearRejoinHydrationTimer: jest.fn(),
+      suppressRemoteEndedDuringDisconnect: false,
+      setHealthStatus,
+      notifyStateChange: jest.fn(),
+      deadTransportSession: null,
+      deadTransportSkipLogged: false,
+    });
+    return { manager, endSession, endCurrentSession, setHealthStatus };
+  };
+  const state = (manager: Harness) => (manager as unknown as { state: string }).state;
+
+  it('the leave cannot be sent: ended here, paused on its own track, no toast, the receiver left playing', () => {
+    const { manager, endSession } = woken({ leaveThrows: true, reconnecting: true });
+    expect(manager.stepBackIfTakenOver(statusFrom('web:desktop-b'), 'f611720b')).toBe(true);
+    expect(manager.logCast).toHaveBeenCalledWith('warn', 'cast-taken-over-leave-failed', expect.any(String));
+    expect(state(manager)).toBe('NOT_CONNECTED');
+    expect(endSession).not.toHaveBeenCalled();
+    expect(mockContinueLocally).toHaveBeenCalledWith(3, 61.5, false);
+    expect(mockAddToast).not.toHaveBeenCalled();
+  });
+
+  it('a reconnect under way is no reason to wait for an end either', () => {
+    const { manager, endSession } = woken({ leaveThrows: false, reconnecting: true });
+    manager.stepBackIfTakenOver(statusFrom('web:desktop-b'), 'f611720b');
+    expect(state(manager)).toBe('NOT_CONNECTED');
+    expect(endSession).not.toHaveBeenCalled();
+    expect(mockContinueLocally).toHaveBeenCalledWith(3, 61.5, false);
+  });
+
+  it('awake, with the leave sent: SESSION_ENDED does the rest, as before', () => {
+    const { manager } = woken({ leaveThrows: false, reconnecting: false });
+    manager.stepBackIfTakenOver(statusFrom('web:desktop-b'), 'f611720b');
+    expect(state(manager)).toBe('CONNECTED');
+    expect(mockContinueLocally).not.toHaveBeenCalled();
+  });
+
+  it('the reconnect that got back in leaves again, quietly, and nothing of the new cast is taken on', async () => {
+    const { manager, endCurrentSession, setHealthStatus } = woken({ leaveThrows: true, reconnecting: true });
+    manager.stepBackIfTakenOver(statusFrom('web:desktop-b'), 'f611720b');
+    endCurrentSession.mockImplementation(() => undefined);
+    const internals = manager as unknown as {
+      dropRecoveryAfterStepBack(sid: string, reason: string): false;
+      hydrateSenderFromRemoteSession(media: unknown, reason: string): Promise<boolean>;
+      isSteppedBack(sid: string): boolean;
+    };
+    expect(internals.isSteppedBack('f611720b')).toBe(true);
+    await expect(internals.hydrateSenderFromRemoteSession({ playerState: 'PLAYING' }, 'session-resumed')).resolves.toBe(false);
+    expect(internals.dropRecoveryAfterStepBack('f611720b', 'media-status:reconcile')).toBe(false);
+    expect(endCurrentSession).toHaveBeenLastCalledWith(false);
+    expect(manager.logCast).toHaveBeenCalledWith('ok', 'stale-transport-recovery-dropped', 'sid=f611720b reason=media-status:reconcile cause=taken-over');
+    expect(setHealthStatus).toHaveBeenLastCalledWith('idle', '');
+  });
+});
