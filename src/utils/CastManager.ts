@@ -3568,7 +3568,8 @@ export class CastManager {
                 this.takeoverKeepsVolume = true;
                 this.deafTakeoverSid = this.getCurrentSessionId();
                 this.logCast('ok', 'cast-takeover', `reason=${reason} waitedMs=${elapsedMs} deaf=true`);
-                this.watchRelayAfterDeafTakeover();
+                // The wait for the relay starts with this device's LOAD
+                // (watchRelayAfterDeafTakeover), not here.
                 return null;
             }
             await this.delay(100);
@@ -3591,9 +3592,17 @@ export class CastManager {
      * A deaf takeover hears the receiver only through the relay. With nothing
      * at all heard by then (a receiver page from before the relay, or no
      * server), it falls back to #211: stop that receiver app, Cast again.
+     *
+     * Counted from this device's first LOAD in that session, since the
+     * receiver relays to whoever loaded last: before it, nothing can come.
+     * Prod 2026-11-05 10:36 (T5, idle receiver): the desktop had nothing
+     * playing, loaded 11 s after joining, and was stopped 30 ms before the
+     * receiver's relayed status naming it arrived.
      */
     private watchRelayAfterDeafTakeover() {
         const sid = this.getCurrentSessionId();
+        if (!sid || this.deafTakeoverSid !== sid || this.deafTakeoverWatchedSid === sid) return;
+        this.deafTakeoverWatchedSid = sid;
         const since = Date.now();
         setTimeout(() => {
             if (!sid || this.getCurrentSessionId() !== sid || this.lastReceiverAnswerAt >= since) return;
@@ -3606,6 +3615,8 @@ export class CastManager {
     private takeoverKeepsVolume = false;
     /** The Cast session this device took over deaf, until it reconnects (reconnectAfterDeafTakeover). */
     private deafTakeoverSid = '';
+    /** The deaf takeover whose relay wait has started (at its first LOAD). */
+    private deafTakeoverWatchedSid = '';
 
     /**
      * A deaf takeover, once the receiver names this device (its LOAD has
@@ -4335,6 +4346,7 @@ export class CastManager {
             for (let attempt = 0; attempt < 3; attempt++) {
                 const bounded = boundedQueueRequest(ordered, build, cap);
                 this.logCast('ok', 'Queue load requested', `items=${before.length + bounded.entries.length} previous=${before.length} startIndex=${index} startTime=${time} bytes=${bounded.bytes} attempt=${attempt + 1}`);
+                this.watchRelayAfterDeafTakeover();
                 try {
                     // Through the stale-transport wrapper like every other
                     // command: a tap after waking into a dead transport
