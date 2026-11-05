@@ -1113,6 +1113,23 @@ export class CastManager {
         } catch { /* ignore */ }
     }
 
+    /**
+     * The Cast connection can't be got back, and nothing played there: the
+     * receiver closed its idle app (after 5 minutes, IDLE_STOP_MS) while this
+     * device slept, so no SESSION_ENDED reached it. That is the cast's normal
+     * end, not a failure: end it here, quietly, as SESSION_ENDED would (prod
+     * 2026-11-05 11:52: the phone kept "casting", Play failed, song taps went
+     * to the gone receiver, and Retry could not help).
+     */
+    private endIfClosedWhileIdle(sessionId: string | null | undefined, how: 'dead' | 'timeout'): boolean {
+        const sid = sessionId || this.getCurrentSessionId();
+        if (!sid || this.mediaEndedSid !== sid) return false;
+        this.logCast('ok', 'cast-closed-while-idle', `sid=${sid} transport=${how}`);
+        this.clearDeadTransport();
+        this.endCastSessionLocally(sid, 'closed-while-idle', { anyState: true });
+        return true;
+    }
+
     private isRemoteMediaEnded(): boolean {
         const sid = this.getCurrentSessionId();
         return !!sid && this.mediaEndedSid === sid;
@@ -1120,6 +1137,10 @@ export class CastManager {
 
     /** Play after the queue ended: cast this device's queue again, from the start of its track. */
     private castQueueAgain(label: string) {
+        if (this.queueLoadingSession || Date.now() - this.lastQueueLoadStartedAt < MEDIA_END_AFTER_LOAD_MS) {
+            this.logCast('ok', 'cast-media-ended-replay', `via=${label} skipped=load-under-way`);
+            return;
+        }
         const state = usePlayerStore.getState();
         const index = state.currentIndex ?? (state.playlist.length ? 0 : null);
         this.logCast('ok', 'cast-media-ended-replay', `via=${label} index=${index ?? 'none'}`);
@@ -1679,6 +1700,7 @@ export class CastManager {
                 return true;
             }
 
+            if (this.endIfClosedWhileIdle(sessionId, transportStillDead ? 'dead' : 'timeout')) return false;
             if (transportStillDead) {
                 // rejoinSessionPending stays set, as on the timeout path below:
                 // if requestSessionById() does deliver later, it must hydrate
@@ -4412,7 +4434,6 @@ export class CastManager {
         this.queueLoadingSession = session;
         this.lastQueueLoadStartedAt = Date.now();
         this.mediaSeenSid = this.getCurrentSessionId();
-        if (this.mediaEndedSid) this.mediaEndedSid = '';
         const requestedEntryId = tracks[startIndex]?.queueEntryId;
         this.confirmationLoadAccepted = false;
         if (!confirmationRetry && requestedEntryId) this.beginPlaybackConfirmation(session, requestedEntryId, startTime);
@@ -5455,9 +5476,11 @@ export class CastManager {
      * handoff), and keep Chrome's lingering session from being rejoined or
      * hydrated (isEndedLocally). A SESSION_ENDED that comes later only cleans up.
      */
-    private endCastSessionLocally(sid: string, reason: string) {
+    private endCastSessionLocally(sid: string, reason: string, options: { anyState?: boolean } = {}) {
         this.castEndWatch = null;
-        if (this.getCurrentSessionId() !== sid || this.state !== 'CONNECTED') return;
+        // anyState: a dead transport may have let go of the session object already.
+        if ((options.anyState ? this.getCurrentSessionId() || sid : this.getCurrentSessionId()) !== sid
+            || (this.state !== 'CONNECTED' && !options.anyState)) return;
         const session = this.castContext?.getCurrentSession?.() || null;
         this.logCast('warn', 'cast-end-unconfirmed', `reason=${reason} castState=${this.castContext?.getCastState?.() ?? 'unknown'} sessionState=${session?.getSessionState?.() ?? 'unknown'}`);
         try {
