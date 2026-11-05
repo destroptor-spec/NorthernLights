@@ -171,6 +171,38 @@ describe('the receiver closed its idle app while this device slept (prod 2026-11
     expect(afterSessionEnded).toHaveBeenCalledWith({ index: 0, positionSeconds: 0, wasPlaying: false });
   });
 
+  describe('waking with no media left in the SDK (prod 2026-11-05 13:49)', () => {
+    const disconnected = Object.assign(new Error("Failed to execute 'send' on 'PresentationConnection': Presentation connection is disconnected."), { name: 'InvalidStateError' });
+    const waking = (ended: boolean, send: () => unknown) => {
+      const { manager } = harness();
+      const recoverStaleTransport = jest.fn(async () => false);
+      Object.assign(manager, { mediaEndedSid: ended ? SID : '', recoverStaleTransport, watchdogMediaRequestId: 0 });
+      const session = { getSessionId: () => SID, getMediaSession: () => null, sendMessage: jest.fn(send) };
+      const check = () => (manager as unknown as { checkTransportAfterMediaEnded(s: unknown, r: string): Promise<boolean | null> })
+        .checkTransportAfterMediaEnded(session, 'visibility-visible+0ms');
+      return { manager, recoverStaleTransport, check };
+    };
+
+    it('the unlock asks the session itself, and a dead connection goes to recovery, which ends it quietly', async () => {
+      const { manager, recoverStaleTransport, check } = waking(true, () => Promise.reject(disconnected));
+      await expect(check()).resolves.toBe(false);
+      expect(manager.logCast).toHaveBeenCalledWith('warn', 'cast-media-ended-transport-dead', 'reason=visibility-visible+0ms');
+      expect(recoverStaleTransport).toHaveBeenCalledWith('media-ended:visibility-visible+0ms');
+    });
+
+    it('a live connection stays connected and idle', async () => {
+      const { recoverStaleTransport, check } = waking(true, () => Promise.resolve(undefined));
+      await expect(check()).resolves.toBeNull();
+      expect(recoverStaleTransport).not.toHaveBeenCalled();
+    });
+
+    it('nothing is sent unless the queue had ended', async () => {
+      const { recoverStaleTransport, check } = waking(false, () => Promise.reject(disconnected));
+      await expect(check()).resolves.toBeNull();
+      expect(recoverStaleTransport).not.toHaveBeenCalled();
+    });
+  });
+
   it('not while something was playing there: that is a lost connection, with Retry', () => {
     const { manager, afterSessionEnded, end } = closable(false);
     expect(end(SID)).toBe(false);

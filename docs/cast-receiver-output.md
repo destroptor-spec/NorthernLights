@@ -381,6 +381,12 @@ app after 5 minutes of nothing (its `IDLE_STOP_MS`).
   normal end: it ends here, quietly (`cast-closed-while-idle`), not as
   "Lost connection" with Retry (prod 2026-11-05 11:52). With something
   playing it stays a lost connection.
+  Once the queue has ended, the SDK may hold no media, so the wake-up
+  refresh sends nothing. The sender then asks the session itself
+  (`cast-media-ended-transport-dead`). A dead connection goes to recovery,
+  which either rejoins quietly (still inside the 5 minutes) or ends the
+  cast as above (prod 2026-11-05 13:49: the phone kept "Casting from NAD"
+  on every unlock).
 
 ## Live checks before PR D (probe, no product change) — built (feat/receiver-probe)
 
