@@ -347,6 +347,47 @@ follows a browser or plain Cast output.
   without a window, and its next skip loads in full. The second-sender rules
   make that rare.
 
+### After the queue ends (sender only, 2026-11-05)
+
+The receiver's queue ended while the sender stays connected. Prod 2026-11-05
+11:15: the phone cast a single, slept, and woke as it ended. Every
+Play/Pause on the SDK's old media answered `session_error`, and song taps
+went to a receiver no longer following (`result=replaced`). Only Stop
+worked.
+
+Andreas: stay connected and idle; Play casts again; the receiver closes its
+app after 5 minutes of nothing (its `IDLE_STOP_MS`).
+
+- **Ended:** the receiver says it's idle with nothing loaded (`aurora.status`
+  IDLE, no `queueEntryId`) for 2 s, after media of this sender played in that
+  Cast session (`cast-media-ended`).
+  - Between two tracks it's idle for a moment only (about 230 ms).
+  - Not on a fresh join, and not within 10 s of this sender's own LOAD.
+  - A `session_error` with the transport alive asks the receiver at once. The
+    60 s watchdog verdict counts too.
+- **Then:**
+  - this sender no longer counts the receiver as following, so songs and
+    skips load directly again;
+  - Pause just shows paused;
+  - Play casts the queue again from the start of its track
+    (`cast-media-ended-replay`);
+  - the old media isn't hydrated from.
+- **Ends:** when anything plays there again (`cast-media-ended-cleared`).
+  A LOAD of its own doesn't end it until the receiver plays: a LOAD that
+  fails left song taps going to a receiver that was gone.
+- **Closed while asleep:** the receiver closes the idle app after 5 minutes.
+  A phone asleep then hears no SESSION_ENDED; on waking its connection is
+  dead and can't be rejoined. With the queue ended, that's the cast's
+  normal end: it ends here, quietly (`cast-closed-while-idle`), not as
+  "Lost connection" with Retry (prod 2026-11-05 11:52). With something
+  playing it stays a lost connection.
+  Once the queue has ended, the SDK may hold no media, so the wake-up
+  refresh sends nothing. The sender then asks the session itself
+  (`cast-media-ended-transport-dead`). A dead connection goes to recovery,
+  which either rejoins quietly (still inside the 5 minutes) or ends the
+  cast as above (prod 2026-11-05 13:49: the phone kept "Casting from NAD"
+  on every unlock).
+
 ## Live checks before PR D (probe, no product change) — built (feat/receiver-probe)
 
 Castlite (B&O) may lack `EventSource` or `fetch`, and how long a stream
