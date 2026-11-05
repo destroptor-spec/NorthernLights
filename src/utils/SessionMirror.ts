@@ -173,6 +173,14 @@ export class SessionMirror {
   private claimRetryTimer: ReturnType<typeof setTimeout> | null = null;
   /** The Cast session whose receiver did not take the session: claim as `cast` there. */
   private receiverRefusedCastSession: string | null = null;
+  /**
+   * A handover that failed because the Cast connection was reconnecting (not
+   * a refusal): the Cast session to hand over to once it is back. Prod
+   * 2026-11-05 11:38:12 (desktop, a deaf takeover reconnecting by id): the
+   * claim's handover went out mid-reconnect, answered not-connected, and the
+   * receiver never got the session.
+   */
+  private handOverWhenConnected: string | null = null;
   /** The receiver took the session for this device's current grant. */
   private receiverFollowing = false;
   private wakeRefreshAt = 0;
@@ -416,6 +424,15 @@ export class SessionMirror {
       if ((startedPlaying || switchedOn) && !this.displaced) void this.claim();
       return;
     }
+    if (state.castConnected && !previous.castConnected && this.handOverWhenConnected) {
+      const castSessionId = this.handOverWhenConnected;
+      this.handOverWhenConnected = null;
+      // Back on the same Cast session: the handover that met the reconnect.
+      if (this.grant.kind === 'receiver' && this.options?.getCastSessionId?.() === castSessionId) {
+        void this.handOver('claim', castSessionId);
+        return;
+      }
+    }
     if (state.castConnected !== previous.castConnected) {
       // The output moved between this browser and a Cast device: claim again
       // under the new kind and name (or let a receiver go), once casting has
@@ -438,6 +455,7 @@ export class SessionMirror {
     this.flushTimer = this.reportTimer = this.refreshTimer = this.kindTimer = null;
     this.setReceiverFollowing(false);
     this.receiverRestarts = 0;
+    this.handOverWhenConnected = null;
     this.grant = null;
     this.session = null;
     this.dirty = false;
@@ -553,6 +571,11 @@ export class SessionMirror {
     }, reason).catch(() => false);
     if (taken && this.grant === grant) this.setReceiverFollowing(true);
     if (taken || this.grant !== grant || reason !== 'claim') return;
+    if (castSessionId && !this.store?.getState().castConnected) {
+      this.handOverWhenConnected = castSessionId;
+      this.options.diagnostic?.('ok', 'sync-receiver-handover-deferred', `generation=${credential.generation}`);
+      return;
+    }
     this.options.diagnostic?.('warn', 'sync-receiver-handover-failed', `generation=${credential.generation}`);
     this.receiverRefusedCastSession = castSessionId ?? null;
     if (this.store?.getState().castConnected) void this.claim();
