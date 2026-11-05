@@ -1360,6 +1360,11 @@ export class CastManager {
      */
     private leaveResumedSessionSteppedBackFrom(sid: string) {
         this.logCast('ok', 'SESSION_RESUMED ignored', 'reason=taken-over');
+        this.leaveSessionSteppedBackFrom(sid);
+    }
+
+    /** Out of a session this device stepped back from, shown as not casting; its end only cleans up. */
+    private leaveSessionSteppedBackFrom(sid: string) {
         this.endedLocallySid = sid;
         localStorage.removeItem(SESSION_STORAGE_KEY);
         this.state = 'NOT_CONNECTED';
@@ -1681,11 +1686,10 @@ export class CastManager {
         this.rejoinSessionPending = false;
         this.clearDeadTransport();
         this.logCast('ok', 'stale-transport-recovery-dropped', `sid=${sessionId} reason=${reason} cause=taken-over`);
-        if (this.getCurrentSessionId() === sessionId) {
-            try {
-                this.castContext?.endCurrentSession?.(false);
-            } catch { /* the transport is dead: nothing to leave */ }
-        }
+        // Still held by the SDK: shown as casting, the watchdog would start
+        // the next reconnect within seconds (prod 2026-11-05 22:03-22:05,
+        // one dropped every ~7 s).
+        if (this.getCurrentSessionId() === sessionId) this.leaveSessionSteppedBackFrom(sessionId);
         this.setHealthStatus('idle', '');
         return false;
     }
