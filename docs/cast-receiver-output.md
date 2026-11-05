@@ -373,6 +373,14 @@ app after 5 minutes of nothing (its `IDLE_STOP_MS`).
     (`cast-media-ended-replay`);
   - the old media isn't hydrated from.
 - **Ends:** when anything plays there again (`cast-media-ended-cleared`).
+  A LOAD of its own doesn't end it until the receiver plays: a LOAD that
+  fails left song taps going to a receiver that was gone.
+- **Closed while asleep:** the receiver closes the idle app after 5 minutes.
+  A phone asleep then hears no SESSION_ENDED; on waking its connection is
+  dead and can't be rejoined. With the queue ended, that's the cast's
+  normal end: it ends here, quietly (`cast-closed-while-idle`), not as
+  "Lost connection" with Retry (prod 2026-11-05 11:52). With something
+  playing it stays a lost connection.
 
 ## Live checks before PR D (probe, no product change) — built (feat/receiver-probe)
 

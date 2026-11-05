@@ -139,3 +139,50 @@ it('new media there (its LOAD or another sender\'s) ends it', () => {
   expect(manager.logCast).toHaveBeenCalledWith('ok', 'cast-media-ended-cleared', `reason=receiver-playing sid=${SID}`);
   expect(manager.receiverFollowsSession()).toBe(true);
 });
+
+describe('the receiver closed its idle app while this device slept (prod 2026-11-05 11:52)', () => {
+  const closable = (ended: boolean) => {
+    const { manager } = harness();
+    const afterSessionEnded = jest.fn();
+    Object.assign(manager, {
+      mediaEndedSid: ended ? SID : '',
+      state: 'CONNECTING',
+      castEndWatch: null,
+      castEndSnapshotAtStop: null,
+      captureCastEndSnapshot: () => ({ index: 0, positionSeconds: 0, wasPlaying: false }),
+      clearUserSessionIntentTimer: jest.fn(),
+      clearRejoinHydrationTimer: jest.fn(),
+      setHealthStatus: jest.fn(),
+      notifyStateChange: jest.fn(),
+      afterSessionEnded,
+      deadTransportSession: {},
+      rejoinHydrationRunId: 0,
+    });
+    const end = (sid: string) => (manager as unknown as { endIfClosedWhileIdle(sid: string, how: string): boolean }).endIfClosedWhileIdle(sid, 'dead');
+    return { manager, afterSessionEnded, end };
+  };
+
+  it('a connection that cannot be got back after the queue ended is the cast\'s normal end: ended here, quietly', () => {
+    const { manager, afterSessionEnded, end } = closable(true);
+    expect(end(SID)).toBe(true);
+    expect(manager.logCast).toHaveBeenCalledWith('ok', 'cast-closed-while-idle', `sid=${SID} transport=dead`);
+    expect((manager as unknown as { state: string }).state).toBe('NOT_CONNECTED');
+    expect((manager as unknown as { setHealthStatus: jest.Mock }).setHealthStatus).toHaveBeenCalledWith('idle', '');
+    expect(afterSessionEnded).toHaveBeenCalledWith({ index: 0, positionSeconds: 0, wasPlaying: false });
+  });
+
+  it('not while something was playing there: that is a lost connection, with Retry', () => {
+    const { manager, afterSessionEnded, end } = closable(false);
+    expect(end(SID)).toBe(false);
+    expect(afterSessionEnded).not.toHaveBeenCalled();
+    expect((manager as unknown as { state: string }).state).toBe('CONNECTING');
+  });
+});
+
+it('Play right after a replay started loads once', () => {
+  const { manager } = harness({ loadedAgoMs: 500 });
+  Object.assign(manager, { mediaEndedSid: SID });
+  manager.resume();
+  expect(mockPlayAtIndex).not.toHaveBeenCalled();
+  expect(manager.logCast).toHaveBeenCalledWith('ok', 'cast-media-ended-replay', 'via=resume skipped=load-under-way');
+});
