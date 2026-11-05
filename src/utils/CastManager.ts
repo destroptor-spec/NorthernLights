@@ -110,6 +110,8 @@ const MEDIA_END_AFTER_LOAD_MS = 10_000;
  * 2026-11-05 10:02:36: LOADING → IDLE → BUFFERING within 230 ms).
  */
 const MEDIA_END_CONFIRM_MS = 2000;
+/** Recovery reason prefix for a dead connection found after the queue ended. */
+const MEDIA_ENDED_RECONNECT = 'media-ended:';
 /** The stale-transport recovery run after a deaf takeover, to reconnect as a reload would. */
 const DEAF_TAKEOVER_RECONNECT = 'deaf-takeover';
 /** The join's ping (cast-join-deaf): an action no receiver knows, which every receiver acknowledges. */
@@ -1112,6 +1114,27 @@ export class CastManager {
         return true;
     }
 
+    /**
+     * After the queue ended the SDK may hold no media at all, so the
+     * reconcile's media refresh sends nothing and can't find the connection
+     * dead. Ask the session itself. If it's dead, recovery rejoins it, or, if
+     * the receiver closed its idle app meanwhile, ends the cast here quietly
+     * (endIfClosedWhileIdle). Prod 2026-11-05 13:49 (phone, after
+     * the NAD's 13:42 idle close): every unlock logged "Cast session exists
+     * without active media", and the phone kept "Casting from NAD".
+     * Null: not this case, or the connection is alive; the reconcile carries on.
+     */
+    private async checkTransportAfterMediaEnded(session: any, reason: string): Promise<boolean | null> {
+        if (!this.isRemoteMediaEnded()) return null;
+        const probe = await probeCastTransport(session, {
+            requestId: this.nextMediaRequestId(),
+            isDisconnected: (error) => this.isDisconnectedPresentationError(error),
+        });
+        if (probe !== 'dead') return null;
+        this.logCast('warn', 'cast-media-ended-transport-dead', `reason=${reason}`);
+        return this.recoverStaleTransport(`${MEDIA_ENDED_RECONNECT}${reason}`);
+    }
+
     private isRemoteMediaEnded(): boolean {
         const sid = this.getCurrentSessionId();
         return !!sid && this.mediaEndedSid === sid;
@@ -1645,8 +1668,9 @@ export class CastManager {
                 }
                 this.logCast('ok', `Recovered stale Cast transport: ${reason}`);
                 this.logCast('ok', 'stale-transport-recovered', `reason=${reason}`);
-                // Nothing to tell after a takeover's reconnect: casting simply works.
-                if (reason === DEAF_TAKEOVER_RECONNECT) this.setHealthStatus('idle', '');
+                // Nothing to tell after a takeover's reconnect, or an idle
+                // cast's after its queue ended: casting simply works.
+                if (reason === DEAF_TAKEOVER_RECONNECT || reason.startsWith(MEDIA_ENDED_RECONNECT)) this.setHealthStatus('idle', '');
                 else this.setHealthStatus('recovered', 'Cast control reconnected.', this.getCastDeviceName());
                 return true;
             }
@@ -2498,6 +2522,9 @@ export class CastManager {
                     this.scheduleFreshSessionPlayback(`reconcile-user-launch:${reason}`);
                     return true;
                 }
+
+                const afterEnd = await this.checkTransportAfterMediaEnded(session, reason);
+                if (afterEnd !== null) return afterEnd;
 
                 this.logCast('warn', `Cast session exists without active media: ${reason}`, this.describeRemotePlayer());
                 this.setHealthStatus('warning', 'Cast session connected without active media.', reason);
