@@ -247,6 +247,15 @@ describe('woken after the takeover, with the connection dead (T2, prod 2026-11-0
     expect(manager.logCast).toHaveBeenCalledWith('ok', 'stale-transport-recovery-dropped', 'sid=f611720b reason=media-status:reconcile cause=taken-over');
     expect(setHealthStatus).toHaveBeenLastCalledWith('idle', '');
   });
+
+  it('a dropped reconnect still held by the SDK is left and shown as not casting, so the watchdog starts no next one (prod 2026-11-05 22:03)', () => {
+    const { manager } = woken({ leaveThrows: false, reconnecting: false });
+    const internals = manager as unknown as { steppedBackSid: string; endedLocallySid: string; state: string; dropRecoveryAfterStepBack(sid: string, reason: string): false };
+    internals.steppedBackSid = 'f611720b';
+    internals.dropRecoveryAfterStepBack('f611720b', 'media-status:status-watchdog');
+    expect(internals.state).toBe('NOT_CONNECTED');
+    expect(internals.endedLocallySid).toBe('f611720b');
+  });
 });
 
 it('Chrome rejoining a session it stepped back from (Android auto-join): left again, quietly, not shown as casting (prod 2026-11-05 21:53:49, T7)', () => {
