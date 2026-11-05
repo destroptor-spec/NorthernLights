@@ -383,6 +383,28 @@ test('an unconfirmed start retries the same entry and position exactly once', as
     expect(session.loadMedia).toHaveBeenCalledTimes(2);
 });
 
+/**
+ * Prod 2026-11-03 10:16:03 (docs/cast-takeover.md): a deaf join's LOAD
+ * played, but its acknowledgement never came, statuses (relayed) were dropped
+ * until it did, and the start was sent again at 15 s, restarting the track.
+ */
+test('a status for the very entry it loads confirms the start, without the LOAD ever being acknowledged', async () => {
+    const { manager, session } = harness();
+    session.loadMedia.mockImplementationOnce(() => new Promise(() => undefined));
+    const onTimeUpdate = jest.fn();
+    Object.assign(manager, { onTimeUpdate, onPlayStateChange: jest.fn() });
+    void manager.castQueue(mockState.playlist, 0, 'none', 42);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    manager.applyAuroraStatus({ queueEntryId: 'entry-0', currentTime: 43, duration: 154, playerState: 'PLAYING' });
+    manager.applyAuroraStatus({ queueEntryId: 'entry-0', currentTime: 44, duration: 154, playerState: 'PLAYING' });
+    expect(manager.playbackConfirmation.pending).toBe(false);
+    expect(onTimeUpdate).toHaveBeenLastCalledWith(44);
+    jest.advanceTimersByTime(30000);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(session.loadMedia).toHaveBeenCalledTimes(1);
+    expect(manager.playbackConfirmation.unconfirmed).toBe(false);
+});
+
 test('takeover cancels an unconfirmed start instead of reclaiming the receiver', async () => {
     const { manager, session } = harness();
     await manager.castQueue(mockState.playlist);

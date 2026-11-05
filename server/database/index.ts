@@ -1261,6 +1261,20 @@ export async function initDB(): Promise<Pool> {
         }
       }
 
+      // Usernames are case-insensitive: "Andreas" and "andreas" are one
+      // account. The unique index on lower(username) enforces it, but it can't
+      // be built while two accounts differ by case alone; renaming one of them
+      // is the admin's call, so warn instead of failing startup.
+      const caseClashes = await client.query(
+        `SELECT array_agg(username ORDER BY created_at) AS names FROM users GROUP BY lower(username) HAVING count(*) > 1`
+      );
+      if ((caseClashes.rowCount ?? 0) > 0) {
+        const groups = caseClashes.rows.map((row: { names: string[] }) => row.names.join(' / ')).join('; ');
+        console.warn(`[DB] Usernames that differ only in case: ${groups}. Rename one of each in Settings so usernames can be case-insensitive.`);
+      } else {
+        await client.query('CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx ON users (lower(username))');
+      }
+
       client.release();
       pool = instance;
       return pool;
@@ -5921,9 +5935,17 @@ export async function getUserById(id: string) {
   return res.rows[0] || null;
 }
 
+/**
+ * Usernames match case-insensitively: "andreas" finds the account "Andreas".
+ * Accounts keep the casing they were created with. Until two accounts that
+ * differ only by case are resolved (see initDB), the exact spelling wins.
+ */
 export async function getUserByUsername(username: string) {
   const db = await initDB();
-  const res = await db.query('SELECT * FROM users WHERE username = $1', [username]);
+  const res = await db.query(
+    'SELECT * FROM users WHERE lower(username) = lower($1) ORDER BY (username = $1) DESC, created_at LIMIT 1',
+    [username],
+  );
   return res.rows[0] || null;
 }
 

@@ -417,6 +417,55 @@ it('knows when another of my devices is casting to the very Cast session this on
   expect(gone.follower.castingElsewhere('NAD Forstærker', '2bc27ebd')).toBeNull();
 });
 
+/**
+ * After a join that proved deaf (cast-join-deaf), the join was into a session
+ * already running there, so the device's name is enough: the server forgets
+ * a cast output's Cast session id in a restart, and a locked phone still casts.
+ */
+it('after a deaf join, knows my own device casting there by its name alone', async () => {
+  const joined = { joinedRunningSession: true };
+  const unknown = sessionOf([1, 2, 3]);
+  unknown.output = { ...unknown.output!, kind: 'cast', castSessionId: null };
+  const restarted = setup({}, unknown);
+  await restarted.connect();
+  expect(restarted.follower.castingElsewhere('NAD Forstærker', '2bc27ebd', joined)).toEqual({ outputId: 'phone' });
+  expect(restarted.follower.castingElsewhere('Stue TV', '2bc27ebd', joined)).toBeNull();
+
+  const quiet = sessionOf([1, 2, 3]);
+  quiet.output = { ...quiet.output!, kind: 'cast', status: 'unreachable', castSessionId: '2bc27ebd' };
+  const locked = setup({}, quiet);
+  await locked.connect();
+  expect(locked.follower.castingElsewhere('NAD Forstærker', '2bc27ebd', joined)).toEqual({ outputId: 'phone' });
+
+  // Nothing of mine playing there: nothing to control (the deaf join stops it, #211).
+  const browser = setup();
+  await browser.connect();
+  expect(browser.follower.castingElsewhere('NAD Forstærker', '2bc27ebd', joined)).toBeNull();
+});
+
+/**
+ * docs/cast-takeover.md, PR 4: the receiver names the device casting there.
+ * Is that another of my devices? Only then does picking the speaker make
+ * this one its remote instead of taking it over.
+ */
+it("knows another of my devices by the id the receiver names, as a Cast output's device or the one that handed it over", async () => {
+  const casting = sessionOf([1, 2, 3]);
+  casting.output = { ...casting.output!, kind: 'cast', castSessionId: null };
+  const { follower, connect } = setup({}, casting);
+  await connect();
+  expect(follower.castingElsewhere('NAD Forstærker', null, { castingClientId: 'phone' })).toEqual({ outputId: 'phone' });
+  expect(follower.castingElsewhere('NAD Forstærker', null, { castingClientId: 'web:someone-else' })).toBeNull();
+
+  const following = sessionOf([1, 2, 3]);
+  following.output = { ...following.output!, id: 'receiver:2bc27ebd', kind: 'receiver', castSessionId: '2bc27ebd' };
+  following.ownerClientId = 'phone';
+  const receiver = setup({}, following);
+  await receiver.connect();
+  expect(receiver.follower.castingElsewhere('NAD Forstærker', null, { castingClientId: 'phone' })).toEqual({ outputId: 'receiver:2bc27ebd' });
+  // This device's own: not another device of mine.
+  expect(receiver.follower.castingElsewhere('NAD Forstærker', null, { castingClientId: 'laptop' })).toBeNull();
+});
+
 it('tells the server log which device it follows, and the commands it gets', async () => {
   const { mirror, source, connect, diagnostic } = setup({ playbackState: 'playing' });
   await connect();

@@ -1,10 +1,13 @@
-// NOTE: dotenv.config() must run before any import that reads process.env
-// at module-top level (e.g. route files capturing env vars into `const`s).
-// If it runs later, those modules see `undefined` and silently break —
-// that bug caused OAuth callbacks to use http://localhost:3001 instead of
-// the configured SERVER_URL.
-import dotenv from 'dotenv';
-dotenv.config();
+// NOTE: .env must be loaded before any module that reads process.env at its
+// top level (e.g. files capturing env vars into `const`s), or those modules
+// see `undefined` and silently fall back to defaults. That bug once made OAuth
+// callbacks use http://localhost:3001 instead of the configured SERVER_URL.
+// It has to be this first import, not a dotenv.config() call: every import
+// in this file is evaluated before any statement in it runs, so a call here
+// came after the other modules had loaded. That left TRUSTED_PROXY_MODE,
+// LOG_HLS, LOG_FFMPEG, MBDB_WORK_DIR and ART_CACHE_DIR from .env unread
+// (prod 2026-11-02: every auth.log line showed the proxy's IP).
+import 'dotenv/config';
 
 import express from 'express';
 import cors from 'cors';

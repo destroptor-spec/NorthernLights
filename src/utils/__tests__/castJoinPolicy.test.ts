@@ -1,4 +1,4 @@
-import { decideJoin, isOwnLeaveDisconnect, JOIN_MEDIA_WAIT_MS, OWN_LEAVE_QUIET_MS } from '../castJoinPolicy';
+import { decideJoin, decideTakeoverJoin, isOwnLeaveDisconnect, JOIN_DEAF_AFTER_MS, JOIN_MEDIA_WAIT_MS, OWN_LEAVE_QUIET_MS, TAKEOVER_DEAF_GUESS_MS } from '../castJoinPolicy';
 
 /**
  * Prod 2026-10-13 19:53:48: the desktop's Cast dialog joined the NAD, paused
@@ -32,6 +32,23 @@ describe('decideJoin', () => {
     expect(decideJoin({ sdkHasMedia: false, receiverStatus: null, elapsedMs: JOIN_MEDIA_WAIT_MS - 1 })).toBe('wait');
     expect(decideJoin({ sdkHasMedia: false, receiverStatus: null, elapsedMs: JOIN_MEDIA_WAIT_MS })).toBe('fresh');
   });
+
+  it('goes ahead after the wait when the receiver answered the ping but has nothing to report', () => {
+    expect(decideJoin({ sdkHasMedia: false, receiverStatus: null, heardFromReceiver: true, elapsedMs: JOIN_MEDIA_WAIT_MS })).toBe('fresh');
+  });
+
+  /**
+   * Prod 2026-10-27 12:33: the desktop joined the NAD's idle receiver app,
+   * heard nothing back (no ack, no status, no media status), loaded, and
+   * loaded again 15 s later over its own track.
+   */
+  it('calls a session that never answers deaf, after waiting longer for a slow receiver', () => {
+    expect(decideJoin({ sdkHasMedia: false, receiverStatus: null, heardFromReceiver: false, elapsedMs: JOIN_MEDIA_WAIT_MS })).toBe('wait');
+    expect(decideJoin({ sdkHasMedia: false, receiverStatus: null, heardFromReceiver: false, elapsedMs: JOIN_DEAF_AFTER_MS - 1 })).toBe('wait');
+    expect(decideJoin({ sdkHasMedia: false, receiverStatus: null, heardFromReceiver: false, elapsedMs: JOIN_DEAF_AFTER_MS })).toBe('deaf');
+    // Media the SDK sees is an answer too.
+    expect(decideJoin({ sdkHasMedia: true, receiverStatus: null, heardFromReceiver: false, elapsedMs: JOIN_DEAF_AFTER_MS })).toBe('adopt');
+  });
 });
 
 describe('isOwnLeaveDisconnect', () => {
@@ -46,3 +63,34 @@ describe('isOwnLeaveDisconnect', () => {
   });
 });
 
+
+/**
+ * docs/cast-takeover.md, PR 4 (Andreas, 2026-11-02): picking a Cast device
+ * that plays someone else's cast replaces it, like casting over any other app.
+ */
+describe('decideTakeoverJoin', () => {
+  const base = { sdkHasMedia: false, heardFromReceiver: true, myClientId: 'web:desktop-b', isOwnDevice: () => false, elapsedMs: 300 };
+
+  it("takes over another device's cast, or a receiver that names nobody (idle, or an older sender)", () => {
+    expect(decideTakeoverJoin({ ...base, sdkHasMedia: true, receiverStatus: { castingClientId: 'web:phone-a' } })).toBe('takeover');
+    expect(decideTakeoverJoin({ ...base, receiverStatus: { castingClientId: null } })).toBe('takeover');
+  });
+
+  it('takes on its own cast, and leaves another of my own devices to become its remote', () => {
+    expect(decideTakeoverJoin({ ...base, sdkHasMedia: true, receiverStatus: { castingClientId: 'web:desktop-b' } })).toBe('adopt');
+    expect(decideTakeoverJoin({ ...base, receiverStatus: { castingClientId: 'web:desktop-b' } })).toBe('wait');
+    expect(decideTakeoverJoin({ ...base, receiverStatus: { castingClientId: 'web:desktop-b' }, elapsedMs: JOIN_MEDIA_WAIT_MS })).toBe('adopt');
+    expect(decideTakeoverJoin({ ...base, receiverStatus: { castingClientId: 'web:phone-a' }, isOwnDevice: (id) => id === 'web:phone-a' })).toBe('leave-own');
+  });
+
+  it('waits for the status a receiver that answered will send, then takes over', () => {
+    expect(decideTakeoverJoin({ ...base, receiverStatus: null })).toBe('wait');
+    expect(decideTakeoverJoin({ ...base, receiverStatus: null, elapsedMs: JOIN_MEDIA_WAIT_MS })).toBe('takeover');
+  });
+
+  it('calls a join that hears nothing deaf after a while, to load anyway and hear the relay', () => {
+    const deaf = { ...base, heardFromReceiver: false, receiverStatus: null };
+    expect(decideTakeoverJoin({ ...deaf, elapsedMs: JOIN_MEDIA_WAIT_MS })).toBe('wait');
+    expect(decideTakeoverJoin({ ...deaf, elapsedMs: TAKEOVER_DEAF_GUESS_MS })).toBe('deaf');
+  });
+});

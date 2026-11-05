@@ -86,6 +86,8 @@ export interface SessionFollowerOptions {
   clientName?: () => string;
   /** The user's devices with Aurora open: read when the stream opens, then live (devices.changed). */
   onDevices?: (devices: ConnectedDevice[]) => void;
+  /** A Cast receiver's status, relayed by the server (cast.status, docs/cast-takeover.md). */
+  onCastStatus?: (castSessionId: unknown, status: unknown) => void;
   /** The user's own session as last read, or none (Listen together: the owner's sheet). */
   onOwnSession?: (session: PlaybackSession | null) => void;
   /**
@@ -125,6 +127,7 @@ const SESSION_EVENTS = [
   'playbackSync.changed',
   'resync.required',
   'devices.changed',
+  'cast.status',
   'playbackSession.transferRequested',
   'playbackSession.memberJoined',
   'playbackSession.memberLeft',
@@ -188,13 +191,34 @@ export class SessionFollower {
    * name right now (the session's output). Picking that device in this
    * device's Cast dialog would join its Cast session as a second sender.
    */
-  castingElsewhere(castDeviceName: string, castSessionId: string | null): { outputId: string } | null {
+  castingElsewhere(
+    castDeviceName: string,
+    castSessionId: string | null,
+    options: { joinedRunningSession?: boolean; castingClientId?: string } = {},
+  ): { outputId: string } | null {
     const output = this.session?.output;
     if (!output || !this.options || output.id === this.options.clientId()) return null;
+    // The receiver named the device casting there (docs/cast-takeover.md):
+    // is it the one this session's Cast output belongs to? That is the
+    // device that claimed it as a Cast output, or handed it to the receiver.
+    if (options.castingClientId) {
+      const caster = output.kind === 'receiver' ? this.session!.ownerClientId : output.id;
+      const live = output.status === 'active' || output.status === 'unreachable';
+      if (!isCastOutput(output) || !live || caster !== options.castingClientId || caster === this.options.clientId()) return null;
+      return { outputId: output.id };
+    }
+    // A join that proved deaf (cast-join-deaf) joined a session already
+    // running there, never a new one, so the device's name is enough: the
+    // server may have lost a cast output's Cast session id in a restart. A
+    // phone gone quiet (locked) still casts there, and even this device's
+    // own receiver output is better controlled from here than stopped.
+    const joined = options.joinedRunningSession === true;
     // A receiver output this device claimed is its own Cast session (a
     // reload or recovery rejoining it), not another device's.
-    if (output.kind === 'receiver' && this.session!.ownerClientId === this.options.clientId()) return null;
-    if (!isCastOutput(output) || output.status !== 'active' || output.name !== castDeviceName) return null;
+    if (!joined && output.kind === 'receiver' && this.session!.ownerClientId === this.options.clientId()) return null;
+    const live = output.status === 'active' || (joined && output.status === 'unreachable');
+    if (!isCastOutput(output) || !live || output.name !== castDeviceName) return null;
+    if (joined) return { outputId: output.id };
     // Only the very Cast session it sends to: picking the device may also
     // start a new session, which ends the other device's (prod 2026-10-13
     // 22:16:20: the phone left a session it had just started).
@@ -503,6 +527,9 @@ export class SessionFollower {
         return;
       case 'devices.changed':
         if (Array.isArray(data.devices)) this.options!.onDevices?.(data.devices as ConnectedDevice[]);
+        return;
+      case 'cast.status':
+        this.options!.onCastStatus?.(data.castSessionId, data.status);
         return;
       case 'playbackSession.transferRequested':
         if (!sessionId || data.targetClientId !== myId) return;

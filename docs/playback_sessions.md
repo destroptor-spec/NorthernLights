@@ -1125,6 +1125,33 @@ session instead of joining, which must not count; prod 22:16:20), the device lea
 device as the remote target, so it controls the Cast device through the
 device casting to it.
 
+Whether or not sync knows of another device there, a joined session that
+never answers this device (no acknowledgement of the join's ping, no status,
+no media status within 5 s) is not loaded into. If another of the user's
+devices casts to that device (by name: a deaf join is into a running
+session), the sender leaves and becomes its remote (`cast-join-left`);
+otherwise it stops that receiver app, leaves it, and offers Cast again for a
+new cast (`cast-join-deaf`,
+2026-10-30; see
+[listen-together.md](listen-together.md), the deaf joiner).
+
+**Since the takeover (2026-11-02, [cast-takeover.md](cast-takeover.md)):**
+picking a Cast device right after a tap on Cast follows "last caster wins".
+The receiver names whose cast plays (`castingClientId`, asked for at once
+with `aurora.diagnostics`).
+- **This device's own cast:** it's taken on.
+- **Another of the user's devices** (sync on, known by that id, or by name
+  after a deaf join): this device leaves and becomes its remote
+  (`cast-join-left`).
+- **Anything else:** this device loads its own queue over it
+  (`cast-takeover`), and the device it replaces steps back quietly
+  (`cast-taken-over`).
+- **A deaf join** loads anyway after 3 s and hears the receiver through the
+  server's relay (`cast.status`, `cast-status-relayed`). Only when nothing at
+  all is heard within 12 s does #211's stop and Cast again apply
+  (`cast-takeover-unheard`).
+- **Rejoins** without a tap (a reload, a recovery) are decided as before.
+
 Relay limits (prod 2026-10-14, phone casting and locked, desktop as remote):
 Android stretches a background tab's timers, so the playing device reports at
 once after a command, not on a timer. A Cast output silent for over a minute

@@ -613,6 +613,28 @@ describe('a receiver that plays the session on its own (Phase 5)', () => {
     expect(handOverToReceiver).toHaveBeenCalledTimes(1);
   });
 
+  it('hands over once a Cast connection reconnecting during the handover is back (prod 2026-11-05 11:38:12)', async () => {
+    const { api, store, handOverToReceiver, diagnostic } = castSetup();
+    // The first try meets the reconnect: not connected, and Cast drops meanwhile.
+    handOverToReceiver.mockImplementationOnce(async () => {
+      store.setState({ castConnected: false });
+      return false;
+    });
+    await play(store);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(diagnostic).toHaveBeenCalledWith('ok', 'sync-receiver-handover-deferred', 'generation=1');
+    expect(diagnostic).not.toHaveBeenCalledWith('warn', 'sync-receiver-handover-failed', expect.anything());
+    // Back about 0.4 s later, on the same Cast session.
+    store.setState({ castConnected: true });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(handOverToReceiver).toHaveBeenCalledTimes(2);
+    expect(handOverToReceiver).toHaveBeenLastCalledWith(expect.objectContaining({ outputId: 'receiver:cast-77', generation: 1 }), 'claim');
+    // No claim as a plain Cast output, and the receiver reports.
+    expect(api.claimPlaybackOutput).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(api.reportPlaybackOutput).not.toHaveBeenCalled();
+  });
+
   it('hands every renewed credential to the receiver, and renews on waking', async () => {
     const { api, store, mirror, handOverToReceiver } = castSetup();
     await play(store);
