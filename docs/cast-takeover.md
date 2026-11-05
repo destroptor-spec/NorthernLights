@@ -11,6 +11,7 @@
 - no restart, no toasts.
 T4 (same account) passed 2026-11-03 09:59. Still to run: T2, T3, T5–T8.
 Merge order into main: #218, #219, #211, #220, #221.
+The refresh after a takeover on desktop Chrome: see Known limit.
 
 **Deaf takeovers, as built:** the desktop is often deaf on a session it
 didn't start (and sometimes on its own). It loads after 3 s, hears the
@@ -142,6 +143,43 @@ I cast to my speaker. Another person casts to it and takes it over.
 - **Waking later:** the first status it hears names B, so it steps back the
   same way before hydrating anything. It never takes on B's music.
   - With sync on, A's session output has also ended with `taken-over`.
+
+## Known limit: desktop Chrome after a takeover (can't be solved)
+
+Found on prod 2026-11-03 (T1 the other way round). The desktop (account A)
+casts to the NAD, and the phone (account B) takes over. The desktop steps
+back as built, but Chrome keeps the tab attached to that Cast session for as
+long as it lives:
+
+- Chrome's Cast dialog still lists the NAD as casting from this tab, with
+  only "Stop casting";
+- the app's picker is refused at once (`cast-picker-answered
+  outcome=error-cancel`, about 20 ms), so the desktop can't cast anywhere,
+  not even to another device.
+
+There's no way out from the page:
+
+- `endCurrentSession(false)` (leave) is what leaves the hold behind;
+- only ending the session frees it, and that also stops B's music;
+- reloading the receiver keeps the same session, so it changes nothing.
+
+A page reload does free it (Andreas, 2026-11-03: F5 resets Chrome's Cast
+dialog). Spotify avoids this by not casting from Chrome at all.
+
+**What the app does:** after a takeover, the Connect card shows "Cast to a
+device · To cast again, refresh your session" (refresh icon) in place of the
+usual row. A tap reloads the page (`cast-refresh-to-cast`).
+
+The row appears:
+- at once, on a desktop that cast from this page (a Cast tap in this page's
+  life) and was then taken over (`cast-taken-over … refresh-needed=1`);
+- or when the picker is refused in under 1 s on a page that has cast
+  (phones included, should they ever hold on too). That also covers a
+  session that ended under the page some other way (prod 2026-11-05
+  10:37:57: refused in 10 ms after #211's stop, no takeover).
+
+It goes with the reload, or when a cast connects after all. A page that
+only woke or reloaded into the taken-over session doesn't get the row.
 
 ## Speed
 

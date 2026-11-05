@@ -7,7 +7,7 @@ import { castManager } from '../../utils/CastManager';
 import { sessionMirror } from '../../utils/SessionMirror';
 import type { CastStatus } from '../../hooks/useCastStatus';
 
-const noCast: CastStatus = { available: false, connected: false, busy: false, deviceName: '' };
+const noCast: CastStatus = { available: false, connected: false, busy: false, deviceName: '', needsRefresh: false };
 let mockCast: CastStatus = noCast;
 jest.mock('../../hooks/useCastStatus', () => ({ useCastStatus: () => mockCast }));
 
@@ -173,6 +173,19 @@ describe('Cast, in the card (step 2: no Cast button of its own)', () => {
   test('is not offered without the Cast SDK or a device to cast to', () => {
     setup({});
     expect(screen.queryByRole('button', { name: /Cast to a device/ })).toBeNull();
+  });
+
+  test('after a takeover Chrome still holds: offers a refresh in its place, which reloads the page', () => {
+    // Andreas, 2026-11-03: Chrome refuses the picker until the tab reloads.
+    castReady({ needsRefresh: true });
+    const open = jest.spyOn(castManager, 'openCastPicker');
+    const reload = jest.spyOn(castManager, 'reloadToCastAgain').mockImplementation(() => undefined);
+    setup({});
+    const row = screen.getByRole('button', { name: /Cast to a device To cast again, refresh your session/ });
+    expect(screen.getAllByRole('button', { name: /Cast to a device/ })).toHaveLength(1);
+    act(() => { row.click(); });
+    expect(reload).toHaveBeenCalledWith('connect-menu');
+    expect(open).not.toHaveBeenCalled();
   });
 
   test('is offered while another device plays too', () => {
