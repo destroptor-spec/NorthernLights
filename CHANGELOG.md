@@ -4,7 +4,7 @@
 
 ### Improvements
 - **Audio analysis:** Each track is now analysed at three points (20 %, 50 % and 80 %) instead of one, so songs whose middle differs from the rest are matched more reliably. A blind listening test preferred the new results 13 to 7. Analysis takes about as long as before: the three windows are decoded in one pass, and a single model now does the work of two. Analysis also stores 400 style scores per track, the groundwork for the coming Genre and Style browse. After updating, Aurora re-analyses the library once.
-- **Python 3.14:** The analysis environment moves to Python 3.14 with a pinned Essentia build. Existing installs rebuild `.venv` once (see the production guide).
+- **Python 3.14:** The analysis environment moves to Python 3.14 with a pinned Essentia build. Existing installs rebuild `.venv` once (see the production guide; the full upgrade checklist is in `docs/genre-engine-upgrade.md`).
 
 ## [v1.0.0-rc.7] - 2026-11-06
 
