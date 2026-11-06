@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { BrowseHome } from './BrowseHome';
 import { BrowseGenrePage } from './BrowseGenrePage';
+import { COVER_GRADIENTS, coverGradientFor } from './AuroraCard';
 import { usePlayerStore } from '../../store';
 import type { BrowseGenreDetail, BrowseGenres } from '../../../shared/api/v1';
 
@@ -94,4 +95,12 @@ test('a genre page shows its biggest styles as tiles, every other style in an in
   fireEvent.click(screen.getByRole('button', { name: /^Shuffle Electronic from the 1990s/ }));
   await waitFor(() => expect(setPlaylist).toHaveBeenCalledTimes(2));
   expect(fetchMock.mock.calls.some(([u]) => String(u) === '/api/v1/browse/tracks?genre=Electronic&decade=1990&limit=500')).toBe(true);
+});
+
+test('a card takes one of the Hub cover gradients, the same one for a name every time', () => {
+  for (const name of ['Rock', 'Pop', 'Funk / Soul', 'Electronic', 'Trip Hop']) {
+    const gradient = coverGradientFor(name);
+    expect(COVER_GRADIENTS.map(token => `var(${token})`)).toContain(gradient);
+    expect(coverGradientFor(name)).toBe(gradient);
+  }
 });

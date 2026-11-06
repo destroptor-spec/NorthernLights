@@ -1423,10 +1423,11 @@ a:focus-visible > .genre-card .genre-card__label {
   margin: 0;
 }
 
-/* Genre and style cards: a 3:2 card filled with the name's own aurora
-   (genreAurora: --g-1/--g-2 from the brand palette, --g-angle, --g-ox/--g-oy),
-   the name in the display font and one line of metadata. A scrim under the
-   text keeps it readable on any hue. No hover effects; focus shows a ring. */
+/* Genre and style cards: a 3:2 card in one of the Hub's cover gradients
+   (AuroraCard.tsx picks one per name), the name in the display font and one
+   line of metadata. Cover art is theme-stable, so the text is light on a
+   fixed dark shade in both themes, as on the Hub covers. No hover effects;
+   focus shows a ring. */
 .browse-card-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1454,20 +1455,11 @@ a:focus-visible > .genre-card .genre-card__label {
   aspect-ratio: 3 / 2;
   min-width: 0;
   padding: 1rem 1.125rem;
-  border: 1px solid var(--glass-border);
   border-radius: var(--radius);
   overflow: hidden;
   isolation: isolate;
-  color: var(--color-text-primary);
+  color: rgb(255 255 255 / 0.96);
   text-decoration: none;
-  background:
-    radial-gradient(70% 90% at var(--g-ox) var(--g-oy),
-      color-mix(in oklch, var(--g-1) 78%, transparent), transparent 75%),
-    radial-gradient(80% 90% at calc(100% - var(--g-ox)) calc(100% - var(--g-oy)),
-      color-mix(in oklch, var(--g-2) 62%, transparent), transparent 78%),
-    linear-gradient(var(--g-angle),
-      color-mix(in oklch, var(--g-1) 34%, var(--color-bg-primary)),
-      color-mix(in oklch, var(--g-2) 26%, var(--color-bg-primary)));
   box-shadow: var(--shadow-sm);
 }
 
@@ -1476,8 +1468,7 @@ a:focus-visible > .genre-card .genre-card__label {
   position: absolute;
   inset: 0;
   z-index: -1;
-  background: linear-gradient(to top,
-    color-mix(in oklch, var(--color-bg-primary) 62%, transparent), transparent 62%);
+  background: linear-gradient(to top, rgb(0 0 0 / 0.42), transparent 64%);
 }
 
 .browse-card:focus-visible {
@@ -1487,6 +1478,7 @@ a:focus-visible > .genre-card .genre-card__label {
 
 .browse-card__title {
   font-family: var(--font-display);
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
   font-weight: 400;
   font-size: clamp(1.15rem, 1rem + 0.6vw, 1.5rem);
   line-height: 1.1;
@@ -1498,7 +1490,7 @@ a:focus-visible > .genre-card .genre-card__label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--color-text-secondary);
+  color: rgb(255 255 255 / 0.82);
   font-size: 0.8rem;
   font-variant-numeric: tabular-nums;
 }
