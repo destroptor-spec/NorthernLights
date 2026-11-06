@@ -1,7 +1,8 @@
 /**
- * Genre & style taxonomy: startup seeding and tag mapping
- * (docs/Aurora genre and style redesign.md, phase 1). Runs in the background
- * after the database connects; nothing here blocks playback or scanning.
+ * Genre & style taxonomy: startup seeding, tag mapping (phase 1) and fusion
+ * (phase 2) of docs/Aurora genre and style redesign.md. Runs in the
+ * background after the database connects; nothing here blocks playback or
+ * scanning.
  */
 import { initDB } from '../../database';
 import { getMappingCoverage } from './coverage';
@@ -9,9 +10,11 @@ import { mappingIsCurrent, runTagMapping } from './mapping';
 import { loadMbSnapshotIfNeeded, seedTaxonomy } from './seed';
 import { backfillTrackTags } from './trackTags';
 import { runArtistTagBackfill } from './artistTagBackfill';
+import { fusionIsCurrent, runFusion } from './fusion';
 
 export { getMappingCoverage } from './coverage';
 export { runTagMapping } from './mapping';
+export { getFusionStatus, runFusion } from './fusion';
 export { getArtistTagBackfillStatus, stopArtistTagBackfill, countRemaining as countArtistTagsRemaining } from './artistTagBackfill';
 
 const log = (message: string) => console.log(`[GenreTaxonomy] ${message}`);
@@ -40,6 +43,8 @@ export async function initializeGenreTaxonomy(): Promise<void> {
     await mapNow(!(await mappingIsCurrent()));
     const coverage = await getMappingCoverage(db, 0);
     log(`Coverage ${(coverage.tracks.coverage * 100).toFixed(1)} % of tagged tracks; ${coverage.tags.unmapped} unmapped tag(s), ${coverage.mappings.unreviewed} mapping(s) to review`);
+    // Fusion has never run, or its rules changed: rebuild every track now.
+    if (!(await fusionIsCurrent())) await fuseNow();
   })().finally(() => { running = null; });
   // Optional provider evidence: slow, resumable; does nothing without a provider.
   void running.then(() => startArtistTagBackfill()).catch(() => {});
@@ -52,7 +57,47 @@ export function startArtistTagBackfill() {
     .catch(error => console.error('[GenreTaxonomy] Artist tag backfill failed:', error?.message || error));
 }
 
-/** Debounced incremental mapping after a scan wrote new tags. */
+async function fuseNow() {
+  const status = await runFusion(await initDB());
+  const g = status.byGenreSource;
+  log(`Fused ${status.tracks} tracks in ${status.durationMs} ms: genre from tags ${g.tag}, artist tags ${g.artist}, sound ${g.audio}, by hand ${g.override}, unsorted ${g.unsorted}; ${status.withStyle} with a style`);
+}
+
+// Fusion is a full rebuild (about 10 s per 30,000 tracks), so requests are
+// debounced; a steady stream (an analysis run) still fuses every 10 minutes.
+const FUSION_DEBOUNCE_MS = 30_000;
+const FUSION_MAX_WAIT_MS = 10 * 60_000;
+let fusionTimer: NodeJS.Timeout | null = null;
+let fusionFirstRequest = 0;
+let fusionRunning: Promise<void> | null = null;
+let fusionRerun = false;
+
+/**
+ * Rebuilds genres and styles after tags, mappings, review answers, artist
+ * tags or style scores changed. `delayMs` shortens the wait for changes made
+ * by hand (a review answer should show in Browse soon).
+ */
+export function scheduleFusion(delayMs = FUSION_DEBOUNCE_MS) {
+  // Tests run fusion directly; a timer firing mid-suite would race them.
+  if (process.env.NODE_ENV === 'test') return;
+  const now = Date.now();
+  if (!fusionTimer) fusionFirstRequest = now;
+  else clearTimeout(fusionTimer);
+  const wait = Math.max(0, Math.min(delayMs, fusionFirstRequest + FUSION_MAX_WAIT_MS - now));
+  fusionTimer = setTimeout(() => {
+    fusionTimer = null;
+    if (fusionRunning || running) { fusionRerun = true; return; }
+    fusionRunning = fuseNow()
+      .catch(error => console.error('[GenreTaxonomy] Fusion failed:', error?.message || error))
+      .finally(() => {
+        fusionRunning = null;
+        if (fusionRerun) { fusionRerun = false; scheduleFusion(); }
+      });
+  }, wait);
+  fusionTimer.unref?.();
+}
+
+/** Debounced incremental mapping after a scan wrote new tags; fusion follows. */
 export function scheduleTagMapping(delayMs = 5000) {
   if (scheduled) clearTimeout(scheduled);
   scheduled = setTimeout(async () => {
@@ -61,6 +106,7 @@ export function scheduleTagMapping(delayMs = 5000) {
     running = mapNow(false).finally(() => {
       running = null;
       if (rerunRequested) { rerunRequested = false; scheduleTagMapping(delayMs); }
+      scheduleFusion();
     });
     running.catch(error => console.error('[GenreTaxonomy] Tag mapping failed:', error?.message || error));
   }, delayMs);

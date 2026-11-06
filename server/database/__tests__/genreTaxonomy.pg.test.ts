@@ -279,4 +279,75 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     expect((await review.getGenreReviewState(pool)).entries.some(e => e.kind === 'spelling'
       && e.spellings!.some(s => s.name === 'Alternative-Rock'))).toBe(true);
   });
+
+  test('fusion gives every track a genre or leaves it unsorted, adds sound styles to genre-only tags, and builds album and artist profiles', async () => {
+    const fusion = await import('../../services/genreTaxonomy/fusion');
+    const styleOf = async (genre: string, name: string) => (await pool.query(
+      'SELECT id, model_index FROM style WHERE genre = $1 AND name = $2', [genre, name])).rows[0] as { id: number; model_index: number };
+    const [house, techno, hardRock, popRock, punk] = await Promise.all([
+      styleOf('Electronic', 'House'), styleOf('Electronic', 'Techno'), styleOf('Rock', 'Hard Rock'), styleOf('Rock', 'Pop Rock'), styleOf('Rock', 'Punk')]);
+    const artist = (await pool.query(`INSERT INTO artists (name) VALUES ('Fusion Artist') RETURNING id`)).rows[0].id;
+    const tagged = (await pool.query(`INSERT INTO artists (name) VALUES ('Fusion Tagged Artist') RETURNING id`)).rows[0].id;
+    const albumA = (await pool.query(`INSERT INTO albums (title, artist_name) VALUES ('Fusion A', 'Fusion Artist') RETURNING id`)).rows[0].id;
+    const albumB = (await pool.query(`INSERT INTO albums (title, artist_name) VALUES ('Fusion B', 'Fusion Artist') RETURNING id`)).rows[0].id;
+    const add = async (name: string, genres: string[] | null, opts: { artistId: string; albumId: string; scores?: Record<number, number>; simulated?: boolean }) => {
+      await db.addTrack(track(name, genres));
+      const id = idOf(name);
+      await pool.query('UPDATE tracks SET artist_id = $2, album_id = $3 WHERE id = $1', [id, opts.artistId, opts.albumId]);
+      if (opts.scores) {
+        const scores = Array(400).fill(0.01);
+        for (const [index, score] of Object.entries(opts.scores)) scores[Number(index)] = score;
+        await pool.query('INSERT INTO track_features (track_id, is_simulated) VALUES ($1, $2)', [id, opts.simulated ?? false]);
+        await pool.query(`INSERT INTO track_style_scores (track_id, scores, model, windows, genre_version) VALUES ($1, $2, 'test', '20,50,80', 1)`, [id, scores]);
+      }
+      return id;
+    };
+    // A style tag; a genre-only tag with a sound that leans Hard Rock, a bit
+    // Pop Rock, too little Punk, and loud House (another genre: ignored).
+    const styled = await add('fz-house', ['House'], { artistId: tagged, albumId: albumA });
+    const rock = await add('fz-rock', ['Rock'], {
+      artistId: artist, albumId: albumA, scores: { [hardRock.model_index]: 0.6, [popRock.model_index]: 0.3, [punk.model_index]: 0.1, [house.model_index]: 0.9 } });
+    const simulatedRock = await add('fz-rock-sim', ['Rock'], { artistId: artist, albumId: albumA, scores: { [hardRock.model_index]: 0.9 }, simulated: true });
+    // No tag: the artist's tags decide (Last.fm "electronic"), the sound picks styles.
+    const untagged = await add('fz-untagged', null, { artistId: artist, albumId: albumB, scores: { [techno.model_index]: 0.7, [hardRock.model_index]: 0.8 } });
+    await pool.query(`INSERT INTO artist_tags (artist_id, provider, tag, tag_key, raw_count, weight) VALUES ($1, 'lastfm', 'electronic', 'electronic', 100, 1)`, [artist]);
+    // No tag, no artist tags, and too little library to trust the sound alone: Unsorted.
+    const unsorted = await add('fz-unsorted', null, { artistId: tagged, albumId: albumB, scores: { [house.model_index]: 0.9 } });
+    await taxonomy.runTagMapping(pool);
+
+    const status = await fusion.runFusion(pool);
+    expect(status.version).toBe(fusion.FUSION_VERSION);
+    expect(status.byGenreSource.unsorted).toBeGreaterThanOrEqual(1);
+    const rowsOf = async (id: string) => (await pool.query(
+      `SELECT ts.genre, s.name AS style, ts.source, round(ts.strength::numeric, 2)::float AS strength FROM track_styles ts
+       LEFT JOIN style s ON s.id = ts.style_id WHERE ts.track_id = $1 ORDER BY ts.genre, s.name NULLS FIRST`, [id])).rows;
+    expect(await rowsOf(styled)).toEqual([
+      { genre: 'Electronic', style: null, source: 'tag', strength: 1 }, { genre: 'Electronic', style: 'House', source: 'tag', strength: 1 }]);
+    expect(await rowsOf(rock)).toEqual([
+      { genre: 'Rock', style: null, source: 'tag', strength: 1 },
+      { genre: 'Rock', style: 'Hard Rock', source: 'audio', strength: 0.48 },
+      { genre: 'Rock', style: 'Pop Rock', source: 'audio', strength: 0.24 }]);
+    expect(await rowsOf(simulatedRock)).toEqual([{ genre: 'Rock', style: null, source: 'tag', strength: 1 }]);
+    expect(await rowsOf(untagged)).toEqual([
+      { genre: 'Electronic', style: null, source: 'artist', strength: 0.6 },
+      { genre: 'Electronic', style: 'Techno', source: 'audio', strength: 0.56 }]);
+    expect(await rowsOf(unsorted)).toEqual([]);
+
+    // Profiles: album A has 3 tracks (1 House); the artist's own tracks are
+    // album A (2 Rock tracks) and album B (1 Electronic), each album counted once.
+    const albumRow = (await pool.query(`SELECT share, tracks FROM album_styles WHERE album_id = $1 AND style_id = $2`, [albumA, house.id])).rows[0];
+    expect(Number(albumRow.share)).toBeCloseTo(1 / 3);
+    const artistRows = (await pool.query(
+      `SELECT genre, style_id, share, albums, tracks FROM artist_styles WHERE artist_id = $1 AND style_id IS NULL ORDER BY genre`, [artist])).rows;
+    expect(artistRows.map(r => [r.genre, Number(Number(r.share).toFixed(2)), r.albums, r.tracks]))
+      .toEqual([['Electronic', 0.5, 1, 1], ['Rock', 0.5, 1, 2]]);
+
+    // Hand corrections apply last, and an incremental run touches only its tracks.
+    await pool.query(`INSERT INTO track_style_overrides (track_id, genre, style_id, action) VALUES
+      ($1, 'Rock', $2, 'exclude'), ($3, 'Electronic', $4, 'add')`, [rock, hardRock.id, styled, techno.id]);
+    await fusion.runFusion(pool, { trackIds: [rock, styled] });
+    expect((await rowsOf(rock)).map(r => r.style)).toEqual([null, 'Pop Rock']);
+    expect(await rowsOf(styled)).toContainEqual({ genre: 'Electronic', style: 'Techno', source: 'override', strength: 1 });
+    expect(await rowsOf(untagged)).toHaveLength(2);
+  });
 });

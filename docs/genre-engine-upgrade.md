@@ -6,7 +6,7 @@ Every step needed to take branch `genre-engine-next` to prod, in one place. Each
 | --- | --- | --- |
 | 0 | Python 3.14 venv, new analysis models, `track_style_scores`, full re-analysis | Built (`038e736`), not deployed |
 | 1 | Genre list, MusicBrainz genre snapshot, tag mapping, artist-tag split, Last.fm backfill, genre review | Built (1a: taxonomy, snapshot, tag mapping, artist tags, backfill; 1b: review queue), not deployed |
-| 2 | New Browse behind a setting | Not built |
+| 2 | Fusion (genres and styles per track, album and artist profiles), new Browse behind a setting, "Aurora rays from {title}" | In progress: fusion built, not deployed |
 | 3 | Audio, KNN and Last.fm evidence; style centroids | Not built |
 | 4 | Engine scoring; Genre Matrix and MBDB import retired | Not built |
 
@@ -140,7 +140,20 @@ Dev, for scale: 143 name matches, 106 questions (41 no genre, 36 guessed, 13 sev
 
 ## Phase 2: new Browse
 
-Steps are added here when phase 2 is built.
+### 1. Deploy (schema change)
+
+New tables `track_styles`, `track_style_overrides`, `album_styles`, `artist_styles`; nothing existing changes. The deploy script exports the database first.
+
+### 2. Automatic on first start (nothing to run)
+
+After tag mapping, the server runs fusion once over the whole library because no fusion has run yet. The log says `[GenreTaxonomy] Fused N tracks in … ms: genre from tags …, artist tags …, sound …, by hand …, unsorted …; M with a style`. On dev (30,746 tracks) it takes about 10 s; prod's larger library takes proportionally longer, in the background. From then on fusion reruns by itself after scans, review answers and analysis.
+
+Run it after phase 0's re-analysis if possible: without style scores, genre-only tags get no styles and untagged tracks can only take a genre from artist tags. Rerun by hand any time with `POST /api/admin/genre-taxonomy/fusion`.
+
+### 3. Verify
+
+- [ ] `GET /api/admin/genre-taxonomy/fusion` returns a status with `version` 1, `unsorted` small (dev: 57 of 30,746), and `audioGenres` listing the genres the sound may name on its own (dev: Electronic, Rock, Jazz).
+- [ ] `SELECT COUNT(*) FROM album_styles` and `artist_styles` are not zero.
 
 ## Phase 3: audio and artist-tag evidence
 

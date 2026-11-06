@@ -154,29 +154,24 @@ CREATE TABLE tag_ignored (
   reason TEXT
 );
 
--- Per-track evidence and the fused result
+-- The fused result: one row per membership, saying where it came from.
+-- (Built in phase 2. The first plan also stored a row per evidence source;
+-- model scores already live in track_style_scores, so only the result is
+-- stored, and its source is what "Aurora rays from {title}" shows.)
 CREATE TABLE track_styles (
-  id             BIGSERIAL PRIMARY KEY,
   track_id       TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
   genre          TEXT NOT NULL REFERENCES taxonomy_genre(name),
-  style_id       INT,                        -- NULL = genre-level membership
-  source         TEXT NOT NULL,              -- 'tag' | 'ml' | 'knn' | 'lastfm' | 'override' | 'fused'
-  member         BOOLEAN NOT NULL,           -- listed under this genre/style in Browse
+  style_id       INT,                        -- NULL = the genre row; every member genre has one
+  source         TEXT NOT NULL,              -- 'tag' | 'audio' | 'artist' | 'override'
   strength       REAL NOT NULL,              -- ranking on pages, 0..1
   confidence     REAL NOT NULL,              -- how sure, 0..1
-  disputed       BOOLEAN NOT NULL DEFAULT false,  -- fused tag membership the audio contradicts (see Fusion)
+  disputed       BOOLEAN NOT NULL DEFAULT false,  -- tag membership the audio contradicts (phase 3)
   fusion_version INT NOT NULL,
   FOREIGN KEY (style_id, genre) REFERENCES style(id, genre),
-  UNIQUE NULLS NOT DISTINCT (track_id, genre, style_id, source)
+  UNIQUE NULLS NOT DISTINCT (track_id, genre, style_id)
 );
-
--- Browse reads fused members only; keep those lookups off the evidence rows
-CREATE INDEX track_styles_style_browse_idx ON track_styles (style_id, strength DESC)
-  WHERE source = 'fused' AND member;
-CREATE INDEX track_styles_genre_browse_idx ON track_styles (genre, strength DESC)
-  WHERE source = 'fused' AND member;
-CREATE INDEX track_styles_disputed_idx ON track_styles (genre, style_id)
-  WHERE source = 'fused' AND disputed;
+CREATE INDEX track_styles_style_idx ON track_styles (style_id, strength DESC) WHERE style_id IS NOT NULL;
+CREATE INDEX track_styles_genre_idx ON track_styles (genre, strength DESC) WHERE style_id IS NULL;
 
 -- Persistent user corrections, applied after fusion on every run.
 -- 'add' also confirms a disputed tag, so the dispute is not raised again.
@@ -272,7 +267,7 @@ Each track gets evidence from up to four sources, and a fusion step writes the `
 
 &#91;embedded content: genre/style data flow · 4 sources, 1 fused table\]
 
-Only `track_styles` rows with `source = 'fused'` are read downstream; centroids are rebuilt from them after each scan and also drive "sounds close to" in Browse.
+Only `track_styles` is read downstream; centroids are rebuilt from it after each scan and also drive "sounds close to" in Browse.
 
 ### Extractor changes (`server/workers/extractor.py`)
 
@@ -337,7 +332,7 @@ Here tag(s) is the best mapping reliability among the track's tags for s. Rules,
 - **Tags mapped to a genre alone**: when none of a track's tags names a style, its styles come from audio within the tagged genre, as for untagged tracks below (top 3 with a raw ML score of at least 0.15). This ships in phase 2 with the untagged rule. It is how the review handles a tag one artist uses across varied albums ("Electric Hip Hop Soul": Downtempo, Glitch, Dubstep and Instrumental Hip Hop on different tracks): the tag sets the genre, and each track keeps its own style.
 - **Untagged tracks**: the genre comes from the first available source, and styles always come from audio. This rule touches only tracks with no genre tag, so it ships in phase 2 (see Migration) and cannot make tagged tracks worse.
   1. *Artist tags, when the install has them*: the artist's strongest tag that maps to a genre (weight at least 0.3) sets the genre. On prod this matched Picard for 86 % of tracks, against 70 % for audio (see Artist tags).
-  2. *Audio otherwise (the baseline)*: the model's top genre, but only in genres where it agrees with tags at least 70 % of the time (today Electronic, Reggae, Hip Hop and Rock; see Model choice).
+  2. *Audio otherwise (the baseline)*: the model's top genre, but only in genres where it agrees with tags at least 70 % of the time, measured on the library itself at every full fusion run (at least 50 tagged tracks per genre). On dev with three windows: Rock 89 %, Electronic 75 %, Jazz 72 % qualify; Hip Hop 61 %, Pop 48 % and the rest do not.
   3. *Neither*: the track goes to Unsorted with the model's suggestion for an admin to confirm.
 
   Within the chosen genre, the top 3 styles with a raw ML score of at least 0.15 join as inferred members; KNN only breaks ties. Thresholds always compare raw scores, never weighted ones. On dev the predictions for untagged tracks looked right (Pendulum → Drum n Bass 0.91, Static-X → Nu Metal, Benal → Cloud Rap, Coldplay → Alternative Rock).
@@ -506,7 +501,7 @@ Ship in four phases: tags and taxonomy → usable Browse → measured ML enrichm
 
 0. **Analysis window (parallel to phase 1).** The blind A/B round favoured the mean of 20 / 50 / 80 % (13–7, see Analysis window). Implemented as feature version 3: one ffmpeg call per track, EffNet plus classifiers (MusiCNN removed), `genre_discogs400` scores in `track_style_scores`. Any scan that finds a new file re-analyses every outdated track, so time the prod deploy. Prod steps (venv rebuild, models, re-analysis, verification) are in [genre-engine-upgrade.md](./genre-engine-upgrade.md).
 1. **Taxonomy and tag mapping.** Seed `taxonomy_genre` and `style` from the versioned JSON with validation. Split Last.fm and MusicBrainz artist tags into per-provider rows with normalised weights (the scale-mixing fix). Copy every original tag from `tracks.genres` into `track_tags`, and carry accepted duplicate-review merges into `tag_map` as aliases. Map tags exact → alias → MusicBrainz alias → MusicBrainz parent → LLM; ambiguous duplicate style names and low-reliability mappings go to an admin review screen. The LLM step is optional, like all AI in Aurora: without a configured LLM, tags left after the MusicBrainz steps go straight to the review screen and stay visible under Unsorted. Seed the snapshot (see MusicBrainz genre data) in this phase. On dev, exact names alone map 77.5 % of tagged tracks, and 21 aliases for the most common misses (Dance → Electronic, Drum & Bass → Drum n Bass, Rap → Hip Hop, R&B → Rhythm & Blues, Metal → Heavy Metal, Film → Soundtrack…) raise that to 95.6 %. Junk tags ("None", "Other") map to `tag_ignored`. Gate: mapping coverage (share of tagged tracks with at least one mapping) and mapping correctness (share right in the reviewed sample) are reported separately, and both meet a target you set.
-2. **Browse on tags, plus untagged tracks.** Fusion with tag evidence, and the untagged-track rule so tracks with no genre tag do not wait for phase 3. Where artist tags are already stored (prod), they set the genre of untagged tracks immediately; without them the audio-only rule applies. Fusion is tested both with and without artist tags (dev has none), and both runs must leave every track either in a genre or in Unsorted. Their scores come from an early genre backfill limited to untagged, non-simulated tracks, using the `genre_discogs400` head on fresh per-patch embeddings (it fits the current extractor wrapper). The stored `embedding_vector` cannot be reused: it is an L2-normalised mean, not the per-patch input the head was trained on. These rows carry their own `genre_version`, so if phase 0 changes the windows they are simply rescored. The new Browse ships behind a setting, then becomes the default, with Unsorted tags live from day one. Tags mapped to a genre alone get styles from audio within that genre in the same step. Album and artist profiles (see Three levels) and "Aurora rays from {title}" ship here too, without "Sounds close to".
+2. **Browse on tags, plus untagged tracks.** Fusion built (fusion version 1, `services/genreTaxonomy/fusion.ts`): on dev, 29,416 tracks take their genre from tags, 1,191 from artist tags, 82 from the sound, 57 stay unsorted, and 24,138 (78 %) have a style, up from 15,025 by tags alone; a full run takes about 10 s. Fusion with tag evidence, and the untagged-track rule so tracks with no genre tag do not wait for phase 3. Where artist tags are already stored (prod), they set the genre of untagged tracks immediately; without them the audio-only rule applies. Fusion is tested both with and without artist tags (dev has none), and both runs must leave every track either in a genre or in Unsorted. Their scores come from an early genre backfill limited to untagged, non-simulated tracks, using the `genre_discogs400` head on fresh per-patch embeddings (it fits the current extractor wrapper). The stored `embedding_vector` cannot be reused: it is an L2-normalised mean, not the per-patch input the head was trained on. These rows carry their own `genre_version`, so if phase 0 changes the windows they are simply rescored. The new Browse ships behind a setting, then becomes the default, with Unsorted tags live from day one. Tags mapped to a genre alone get styles from audio within that genre in the same step. Album and artist profiles (see Three levels) and "Aurora rays from {title}" ship here too, without "Sounds close to".
 3. **Measured ML enrichment.** Run the genre backfill (unless phase 0's re-analysis already wrote the scores). ML, KNN and Last.fm evidence for tagged tracks switch on only where the reviewed sample shows they help; Last.fm descriptors start feeding AI playlist prompts and facets; centroids and "Sounds close to" follow, in Browse and in "Aurora rays from {title}". Disputed-tag flags start once centroids exist.
 4. **Recommendation changes.** Style overlap replaces the hop-cost penalty in candidate scoring and is compared side by side against the old engine, which stays selectable. Then `tracks.genre_id` and `track_genres` are derived from fused genres and styles, and the remaining Genre Matrix pieces are retired or re-pointed (see What happens to the Genre Matrix), including `subgenre_mappings`.
 

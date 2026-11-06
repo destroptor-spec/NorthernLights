@@ -616,6 +616,24 @@ router.post('/genre-taxonomy/artist-tags/backfill', adminMutationRateLimit, requ
   res.json(taxonomy.getArtistTagBackfillStatus());
 });
 
+// Fusion (phase 2): the last run's summary, and a full rebuild on request.
+router.get('/genre-taxonomy/fusion', adminReadRateLimit, requireAdmin, async (_req, res) => {
+  try {
+    const { getFusionStatus } = await import('../services/genreTaxonomy');
+    res.json({ status: await getFusionStatus() });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || 'Status failed' });
+  }
+});
+router.post('/genre-taxonomy/fusion', adminMutationRateLimit, requireAdmin, async (_req, res) => {
+  try {
+    const { runFusion } = await import('../services/genreTaxonomy');
+    res.json({ status: await runFusion(await initDB()) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || 'Fusion failed' });
+  }
+});
+
 // Re-run tag mapping. full=true re-resolves every tag without a manual decision.
 router.post('/genre-taxonomy/remap', adminMutationRateLimit, requireAdmin, async (req, res) => {
   try {

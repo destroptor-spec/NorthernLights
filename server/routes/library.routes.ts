@@ -270,6 +270,8 @@ router.get('/genre-reviews/taxonomy', requireAdmin, async (_req, res) => {
 const afterGenreDecision = async () => {
   const { invalidateGenreEntityCache } = await import('../database');
   invalidateGenreEntityCache();
+  // Review answers change mappings: rebuild genres and styles soon.
+  void import('../services/genreTaxonomy').then(m => m.scheduleFusion(5000)).catch(() => {});
   await publishApiV1LibraryRevision({ source: 'genreReview' });
 };
 

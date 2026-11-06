@@ -910,6 +910,63 @@ export async function initDB(): Promise<Pool> {
           error      TEXT,
           PRIMARY KEY (artist_id, provider)
         );
+        -- Fused genres and styles per track (phase 2 of the genre redesign):
+        -- one row per membership, saying where it came from. Rebuilt by
+        -- services/genreTaxonomy/fusion.ts; model scores stay in
+        -- track_style_scores. Browse reads only this table and the profiles.
+        CREATE TABLE IF NOT EXISTS track_styles (
+          track_id       TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+          genre          TEXT NOT NULL REFERENCES taxonomy_genre(name),
+          style_id       INTEGER,
+          source         TEXT NOT NULL CHECK (source IN ('tag', 'audio', 'artist', 'override')),
+          strength       REAL NOT NULL CHECK (strength BETWEEN 0 AND 1),
+          confidence     REAL NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+          disputed       BOOLEAN NOT NULL DEFAULT false,
+          fusion_version INTEGER NOT NULL,
+          FOREIGN KEY (style_id, genre) REFERENCES style(id, genre),
+          UNIQUE NULLS NOT DISTINCT (track_id, genre, style_id)
+        );
+        CREATE INDEX IF NOT EXISTS track_styles_style_idx ON track_styles (style_id, strength DESC) WHERE style_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS track_styles_genre_idx ON track_styles (genre, strength DESC) WHERE style_id IS NULL;
+        -- Hand corrections, applied after fusion on every run.
+        CREATE TABLE IF NOT EXISTS track_style_overrides (
+          track_id   TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+          genre      TEXT NOT NULL REFERENCES taxonomy_genre(name),
+          style_id   INTEGER,
+          action     TEXT NOT NULL CHECK (action IN ('add', 'exclude')),
+          user_id    UUID REFERENCES users(id) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          FOREIGN KEY (style_id, genre) REFERENCES style(id, genre),
+          UNIQUE NULLS NOT DISTINCT (track_id, genre, style_id)
+        );
+        -- Album and artist profiles: summaries of their tracks' rows above,
+        -- rebuilt with them. An artist's profile counts each album once.
+        CREATE TABLE IF NOT EXISTS album_styles (
+          album_id       UUID NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+          genre          TEXT NOT NULL REFERENCES taxonomy_genre(name),
+          style_id       INTEGER,
+          share          REAL NOT NULL,
+          strength       REAL NOT NULL,
+          tracks         INTEGER NOT NULL,
+          fusion_version INTEGER NOT NULL,
+          FOREIGN KEY (style_id, genre) REFERENCES style(id, genre),
+          UNIQUE NULLS NOT DISTINCT (album_id, genre, style_id)
+        );
+        CREATE INDEX IF NOT EXISTS album_styles_style_idx ON album_styles (style_id, share DESC) WHERE style_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS album_styles_genre_idx ON album_styles (genre, share DESC) WHERE style_id IS NULL;
+        CREATE TABLE IF NOT EXISTS artist_styles (
+          artist_id      UUID NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+          genre          TEXT NOT NULL REFERENCES taxonomy_genre(name),
+          style_id       INTEGER,
+          share          REAL NOT NULL,
+          albums         INTEGER NOT NULL,
+          tracks         INTEGER NOT NULL,
+          fusion_version INTEGER NOT NULL,
+          FOREIGN KEY (style_id, genre) REFERENCES style(id, genre),
+          UNIQUE NULLS NOT DISTINCT (artist_id, genre, style_id)
+        );
+        CREATE INDEX IF NOT EXISTS artist_styles_style_idx ON artist_styles (style_id, share DESC) WHERE style_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS artist_styles_genre_idx ON artist_styles (genre, share DESC) WHERE style_id IS NULL;
 
         CREATE TABLE IF NOT EXISTS user_playback_stats (
           user_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -2326,6 +2383,8 @@ export async function addTrackFeatures(trackId: string, audioFeatures: {
       await client.query('DELETE FROM track_style_scores WHERE track_id = $1', [trackId]);
     }
     await client.query('COMMIT');
+    // New style scores feed fusion (debounced; at most every 10 minutes during a run).
+    void import('../services/genreTaxonomy').then(m => m.scheduleFusion()).catch(() => {});
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     throw error;

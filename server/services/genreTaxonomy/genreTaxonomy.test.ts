@@ -2,6 +2,7 @@
 import { loadDiscogsLabels, loadMbSnapshot, loadTagAliases, tagKey, validateAliases, validateLabels } from './data';
 import { buildContext, resolveTag } from './mapping';
 import { suggestGenre } from './review';
+import { trustedAudioGenres } from './fusion';
 import { parseSetting, snapshotDecision } from './seed';
 import { splitStoredGenres } from './trackTags';
 
@@ -180,5 +181,17 @@ describe('the review suggestion', () => {
     expect(suggestGenre(fits, { genre: 'Rock', strong: false }, [newWave])?.targets).toEqual([newWave]);
     // Without audio the tag's own style stands.
     expect(suggestGenre(null, { genre: 'Rock', strong: true }, [newWave])?.targets).toEqual([newWave]);
+  });
+});
+
+describe('fusion', () => {
+  test('the sound names the genre of an untagged track only where it agrees with tags 70 % of the time, on at least 50 tracks', () => {
+    // Dev, 6 Nov 2026 (three windows).
+    const measured = [
+      { genre: 'Electronic', tracks: 11018, agreement: 0.75 }, { genre: 'Rock', tracks: 9372, agreement: 0.89 },
+      { genre: 'Hip Hop', tracks: 2821, agreement: 0.61 }, { genre: 'Jazz', tracks: 345, agreement: 0.72 },
+      { genre: 'Brass & Military', tracks: 18, agreement: 1 },
+    ];
+    expect(trustedAudioGenres(measured).map(a => a.genre)).toEqual(['Electronic', 'Rock', 'Jazz']);
   });
 });
