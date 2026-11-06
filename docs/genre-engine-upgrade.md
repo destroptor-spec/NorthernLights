@@ -5,7 +5,7 @@ Every step needed to take branch `genre-engine-next` to prod, in one place. Each
 | Phase | What it changes on prod | Status |
 | --- | --- | --- |
 | 0 | Python 3.14 venv, new analysis models, `track_style_scores`, full re-analysis | Built (`038e736`), not deployed |
-| 1 | Genre list, MusicBrainz genre snapshot, tag mapping, artist-tag split, Last.fm backfill | 1a in progress (taxonomy, snapshot, tag mapping built); review screen (1b) not built |
+| 1 | Genre list, MusicBrainz genre snapshot, tag mapping, artist-tag split, Last.fm backfill | 1a built (taxonomy, snapshot, tag mapping, artist tags, backfill); review screen (1b) not built |
 | 2 | New Browse behind a setting | Not built |
 | 3 | Audio, KNN and Last.fm evidence; style centroids | Not built |
 | 4 | Engine scoring; Genre Matrix and MBDB import retired | Not built |
@@ -80,7 +80,7 @@ SQL
 
 ## Phase 1: genre list and tag mapping
 
-Built so far: genre list, MusicBrainz genre snapshot, original-tag table, tag mapping and coverage report. The artist-tag split, Last.fm backfill and the review screen will add their steps here.
+Built so far (1a): genre list, MusicBrainz genre snapshot, original-tag table, tag mapping, coverage report, per-provider artist tags and their backfill. The review screen (1b) will add its steps here.
 
 ### 1. Deploy (schema change)
 
@@ -97,7 +97,20 @@ In the background after the database connects, in this order:
 
 The server log shows `[GenreTaxonomy] Coverage NN.N % of tagged tracks; …`. Dev reached 98.3 %, with 41 tags unmapped and 237 mappings to review.
 
-### 3. Verify
+### 3. Artist-tag backfill (automatic, slow, optional)
+
+After the startup mapping, a background job fetches tags for library artists that have none yet:
+
+- **Last.fm:** one `artist.gettoptags` call per artist, when a Last.fm key is configured.
+- **MusicBrainz:** one artist lookup per artist with a known MBID, when MusicBrainz is enabled.
+
+It works most-played first at one call per 1.5 s, maps new artist tags as it goes, stops on a rate limit, and resumes at the next start (a deploy or restart just continues it). Expect about 2 h for Last.fm on prod's ~4,800 artists, then a similar run for MusicBrainz. Without a key or with MusicBrainz off, it does nothing, and the taxonomy works from file tags and audio alone.
+
+- [ ] Progress (admin): `GET /api/admin/genre-taxonomy/artist-tags/backfill` shows `fetched`, `remaining` and `stoppedReason`.
+- [ ] To pause it: `POST /api/admin/genre-taxonomy/artist-tags/backfill` with `{"action":"stop"}`; `{}` starts it again.
+- Existing artist chips switch from summed counts to per-provider weights when an artist is next looked up; nothing to do.
+
+### 4. Verify
 
 - [ ] The log line above appears without `[GenreTaxonomy] Initialisation failed`.
 - [ ] Coverage and gate (admin): `GET /api/admin/genre-taxonomy/coverage` returns `gate.coverageMet: true`. `gate.allReviewed` stays false until the review screen (1b) has been worked through.
@@ -106,12 +119,13 @@ The server log shows `[GenreTaxonomy] Coverage NN.N % of tagged tracks; …`. De
 SELECT (SELECT COUNT(*) FROM style) AS styles,              -- 400
        (SELECT COUNT(*) FROM track_tags) AS track_tags,
        (SELECT COUNT(*) FROM tag_map) AS mappings,
-       (SELECT value FROM system_settings WHERE key = 'mbGenreSource') AS mb_source;
+       (SELECT value FROM system_settings WHERE key = 'mbGenreSource') AS mb_source,
+       (SELECT COUNT(*) FROM artist_tag_fetches) AS artist_fetches;
 ```
 
 ### Rollback
 
-`--rollback` is safe: the old code ignores the new tables, and the MusicBrainz tables keep the same shape (the snapshot only refreshes their contents).
+`--rollback` is safe: the old code ignores the new tables, and the MusicBrainz tables keep the same shape (the snapshot only refreshes their contents). The old code still writes summed tag counts to `artists.community_tags`; that only affects the chips' tooltip number.
 
 ## Phase 2: new Browse
 

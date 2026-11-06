@@ -108,3 +108,27 @@ describe('MusicBrainz snapshot decision', () => {
     expect(parseSetting('not json')).toBeNull();
   });
 });
+
+describe('artist tags per provider', () => {
+  const { normaliseProviderTags, mergeForDisplay } = jest.requireActual('./artistTags') as typeof import('./artistTags');
+
+  test('MusicBrainz genres and tags merge by maximum, then weight against the strongest tag', () => {
+    const tags = normaliseProviderTags([
+      { name: 'electronic', count: 4 }, { name: 'Electronic', count: 4 }, // genre + tag, same votes
+      { name: 'downtempo', count: 2 }, { name: 'zero', count: 0 }, { name: '', count: 3 },
+    ]);
+    expect(tags.map(t => [t.name, t.rawCount, t.weight])).toEqual([['electronic', 4, 1], ['downtempo', 2, 0.5]]);
+    expect(tags[0].key).toBe('electronic');
+    expect(normaliseProviderTags([{ name: 'x', count: 0 }])).toEqual([]);
+  });
+
+  test('display chips use the strongest provider weight, never a sum across providers', () => {
+    const lastfm = normaliseProviderTags([{ name: 'trip-hop', count: 100 }, { name: 'electronic', count: 40 }]);
+    const mb = normaliseProviderTags([{ name: 'electronic', count: 3 }, { name: 'trip-hop', count: 1 }]);
+    expect(mergeForDisplay({ lastfm, musicbrainz: mb })).toEqual([
+      { name: 'electronic', count: 100, providers: ['lastfm', 'musicbrainz'] },
+      { name: 'trip-hop', count: 100, providers: ['lastfm', 'musicbrainz'] },
+    ]);
+    expect(mergeForDisplay({})).toBeUndefined();
+  });
+});

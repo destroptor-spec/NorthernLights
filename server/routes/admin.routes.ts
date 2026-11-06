@@ -600,6 +600,22 @@ router.get('/genre-taxonomy/coverage', adminReadRateLimit, requireAdmin, async (
   }
 });
 
+// Artist-tag backfill (Last.fm / MusicBrainz, optional): status, start, stop.
+router.get('/genre-taxonomy/artist-tags/backfill', adminReadRateLimit, requireAdmin, async (_req, res) => {
+  try {
+    const taxonomy = await import('../services/genreTaxonomy');
+    res.json({ ...taxonomy.getArtistTagBackfillStatus(), remaining: await taxonomy.countArtistTagsRemaining(await initDB()) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || 'Status failed' });
+  }
+});
+router.post('/genre-taxonomy/artist-tags/backfill', adminMutationRateLimit, requireAdmin, async (req, res) => {
+  const taxonomy = await import('../services/genreTaxonomy');
+  if (req.body?.action === 'stop') taxonomy.stopArtistTagBackfill();
+  else taxonomy.startArtistTagBackfill();
+  res.json(taxonomy.getArtistTagBackfillStatus());
+});
+
 // Re-run tag mapping. full=true re-resolves every tag without a manual decision.
 router.post('/genre-taxonomy/remap', adminMutationRateLimit, requireAdmin, async (req, res) => {
   try {

@@ -1,4 +1,6 @@
-import { getSystemSetting } from '../../database';
+import { getSystemSetting, initDB } from '../../database';
+import { mergeForDisplay, normaliseProviderTags, saveArtistTagsByName, type ProviderTag, type TagProvider, type WeightedTag } from '../genreTaxonomy/artistTags';
+import { scheduleTagMapping } from '../genreTaxonomy';
 import { RateLimitError, ProviderError, isRateLimitError, isProviderError } from './errors';
 import {
   getCachedArtist,
@@ -101,41 +103,6 @@ function cleanHtml(text: string): string {
     .trim();
 }
 
-function addCommunityTag(
-  tagMap: Map<string, CommunityTag>,
-  rawName: unknown,
-  rawCount: unknown,
-  provider: 'lastfm' | 'musicbrainz'
-) {
-  if (typeof rawName !== 'string') return;
-  const name = rawName.trim();
-  if (!name) return;
-
-  const key = name.toLowerCase();
-  const parsedCount = typeof rawCount === 'number'
-    ? rawCount
-    : typeof rawCount === 'string'
-      ? parseInt(rawCount, 10)
-      : 0;
-  const count = Number.isFinite(parsedCount) ? parsedCount : 0;
-
-  const existing = tagMap.get(key);
-  if (existing) {
-    existing.count += count;
-    if (!existing.providers.includes(provider)) existing.providers.push(provider);
-    return;
-  }
-
-  tagMap.set(key, { name, count, providers: [provider] });
-}
-
-function sortedCommunityTags(tagMap: Map<string, CommunityTag>): CommunityTag[] | undefined {
-  const tags = Array.from(tagMap.values())
-    .sort((a, b) => b.count - a.count || b.providers.length - a.providers.length || a.name.localeCompare(b.name))
-    .slice(0, 16);
-  return tags.length > 0 ? tags : undefined;
-}
-
 async function getProviderSettings(): Promise<ProviderSettings> {
   return {
     lastFmApiKey: (await getSystemSetting('lastFmApiKey')) || '',
@@ -191,7 +158,10 @@ export async function getArtistData(
   }
 
   let data: ArtistData = {};
-  const communityTagMap = new Map<string, CommunityTag>();
+  // Raw tags per provider that answered. Kept apart: Last.fm counts are 0–100
+  // relative, MusicBrainz counts are votes; they are normalised per provider
+  // (genreTaxonomy/artistTags) and never summed.
+  const providerTags: Partial<Record<TagProvider, ProviderTag[]>> = {};
 
   // The stored id (from the files) wins over one the caller derived.
   if (settings.musicBrainzEnabled && (cached?.mbid || mbArtistId)) {
@@ -214,11 +184,12 @@ export async function getArtistData(
           data.links = extractMbLinks(mbArtist.relations || []);
           if (Array.isArray(mbArtist.genres) && mbArtist.genres.length > 0) {
             data.genres = mbArtist.genres.map((g: any) => g.name);
-            mbArtist.genres.forEach((g: any) => addCommunityTag(communityTagMap, g.name, g.count, 'musicbrainz'));
           }
-          if (Array.isArray(mbArtist.tags) && mbArtist.tags.length > 0) {
-            mbArtist.tags.forEach((tag: any) => addCommunityTag(communityTagMap, tag.name, tag.count, 'musicbrainz'));
-          }
+          // Genres are a subset of tags with the same votes; normalising keeps the max.
+          providerTags.musicbrainz = [
+            ...(Array.isArray(mbArtist.genres) ? mbArtist.genres : []),
+            ...(Array.isArray(mbArtist.tags) ? mbArtist.tags : []),
+          ].map((t: any) => ({ name: t?.name, count: Number(t?.count) }));
           const members = extractMbMembers(mbArtist.relations || []);
           if (members.length > 0) data.members = members;
         }
@@ -384,9 +355,12 @@ export async function getArtistData(
             }
             const topTags = await lastFmArtistTopTags(name, settings.lastFmApiKey);
             if (topTags?.tag && topTags.tag.length > 0) {
-              topTags.tag.forEach((tag: any) => addCommunityTag(communityTagMap, tag.name, tag.count, 'lastfm'));
+              providerTags.lastfm = topTags.tag.map((tag: any) => ({ name: tag?.name, count: Number(tag?.count) }));
             } else if (artist.tags?.tag && artist.tags.tag.length > 0) {
-              artist.tags.tag.forEach((tag: any) => addCommunityTag(communityTagMap, tag.name, tag.count, 'lastfm'));
+              // artist.getinfo lists tags without counts: keep their order as weight.
+              providerTags.lastfm = artist.tags.tag.map((tag: any, i: number) => ({ name: tag?.name, count: Math.max(10, 100 - i * 10) }));
+            } else {
+              providerTags.lastfm = [];
             }
           }
         } catch (err) {
@@ -416,7 +390,11 @@ export async function getArtistData(
 
   data.imageUrl = pick('imageUrl', imagePreference);
   data.bio = pick('bio', bioPreference);
-  data.communityTags = sortedCommunityTags(communityTagMap);
+  const weightedTags: Partial<Record<TagProvider, WeightedTag[]>> = {};
+  for (const provider of Object.keys(providerTags) as TagProvider[]) {
+    weightedTags[provider] = normaliseProviderTags(providerTags[provider] || []);
+  }
+  data.communityTags = mergeForDisplay(weightedTags);
 
   if (!wasRateLimited || data.imageUrl || data.bio) {
     const extras: ArtistCacheExtras = {
@@ -440,6 +418,16 @@ export async function getArtistData(
       !wasRateLimited && !(imageLookupFailed && !data.imageUrl),
       extras
     );
+    // Per-provider tags for the genre & style taxonomy (optional evidence).
+    if (Object.keys(weightedTags).length > 0) {
+      try {
+        const db = await initDB();
+        await saveArtistTagsByName(db, name, weightedTags);
+        scheduleTagMapping();
+      } catch (e: any) {
+        console.warn('[Metadata] Saving artist tags failed (non-fatal):', e?.message || e);
+      }
+    }
   }
 
   if (lastError && !data.imageUrl && (!data.bio || imageLookupFailed)) {

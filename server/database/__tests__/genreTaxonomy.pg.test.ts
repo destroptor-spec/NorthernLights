@@ -3,6 +3,9 @@ import { Pool } from 'pg';
 import { config } from 'dotenv';
 if (process.env.AURORA_DB_TESTS === '1') config({ quiet: true });
 const describeDb = process.env.AURORA_DB_TESTS === '1' ? describe : describe.skip;
+// Provider clients are mocked: the backfill must never reach the real APIs in tests.
+jest.mock('../../services/metadata/providers/lastfm', () => ({ lastFmArtistTopTags: jest.fn() }));
+jest.mock('../../services/metadata/providers/musicbrainz', () => ({ mbGetArtist: jest.fn() }));
 const name = `aurora_taxonomy_test_${process.pid}_${Date.now().toString(36)}`;
 let admin: Pool;
 let pool: Pool;
@@ -95,5 +98,48 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     const result = await taxonomy.runTagMapping(pool);
     expect(result.keys).toBeGreaterThanOrEqual(1);
     expect((await pool.query(`SELECT genre FROM tag_map WHERE tag = 'techno'`)).rows).toEqual([{ genre: 'Electronic' }]);
+  });
+
+  test('the artist-tag backfill fetches library artists once per provider, most-played first, and stops on a rate limit', async () => {
+    const lastfm = jest.requireMock('../../services/metadata/providers/lastfm').lastFmArtistTopTags as jest.Mock;
+    const mb = jest.requireMock('../../services/metadata/providers/musicbrainz').mbGetArtist as jest.Mock;
+    const { RateLimitError } = await import('../../services/metadata/errors');
+    const backfill = await import('../../services/genreTaxonomy/artistTagBackfill');
+    const artistIds: string[] = [];
+    for (const [name, mbid, plays] of [['Busy Artist', 'mbid-busy', 3], ['Quiet Artist', null, 1], ['Various Artists', null, 5]] as const) {
+      const id = (await pool.query('INSERT INTO artists (name, mbid) VALUES ($1, $2) RETURNING id', [name, mbid])).rows[0].id;
+      artistIds.push(id);
+      for (let i = 0; i < plays; i++) {
+        await pool.query('INSERT INTO tracks (id, title, path, artist_id) VALUES ($1, $1, $1, $2)', [`bf-${name}-${i}`, id]);
+      }
+    }
+    await db.setSystemSetting('lastFmApiKey', 'test-key');
+    await db.setSystemSetting('musicBrainzEnabled', true);
+    lastfm.mockResolvedValue({ tag: [{ name: 'trip-hop', count: 100 }, { name: 'electronic', count: 40 }] });
+    mb.mockResolvedValue({ genres: [{ name: 'electronic', count: 3 }], tags: [{ name: 'electronic', count: 3 }, { name: 'downtempo', count: 1 }] });
+
+    const first = await backfill.runArtistTagBackfill({ paceMs: 0 });
+    expect(first.stoppedReason).toBe('done');
+    // Various Artists is skipped; MusicBrainz only for artists with an MBID.
+    expect(first.fetched).toEqual({ lastfm: 2, musicbrainz: 1 });
+    expect(lastfm.mock.calls.map(c => c[0])).toEqual(['Busy Artist', 'Quiet Artist']);
+    const rows = (await pool.query(
+      `SELECT provider, tag, raw_count, weight FROM artist_tags WHERE artist_id = $1 ORDER BY provider, weight DESC`, [artistIds[0]])).rows;
+    expect(rows.map(r => `${r.provider}:${r.tag}:${r.raw_count}:${Number(r.weight).toFixed(2)}`)).toEqual([
+      'lastfm:trip-hop:100:1.00', 'lastfm:electronic:40:0.40', 'musicbrainz:electronic:3:1.00', 'musicbrainz:downtempo:1:0.33']);
+
+    // Resumable: a second run has nothing left to ask.
+    lastfm.mockClear(); mb.mockClear();
+    expect((await backfill.runArtistTagBackfill({ paceMs: 0 })).fetched).toEqual({ lastfm: 0, musicbrainz: 0 });
+    expect(lastfm).not.toHaveBeenCalled();
+
+    // A rate limit stops the run without recording the artist, so the next run retries it.
+    await pool.query('DELETE FROM artist_tag_fetches');
+    lastfm.mockRejectedValueOnce(new RateLimitError('lastfm'));
+    const limited = await backfill.runArtistTagBackfill({ paceMs: 0 });
+    expect(limited.stoppedReason).toBe('rate limited by lastfm');
+    expect((await backfill.countRemaining(pool)).lastfm).toBe(2);
+    await db.setSystemSetting('lastFmApiKey', '');
+    await db.setSystemSetting('musicBrainzEnabled', false);
   });
 });

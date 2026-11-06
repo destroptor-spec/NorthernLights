@@ -8,9 +8,11 @@ import { getMappingCoverage } from './coverage';
 import { mappingIsCurrent, runTagMapping } from './mapping';
 import { loadMbSnapshotIfNeeded, seedTaxonomy } from './seed';
 import { backfillTrackTags } from './trackTags';
+import { runArtistTagBackfill } from './artistTagBackfill';
 
 export { getMappingCoverage } from './coverage';
 export { runTagMapping } from './mapping';
+export { getArtistTagBackfillStatus, stopArtistTagBackfill, countRemaining as countArtistTagsRemaining } from './artistTagBackfill';
 
 const log = (message: string) => console.log(`[GenreTaxonomy] ${message}`);
 let running: Promise<void> | null = null;
@@ -39,7 +41,15 @@ export async function initializeGenreTaxonomy(): Promise<void> {
     const coverage = await getMappingCoverage(db, 0);
     log(`Coverage ${(coverage.tracks.coverage * 100).toFixed(1)} % of tagged tracks; ${coverage.tags.unmapped} unmapped tag(s), ${coverage.mappings.unreviewed} mapping(s) to review`);
   })().finally(() => { running = null; });
+  // Optional provider evidence: slow, resumable; does nothing without a provider.
+  void running.then(() => startArtistTagBackfill()).catch(() => {});
   return running;
+}
+
+/** Starts the artist-tag backfill in the background; maps new artist tags as it goes. */
+export function startArtistTagBackfill() {
+  runArtistTagBackfill({ onProgress: () => scheduleTagMapping(1000) })
+    .catch(error => console.error('[GenreTaxonomy] Artist tag backfill failed:', error?.message || error));
 }
 
 /** Debounced incremental mapping after a scan wrote new tags. */
