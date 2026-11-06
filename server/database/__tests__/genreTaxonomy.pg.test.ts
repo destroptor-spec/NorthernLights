@@ -142,4 +142,89 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     await db.setSystemSetting('lastFmApiKey', '');
     await db.setSystemSetting('musicBrainzEnabled', false);
   });
+  test('the review queue asks about open tags, applies answers and undoes them in order', async () => {
+    const review = await import('../../services/genreTaxonomy/review');
+    const rowsOf = async (key: string) => (await pool.query(
+      `SELECT m.method, m.genre, s.name AS style, m.reviewed_at IS NOT NULL AS reviewed FROM tag_map m
+       LEFT JOIN style s ON s.id = m.style_id WHERE m.tag = $1 ORDER BY m.genre, s.name`, [key])).rows;
+    const state = await review.getGenreReviewState(pool);
+    const byTag = new Map(state.entries.map(e => [e.tagKey, e]));
+    expect(byTag.get('trip hop')?.kind).toBe('two-genres');
+    expect(byTag.get('groove metal')?.kind).toBe('guessed');
+    expect(byTag.get('groove metal')?.note).toMatch(/^MusicBrainz lists it under metal/i);
+    expect(byTag.get('hard rock heavy metal')?.kind).toBe('compound');
+    expect(byTag.has('electric hip hop soul')).toBe(false); // a hand choice is already reviewed
+    expect(state.exact.map(m => m.subject)).toEqual(['Techno']);
+    expect(state.ignored).toEqual([expect.objectContaining({ subject: 'Other', byHand: false })]);
+    expect(state.coverage.ratio).toBeCloseTo(1);
+
+    // An answer to an entry that changed since it was loaded is refused.
+    const trip = byTag.get('trip hop')!;
+    await expect(review.decideGenreReview(pool, { key: trip.key, signature: 'stale', outcomeId: 'accept' })).rejects.toThrow(/changed/);
+
+    // One of two genres becomes a hand choice, so a full remap keeps it.
+    const only = trip.outcomes.find(o => o.label === 'Electronic › Trip Hop')!;
+    const picked = await review.decideGenreReview(pool, { key: trip.key, signature: trip.signature, outcomeId: only.id });
+    expect(picked.summary).toBe('Trip Hop → Electronic › Trip Hop');
+    await taxonomy.runTagMapping(pool, { full: true });
+    expect(await rowsOf('trip hop')).toEqual([{ method: 'manual', genre: 'Electronic', style: 'Trip Hop', reviewed: true }]);
+
+    // A picked style must exist under the genre sent with it.
+    const compound = byTag.get('hard rock heavy metal')!;
+    const hardRock = (await pool.query(`SELECT id FROM style WHERE label = 'Rock---Hard Rock'`)).rows[0].id;
+    await expect(review.decideGenreReview(pool, {
+      key: compound.key, signature: compound.signature, outcomeId: 'pick', targets: [{ genre: 'Jazz', styleId: hardRock }],
+    })).rejects.toThrow(/Unknown style/);
+    await review.decideGenreReview(pool, {
+      key: compound.key, signature: compound.signature, outcomeId: 'pick', targets: [{ genre: 'Rock', styleId: hardRock }],
+    });
+    expect(await rowsOf('hard rock heavy metal')).toEqual([{ method: 'manual', genre: 'Rock', style: 'Hard Rock', reviewed: true }]);
+
+    // Not a genre, then a genre again: the tag goes back through the automatic mapping.
+    const groove = byTag.get('groove metal')!;
+    const ignored = await review.decideGenreReview(pool, { key: groove.key, signature: groove.signature, outcomeId: 'ignore' });
+    expect(await rowsOf('groove metal')).toEqual([]);
+    const asIgnored = (await review.getGenreReviewEntry(pool, groove.key))!;
+    expect(asIgnored.kind).toBe('ignored');
+    const restored = await review.decideGenreReview(pool, { key: groove.key, signature: asIgnored.signature, outcomeId: 'restore' });
+    expect((await rowsOf('groove metal')).map(r => r.method)).toEqual(['mb_parent']);
+    // Undo goes newest first per tag.
+    await expect(review.undoGenreReviewDecision(pool, ignored.decisionId)).rejects.toThrow(/later decision/);
+    await review.undoGenreReviewDecision(pool, restored.decisionId);
+    expect((await pool.query(`SELECT source FROM tag_ignored WHERE tag = 'groove metal'`)).rows).toEqual([{ source: 'manual' }]);
+    await review.undoGenreReviewDecision(pool, ignored.decisionId);
+    expect(await rowsOf('groove metal')).toEqual([{ method: 'mb_parent', genre: 'Rock', style: 'Heavy Metal', reviewed: false }]);
+    expect((await pool.query(`SELECT 1 FROM tag_ignored WHERE tag = 'groove metal'`)).rowCount).toBe(0);
+
+    // Name matches are accepted together and undone as one.
+    const fresh = await review.getGenreReviewState(pool);
+    const bulk = await review.acceptExactMatches(pool, { items: fresh.exact.map(m => ({ key: m.key, signature: m.signature })) });
+    expect(bulk).toMatchObject({ accepted: 1, summary: 'Accepted 1 name match' });
+    expect((await review.getGenreReviewState(pool)).exact).toEqual([]);
+    await review.undoGenreReviewDecision(pool, bulk.decisionId!);
+    expect((await review.getGenreReviewState(pool)).exact.map(m => m.subject)).toEqual(['Techno']);
+
+    expect((await review.getRecentGenreReviewDecisions(pool)).map(d => d.summary))
+      .toEqual(['Hard Rock/Heavy Metal → Rock › Hard Rock', 'Trip Hop → Electronic › Trip Hop']);
+  });
+
+  test('two spellings of one genre are kept as one in the old genre list, and the undo separates them again', async () => {
+    const review = await import('../../services/genreTaxonomy/review');
+    await db.addTrack(track('t-alt-1', ['Alternative Rock']));
+    await db.addTrack(track('t-alt-2', ['Alternative-Rock']));
+    const spelling = (await review.getGenreReviewState(pool)).entries.find(e => e.kind === 'spelling'
+      && e.spellings!.some(s => s.name === 'Alternative-Rock'));
+    expect(spelling?.outcomes.map(o => o.label)).toEqual(expect.arrayContaining(['Keep "Alternative Rock"', 'Keep apart']));
+    const keep = spelling!.spellings!.find(s => s.name === 'Alternative Rock')!;
+    const other = spelling!.spellings!.find(s => s.name === 'Alternative-Rock')!;
+    const decided = await review.decideGenreReview(pool, { key: spelling!.key, signature: spelling!.signature, outcomeId: `merge:${keep.id}` });
+    expect(decided.summary).toMatch(/→ Alternative Rock$/);
+    expect((await pool.query('SELECT merged_into FROM genres WHERE id = $1', [other.id])).rows[0].merged_into).toBe(keep.id);
+    expect((await review.getGenreReviewState(pool)).entries.some(e => e.key === spelling!.key)).toBe(false);
+
+    await review.undoGenreReviewDecision(pool, decided.decisionId);
+    expect((await pool.query('SELECT merged_into FROM genres WHERE id = $1', [other.id])).rows[0].merged_into).toBeNull();
+    expect((await review.getGenreReviewState(pool)).entries.some(e => e.kind === 'spelling'
+      && e.spellings!.some(s => s.name === 'Alternative-Rock'))).toBe(true);
+  });
 });

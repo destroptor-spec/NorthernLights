@@ -479,7 +479,7 @@ Rollback: phases 1–3 add tables and leave `tracks.genres`, `track_genres` and 
 | MAEST-30s instead of more windows? | No. It is still one region of the track, so it does not fix the round 1 misses, and it replaces Infinity's embedding space. Revisit only if style accuracy for Pop and Jazz matters after phase 3. |
 | Genre penalty in the engine? | Removed in phase 4; style overlap is a bonus only. Banned genres remain a hard veto. |
 | LLM step in tag mapping | Deferred (decided 2026-11-06). Exact names, hand aliases and MusicBrainz aliases and parents reach about 97 % of Picard tag uses; leftovers go to the review screen. |
-| Where does the mapping review live? | Settings → Library Entities → Genres. Adding it includes reworking that whole sub-tab to the standard of the Artists sub-tab (previews, undo, clearer actions). |
+| Where does the mapping review live? | Settings → Library Entities → Genres. Adding it includes reworking that whole sub-tab to the standard of the Artists sub-tab (previews, undo, clearer actions). Built (1b, 2026-11-06): one queue with kinds No genre, Two genres, Guessed, Several in one and Spellings (the old duplicate detector, still grouping `genres.merged_into` until phase 4); name matches accepted in bulk from a list; coverage meter and count as the header; every answer undoable for 30 days. The Artists and Genres tabs share one queue component (`ReviewQueue`, `ReviewPanel`, `useReviewQueue`). |
 | Tuning weights and thresholds | Tuned against reviewed labels. Loves and skips personalise recommendations only, never shared genre truth. |
 
 Still open:

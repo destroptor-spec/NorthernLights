@@ -227,8 +227,8 @@ export const ManualArtistMerge: React.FC<{ onMerged: () => void }> = ({ onMerged
 
     return (
         <>
-            <div className="artist-review-tool">
-                <p className="artist-review-tool__hint">
+            <div className="entity-review-tool">
+                <p className="entity-review-tool__hint">
                     For two artists the queue doesn't pair up. The second one's tracks and albums move to the first.
                 </p>
                 <div className="artist-entities-manual__grid">

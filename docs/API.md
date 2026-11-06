@@ -1259,17 +1259,35 @@ List active canonical genres. Each row includes `track_count` across primary and
 ### [GET] `/api/genres/:id`
 Get canonical genre details with tracks. A grouped alias ID redirects to its canonical genre, and membership includes both primary and secondary tags.
 
-### [GET] `/api/library/genre-duplicates`
-Return the admin genre-hygiene state: scored duplicate candidates, separately quarantined slash-compound tags, and active reversible groups. Scores rank spelling/token similarity and never apply a merge automatically. Admin only.
+### Genre review queue (admin)
+Settings → Library Entities → Genres. Each entry is one question about an original genre tag that the tag mapping can't settle by name (no match, a style name under two genres, a MusicBrainz-parent guess, several genres in one tag), or two spellings of a genre in the genre list. Every answer stores the affected tags' state from before, so it can be undone for 30 days, newest first per tag. Types: `shared/genreReview.ts`. Errors a user can act on (a stale entry, an unknown style, a later decision to undo first) return `409` with `error` and, for spellings in different parts of the genre tree, `code: "GENRE_TAXONOMY_CONFLICT"`. Admin only.
 
-### [POST] `/api/library/genre-duplicates/dismiss`
-Dismiss a scored or compound candidate by `candidateKey`, `signature`, and `genreIds`. The dismissal remains active until names, mappings, or library counts change the signature. Admin only.
+### [GET] `/api/library/genre-reviews`
+The queue: `entries` (most tracks first), `exact` (name matches waiting for a bulk accept), `ignored` (tags that are not genres; `byHand` for those marked in the review), `groups` (spellings kept as one genre), and `coverage` (`tagged`, `mapped`, `ratio`, `target`).
 
-### [POST] `/api/library/genres/merge`
-Group `aliasGenreIds` into `canonicalGenreId` without rewriting `tracks.genre` or `tracks.genres`. The transaction repoints canonical primary/secondary associations and records an audit row. Taxonomy-root conflicts return `409 GENRE_TAXONOMY_CONFLICT` unless `acknowledgeTaxonomyConflict` is true. Admin only.
+### [GET] `/api/library/genre-reviews/preview?key=`
+Evidence for one entry: the three artists with the most tracks carrying it, up to three albums, `lean` (where Last.fm and MusicBrainz artist tags put those artists; `null` without provider data), and `targetTracks` (tracks each outcome target holds today from other tags).
 
-### [POST] `/api/library/genres/:aliasId/restore`
-Restore a grouped alias and rebuild affected associations from the preserved raw track tags. Admin only.
+### [GET] `/api/library/genre-reviews/tags?q=`
+Find a tag: up to 12 tags containing `q`, as entries (also reviewed and ignored ones), so their mapping can be changed.
+
+### [GET] `/api/library/genre-reviews/taxonomy`
+The visible genres and styles for the picker: `{ genres, styles: [{ id, genre, name }] }`.
+
+### [POST] `/api/library/genre-reviews/decide`
+Body `{ key, signature, outcomeId, targets?, acknowledgeConflict? }`. Outcomes: `accept`, `only:<n>` (one of two genres), `pick` (with `targets: [{ genre, styleId|null }]`), `ignore`, `restore`, `merge:<genre id>` and `keep-apart` (spellings). `only` and `pick` write hand mappings that remaps keep; `merge` groups the old genre list like the previous duplicate tool. Returns `{ decisionId, summary }`.
+
+### [POST] `/api/library/genre-reviews/accept-exact`
+Body `{ items: [{ key, signature }] }`: accepts the listed name matches that are unchanged, as one decision. Returns `{ decisionId, summary, accepted }`.
+
+### [POST] `/api/library/genre-reviews/groups/:aliasId/separate`
+Separates a spelling kept as one genre (also groups made before this queue). Returns `{ decisionId, summary }`.
+
+### [GET] `/api/library/genre-reviews/decisions`
+Decisions of the last 30 days: `{ id, key, decision, summary, decidedAt, undoableUntil }`.
+
+### [POST] `/api/library/genre-reviews/decisions/:id/undo`
+Restores the tags as they were before the decision; a spelling decision also regroups or separates the genre list again.
 
 ---
 

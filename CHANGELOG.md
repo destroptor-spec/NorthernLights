@@ -4,6 +4,7 @@
 
 ### Improvements
 - **Audio analysis:** Each track is now analysed at three points (20 %, 50 % and 80 %) instead of one, so songs whose middle differs from the rest are matched more reliably. A blind listening test preferred the new results 13 to 7. Analysis takes about as long as before: the three windows are decoded in one pass, and a single model now does the work of two. Analysis also stores 400 style scores per track, the groundwork for the coming Genre and Style browse. After updating, Aurora re-analyses the library once.
+- **Genre review:** Settings → Library Entities → Genres is now one review queue, built like the artist review. It asks about genre tags that don't match a genre or style by name (no match, a style found under two genres, a guess from MusicBrainz, several genres in one tag) and about two spellings of one genre, shows the artists and albums involved, and previews where the tracks go. Tags that match by name are listed and accepted together. Every decision can be undone for 30 days. A meter shows how many tagged tracks have a genre.
 - **Python 3.14:** The analysis environment moves to Python 3.14 with a pinned Essentia build. Existing installs rebuild `.venv` once (see the production guide; the full upgrade checklist is in `docs/genre-engine-upgrade.md`).
 
 ## [v1.0.0-rc.7] - 2026-11-06

@@ -155,6 +155,7 @@ The scanner indicator in `App.tsx` must use reactive Zustand subscriptions for `
 - `useArtistData(name, mbArtistId, options?)` — Fetches artist image/bio/metadata. Returns `{ imageUrl, bio, disambiguation, area, type, lifeSpan, links, genres, isLoading, error }`. Supports `enabled` and `debounceMs` (default 200ms) options.
 - `useLlmConnectionTest({ getAuthHeader, onModelsReceived })` — LLM connection testing state + logic.
 - `useSwipe(ref, { onSwipeLeft, onSwipeRight, onSwipeUp, onSwipeDown, threshold })` — Reusable touch swipe gesture detection hook. Returns a ref to attach to the target element.
+- `useReviewQueue(base)` — A review queue in Settings → Library Entities (artists, genres): entries, 30-day decisions, signature-cached previews, `decide`/`undo`. Rendered by `settings/ReviewQueue.tsx` (kind filters, one entry open, Skip, Undo toast, Decided list) and `settings/ReviewPanel.tsx` (outcome cards, Skip/Apply, keys 1–9/S/Enter); classes `.entity-review-*`. Use these for any new review queue.
 - `useToast()` — Global toast access. Returns `{ toasts, addToast, removeToast }`. Toast items rendered via `ToastContainer` in App.tsx.
 
 ## Workflow

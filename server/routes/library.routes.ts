@@ -213,81 +213,129 @@ router.post('/artist-reviews/decisions/:id/undo', requireAdmin, async (req, res)
   }
 });
 
-router.get('/genre-duplicates', requireAdmin, async (_req, res) => {
+// The genre review queue (Settings → Library entities → Genres). See
+// server/services/genreTaxonomy/review.ts. Spellings still group the old genre
+// list, so the old engine follows the answers until phase 4.
+const genreReviewError = (res: Response, error: any, fallback: string) => {
+  const known = error?.name === 'GenreReviewError';
+  if (!known) console.error('[GenreReviews]', fallback, error);
+  res.status(known ? 409 : 500).json({ error: error?.message || fallback, code: error?.code });
+};
+
+router.get('/genre-reviews', requireAdmin, async (_req, res) => {
   try {
-    const { getGenreReviewState } = await import('../services/genreCanonicalization.service');
-    res.json(await getGenreReviewState());
+    const { getGenreReviewState } = await import('../services/genreTaxonomy/review');
+    const { initDB } = await import('../database');
+    res.json(await getGenreReviewState(await initDB()));
   } catch (error: any) {
-    console.error('[GenreDuplicates] list error:', error);
-    res.status(500).json({ error: error.message || 'Failed to load genre duplicate candidates' });
+    genreReviewError(res, error, 'Failed to load the genre review queue');
   }
 });
 
-router.post('/genre-duplicates/dismiss', requireAdmin, async (req, res) => {
+router.get('/genre-reviews/preview', requireAdmin, async (req, res) => {
   try {
-    const { candidateKey, signature, genreIds } = req.body || {};
-    if (!candidateKey || !signature || !Array.isArray(genreIds) || genreIds.length < 1) {
-      return res.status(400).json({ error: 'candidateKey, signature, and genreIds are required' });
+    const key = typeof req.query.key === 'string' ? req.query.key : '';
+    if (!key) return res.status(400).json({ error: 'key is required' });
+    const { getGenreReviewEvidence } = await import('../services/genreTaxonomy/review');
+    const { initDB } = await import('../database');
+    const evidence = await getGenreReviewEvidence(await initDB(), key);
+    if (!evidence) return res.status(404).json({ error: 'This entry is no longer in the queue' });
+    res.json(evidence);
+  } catch (error: any) {
+    genreReviewError(res, error, 'Failed to preview the entry');
+  }
+});
+
+router.get('/genre-reviews/tags', requireAdmin, async (req, res) => {
+  try {
+    const q = typeof req.query.q === 'string' ? req.query.q.slice(0, 100) : '';
+    const { searchGenreTags } = await import('../services/genreTaxonomy/review');
+    const { initDB } = await import('../database');
+    res.json({ entries: await searchGenreTags(await initDB(), q) });
+  } catch (error: any) {
+    genreReviewError(res, error, 'Failed to search tags');
+  }
+});
+
+router.get('/genre-reviews/taxonomy', requireAdmin, async (_req, res) => {
+  try {
+    const { listTaxonomy } = await import('../services/genreTaxonomy/review');
+    const { initDB } = await import('../database');
+    res.json(await listTaxonomy(await initDB()));
+  } catch (error: any) {
+    genreReviewError(res, error, 'Failed to load the genre list');
+  }
+});
+
+const afterGenreDecision = async () => {
+  const { invalidateGenreEntityCache } = await import('../database');
+  invalidateGenreEntityCache();
+  await publishApiV1LibraryRevision({ source: 'genreReview' });
+};
+
+router.post('/genre-reviews/decide', requireAdmin, async (req, res) => {
+  try {
+    const { key, signature, outcomeId, targets, acknowledgeConflict } = req.body || {};
+    if (!key || !signature || !outcomeId) {
+      return res.status(400).json({ error: 'key, signature and outcomeId are required' });
     }
-    const { dismissGenreCandidate } = await import('../services/genreCanonicalization.service');
-    await dismissGenreCandidate({
-      candidateKey: String(candidateKey),
-      signature: String(signature),
-      genreIds: genreIds.map(String),
-      userId: req.user?.userId || null,
+    const { decideGenreReview } = await import('../services/genreTaxonomy/review');
+    const { initDB } = await import('../database');
+    const result = await decideGenreReview(await initDB(), {
+      key: String(key), signature: String(signature), outcomeId: String(outcomeId), targets,
+      acknowledgeConflict: acknowledgeConflict === true, userId: req.user?.userId || null,
     });
-    res.json({ status: 'dismissed' });
+    await afterGenreDecision();
+    res.json({ status: 'decided', ...result });
   } catch (error: any) {
-    console.error('[GenreDuplicates] dismiss error:', error);
-    res.status(500).json({ error: error.message || 'Failed to dismiss genre candidate' });
+    genreReviewError(res, error, 'Failed to apply the decision');
   }
 });
 
-router.post('/genres/merge', requireAdmin, async (req, res) => {
+router.post('/genre-reviews/accept-exact', requireAdmin, async (req, res) => {
   try {
-    const {
-      canonicalGenreId,
-      aliasGenreIds,
-      candidateKey,
-      signature,
-      scoreEvidence,
-      acknowledgeTaxonomyConflict,
-    } = req.body || {};
-    if (!canonicalGenreId || !Array.isArray(aliasGenreIds) || aliasGenreIds.length < 1) {
-      return res.status(400).json({ error: 'canonicalGenreId and aliasGenreIds are required' });
-    }
-    const { groupGenres } = await import('../services/genreCanonicalization.service');
-    await groupGenres({
-      canonicalGenreId: String(canonicalGenreId),
-      aliasGenreIds: aliasGenreIds.map(String),
-      candidateKey: candidateKey ? String(candidateKey) : undefined,
-      signature: signature ? String(signature) : undefined,
-      scoreEvidence,
-      acknowledgeTaxonomyConflict: acknowledgeTaxonomyConflict === true,
-      userId: req.user?.userId || null,
-    });
-    res.json({ status: 'grouped' });
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    const { acceptExactMatches } = await import('../services/genreTaxonomy/review');
+    const { initDB } = await import('../database');
+    const result = await acceptExactMatches(await initDB(), { items, userId: req.user?.userId || null });
+    await afterGenreDecision();
+    res.json({ status: 'decided', ...result });
   } catch (error: any) {
-    console.error('[GenreDuplicates] merge error:', error);
-    const isConflict = error?.code === 'GENRE_TAXONOMY_CONFLICT';
-    res.status(isConflict ? 409 : 400).json({
-      error: error.message || 'Failed to group genres',
-      code: isConflict ? 'GENRE_TAXONOMY_CONFLICT' : undefined,
-    });
+    genreReviewError(res, error, 'Failed to accept the matches');
   }
 });
 
-router.post('/genres/:aliasId/restore', requireAdmin, async (req, res) => {
+router.post('/genre-reviews/groups/:aliasId/separate', requireAdmin, async (req, res) => {
   try {
-    const { restoreGenreAlias } = await import('../services/genreCanonicalization.service');
-    await restoreGenreAlias({
-      aliasGenreId: String(req.params.aliasId),
-      userId: req.user?.userId || null,
-    });
-    res.json({ status: 'restored' });
+    const { separateGenreSpelling } = await import('../services/genreTaxonomy/review');
+    const { initDB } = await import('../database');
+    const result = await separateGenreSpelling(await initDB(), { aliasGenreId: String(req.params.aliasId), userId: req.user?.userId || null });
+    await afterGenreDecision();
+    res.json({ status: 'decided', ...result });
   } catch (error: any) {
-    console.error('[GenreDuplicates] restore error:', error);
-    res.status(400).json({ error: error.message || 'Failed to restore genre alias' });
+    genreReviewError(res, error, 'Failed to separate the spelling');
+  }
+});
+
+router.get('/genre-reviews/decisions', requireAdmin, async (_req, res) => {
+  try {
+    const { getRecentGenreReviewDecisions } = await import('../services/genreTaxonomy/review');
+    const { initDB } = await import('../database');
+    res.json({ decisions: await getRecentGenreReviewDecisions(await initDB()) });
+  } catch (error: any) {
+    genreReviewError(res, error, 'Failed to load recent decisions');
+  }
+});
+
+router.post('/genre-reviews/decisions/:id/undo', requireAdmin, async (req, res) => {
+  try {
+    const { undoGenreReviewDecision } = await import('../services/genreTaxonomy/review');
+    const { initDB } = await import('../database');
+    await undoGenreReviewDecision(await initDB(), String(req.params.id));
+    await afterGenreDecision();
+    res.json({ status: 'undone' });
+  } catch (error: any) {
+    genreReviewError(res, error, 'Failed to undo the decision');
   }
 });
 

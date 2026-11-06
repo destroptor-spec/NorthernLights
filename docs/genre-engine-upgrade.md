@@ -5,7 +5,7 @@ Every step needed to take branch `genre-engine-next` to prod, in one place. Each
 | Phase | What it changes on prod | Status |
 | --- | --- | --- |
 | 0 | Python 3.14 venv, new analysis models, `track_style_scores`, full re-analysis | Built (`038e736`), not deployed |
-| 1 | Genre list, MusicBrainz genre snapshot, tag mapping, artist-tag split, Last.fm backfill | 1a built (taxonomy, snapshot, tag mapping, artist tags, backfill); review screen (1b) not built |
+| 1 | Genre list, MusicBrainz genre snapshot, tag mapping, artist-tag split, Last.fm backfill, genre review | Built (1a: taxonomy, snapshot, tag mapping, artist tags, backfill; 1b: review queue), not deployed |
 | 2 | New Browse behind a setting | Not built |
 | 3 | Audio, KNN and Last.fm evidence; style centroids | Not built |
 | 4 | Engine scoring; Genre Matrix and MBDB import retired | Not built |
@@ -80,11 +80,11 @@ SQL
 
 ## Phase 1: genre list and tag mapping
 
-Built so far (1a): genre list, MusicBrainz genre snapshot, original-tag table, tag mapping, coverage report, per-provider artist tags and their backfill. The review screen (1b) will add its steps here.
+Genre list, MusicBrainz genre snapshot, original-tag table, tag mapping, coverage report, per-provider artist tags and their backfill (1a), and the genre review queue in Settings → Library Entities → Genres (1b).
 
 ### 1. Deploy (schema change)
 
-New tables at startup: `taxonomy_genre`, `style`, `track_tags`, `tag_map`, `tag_ignored`, `artist_tags`, `artist_tag_fetches`. `deploy-prod.sh` exports the database first, as for any schema change.
+New tables at startup: `taxonomy_genre`, `style`, `track_tags`, `tag_map`, `tag_ignored`, `genre_review_decisions`, `artist_tags`, `artist_tag_fetches`. `deploy-prod.sh` exports the database first, as for any schema change.
 
 ### 2. Automatic on first start (nothing to run)
 
@@ -113,7 +113,7 @@ It works most-played first at one call per 1.5 s, maps new artist tags as it goe
 ### 4. Verify
 
 - [ ] The log line above appears without `[GenreTaxonomy] Initialisation failed`.
-- [ ] Coverage and gate (admin): `GET /api/admin/genre-taxonomy/coverage` returns `gate.coverageMet: true`. `gate.allReviewed` stays false until the review screen (1b) has been worked through.
+- [ ] Coverage and gate (admin): `GET /api/admin/genre-taxonomy/coverage` returns `gate.coverageMet: true`. `gate.allReviewed` stays false until step 5 is done.
 
 ```sql
 SELECT (SELECT COUNT(*) FROM style) AS styles,              -- 400
@@ -123,9 +123,20 @@ SELECT (SELECT COUNT(*) FROM style) AS styles,              -- 400
        (SELECT COUNT(*) FROM artist_tag_fetches) AS artist_fetches;
 ```
 
+### 5. Review the genres (by hand; can wait until the backfill has run)
+
+Settings → Library Entities → Genres. The header shows the share of tagged tracks that have a genre and how many questions are open. Artist-tag evidence ("tags for these artists lean Electronic") appears once the backfill in step 3 has reached those artists, so reviewing after it helps but is not required.
+
+- [ ] Open **Name matches**, check the list (tags whose name is a genre or style), and **Accept all**. One Undo takes the whole batch back.
+- [ ] Work through the queue. Filters: No genre, Two genres, Guessed (from MusicBrainz parents), Several in one, Spellings. Keys 1–9 choose an outcome, S skips, Enter applies.
+- [ ] Spelling answers group the old genre list (`genres.merged_into`) as the old duplicate tool did, so the current engine follows them until phase 4.
+- [ ] The phase-1 gate is met when the header reads "Every tag is reviewed" and the coverage endpoint returns `gate.passed: true`.
+
+Dev, for scale: 143 name matches, 106 questions (41 no genre, 36 guessed, 13 several in one, 12 two genres, 4 spellings).
+
 ### Rollback
 
-`--rollback` is safe: the old code ignores the new tables, and the MusicBrainz tables keep the same shape (the snapshot only refreshes their contents). The old code still writes summed tag counts to `artists.community_tags`; that only affects the chips' tooltip number.
+`--rollback` is safe: the old code ignores the new tables, and the MusicBrainz tables keep the same shape (the snapshot only refreshes their contents). Spelling answers from the review stay in `genres.merged_into`, which the old Genres tab also reads and can restore. The old code still writes summed tag counts to `artists.community_tags`; that only affects the chips' tooltip number.
 
 ## Phase 2: new Browse
 

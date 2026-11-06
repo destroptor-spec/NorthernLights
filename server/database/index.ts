@@ -872,6 +872,21 @@ export async function initDB(): Promise<Pool> {
           reviewed_at TIMESTAMPTZ,
           reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL
         );
+        -- Answers in the genre review queue (Settings -> Library entities ->
+        -- Genres), with the tags' rows before the answer, for 30-day undo.
+        CREATE TABLE IF NOT EXISTS genre_review_decisions (
+          id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          entry_key  TEXT NOT NULL,
+          decision   TEXT NOT NULL CHECK (decision IN ('accepted', 'mapped', 'ignored', 'restored', 'grouped', 'kept-apart', 'accepted-exact')),
+          summary    TEXT NOT NULL,
+          tags       TEXT[] NOT NULL DEFAULT '{}',
+          before     JSONB NOT NULL DEFAULT '{}'::jsonb,
+          detail     JSONB,
+          decided_by UUID REFERENCES users(id) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS genre_review_decisions_created_idx ON genre_review_decisions (created_at DESC);
+        CREATE INDEX IF NOT EXISTS genre_review_decisions_tags_idx ON genre_review_decisions USING GIN (tags);
         -- Community artist tags, one row per provider; weights are normalised
         -- per artist and provider, never summed across providers.
         CREATE TABLE IF NOT EXISTS artist_tags (
