@@ -135,17 +135,18 @@ describe('artist tags per provider', () => {
 });
 
 describe('the review suggestion', () => {
-  const audio = (genres: Array<[string, number]>, styles: Array<[string, number, string, number]>) => ({
+  const audio = (genres: Array<[string, number]>, styles: Array<[string, number, string, number, number?]>) => ({
     analysed: genres.reduce((n, [, t]) => n + t, 0), sampled: false,
     genres: genres.map(([genre, tracks]) => ({ genre, tracks })),
-    styles: styles.map(([genre, styleId, style, tracks]) => ({ genre, styleId, style, tracks })),
+    styles: styles.map(([genre, styleId, style, tracks, near]) => ({ genre, styleId, style, tracks, near: near ?? tracks })),
   });
   // Pretty Lights on dev: mostly Electronic, its top styles spread out.
   const spread = audio([['Electronic', 95], ['Hip Hop', 15], ['Funk / Soul', 3]],
     [['Electronic', 1, 'Downtempo', 32], ['Electronic', 2, 'Glitch', 16], ['Hip Hop', 3, 'Instrumental', 11]]);
 
   test('styles that vary give the genre alone; a weak artist lean counts when the audio agrees', () => {
-    expect(suggestGenre(spread, { genre: 'Electronic', strong: false })).toEqual({ targets: [{ genre: 'Electronic', styleId: null, style: null }], basis: 'both', stylesVary: true });
+    expect(suggestGenre(spread, { genre: 'Electronic', strong: false }))
+      .toEqual({ targets: [{ genre: 'Electronic', styleId: null, style: null }], basis: 'both', stylesVary: true, looseStyles: [] });
   });
 
   test('a style most tracks share is suggested with its genre', () => {
@@ -160,6 +161,24 @@ describe('the review suggestion', () => {
     expect(suggestGenre(audio([['Electronic', 6], ['Rock', 4]], [['Electronic', 1, 'House', 6]]), null)).toBeNull();
     expect(suggestGenre(audio([['Electronic', 2]], [['Electronic', 1, 'House', 2]]), null)).toBeNull();
     expect(suggestGenre(null, { genre: 'Rock', strong: false })).toBeNull();
-    expect(suggestGenre(null, { genre: 'Rock', strong: true })).toEqual({ targets: [{ genre: 'Rock', styleId: null, style: null }], basis: 'artists', stylesVary: false });
+    expect(suggestGenre(null, { genre: 'Rock', strong: true }))
+      .toEqual({ targets: [{ genre: 'Rock', styleId: null, style: null }], basis: 'artists', stylesVary: false, looseStyles: [] });
+  });
+
+  test('a style the tag names is kept when the tracks sound like it, and left out when few do', () => {
+    const electro = { genre: 'Electronic', styleId: 9, style: 'Electro' };
+    const hipHopElectro = { genre: 'Hip Hop', styleId: 10, style: 'Electro' };
+    // "Electro" on Radiohead remixes, ODESZA and Netsky: among the 5 closest styles for 16 of 102.
+    const loose = audio([['Electronic', 96], ['Hip Hop', 6]], [['Electronic', 1, 'House', 12, 40], ['Electronic', 9, 'Electro', 2, 16]]);
+    expect(suggestGenre(loose, { genre: 'Electronic', strong: true }, [electro, hipHopElectro])).toEqual({
+      targets: [{ genre: 'Electronic', styleId: null, style: null }], basis: 'both', stylesVary: false,
+      looseStyles: [{ style: 'Electro', near: 16 }],
+    });
+    // New Wave: rarely the top style, but near for a quarter of the tracks, so the tag's style stays.
+    const newWave = { genre: 'Rock', styleId: 11, style: 'New Wave' };
+    const fits = audio([['Rock', 74], ['Electronic', 41]], [['Rock', 2, 'Pop Rock', 42, 80], ['Rock', 11, 'New Wave', 2, 29]]);
+    expect(suggestGenre(fits, { genre: 'Rock', strong: false }, [newWave])?.targets).toEqual([newWave]);
+    // Without audio the tag's own style stands.
+    expect(suggestGenre(null, { genre: 'Rock', strong: true }, [newWave])?.targets).toEqual([newWave]);
   });
 });

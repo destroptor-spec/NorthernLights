@@ -47,6 +47,9 @@ const AUDIO_ALONE_SHARE = 0.7;
 /** A style is suggested only when this share of the tracks has it as top style. */
 const STYLE_SUGGEST_SHARE = 0.5;
 const AUDIO_MIN_TRACKS = 3;
+/** A style the tag names counts as loosely used when fewer tracks have it among their 5 closest. */
+const NAMED_STYLE_MIN_NEAR = 0.2;
+const NEAR_RANKS = 5;
 const AUDIO_SAMPLE = 1000;
 
 export class GenreReviewError extends Error {
@@ -316,15 +319,17 @@ export async function getGenreReviewEvidence(db: Pool, key: string): Promise<Gen
     lean: lean && lean.of >= 2 ? lean : null,
     artistTags,
     audio,
-    suggestion: suggestGenre(audio, artistLean),
+    suggestion: suggestGenre(audio, artistLean, entry.outcomes
+      .filter(o => o.kind === 'accept' || o.kind === 'only').flatMap(o => o.targets || [])),
     targetTracks,
   };
 }
 
 /**
- * Per track, its top style among the 400 scores (and that style's genre),
- * counted over the tag's analysed, non-simulated tracks. Large tags are
- * sampled, which keeps this to about 0.1 s.
+ * Per track, its 5 closest styles among the 400 scores: the first counts as
+ * its top style (and that style's genre), all five as near. Counted over the
+ * tag's analysed, non-simulated tracks; large tags are sampled, which keeps
+ * this to about 0.1 s.
  */
 async function loadAudioEvidence(db: Pool, tracksSql: string, param: unknown, totalTracks: number): Promise<GenreAudioEvidence | null> {
   const rows = (await db.query(`
@@ -334,24 +339,27 @@ async function loadAudioEvidence(db: Pool, tracksSql: string, param: unknown, to
       FROM t JOIN track_style_scores ss ON ss.track_id = t.track_id
       JOIN track_features tf ON tf.track_id = t.track_id AND tf.is_simulated IS NOT TRUE
       ORDER BY md5(t.track_id) LIMIT ${AUDIO_SAMPLE}
-    ), top AS (
-      SELECT (SELECT u.idx FROM unnest(scored.scores) WITH ORDINALITY u(score, idx) ORDER BY u.score DESC LIMIT 1) - 1 AS model_index
-      FROM scored
+    ), near AS (
+      SELECT u.idx - 1 AS model_index, u.rank
+      FROM scored, LATERAL (
+        SELECT x.idx, ROW_NUMBER() OVER (ORDER BY x.score DESC) AS rank
+        FROM unnest(scored.scores) WITH ORDINALITY x(score, idx) ORDER BY x.score DESC LIMIT ${NEAR_RANKS}
+      ) u
     )
-    SELECT st.genre, st.id, st.name, COUNT(*)::int AS tracks
-    FROM top JOIN style st ON st.model_index = top.model_index
-    GROUP BY st.genre, st.id, st.name ORDER BY tracks DESC, st.genre, st.name`, [param])).rows;
+    SELECT st.genre, st.id, st.name, COUNT(*) FILTER (WHERE near.rank = 1)::int AS tracks, COUNT(*)::int AS near
+    FROM near JOIN style st ON st.model_index = near.model_index
+    GROUP BY st.genre, st.id, st.name ORDER BY tracks DESC, near DESC, st.genre, st.name`, [param])).rows;
   const analysed = rows.reduce((sum: number, r: any) => sum + r.tracks, 0);
   if (!analysed) return null;
   const sampled = analysed === AUDIO_SAMPLE && totalTracks > AUDIO_SAMPLE;
   const genres = new Map<string, number>();
-  for (const row of rows) genres.set(row.genre, (genres.get(row.genre) || 0) + row.tracks);
+  for (const row of rows) if (row.tracks) genres.set(row.genre, (genres.get(row.genre) || 0) + row.tracks);
   return {
     analysed,
     sampled,
     genres: [...genres.entries()].map(([genre, tracks]) => ({ genre, tracks }))
       .sort((a, b) => b.tracks - a.tracks || a.genre.localeCompare(b.genre)),
-    styles: rows.map((r: any) => ({ genre: r.genre, styleId: r.id, style: r.name, tracks: r.tracks })),
+    styles: rows.map((r: any) => ({ genre: r.genre, styleId: r.id, style: r.name, tracks: r.tracks, near: r.near })),
   };
 }
 
@@ -359,13 +367,18 @@ async function loadAudioEvidence(db: Pool, tracksSql: string, param: unknown, to
  * A starting answer from the audio and the optional artist tags. Artist tags
  * describe the artist, and on genre they beat audio (docs: Artist tags), so
  * when both exist they must agree. Alone, artist tags need a strong lean
- * (most artists, or the only one) and audio most of the tracks. A style is
- * suggested only when most tracks share it; otherwise the genre alone, so one
- * tag doesn't stamp every track of an artist whose albums differ with one style.
+ * (most artists, or the only one) and audio most of the tracks.
+ *
+ * The style: a style the tag itself names (`named`, from its current
+ * mapping) is kept unless few tracks sound like it, because files are the
+ * source of truth. A tag that names no style gets one only when most tracks
+ * have it as their top style. Otherwise the genre alone, so one tag doesn't
+ * stamp a style on every track of an artist whose albums differ.
  */
 export function suggestGenre(
   audio: GenreAudioEvidence | null,
   artist: { genre: string; strong: boolean } | null,
+  named: GenreTarget[] = [],
 ): GenreSuggestion | null {
   const usable = audio && audio.analysed >= AUDIO_MIN_TRACKS ? audio : null;
   const audioTop = usable?.genres[0] || null;
@@ -386,11 +399,21 @@ export function suggestGenre(
   } else {
     return null;
   }
+  const genreAlone: GenreTarget = { genre, styleId: null, style: null };
+  const namedStyles = [...new Map(named.filter(t => t.genre === genre && t.styleId !== null)
+    .map(t => [t.styleId, t] as const)).values()];
+  if (namedStyles.length) {
+    if (!usable) return { targets: namedStyles, basis, stylesVary: false, looseStyles: [] };
+    const near = (t: GenreTarget) => usable.styles.find(s => s.styleId === t.styleId)?.near ?? 0;
+    const fits = namedStyles.filter(t => near(t) / usable.analysed >= NAMED_STYLE_MIN_NEAR);
+    const loose = namedStyles.filter(t => !fits.includes(t)).map(t => ({ style: t.style!, near: near(t) }));
+    return { targets: fits.length ? fits : [genreAlone], basis, stylesVary: false, looseStyles: loose };
+  }
   const topStyle = usable?.styles.find(s => s.genre === genre);
   if (topStyle && topStyle.tracks / usable!.analysed >= STYLE_SUGGEST_SHARE) {
-    return { targets: [{ genre, styleId: topStyle.styleId, style: topStyle.style }], basis, stylesVary: false };
+    return { targets: [{ genre, styleId: topStyle.styleId, style: topStyle.style }], basis, stylesVary: false, looseStyles: [] };
   }
-  return { targets: [{ genre, styleId: null, style: null }], basis, stylesVary: Boolean(usable) };
+  return { targets: [genreAlone], basis, stylesVary: Boolean(usable), looseStyles: [] };
 }
 
 // ── Decisions ────────────────────────────────────────────────────────────

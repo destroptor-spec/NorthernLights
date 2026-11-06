@@ -23,23 +23,16 @@ const SOUND_ROWS = 5;
 /** Below this many analysed tracks the shares are too thin to warn about. */
 const AUDIO_HINT_MIN_TRACKS = 5;
 const STYLE_HINT_SHARE = 0.5;
+/** As NAMED_STYLE_MIN_NEAR on the server: under this share, a style the tag names looks loosely used. */
+const NAMED_STYLE_MIN_NEAR = 0.2;
 
 const sameTargets = (a: GenreTarget[], b: GenreTarget[]) =>
   a.length === b.length && a.every(t => b.some(u => targetKey(u) === targetKey(t)));
-const sameGenres = (a: GenreTarget[], b: GenreTarget[]) => {
-  const genres = (list: GenreTarget[]) => [...new Set(list.map(t => t.genre))].sort().join('|');
-  return genres(a) === genres(b);
-};
-
-/**
- * The outcome that already says what the suggestion says: the same targets,
- * or for a genre-only suggestion, the outcome in that genre.
- */
+/** The outcome that says exactly what the suggestion says; otherwise the picker carries it. */
 function suggestedOutcome(entry: Entry, suggestion: GenreSuggestion | null): string | null {
   if (!suggestion) return null;
-  const genreOnly = suggestion.targets.every(t => t.styleId === null);
   const match = entry.outcomes.find(o => (o.kind === 'accept' || o.kind === 'only') && o.targets?.length
-    && (sameTargets(o.targets, suggestion.targets) || (genreOnly && sameGenres(o.targets, suggestion.targets))));
+    && sameTargets(o.targets, suggestion.targets));
   return match?.id ?? null;
 }
 
@@ -48,25 +41,49 @@ const audioTracks = (audio: GenreAudioEvidence, target: GenreTarget) => target.s
   : audio.styles.find(s => s.styleId === target.styleId)?.tracks ?? 0;
 
 /** Why the suggestion, in words, shown in the suggested outcome's card. */
-function suggestionReason(suggestion: GenreSuggestion, audio: GenreAudioEvidence | null, totalTracks: number, cardHasStyle: boolean): string {
+function suggestionReason(suggestion: GenreSuggestion, audio: GenreAudioEvidence | null, totalTracks: number): string {
   const target = suggestion.targets[0];
   const why = suggestion.basis === 'both'
     ? `The sound of the tracks and the artist tags both point to ${target.genre}.`
     : suggestion.basis === 'artists'
       ? `The artist tags point to ${target.genre}; too few of the tracks are analysed to check their sound.`
       : `${audio ? audioTracks(audio, target) : 0} of the ${audio?.analysed ?? 0} analysed tracks sound most like ${targetLabel(target)}.`;
-  // A card that names a style (the tag is one, under two genres) settles the genre only.
-  if (!suggestion.stylesVary || !audio || cardHasStyle) return `Suggested. ${why}`;
-  const styles = audio.styles.filter(s => s.genre === target.genre).slice(0, 3).map(s => s.style!);
+  if (suggestion.looseStyles.length && audio) {
+    const loose = suggestion.looseStyles.map(s => `${s.style} (${s.near} of ${audio.analysed})`);
+    const few = `Few of the tracks have ${listJoin(loose)} among their 5 closest styles`;
+    return suggestion.targets.some(t => t.styleId !== null)
+      ? `Suggested. ${why} ${few}, so ${suggestion.looseStyles.length > 1 ? 'they are' : 'it is'} left out.`
+      : `Suggested. ${why} ${few}, so the tag looks loosely used: ${target.genre} alone, without the style.`;
+  }
+  if (!suggestion.stylesVary || !audio) return `Suggested. ${why}`;
+  const styles = audio.styles.filter(s => s.genre === target.genre && s.tracks > 0).slice(0, 3).map(s => s.style!);
   return `Suggested. ${why} No style: the tracks sound like different ones (${listJoin(styles)}), and a style here would go on all ${count(totalTracks, 'track')}.`;
 }
 
-/** A style the sound gives few of these tracks: say so, and point to the genre alone. */
-function styleHint(picked: GenreTarget[], audio: GenreAudioEvidence | null, totalTracks: number): string | null {
+const nearTracks = (audio: GenreAudioEvidence, target: GenreTarget) =>
+  audio.styles.find(s => s.styleId === target.styleId)?.near ?? 0;
+
+/**
+ * A picked style few of these tracks sound like: say so, and point to the
+ * genre alone. The same tests as the suggestion: a style the tag names is
+ * judged by the 5 closest styles (as the server's loose check), one added by
+ * hand by the top style (as for a tag that names none).
+ */
+function styleHint(picked: GenreTarget[], audio: GenreAudioEvidence | null, totalTracks: number, named: Set<string>): string | null {
   if (!audio || audio.analysed < AUDIO_HINT_MIN_TRACKS) return null;
-  const thin = picked.find(t => t.styleId !== null && audioTracks(audio, t) / audio.analysed < STYLE_HINT_SHARE);
-  if (!thin) return null;
-  return `Only ${audioTracks(audio, thin)} of the ${audio.analysed} analysed tracks sound most like ${thin.style}, but all ${count(totalTracks, 'track')} with this tag would get it. Choose ${thin.genre} alone if the style changes from track to track.`;
+  for (const t of picked) {
+    if (t.styleId === null) continue;
+    const all = `all ${count(totalTracks, 'track')} with this tag would get it. Choose ${t.genre} alone if the style changes from track to track.`;
+    if (named.has(targetKey(t))) {
+      const near = nearTracks(audio, t);
+      if (near / audio.analysed < NAMED_STYLE_MIN_NEAR) {
+        return `Only ${near} of the ${audio.analysed} analysed tracks have ${t.style} among their 5 closest styles, but ${all}`;
+      }
+    } else if (audioTracks(audio, t) / audio.analysed < STYLE_HINT_SHARE) {
+      return `Only ${audioTracks(audio, t)} of the ${audio.analysed} analysed tracks sound most like ${t.style}, but ${all}`;
+    }
+  }
+  return null;
 }
 
 /** A labelled list of names with track counts (the artist review's release list). */
@@ -96,6 +113,8 @@ const SoundSection: React.FC<{ audio: GenreAudioEvidence | null; totalTracks: nu
     );
   }
   const lead = audio.genres[0]?.genre;
+  // The list counts top styles; styles that are only among the 5 closest stay out of it.
+  const topStyles = audio.styles.filter(s => s.tracks > 0);
   const counted = audio.sampled
     ? `${audio.analysed.toLocaleString()} of the ${totalTracks.toLocaleString()} tracks, sampled`
     : audio.analysed === totalTracks ? `all ${count(totalTracks, 'track')}` : `${audio.analysed.toLocaleString()} of ${count(totalTracks, 'track')}`;
@@ -113,12 +132,12 @@ const SoundSection: React.FC<{ audio: GenreAudioEvidence | null; totalTracks: nu
         />
         <CountList
           label="Style"
-          rows={audio.styles.slice(0, SOUND_ROWS).map(s => ({
+          rows={topStyles.slice(0, SOUND_ROWS).map(s => ({
             key: targetKey(s),
             name: s.genre === lead ? s.style! : `${s.style} (${s.genre})`,
             tracks: s.tracks,
           }))}
-          more={Math.max(0, audio.styles.length - SOUND_ROWS)}
+          more={Math.max(0, topStyles.length - SOUND_ROWS)}
         />
       </div>
     </section>
@@ -146,6 +165,20 @@ const ArtistTagSection: React.FC<{ evidence: GenreReviewEvidence }> = ({ evidenc
         <p className="genre-review-source__fact">Mostly {lean.genre} for {lean.artists} of {lean.of} artists</p>
       )}
     </section>
+  );
+};
+
+/** How many of the tracks have a style among their 5 closest, for each style an outcome names. */
+const StyleFit: React.FC<{ targets: GenreTarget[]; audio: GenreAudioEvidence | null }> = ({ targets, audio }) => {
+  const styles = targets.filter(t => t.styleId !== null);
+  if (!audio || !styles.length) return null;
+  const [first, ...rest] = styles;
+  const named = (t: GenreTarget) => styles.length > 1 ? targetLabel(t) : t.style;
+  return (
+    <p className="genre-review-effect">
+      {`${nearTracks(audio, first).toLocaleString()} of the ${audio.analysed.toLocaleString()} analysed tracks have ${named(first)} among their 5 closest styles`}
+      {rest.map(t => `; ${nearTracks(audio, t).toLocaleString()} have ${named(t)}`).join('')}.
+    </p>
   );
 };
 
@@ -177,7 +210,12 @@ function outcomeBody(entry: Entry, outcome: GenreReviewOutcome, evidence: GenreR
   switch (outcome.kind) {
     case 'accept':
     case 'only':
-      return <TargetList targets={outcome.targets || []} evidence={evidence} />;
+      return (
+        <>
+          <TargetList targets={outcome.targets || []} evidence={evidence} />
+          <StyleFit targets={outcome.targets || []} audio={evidence.audio} />
+        </>
+      );
     case 'pick':
       return picker;
     case 'ignore':
@@ -225,6 +263,7 @@ export const GenreReviewEntry: React.FC<{
         if (match) setChosen(current => current === null || current === 'pick' ? match : current);
         else if (result.suggestion && entry.outcomes.some(o => o.kind === 'pick')) {
           setPicked(current => current.length ? current : result.suggestion!.targets);
+          setChosen(current => current ?? 'pick');
         }
       })
       .catch((e: Error) => { if (live) setError(e.message); });
@@ -234,12 +273,10 @@ export const GenreReviewEntry: React.FC<{
   const suggestion = evidence?.suggestion ?? null;
   const suggestedId = suggestedOutcome(entry, suggestion)
     ?? (suggestion && sameTargets(picked, suggestion.targets) ? 'pick' : null);
-  const suggestedTargets = suggestedId === 'pick' ? picked : entry.outcomes.find(o => o.id === suggestedId)?.targets || [];
-  const reason = suggestion && evidence
-    ? suggestionReason(suggestion, evidence.audio, entry.totalTracks, suggestedTargets.some(t => t.styleId !== null))
-    : null;
+  const reason = suggestion && evidence ? suggestionReason(suggestion, evidence.audio, entry.totalTracks) : null;
   const why = (id: string) => id === suggestedId && reason ? <p className="genre-review-why">{reason}</p> : null;
-  const hint = styleHint(picked, evidence?.audio ?? null, entry.totalTracks);
+  const namedStyles = new Set(entry.outcomes.flatMap(o => o.targets || []).filter(t => t.styleId !== null).map(targetKey));
+  const hint = styleHint(picked, evidence?.audio ?? null, entry.totalTracks, namedStyles);
 
   const picker = (
     <>

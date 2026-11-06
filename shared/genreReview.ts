@@ -93,16 +93,28 @@ export interface GenreAudioEvidence {
   sampled: boolean;
   /** Each track counts once, for the genre of its top style; most tracks first. */
   genres: Array<{ genre: string; tracks: number }>;
-  /** Each track counts once, for its top style; most tracks first. */
-  styles: Array<GenreTarget & { tracks: number }>;
+  /**
+   * tracks: how many have this as their top style (each track counts once).
+   * near: how many have it among their 5 closest styles, the fairer test of
+   * whether a style fits (on dev, House is the top style of 34 % of the
+   * tracks tagged House, and among the 5 closest for 72 %). Most tracks first;
+   * styles that are only near have tracks = 0.
+   */
+  styles: Array<GenreTarget & { tracks: number; near: number }>;
 }
 
 export interface GenreSuggestion {
   targets: GenreTarget[];
   /** both: audio and artist tags agree; audio or artists: the only source there is. */
   basis: 'both' | 'audio' | 'artists';
-  /** No style suggested because the tracks' top styles are spread out. */
+  /** The tag names no style, and none is suggested because the tracks' top styles are spread out. */
   stylesVary: boolean;
+  /**
+   * Styles the tag names in the suggested genre that few of the tracks sound
+   * like (among their 5 closest for under 20 %), so they are left out: the
+   * tag looks loosely used ("Electro" on Radiohead remixes, ODESZA and Netsky).
+   */
+  looseStyles: Array<{ style: string; near: number }>;
 }
 
 export interface GenreExactMatch {

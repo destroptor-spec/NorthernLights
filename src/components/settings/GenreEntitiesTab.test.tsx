@@ -136,9 +136,9 @@ test('a lone artist\'s tags and the audio fill in a suggestion, and a style few 
     audio: {
       analysed: 135, sampled: false,
       genres: [{ genre: 'Electronic', tracks: 95 }, { genre: 'Hip Hop', tracks: 15 }],
-      styles: [{ genre: 'Electronic', styleId: 60, style: 'Downtempo', tracks: 32 }, { genre: 'Hip Hop', styleId: 71, style: 'Instrumental', tracks: 11 }],
+      styles: [{ genre: 'Electronic', styleId: 60, style: 'Downtempo', tracks: 32, near: 82 }, { genre: 'Hip Hop', styleId: 71, style: 'Instrumental', tracks: 11, near: 40 }],
     },
-    suggestion: { targets: [{ genre: 'Electronic', styleId: null, style: null }], basis: 'both', stylesVary: true },
+    suggestion: { targets: [{ genre: 'Electronic', styleId: null, style: null }], basis: 'both', stylesVary: true, looseStyles: [] },
   });
   render(<GenreEntitiesTab />);
   // Each source says what it is and where it comes from.
@@ -163,20 +163,60 @@ test('a lone artist\'s tags and the audio fill in a suggestion, and a style few 
   expect(screen.queryByText(/^Suggested\./)).toBeNull();
 });
 
-test('a suggestion for a style under two genres settles the genre without saying "no style"', async () => {
+test('a style the tag names: each card says how many tracks sound like it, and a loosely used one is left out', async () => {
   state.entries = [disco];
+  const audio = {
+    analysed: 154, sampled: false, genres: [{ genre: 'Electronic', tracks: 120 }, { genre: 'Funk / Soul', tracks: 34 }],
+    styles: [
+      { genre: 'Electronic', styleId: 1, style: 'House', tracks: 40, near: 90 },
+      { genre: 'Electronic', styleId: 53, style: 'Disco', tracks: 30, near: 101 },
+      { genre: 'Funk / Soul', styleId: 168, style: 'Disco', tracks: 20, near: 84 },
+    ],
+  };
   evidenceFor = key => ({
-    ...evidence, key, lean: { genre: 'Electronic', artists: 5, of: 6 },
-    audio: {
-      analysed: 154, sampled: false, genres: [{ genre: 'Electronic', tracks: 120 }],
-      styles: [{ genre: 'Electronic', styleId: 1, style: 'House', tracks: 40 }, { genre: 'Electronic', styleId: 53, style: 'Disco', tracks: 30 }],
-    },
-    suggestion: { targets: [{ genre: 'Electronic', styleId: null, style: null }], basis: 'both', stylesVary: true },
+    ...evidence, key, lean: { genre: 'Electronic', artists: 5, of: 6 }, audio,
+    suggestion: { targets: [{ genre: 'Electronic', styleId: 53, style: 'Disco' }], basis: 'both', stylesVary: false, looseStyles: [] },
   });
-  render(<GenreEntitiesTab />);
-  const radio = await screen.findByRole('radio', { name: /Electronic › Disco/ });
+  const { unmount } = render(<GenreEntitiesTab />);
+  const radio = await screen.findByRole('radio', { name: /^Electronic › Disco/ });
   await waitFor(() => expect((radio as HTMLInputElement).checked).toBe(true));
   expect(screen.getByText('Suggested. The sound of the tracks and the artist tags both point to Electronic.')).toBeTruthy();
+  const card = radio.closest('label')!;
+  expect(within(card).getByText(/^101 of the 154 analysed\s+tracks have Disco among their 5 closest styles\.$/)).toBeTruthy();
+  unmount();
+
+  // Few tracks sound like the named style: the genre alone, in the picker.
+  evidenceFor = key => ({
+    ...evidence, key, lean: { genre: 'Electronic', artists: 5, of: 6 }, audio,
+    suggestion: { targets: [{ genre: 'Electronic', styleId: null, style: null }], basis: 'both', stylesVary: false, looseStyles: [{ style: 'Disco', near: 12 }] },
+  });
+  render(<GenreEntitiesTab />);
+  expect(await screen.findByRole('button', { name: 'Remove Electronic' })).toBeTruthy();
+  expect(screen.getByText(/Few of the tracks have Disco \(12 of 154\) among their 5 closest styles, so the tag looks loosely used: Electronic alone, without the style\.$/)).toBeTruthy();
+  expect((screen.getByRole('radio', { name: /^Electronic › Disco/ }) as HTMLInputElement).checked).toBe(false);
+  expect((screen.getByRole('radio', { name: /^Something else/ }) as HTMLInputElement).checked).toBe(true);
+});
+
+test('a compound tag keeps the styles the tracks sound like and says which it leaves out', async () => {
+  const compound: GenreReviewEntry = {
+    key: 'tag:hard rock/heavy metal', signature: 's-c', kind: 'compound', subject: 'Hard Rock/Heavy Metal', tagKey: 'hard rock/heavy metal',
+    totalTracks: 38, current: [{ genre: 'Rock', styleId: 1, style: 'Hard Rock' }, { genre: 'Rock', styleId: 2, style: 'Heavy Metal' }],
+    outcomes: [
+      { id: 'accept', kind: 'accept', label: 'Both', targets: [{ genre: 'Rock', styleId: 1, style: 'Hard Rock' }, { genre: 'Rock', styleId: 2, style: 'Heavy Metal' }] },
+      { id: 'only:0', kind: 'only', label: 'Rock › Hard Rock', targets: [{ genre: 'Rock', styleId: 1, style: 'Hard Rock' }] },
+      { id: 'pick', kind: 'pick', label: 'Something else' },
+    ],
+  };
+  state.entries = [compound];
+  evidenceFor = key => ({
+    ...evidence, key, lean: null, artistTags: ['hard rock'], targetTracks: {},
+    audio: { analysed: 38, sampled: false, genres: [{ genre: 'Rock', tracks: 38 }], styles: [{ genre: 'Rock', styleId: 1, style: 'Hard Rock', tracks: 30, near: 37 }] },
+    suggestion: { targets: [{ genre: 'Rock', styleId: 1, style: 'Hard Rock' }], basis: 'both', stylesVary: false, looseStyles: [{ style: 'Heavy Metal', near: 0 }] },
+  });
+  render(<GenreEntitiesTab />);
+  const radio = await screen.findByRole('radio', { name: /^Rock › Hard Rock/ });
+  await waitFor(() => expect((radio as HTMLInputElement).checked).toBe(true));
+  expect(screen.getByText(/Few of the tracks have Heavy Metal \(0 of 38\) among their 5 closest styles, so it is left out\.$/)).toBeTruthy();
 });
 
 test('keeping spellings from different parts of the genre tree asks first', async () => {

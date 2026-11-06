@@ -237,7 +237,9 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     expect(evidence.audio!.styles[0]).toMatchObject({ genre: 'Electronic', style: 'Downtempo', tracks: 2 });
     // Without artist tags, audio alone suggests the genre (4 of 5); Downtempo is 2 of 5, so no style.
     expect(evidence.artistTags).toBeNull();
-    expect(evidence.suggestion).toEqual({ targets: [{ genre: 'Electronic', styleId: null, style: null }], basis: 'audio', stylesVary: true });
+    expect(evidence.suggestion).toEqual({ targets: [{ genre: 'Electronic', styleId: null, style: null }], basis: 'audio', stylesVary: true, looseStyles: [] });
+    // Near counts each track's 5 closest styles: the other four scored styles tie at 0.01, so every track lists five.
+    expect(evidence.audio!.styles.reduce((n, s) => n + s.near, 0)).toBe(25);
 
     // With artist tags that agree, the suggestion says both; one artist shows their own tags.
     // addTrack leaves the artist entity to the scanner; link the tracks by hand.
