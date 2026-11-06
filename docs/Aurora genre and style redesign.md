@@ -220,6 +220,31 @@ CREATE TABLE descriptor_map (
   name TEXT                            -- display form; NULL for noise
 );
 
+-- Album and artist profiles: summaries of their tracks' fused memberships,
+-- rebuilt after every fusion run (see Three levels). Never edited directly.
+CREATE TABLE album_styles (
+  album_id       UUID NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+  genre          TEXT NOT NULL REFERENCES taxonomy_genre(name),
+  style_id       INT,                  -- NULL = the genre itself
+  share          REAL NOT NULL,        -- share of the album's tracks that are members, 0..1
+  strength       REAL NOT NULL,        -- mean member strength over all its tracks, 0..1
+  tracks         INT NOT NULL,         -- member tracks
+  fusion_version INT NOT NULL,
+  FOREIGN KEY (style_id, genre) REFERENCES style(id, genre),
+  UNIQUE NULLS NOT DISTINCT (album_id, genre, style_id)
+);
+CREATE TABLE artist_styles (
+  artist_id      UUID NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+  genre          TEXT NOT NULL REFERENCES taxonomy_genre(name),
+  style_id       INT,
+  share          REAL NOT NULL,        -- mean of the album shares: each album counts once
+  albums         INT NOT NULL,         -- albums where it appears
+  tracks         INT NOT NULL,         -- member tracks, own tracks only
+  fusion_version INT NOT NULL,
+  FOREIGN KEY (style_id, genre) REFERENCES style(id, genre),
+  UNIQUE NULLS NOT DISTINCT (artist_id, genre, style_id)
+);
+
 -- Library-specific sound of each style
 CREATE TABLE style_centroids (
   style_id       INT PRIMARY KEY REFERENCES style(id) ON DELETE CASCADE,
@@ -433,6 +458,32 @@ The Genre Matrix is retired piece by piece. Every piece keeps working unchanged 
 | Candidate-pool genre paths (`candidatePool.service`) | Hub and candidate pools | Replaced by fused genres and styles | Phase 4 |
 | Settings → Genre Transition Matrix tab | Admin | Becomes the tag-mapping review screen (unmapped tags, ambiguous names, disputed tags) | Phases 1–2 |
 
+## Three levels: track, album, artist
+
+Tracks, albums and artists each have genres and styles, but only the track is assigned. Album and artist profiles are summaries of their tracks, recomputed after every fusion run, so the levels can never contradict each other, and one tag never stamps a style on music that sounds different (a tag one artist uses across varied albums, like "Electric Hip Hop Soul"). Each level also shows the evidence that belongs to it.
+
+| Level | Comes from | Also shown |
+| --- | --- | --- |
+| **Track** | Fusion: file tags, its own sound, corrections. The only level that is stored as decided and the only one that is edited. | Where each style came from |
+| **Album** | Its tracks: for each genre and style, the share of the album's tracks that are members and the mean strength. | The album's own tags: Picard writes the release's genres to every track, so file tags are really release-level evidence |
+| **Artist** | Their own tracks (not appearances or features; Various Artists has no profile), **each album counted once**: the mean of the album shares, so a 40-track deluxe edition or a remix album does not outweigh the rest. Tracks without an album count together as one album. | What listeners tag the artist with (Last.fm, MusicBrainz), when available; styles album by album over time |
+
+- **Editing stays per track.** "Apply to the whole album" and "apply to every track by this artist" are shortcuts that write track overrides; there is no album or artist override.
+- **What a profile lists.** A genre or style appears on an album when at least 20 % of its tracks are members, or it is among the album's 3 strongest; the same rule applies to an artist's album-weighted shares. Smaller ones stay in the data for ranking.
+- **Ranking.** Browse ranks albums and artists on a style page by profile share times strength, so an album that is mostly the style comes before one with a single track in it.
+- **Compilations.** An album's profile shows its spread as it is ("Sun:Sets 2019": Electronic, Downtempo, Ambient, House); nothing is tidied.
+
+### Aurora rays from {title}
+
+One view per track, titled "Aurora rays from {title}", that shows everything Aurora knows about it. Reached from the track's menu and from Now Playing. Named for Aurora; not "DNA", which reads as another service's feature.
+
+1. **Credits.** Artists and every role the scanner already stores in `track_artist_credits` (on dev: composer on 14,746 tracks, producer 6,335, lyricist 6,128, performer, writer, mixer, engineer, arranger, conductor, remixer).
+2. **Genres and styles.** Each with its source in words ("from the file tag", "from the sound", "set by you"), strength, and a flag when the sound disputes a tag. "Remove style" and "Add style" write overrides.
+3. **Sound.** Energy, danceability, acoustic ↔ electronic, instrumental, from the analysis Aurora already runs, and the track's closest styles by sound.
+4. **In context.** How the track sits in its album and artist profiles ("Glitch, where most of the album is Downtempo"), and the listener tags for the artist.
+5. **Albums.** Every album in the library this recording is on (by `mb_recording_id`, or normalised artist + title without one), which is the same match the duplicate-recording fix uses.
+6. **Sounds close to.** Nearby styles and tracks, once style centroids exist (phase 3); hidden until then.
+
 ## Browse UI
 
 Browse becomes Genre → Style → music, with Play at every level, consistent card sizes and direct style search. It replaces the rails and the "Other genres" grid in `LibraryHome.tsx`.
@@ -443,9 +494,9 @@ Browse becomes Genre → Style → music, with Play at every level, consistent c
 4. **Style search.** A search box at the top of Browse matches style names and aliases. Duplicate names show their genre: "Trip Hop · Electronic", "Trip Hop · Hip Hop".
 5. **Unsorted tags.** The last entry lists unmapped tags with track counts; their tracks stay playable, and admins can map a tag from there. Admins also see a **Disputed** list here (tagged memberships the audio contradicts) with Keep and Remove.
 6. **Facets** on genre and style pages: decade, energy, acoustic ↔ electronic, from features Aurora already computes.
-7. **Provenance in details only.** Track and album detail views say where each style came from (tag, model, neighbours, manual) and offer "Remove style", which writes an override. Cards carry no source badges.
+7. **Provenance in details only.** "Aurora rays from {title}" says where each style came from (tag, model, neighbours, manual) and offers "Remove style", which writes an override; album and artist pages show their profiles (see Three levels). Cards carry no source badges.
 
-API: `GET /api/browse/genres`, `GET /api/browse/genres/:genre`, `GET /api/browse/styles/:id` (members, neighbours, facets), `GET /api/browse/search?q=` and `GET /api/browse/unsorted`. All read fused, member rows of `track_styles` and `style_centroids`; nothing loads the full library.
+API: `GET /api/browse/genres`, `GET /api/browse/genres/:genre`, `GET /api/browse/styles/:id` (members, neighbours, facets), `GET /api/browse/search?q=`, `GET /api/browse/unsorted`, plus `GET /api/browse/tracks/:id/rays` and the album and artist profiles. All read fused, member rows of `track_styles`, `album_styles`, `artist_styles` and `style_centroids`; nothing loads the full library.
 
 ## Migration and rollout
 
@@ -455,8 +506,8 @@ Ship in four phases: tags and taxonomy → usable Browse → measured ML enrichm
 
 0. **Analysis window (parallel to phase 1).** The blind A/B round favoured the mean of 20 / 50 / 80 % (13–7, see Analysis window). Implemented as feature version 3: one ffmpeg call per track, EffNet plus classifiers (MusiCNN removed), `genre_discogs400` scores in `track_style_scores`. Any scan that finds a new file re-analyses every outdated track, so time the prod deploy. Prod steps (venv rebuild, models, re-analysis, verification) are in [genre-engine-upgrade.md](./genre-engine-upgrade.md).
 1. **Taxonomy and tag mapping.** Seed `taxonomy_genre` and `style` from the versioned JSON with validation. Split Last.fm and MusicBrainz artist tags into per-provider rows with normalised weights (the scale-mixing fix). Copy every original tag from `tracks.genres` into `track_tags`, and carry accepted duplicate-review merges into `tag_map` as aliases. Map tags exact → alias → MusicBrainz alias → MusicBrainz parent → LLM; ambiguous duplicate style names and low-reliability mappings go to an admin review screen. The LLM step is optional, like all AI in Aurora: without a configured LLM, tags left after the MusicBrainz steps go straight to the review screen and stay visible under Unsorted. Seed the snapshot (see MusicBrainz genre data) in this phase. On dev, exact names alone map 77.5 % of tagged tracks, and 21 aliases for the most common misses (Dance → Electronic, Drum & Bass → Drum n Bass, Rap → Hip Hop, R&B → Rhythm & Blues, Metal → Heavy Metal, Film → Soundtrack…) raise that to 95.6 %. Junk tags ("None", "Other") map to `tag_ignored`. Gate: mapping coverage (share of tagged tracks with at least one mapping) and mapping correctness (share right in the reviewed sample) are reported separately, and both meet a target you set.
-2. **Browse on tags, plus untagged tracks.** Fusion with tag evidence, and the untagged-track rule so tracks with no genre tag do not wait for phase 3. Where artist tags are already stored (prod), they set the genre of untagged tracks immediately; without them the audio-only rule applies. Fusion is tested both with and without artist tags (dev has none), and both runs must leave every track either in a genre or in Unsorted. Their scores come from an early genre backfill limited to untagged, non-simulated tracks, using the `genre_discogs400` head on fresh per-patch embeddings (it fits the current extractor wrapper). The stored `embedding_vector` cannot be reused: it is an L2-normalised mean, not the per-patch input the head was trained on. These rows carry their own `genre_version`, so if phase 0 changes the windows they are simply rescored. The new Browse ships behind a setting, then becomes the default, with Unsorted tags live from day one.
-3. **Measured ML enrichment.** Run the genre backfill (unless phase 0's re-analysis already wrote the scores). ML, KNN and Last.fm evidence for tagged tracks switch on only where the reviewed sample shows they help; Last.fm descriptors start feeding AI playlist prompts and facets; centroids and "Sounds close to" follow. Disputed-tag flags start once centroids exist.
+2. **Browse on tags, plus untagged tracks.** Fusion with tag evidence, and the untagged-track rule so tracks with no genre tag do not wait for phase 3. Where artist tags are already stored (prod), they set the genre of untagged tracks immediately; without them the audio-only rule applies. Fusion is tested both with and without artist tags (dev has none), and both runs must leave every track either in a genre or in Unsorted. Their scores come from an early genre backfill limited to untagged, non-simulated tracks, using the `genre_discogs400` head on fresh per-patch embeddings (it fits the current extractor wrapper). The stored `embedding_vector` cannot be reused: it is an L2-normalised mean, not the per-patch input the head was trained on. These rows carry their own `genre_version`, so if phase 0 changes the windows they are simply rescored. The new Browse ships behind a setting, then becomes the default, with Unsorted tags live from day one. Tags mapped to a genre alone get styles from audio within that genre in the same step. Album and artist profiles (see Three levels) and "Aurora rays from {title}" ship here too, without "Sounds close to".
+3. **Measured ML enrichment.** Run the genre backfill (unless phase 0's re-analysis already wrote the scores). ML, KNN and Last.fm evidence for tagged tracks switch on only where the reviewed sample shows they help; Last.fm descriptors start feeding AI playlist prompts and facets; centroids and "Sounds close to" follow, in Browse and in "Aurora rays from {title}". Disputed-tag flags start once centroids exist.
 4. **Recommendation changes.** Style overlap replaces the hop-cost penalty in candidate scoring and is compared side by side against the old engine, which stays selectable. Then `tracks.genre_id` and `track_genres` are derived from fused genres and styles, and the remaining Genre Matrix pieces are retired or re-pointed (see What happens to the Genre Matrix), including `subgenre_mappings`.
 
 **Reviewed sample.** A fixed, hand-labelled set of tracks every gate is checked against. It covers common styles, rare styles, ambiguous tags (the 16 duplicate style names), untagged tracks, and compilations and soundtracks. Round 1 (20 neighbour pairs, see Appendix) is done.
@@ -481,6 +532,8 @@ Rollback: phases 1–3 add tables and leave `tracks.genres`, `track_genres` and 
 | Genre penalty in the engine? | Removed in phase 4; style overlap is a bonus only. Banned genres remain a hard veto. |
 | LLM step in tag mapping | Deferred (decided 2026-11-06). Exact names, hand aliases and MusicBrainz aliases and parents reach about 97 % of Picard tag uses; leftovers go to the review screen. |
 | Where does the mapping review live? | Settings → Library Entities → Genres. Adding it includes reworking that whole sub-tab to the standard of the Artists sub-tab (previews, undo, clearer actions). Built (1b, 2026-11-06): one queue with kinds No genre, Two genres, Guessed, Several in one and Spellings (the old duplicate detector, still grouping `genres.merged_into` until phase 4); name matches accepted in bulk from a list; coverage meter and count as the header; every answer undoable for 30 days. The Artists and Genres tabs share one queue component (`ReviewQueue`, `ReviewPanel`, `useReviewQueue`). Each question shows the audio (each track counted under its top style) and the artists' tags, and starts from a suggestion when they agree (or when one source is clear alone: most artists, or 70 % of tracks); a style the tag itself names is kept unless under 20 % of the tracks have it among their 5 closest styles (the tag is then loosely used: "Electro" on Radiohead remixes, ODESZA, Netsky and a Chicane compilation, 16 of 102), and a tag that names no style gets one only when at least half the tracks have it as their top style, otherwise the genre alone. Top style alone undersells every style, so named styles are judged by the 5 closest: on dev, tracks tagged Hard Rock / House / Disco / Pop Rock have that style among their 5 closest for 77 / 72 / 54–66 / 46 % (top style 44 / 34 / 18–27 / 13 %), against 25 % for Rock › New Wave and 16 % for Electro. On dev, 77 of 100 questions get a suggestion. |
+| Genres and styles for albums and artists? | Yes, as summaries of their tracks, never assigned on their own (decided 2026-11-06). An artist's profile counts each album once, not each track. |
+| Name of the per-track view | "Aurora rays from {title}" (decided 2026-11-06), not "DNA". |
 | Tuning weights and thresholds | Tuned against reviewed labels. Loves and skips personalise recommendations only, never shared genre truth. |
 
 Still open:
