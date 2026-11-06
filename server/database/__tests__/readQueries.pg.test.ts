@@ -22,6 +22,7 @@
  * skip — a silently-skipped guard is worse than none.
  */
 import { Pool } from 'pg';
+import { AUDIO_FEATURE_VERSION } from '../../services/audioFeatureVersion';
 
 const ENABLED = process.env.AURORA_DB_TESTS === '1';
 const describeDb = ENABLED ? describe : describe.skip;
@@ -98,13 +99,13 @@ describeDb('database read queries', () => {
     try {
       await db.addTrackFeatures(legacyId, features);
       await db.setTrackLoudness(currentId, -12, -1);
-      await db.addTrackFeatures(currentId, { ...features, feature_version: 2 });
-      await db.addTrackFeatures(simulatedId, { ...features, is_simulated: true, feature_version: 2 });
+      await db.addTrackFeatures(currentId, { ...features, feature_version: AUDIO_FEATURE_VERSION });
+      await db.addTrackFeatures(simulatedId, { ...features, is_simulated: true, feature_version: AUDIO_FEATURE_VERSION });
       expect((await db.getTracksWithoutFeatures()).map(row => row.id)).toEqual([legacyId]);
-      await db.addTrackFeatures(legacyId, { ...features, feature_version: 2 });
+      await db.addTrackFeatures(legacyId, { ...features, feature_version: AUDIO_FEATURE_VERSION });
       expect(await db.getTracksWithoutFeatures()).toEqual([]);
       const row = (await pool.query('SELECT feature_version, loudness_lufs FROM track_features WHERE track_id = $1', [currentId])).rows[0];
-      expect(row).toMatchObject({ feature_version: 2, loudness_lufs: -12 });
+      expect(row).toMatchObject({ feature_version: AUDIO_FEATURE_VERSION, loudness_lufs: -12 });
       expect((await db.getTracksWithSimulatedFeatures()).map(row => row.id)).toEqual([simulatedId]);
     } finally {
       await pool.query('DELETE FROM track_features WHERE track_id = ANY($1::text[])', [[legacyId, currentId, simulatedId]]);
@@ -137,7 +138,7 @@ describeDb('database read queries', () => {
     const neighbour = (await pool.query("INSERT INTO artists (name) VALUES ('Neighbour Artist') RETURNING id")).rows[0].id;
     const ownIds = [`${TRACK_ID}0`, `${TRACK_ID}1`];
     const neighbourIds = ['bmVpZ2hib3VyMA==', 'bmVpZ2hib3VyMQ=='];
-    const features = { bpm: 120, acoustic_vector: Array(8).fill(0.5), embedding_vector: [1, ...Array(1279).fill(0)], feature_version: 2 };
+    const features = { bpm: 120, acoustic_vector: Array(8).fill(0.5), embedding_vector: [1, ...Array(1279).fill(0)], feature_version: AUDIO_FEATURE_VERSION };
     try {
       for (const [i, id] of neighbourIds.entries()) {
         await pool.query(
@@ -715,19 +716,19 @@ describeDb('database read queries', () => {
           [id, Buffer.from(`${directory}/${id}.flac`).toString('base64')]);
       }
       await db.setTrackLoudness(ids[1], -12, -1);
-      await db.addTrackFeatures(ids[2], { ...features, feature_version: 2 });
+      await db.addTrackFeatures(ids[2], { ...features, feature_version: AUDIO_FEATURE_VERSION });
       await pool.query('UPDATE track_features SET acoustic_vector_8d = NULL WHERE track_id = $1', [ids[2]]);
       await db.addTrackFeatures(ids[3], { ...features, feature_version: 1 });
-      await db.addTrackFeatures(ids[4], { ...features, feature_version: 2 });
+      await db.addTrackFeatures(ids[4], { ...features, feature_version: AUDIO_FEATURE_VERSION });
       await db.addTrackFeatures(ids[5], { bpm: 120, acoustic_vector: features.acoustic_vector, feature_version: 3 });
-      await db.addTrackFeatures(ids[6], { ...features, feature_version: 2, is_simulated: true });
+      await db.addTrackFeatures(ids[6], { ...features, feature_version: AUDIO_FEATURE_VERSION, is_simulated: true });
       const stats = (await db.getLibraryDirectoryStats()).find(row => row.path === directory)!;
       expect(stats).toEqual({ path: directory, totalTracks: 7, withMetadata: 0, analyzed: 3, missingAnalysis: 3, outdatedAnalysis: 1 });
       const pending = (await db.getTracksWithoutFeatures()).filter(row => ids.includes(row.id));
       expect(pending.map(row => row.id).sort()).toEqual(ids.slice(0, 4).sort());
       expect(pending).toHaveLength(stats.missingAnalysis + stats.outdatedAnalysis);
       // Completing the backlog changes coverage and eligibility together.
-      for (const track of pending) await db.addTrackFeatures(track.id, { ...features, feature_version: 2 });
+      for (const track of pending) await db.addTrackFeatures(track.id, { ...features, feature_version: AUDIO_FEATURE_VERSION });
       expect((await db.getLibraryDirectoryStats()).find(row => row.path === directory))
         .toMatchObject({ analyzed: 7, missingAnalysis: 0, outdatedAnalysis: 0 });
       expect((await db.getTracksWithoutFeatures()).filter(row => ids.includes(row.id))).toEqual([]);
@@ -737,13 +738,35 @@ describeDb('database read queries', () => {
     }
   });
 
+  it('stores style scores with the features and drops them when a track falls back to simulated', async () => {
+    const id = `${TRACK_ID}0`;
+    const scores = Array.from({ length: 400 }, (_, i) => (i % 10) / 10);
+    const features = { bpm: 120, acoustic_vector: Array(8).fill(0.5), embedding_vector: [1, ...Array(1279).fill(0)], feature_version: AUDIO_FEATURE_VERSION };
+    const read = async () => (await pool.query(
+      'SELECT cardinality(scores) AS n, scores[2] AS second, model, windows, genre_version FROM track_style_scores WHERE track_id = $1', [id])).rows[0];
+    try {
+      await db.addTrackFeatures(id, { ...features, style_scores: scores, analysis_windows: '3x15s@20/50/80%' });
+      expect(await read()).toMatchObject({ n: 400, model: 'genre_discogs400-discogs-effnet-1', windows: '3x15s@20/50/80%', genre_version: 1 });
+      expect((await read()).second).toBeCloseTo(0.1, 5);
+      // A later simulated fallback must not leave scores from the real analysis behind.
+      await db.addTrackFeatures(id, { ...features, is_simulated: true, style_scores: scores });
+      expect(await read()).toBeUndefined();
+      // The CHECK rejects anything but 400 values, even if a caller skips validation.
+      await expect(pool.query(`INSERT INTO track_style_scores (track_id, scores, model, windows, genre_version)
+        VALUES ($1, $2::real[], 'm', 'w', 1)`, [id, [0.1, 0.2]])).rejects.toThrow(/check/i);
+    } finally {
+      await pool.query('DELETE FROM track_features WHERE track_id = $1', [id]);
+      await pool.query('DELETE FROM track_style_scores WHERE track_id = $1', [id]);
+    }
+  });
+
   it.each([true, false])('Infinity reads stored vectors by version and never repeats excluded tracks (embedding=%s)', async withEmbedding => {
     const ids = [0, 1, 2].map(index => `${TRACK_ID}${index}`);
     const features = { bpm: 120, acoustic_vector: [0.7, 0.1, 0.1, 0.5, 0.1, 0.1, 0.1, 0.6], embedding_vector: withEmbedding ? [1, ...Array(1279).fill(0)] : undefined };
     try {
-      await db.addTrackFeatures(ids[0], { ...features, feature_version: 2 });
+      await db.addTrackFeatures(ids[0], { ...features, feature_version: AUDIO_FEATURE_VERSION });
       await db.addTrackFeatures(ids[1], { ...features, feature_version: 1 });
-      await db.addTrackFeatures(ids[2], { ...features, acoustic_vector: [0.71, ...features.acoustic_vector.slice(1)], feature_version: 2 });
+      await db.addTrackFeatures(ids[2], { ...features, acoustic_vector: [0.71, ...features.acoustic_vector.slice(1)], feature_version: AUDIO_FEATURE_VERSION });
       const { calculateNextInfinityTrack } = await import('../../services/recommendation.service');
       const next = await calculateNextInfinityTrack([ids[0]], { discoveryLevel: 0 });
       // The old-version row is closer numerically, but has different semantics.

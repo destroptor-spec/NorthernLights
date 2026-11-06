@@ -163,34 +163,52 @@ Covers are **pre-encoded to AVIF during library scans** rather than extracted an
 The application extracts acoustic features from audio files to power the recommendation engine (Infinity Mode, Hub playlists). This is implemented as a **three-phase process**:
 
 1. **Metadata Phase** (Library Scan): ID3/Vorbis/ASF tags extracted and stored in PostgreSQL. The embedded cover is also encoded to AVIF here (see "Album Artwork Pipeline").
-2. **Analysis Phase** (Worker Threads): ffmpeg + Python + TensorFlow extract high-dimensional feature vectors:
+2. **Analysis Phase** (Worker Threads): ffmpeg + Python + TensorFlow extract, per track (feature version 3):
    - **8D Acoustic Vector** (Rhythm, style, and instrumentation)
    - **1280D Discogs-EffNet Embedding** (Neural timbre and production fingerprint)
-3. **Feature Storage**: Results stored in `track_features` table with pgvector HNSW indexing for ultra-fast similarity search.
+   - **400 Discogs style scores** (`genre_discogs400`, for the genre & style redesign)
+3. **Feature Storage**: Vectors are stored in `track_features` (pgvector HNSW indexes); style scores in `track_style_scores`, written in the same transaction and versioned separately (`genre_version`).
 
 ### Technical Implementation
 
 #### ffmpeg Decoding
 ```
-ffmpeg -ss <seek_to_35%> -i <input> -t 15 -f f32le -ac 1 -ar 44100 pipe:1
+ffmpeg -ss <20%> -t 15 -i <input> -ss <50%> -t 15 -i <input> -ss <80%> -t 15 -i <input> \
+       -filter_complex "<each window: asplit → 44.1 kHz and 16 kHz, pad to 15 s> concat" -f f32le pipe:1
 ```
-- **Smart Seeking**: Seeks to ~35% into the track (past intros/silence) to capture a representative segment of the chorus or main verse.
-- **15-Second Window**: Captures sufficient audio for the ML models to generate stable embeddings while minimizing memory and CPU overhead.
-- **Raw PCM Output**: Decodes once to 44.1 kHz, 32-bit little-endian float mono PCM for DSP. Essentia resamples that buffer to 16 kHz for both models; there is no second ffmpeg decode.
+- **Three windows**: 15 s each at 20 %, 50 % and 80 % of the track (start clamped so the window ends inside the file). Their mean replaced the old single window at 35 % after a blind listening A/B (13–7, 2026-11-06; see `docs/Aurora genre and style redesign.md`). Tracks of 15 s or less are analysed whole, unpadded.
+- **One ffmpeg process**: All windows are decoded by one call, at both 44.1 kHz (DSP) and 16 kHz (models), into one raw f32le stream that splits back by sample count. ffmpeg's resampler replaces an in-process Essentia resample (~150 ms/track). Single short windows are decoded at 44.1 kHz and resampled in process.
+- **No ffprobe per track**: The server passes the duration it stored at scan time (`durationSeconds` in the worker job); the extractor probes only when it is missing.
 
 #### Python ML Engine
 The analysis has transitioned from WASM-based processing to a dedicated **Python 3** engine using the **Essentia Python library** and **TensorFlow** models.
 
-**MusiCNN (8D Acoustic Features)**:
-Extracted using the MusiCNN classification model and traditional DSP algorithms:
-1. **Energy** — Duration-independent RMS level, mapped linearly from -60 dBFS (0) to 0 dBFS (1).
-2. **Brightness** (Spectral Centroid) — Frequency balance (high-frequency content proxy).
-3. **Percussiveness** (Dynamic Complexity) — Rhythmic energy variation.
+**Models: one network, small classifiers**
+
+Discogs-EffNet runs once per track over the three concatenated windows. Its graph always processes fixed batches of 64 patches, so one call over all windows costs the same as one window (≈430 ms on 2 threads). Small classifiers then run on its per-patch embeddings (≈12 ms together):
+
+| Model | Output |
+| --- | --- |
+| `genre_discogs400-discogs-effnet-1` | 400 Discogs style scores (identical to EffNet's own `PartitionedCall:0`) |
+| `danceability-discogs-effnet-1` | P(danceable) |
+| `mood_acoustic-discogs-effnet-1` | P(acoustic) |
+| `voice_instrumental-discogs-effnet-1` | P(instrumental) |
+
+MusiCNN was removed in feature version 3: these classifiers replaced its three MSD tags at about 1 % of the CPU cost (480 ms → 6 ms) and use the full 0–1 range (MusiCNN's acoustic and instrumental tags stayed below ~0.2).
+
+All inference sits behind `EssentiaCpuBackend` in `extractor.py` (`infer(clips_16k)` / `infer_many(tracks)`): 16 kHz clips in, per-patch embeddings, style scores and descriptor probabilities out. Decoding and DSP stay outside it, so a future CUDA/ROCm backend replaces only that class, and `infer_many` lets it batch across tracks.
+
+**8D Acoustic Vector**:
+1. **Energy** — Duration-independent RMS level over all windows, mapped linearly from -60 dBFS (0) to 0 dBFS (1).
+2. **Brightness** (Spectral Centroid) — Mean over the windows (high-frequency content proxy).
+3. **Percussiveness** (Dynamic Complexity) — Mean over the windows.
 4. **Pitch Salience** — Reserved dimension, currently the constant 0.5.
-5. **Instrumentalness** (ML-derived) — Probability that the track is instrumental.
-6. **Acousticness** (ML-derived) — Probability of acoustic vs. synthetic instruments.
-7. **Danceability** (ML-derived) — MSD MusiCNN “dance” tag (index 6), used as a proxy. Index 49 is “happy” and is not used for danceability.
-8. **Tempo** — BPM divided by 200 and clamped to [0, 1]. Clips shorter than three seconds report unknown BPM as 0.
+5. **Instrumentalness** — `voice_instrumental` classifier, P(instrumental).
+6. **Acousticness** — `mood_acoustic` classifier, P(acoustic).
+7. **Danceability** — `danceability` classifier, P(danceable).
+8. **Tempo** — BPM from the middle window only (a beat tracker across window joins sees false onsets), divided by 200 and clamped to [0, 1]. Clips shorter than three seconds report unknown BPM as 0.
+
+Per-track cost with three windows is ≈1 s end to end on one worker, about the same as the old single window; most of the rest is decoding from network storage.
 
 Short clips are repeated to a three-second minimum for model inference only; DSP uses the original audio. Empty, non-finite, wrong-dimension, and zero-norm model outputs are rejected. The worker protocol uses strict JSON, and the Node boundary validates vectors again before storage.
 
@@ -250,7 +268,7 @@ AURORA_MODEL_TESTS=1 .venv/bin/python3 -B -m unittest discover -s server/workers
 AURORA_DB_TESTS=1 npm test -- --runInBand server/database/__tests__/readQueries.pg.test.ts
 ```
 
-Native model tests require the installed Essentia/TensorFlow environment, ffmpeg/ffprobe, and both model files. Database tests create and remove a temporary database. Unit coverage includes crash/timeout/shutdown settlement, process-group targeting, EPIPE, resizing, buffered final results, invalid model outputs, energy duration invariance, the dance-tag mapping, and single-decode behavior.
+Native model tests require the installed Essentia/TensorFlow environment (Python 3.14, `essentia-tensorflow==2.1b6.dev1438`), ffmpeg/ffprobe, and the model files in `server/models` (downloaded at server start). Database tests create and remove a temporary database. Unit coverage includes crash/timeout/shutdown settlement, process-group targeting, EPIPE, resizing, buffered final results, invalid model outputs, energy duration invariance, the classifier mapping, one decode and one inference for three windows, and middle-window tempo.
 
 ### Processing diagnostics
 

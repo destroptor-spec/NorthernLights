@@ -5,12 +5,19 @@ import { EventEmitter } from 'events';
 
 export const MODELS_DIR = path.join(__dirname, '..', 'models');
 
-const MUSICNN_URL = 'https://essentia.upf.edu/models/feature-extractors/musicnn/msd-musicnn-1.pb';
 const EFFNET_URL = 'https://essentia.upf.edu/models/feature-extractors/discogs-effnet/discogs-effnet-bs64-1.pb';
+const HEADS_URL = 'https://essentia.upf.edu/models/classification-heads';
 
+// Discogs-EffNet is the only network; the rest are small classifiers on its
+// per-patch embeddings (filenames must match server/workers/extractor.py).
+// MusiCNN was dropped in feature version 3: these classifiers replaced its
+// acoustic/instrumental/danceability tags at ~1 % of the CPU cost.
 const MODELS = [
-  { name: 'MusiCNN', filename: 'msd-musicnn-1.pb', url: MUSICNN_URL },
-  { name: 'Discogs-EffNet', filename: 'discogs-effnet-bs64-1.pb', url: EFFNET_URL }
+  { name: 'Discogs-EffNet', filename: 'discogs-effnet-bs64-1.pb', url: EFFNET_URL },
+  { name: 'Discogs-400 styles', filename: 'genre_discogs400-discogs-effnet-1.pb', url: `${HEADS_URL}/genre_discogs400/genre_discogs400-discogs-effnet-1.pb` },
+  { name: 'Danceability', filename: 'danceability-discogs-effnet-1.pb', url: `${HEADS_URL}/danceability/danceability-discogs-effnet-1.pb` },
+  { name: 'Acoustic', filename: 'mood_acoustic-discogs-effnet-1.pb', url: `${HEADS_URL}/mood_acoustic/mood_acoustic-discogs-effnet-1.pb` },
+  { name: 'Voice / instrumental', filename: 'voice_instrumental-discogs-effnet-1.pb', url: `${HEADS_URL}/voice_instrumental/voice_instrumental-discogs-effnet-1.pb` },
 ];
 const MIN_MODEL_BYTES = 1000;
 

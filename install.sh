@@ -166,9 +166,11 @@ fi
 ok "Dependencies installed"
 
 info "Setting up Python virtual environment for ML Extractor..."
-uv venv --python 3.11 .venv
-uv pip install essentia-tensorflow
-ok "Python ML environment configured via uv (MusiCNN + Discogs-EffNet)"
+# Essentia's current builds ship for Python 3.14 only; keep the pin in sync
+# with README.md and docs/production_guide.md.
+uv venv --clear --python 3.14 .venv
+uv pip install --python .venv/bin/python "essentia-tensorflow==2.1b6.dev1438"
+ok "Python ML environment configured via uv (Discogs-EffNet + style and descriptor classifiers)"
 
 info "Building application..."
 npm run build

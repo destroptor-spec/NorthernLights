@@ -3,12 +3,16 @@ import fs from 'fs';
 import path from 'path';
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import { MODELS_DIR } from './downloadModels';
-import { AUDIO_FEATURE_VERSION } from './audioFeatureVersion';
+import { AUDIO_FEATURE_VERSION, STYLE_SCORE_COUNT } from './audioFeatureVersion';
 
 export interface AudioFeatures {
   bpm: number;
   acoustic_vector: number[];
   embedding_vector: number[];
+  /** genre_discogs400 sigmoid scores in model order; null for simulated features. */
+  style_scores: number[] | null;
+  /** Which audio the scores and vectors came from, e.g. '3x15s@20/50/80%'. */
+  analysis_windows?: string;
   is_simulated: boolean;
   feature_version: number;
 }
@@ -17,13 +21,15 @@ export interface AudioExtractionContext {
   trackId?: string;
   title?: string | null;
   artist?: string | null;
+  /** Stored track duration; lets the extractor skip its own ffprobe call. */
+  durationSeconds?: number | null;
 }
 
 interface PythonWorkerResult {
   id: string;
   audioFeatures?: AudioFeatures;
   error?: string;
-  timings?: Record<string, number>;
+  timings?: Record<string, unknown>;
 }
 
 class PersistentPythonAnalyzer {
@@ -42,14 +48,6 @@ class PersistentPythonAnalyzer {
     return path.join(__dirname, '..', 'workers', 'extractor.py');
   }
 
-  private get musicnnPb(): string {
-    return path.join(MODELS_DIR, 'msd-musicnn-1.pb');
-  }
-
-  private get effnetPb(): string {
-    return path.join(MODELS_DIR, 'discogs-effnet-bs64-1.pb');
-  }
-
   private ensureStarted() {
     if (this.child && !this.child.killed && this.child.stdin.writable) {
       return;
@@ -59,8 +57,8 @@ class PersistentPythonAnalyzer {
     const child = this.child = spawn(this.pythonExecutable, [
       this.extractorScript,
       '--worker',
-      this.musicnnPb,
-      this.effnetPb,
+      // extractor.py resolves its model files (EffNet + classifiers) here.
+      MODELS_DIR,
     ], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -123,7 +121,11 @@ class PersistentPythonAnalyzer {
 
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      child.stdin.write(JSON.stringify({ id, filePath }) + '\n', (error) => {
+      const duration = context?.durationSeconds;
+      const job = Number.isFinite(duration) && (duration as number) > 0
+        ? { id, filePath, durationSeconds: duration }
+        : { id, filePath };
+      child.stdin.write(JSON.stringify(job) + '\n', (error) => {
         if (!error) return;
         this.pending.delete(id);
         reject(error);
@@ -145,20 +147,22 @@ function buildSimulatedFeatures(): AudioFeatures {
     bpm: 120,
     acoustic_vector: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
     embedding_vector: new Array(1280).fill(0),
+    style_scores: null,
     is_simulated: true,
     feature_version: AUDIO_FEATURE_VERSION
   };
 }
 
-function logTimings(context: AudioExtractionContext | undefined, timings: Record<string, number> | undefined) {
+function logTimings(context: AudioExtractionContext | undefined, timings: Record<string, unknown> | undefined) {
   if (!timings) return;
   const label = context?.trackId || context?.title || 'unknown';
   const parts = [
     `total=${timings.total_ms ?? 'n/a'}ms`,
-    `resample16=${timings.audio_16k_load_ms ?? 'n/a'}ms`,
+    `decode=${timings.decode_ms ?? 'n/a'}ms`,
+    `probe=${timings.duration_probe_ms ?? 'skipped'}`,
+    `resample16=${timings.resample16_ms ?? 'ffmpeg'}`,
     `effnet=${timings.effnet_ms ?? 'n/a'}ms`,
-    `musicnn=${timings.musicnn_ms ?? 'n/a'}ms`,
-    `load44=${timings.audio_44k_load_ms ?? 'n/a'}ms`,
+    `heads=${timings.heads_ms ?? 'n/a'}ms`,
     `dsp=${timings.dsp_ms ?? 'n/a'}ms`,
   ];
   workerLog('debug', `[AudioExtract] Timing track=${label} ${parts.join(' ')}`);
@@ -194,7 +198,9 @@ export async function extractAudioFeatures(filePath: string, context?: AudioExtr
       || features.acoustic_vector.some(value => !Number.isFinite(value) || value < 0 || value > 1)
       || !Array.isArray(features.embedding_vector) || features.embedding_vector.length !== 1280
       || features.embedding_vector.some(value => !Number.isFinite(value))
-      || !features.embedding_vector.some(value => value !== 0)) {
+      || !features.embedding_vector.some(value => value !== 0)
+      || !Array.isArray(features.style_scores) || features.style_scores.length !== STYLE_SCORE_COUNT
+      || features.style_scores.some(value => !Number.isFinite(value) || value < 0 || value > 1)) {
       throw new Error('Python analyzer returned invalid audio features');
     }
     return features;

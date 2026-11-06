@@ -3,7 +3,7 @@ import { databaseHost } from './dbHost';
 import path from 'path';
 import fs from 'fs';
 import { ARTWORK_EXTRACTION_VERSION } from '../services/artworkVersion';
-import { AUDIO_FEATURE_VERSION, PENDING_AUDIO_FEATURES_SQL } from '../services/audioFeatureVersion';
+import { AUDIO_FEATURE_VERSION, PENDING_AUDIO_FEATURES_SQL, STYLE_SCORE_COUNT, STYLE_SCORE_MODEL, STYLE_SCORE_VERSION } from '../services/audioFeatureVersion';
 import type { LibraryDirectoryStats } from '../../shared/libraryStats';
 import { normalizeGenreIdentity } from '../utils/genreIdentity';
 import { artistImageSql } from '../utils/artistImage';
@@ -296,6 +296,20 @@ export async function initDB(): Promise<Pool> {
         -- Preserve them until reanalysis; version 2 records attempts
         -- with the corrected extractor, including explicitly simulated failures.
         ALTER TABLE track_features ADD COLUMN IF NOT EXISTS feature_version INTEGER NOT NULL DEFAULT 1;
+
+        -- genre_discogs400 style scores (400 sigmoid values in model order),
+        -- written with feature_version 3 analysis. Own version column so a
+        -- scoring change can be backfilled without touching the embeddings.
+        -- PostgreSQL ignores declared array sizes, hence the CHECK.
+        CREATE TABLE IF NOT EXISTS track_style_scores (
+          track_id      TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+          scores        REAL[] NOT NULL
+                        CHECK (array_ndims(scores) = 1 AND cardinality(scores) = 400),
+          model         TEXT NOT NULL,
+          windows       TEXT NOT NULL,
+          genre_version INTEGER NOT NULL,
+          analyzed_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
 
         -- Migration: Loudness normalization (EBU R128). loudness_measured_at is a
         -- sentinel: set on every attempt (success OR failure) so a track that can't
@@ -2170,24 +2184,62 @@ export async function backfillTrackFileSizes(): Promise<number> {
   return updated;
 }
 
-export async function addTrackFeatures(trackId: string, audioFeatures: { bpm: number; acoustic_vector: number[]; embedding_vector?: number[]; is_simulated?: boolean; feature_version?: number }) {
+export async function addTrackFeatures(trackId: string, audioFeatures: {
+  bpm: number;
+  acoustic_vector: number[];
+  embedding_vector?: number[];
+  style_scores?: number[] | null;
+  analysis_windows?: string;
+  is_simulated?: boolean;
+  feature_version?: number;
+}) {
   const db = await initDB();
   const vector8dStr = `[${audioFeatures.acoustic_vector.slice(0, 8).join(',')}]`;
   const simulated = audioFeatures.is_simulated ?? false;
   const embStr = audioFeatures.embedding_vector && audioFeatures.embedding_vector.length > 0
     ? `[${audioFeatures.embedding_vector.join(',')}]`
     : null;
+  // Simulated features never carry style scores; a stale row from an earlier
+  // real analysis must not outlive the features it came from.
+  const styleScores = !simulated && Array.isArray(audioFeatures.style_scores)
+    && audioFeatures.style_scores.length === STYLE_SCORE_COUNT
+    ? audioFeatures.style_scores
+    : null;
 
-  await db.query(`
-    INSERT INTO track_features (track_id, bpm, acoustic_vector_8d, embedding_vector, is_simulated, feature_version)
-    VALUES ($1, $2, $3, $4, $5, $6)
-    ON CONFLICT (track_id) DO UPDATE SET
-      bpm = EXCLUDED.bpm,
-      acoustic_vector_8d = EXCLUDED.acoustic_vector_8d,
-      embedding_vector = EXCLUDED.embedding_vector,
-      is_simulated = EXCLUDED.is_simulated,
-      feature_version = EXCLUDED.feature_version
-  `, [trackId, audioFeatures.bpm, vector8dStr, embStr, simulated, audioFeatures.feature_version ?? 1]);
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`
+      INSERT INTO track_features (track_id, bpm, acoustic_vector_8d, embedding_vector, is_simulated, feature_version)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (track_id) DO UPDATE SET
+        bpm = EXCLUDED.bpm,
+        acoustic_vector_8d = EXCLUDED.acoustic_vector_8d,
+        embedding_vector = EXCLUDED.embedding_vector,
+        is_simulated = EXCLUDED.is_simulated,
+        feature_version = EXCLUDED.feature_version
+    `, [trackId, audioFeatures.bpm, vector8dStr, embStr, simulated, audioFeatures.feature_version ?? 1]);
+    if (styleScores) {
+      await client.query(`
+        INSERT INTO track_style_scores (track_id, scores, model, windows, genre_version, analyzed_at)
+        VALUES ($1, $2::real[], $3, $4, $5, NOW())
+        ON CONFLICT (track_id) DO UPDATE SET
+          scores = EXCLUDED.scores,
+          model = EXCLUDED.model,
+          windows = EXCLUDED.windows,
+          genre_version = EXCLUDED.genre_version,
+          analyzed_at = EXCLUDED.analyzed_at
+      `, [trackId, styleScores, STYLE_SCORE_MODEL, audioFeatures.analysis_windows || 'unknown', STYLE_SCORE_VERSION]);
+    } else {
+      await client.query('DELETE FROM track_style_scores WHERE track_id = $1', [trackId]);
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 // ─── Loudness (EBU R128) ──────────────────────────────────────────────
@@ -2335,10 +2387,10 @@ export async function getLibraryDirectoryStats(): Promise<LibraryDirectoryStats[
   });
 }
 
-export async function getTracksWithoutFeatures(): Promise<{ id: string; filePath: Buffer; title: string; artist: string | null }[]> {
+export async function getTracksWithoutFeatures(): Promise<{ id: string; filePath: Buffer; title: string; artist: string | null; duration: number | null }[]> {
   const db = await initDB();
   const res = await db.query(`
-    SELECT t.id, t.path, t.title, t.artist
+    SELECT t.id, t.path, t.title, t.artist, t.duration
     FROM tracks t
     LEFT JOIN track_features tf ON t.id = tf.track_id
     -- Key on the acoustic vector, not row presence: loudness measurement can
@@ -2352,13 +2404,14 @@ export async function getTracksWithoutFeatures(): Promise<{ id: string; filePath
     filePath: Buffer.from(r.path, 'base64'),
     title: r.title,
     artist: r.artist || null,
+    duration: r.duration ?? null,
   }));
 }
 
-export async function getTracksWithSimulatedFeatures(): Promise<{ id: string; filePath: Buffer; title: string; artist: string | null }[]> {
+export async function getTracksWithSimulatedFeatures(): Promise<{ id: string; filePath: Buffer; title: string; artist: string | null; duration: number | null }[]> {
   const db = await initDB();
   const res = await db.query(`
-    SELECT t.id, t.path, t.title, t.artist
+    SELECT t.id, t.path, t.title, t.artist, t.duration
     FROM tracks t
     JOIN track_features tf ON t.id = tf.track_id
     WHERE tf.is_simulated = TRUE
@@ -2369,6 +2422,7 @@ export async function getTracksWithSimulatedFeatures(): Promise<{ id: string; fi
     filePath: Buffer.from(r.path, 'base64'),
     title: r.title,
     artist: r.artist || null,
+    duration: r.duration ?? null,
   }));
 }
 

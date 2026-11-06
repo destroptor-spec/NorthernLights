@@ -52,7 +52,7 @@ Aurora is built to feel like a premium music service that happens to run on your
 - **On-demand enrichment** from Last.fm, MusicBrainz, and Genius for biographies, credits, and artwork.
 
 ### Discovery computed from *your* collection
-- **Acoustic similarity from real machine-learning embeddings** — MusiCNN acoustic vectors plus 1280-dimension Discogs-EffNet embeddings, indexed with pgvector — so songs are matched by how they actually sound, not by their genre labels.
+- **Acoustic similarity from real machine-learning embeddings** — 1280-dimension Discogs-EffNet embeddings from three windows per track plus an 8D acoustic vector, indexed with pgvector — so songs are matched by how they actually sound, not by their genre labels.
 - **A Hub of auto-curated surfaces:** a time-of-day daylist, on-repeat, a long-tail "repeat rewind," artist radio, decade and genre mixes, and yearly & seasonal **Wrapped** recaps of your top tracks (blended with your Last.fm / ListenBrainz history when connected).
 - **AI playlists from a prompt or a mood,** grounded in your own library — with genre-ontology-aware blending, diversity / artist-spread / discovery-bias controls, banned genres, and automatic relaxation when a request is too narrow. Recommendations come from your music's actual audio fingerprint, never a cloud catalog.
 
@@ -82,7 +82,7 @@ Minimum recommended server:
 - 4 GB swap recommended on small VPS instances.
 - Enough disk for your music, PostgreSQL data, MusicBrainz import work files, and HLS temp files.
 
-The installer uses `uv` to create a Python 3.11 virtual environment for Essentia TensorFlow analysis. Manual installs should do the same.
+The installer uses `uv` to create a Python 3.14 virtual environment with `essentia-tensorflow==2.1b6.dev1438` for Essentia TensorFlow analysis. Manual installs should do the same.
 
 ## Manual Setup
 
@@ -93,8 +93,8 @@ cp .env.example .env
 npm ci
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
-uv venv --python 3.11 .venv
-uv pip install essentia-tensorflow
+uv venv --python 3.14 .venv
+uv pip install --python .venv/bin/python "essentia-tensorflow==2.1b6.dev1438"
 npm run build
 npx tsx server/index.ts
 ```
@@ -139,7 +139,9 @@ See [docs/production_guide.md](docs/production_guide.md) for concrete commands.
 cd ~/NorthernLights
 git pull
 npm ci
-uv pip install essentia-tensorflow
+# Recreates the venv when the Python version or Essentia pin changed (safe to repeat)
+uv venv --clear --python 3.14 .venv
+uv pip install --python .venv/bin/python "essentia-tensorflow==2.1b6.dev1438"
 npm run build
 pm2 restart aurora
 ```

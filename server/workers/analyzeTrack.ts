@@ -1,7 +1,7 @@
 import { extractAudioFeatures } from '../services/audioExtraction.service';
 
 // Long-running analysis process: reads JSON commands from stdin, outputs results to stdout.
-// Protocol: each line on stdin is a JSON object with { id, filePathBase64 }
+// Protocol: each line on stdin is a JSON object with { id, filePathBase64, title?, artist?, durationSeconds? }
 // Each line on stdout is a JSON object with { id, audioFeatures } or { id, error }
 
 process.stdin.setEncoding('utf8');
@@ -14,7 +14,7 @@ process.stdin.on('data', async (chunk: string) => {
 
   for (const line of lines) {
     if (!line.trim()) continue;
-    let msg: { id: string; filePathBase64: string; title?: string | null; artist?: string | null };
+    let msg: { id: string; filePathBase64: string; title?: string | null; artist?: string | null; durationSeconds?: number | null };
     try {
       msg = JSON.parse(line);
     } catch {
@@ -29,6 +29,7 @@ process.stdin.on('data', async (chunk: string) => {
         trackId: msg.id,
         title: msg.title || null,
         artist: msg.artist || null,
+        durationSeconds: msg.durationSeconds ?? null,
       });
       process.stdout.write(JSON.stringify({ id: msg.id, audioFeatures }) + '\n');
     } catch (err: any) {

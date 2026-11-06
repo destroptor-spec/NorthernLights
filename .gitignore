@@ -56,3 +56,6 @@ CLAUDE.md
 TASKS.md
 MEMORY.md
 road_to_v1.md
+
+# Python bytecode (extractor tests and tools)
+__pycache__/

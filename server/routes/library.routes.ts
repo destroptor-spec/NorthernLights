@@ -668,7 +668,7 @@ async function getAnalysisConcurrency(): Promise<number> {
   }
 }
 
-async function processAnalysisBatch(tracks: { id: string; filePath: Buffer; title: string; artist?: string | null }[], concurrency: number): Promise<void> {
+async function processAnalysisBatch(tracks: { id: string; filePath: Buffer; title: string; artist?: string | null; duration?: number | null }[], concurrency: number): Promise<void> {
   const startTime = Date.now();
   let errorCount = 0;
   let featuresWritten = 0;
@@ -707,7 +707,8 @@ async function processAnalysisBatch(tracks: { id: string; filePath: Buffer; titl
               id: track.id,
               filePathBase64: track.filePath.toString('base64'),
               title: track.title,
-              artist: track.artist || null
+              artist: track.artist || null,
+              durationSeconds: track.duration ?? null
             }
           });
 
@@ -1309,7 +1310,7 @@ router.post('/analyze', async (req, res) => {
   const simulatedOnly = req.body?.simulatedOnly === true;
 
   try {
-    let tracksToAnalyze: { id: string; filePath: Buffer; title: string; artist?: string | null }[];
+    let tracksToAnalyze: { id: string; filePath: Buffer; title: string; artist?: string | null; duration?: number | null }[];
 
     if (simulatedOnly) {
       tracksToAnalyze = await getTracksWithSimulatedFeatures();
@@ -1317,12 +1318,13 @@ router.post('/analyze', async (req, res) => {
       // Re-analyze ALL tracks (e.g., after Essentia upgrade)
       const { initDB } = await import('../database');
       const db = await initDB();
-      const dbRes = await db.query('SELECT t.id, t.path, t.title, t.artist FROM tracks t ORDER BY t.title');
+      const dbRes = await db.query('SELECT t.id, t.path, t.title, t.artist, t.duration FROM tracks t ORDER BY t.title');
       tracksToAnalyze = dbRes.rows.map((r: any) => ({
         id: r.id,
         filePath: Buffer.from(r.path, 'base64'),
         title: r.title,
         artist: r.artist || null,
+        duration: r.duration ?? null,
       }));
     } else {
       tracksToAnalyze = await getTracksWithoutFeatures();

@@ -88,8 +88,9 @@ Library scanning operates in three distinct phases:
 2. **Metadata Phase**: Parallel ID3/Vorbis/ASF tag extraction via `music-metadata`. Stores track metadata (title, artist, album, genre, duration) in PostgreSQL. Creates artist/album/genre entity records. Tracks visible immediately after this phase.
 
 3. **Analysis Phase**: Audio feature extraction via worker threads:
-   - **Smart Seeking**: ffmpeg seeks to ~35% into track (past intro) for representative chorus/verse analysis
-   - **15-Second Decode**: Captures enough audio for accurate features while minimizing memory
+   - **Three windows**: 15 s each at 20/50/80 % of the track, decoded by one ffmpeg call at 44.1 kHz (DSP) and 16 kHz (models); duration comes from the DB, no per-track ffprobe
+   - **One network**: Discogs-EffNet once per track (three windows share one 64-patch batch), plus small classifiers on its embeddings for 400 style scores, danceability, acousticness and instrumentalness. Inference sits behind `EssentiaCpuBackend` in `extractor.py` so a CUDA/ROCm backend can replace it; see `docs/audio_management.md`
+   - **Style scores**: stored in `track_style_scores` (400 values, own `genre_version`) in the same transaction as `track_features`
    - **Symlink Workaround**: Non-ASCII filenames handled via temp symlinks in `/tmp/am-*/`
    - **Safe Essentia**: Individual algorithm error handling with graceful fallbacks
    - **Results**: 21-dimensional feature vectors (**8D acoustic semantic** + 13D MFCC) stored in `track_features` table. Supports slicing for legacy 7D compatibility. Uses native SQL aggregation (`AVG`/`STDDEV`) for ultra-fast library-wide vector normalization.
@@ -134,7 +135,7 @@ The scanner indicator in `App.tsx` must use reactive Zustand subscriptions for `
 - Current Cast constraint: Chromecast custom receiver path is intentionally pinned to AAC-in-HLS for reliability, and `source` quality maps to a Cast-safe AAC bitrate rather than source/lossless. Browser HLS may use higher/source qualities; true lossless Cast remains future fMP4 work and should not replace the stable AAC Cast path casually.
 
 ## Server Services (server/services/)
-- `audioExtraction.service.ts` — ffmpeg subprocess decoding + Essentia.js WASM analysis. Smart seeking (35% into track), 15-second decode, non-ASCII filename symlink workaround, safe Essentia with individual algorithm error handling. Feature extraction optimized with **Hanning Window pre-computation** and **WASM buffer reuse**.
+- `audioExtraction.service.ts` — persistent Python worker (`server/workers/extractor.py`, Essentia TensorFlow) for feature version 3: three 15 s windows at 20/50/80 %, EffNet + classifiers, style scores. Legacy notes: non-ASCII filename symlink workaround, safe Essentia with individual algorithm error handling. Feature extraction optimized with **Hanning Window pre-computation** and **WASM buffer reuse**.
 - `recommendation.service.ts` — Infinity Mode and Hub playlist generation using **21-dimensional** pgvector HNSW similarity search (8D acoustic + 13D MFCC) and genre hop-cost adjacency logic on MBDB. Exponential penalty formula: `distance * Math.pow(1 + hopCost, weight * curve)`. Timbre-weighted MFCC (3× for electronic/synthetic). SQL-level acousticness dealbreaker. Hard vector clamping (energy/danceability bounds). `banned_genres` full-path veto. MFCC imputation safeguard (threshold < 0.25, min 5 seeds). All `<->` parameters use explicit `::vector` casts. Hardened with `NaN` guards and cross-dimension compatibility (7D/8D).
 - `llm.service.ts` — LLM integration for natural language playlist generation. Supports local providers (LM Studio, Ollama) and cloud (OpenAI). 300-genre vocabulary injection and `banned_genres` in prompt schemas. Library-scoped vocabulary logic. 120-second timeout for local LLMs.
 - `genreMatrix.service.ts` — MusicBrainz hierarchical taxonomy classification using tree-path LCA (Lowest Common Ancestor) hop-cost math. 3-step pipeline: direct SQL (6 UNION ALL branches), vocabulary-guided LLM batch, KNN fallback (21D/8D). Standalone `getGenreVocabulary()` export for library-scoped vocabulary.
