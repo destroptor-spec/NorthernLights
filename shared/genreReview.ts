@@ -74,10 +74,11 @@ export interface GenreReviewEvidence {
    */
   lean: { genre: string; artists: number; of: number } | null;
   /**
-   * With a single artist (the lean needs two): that artist's strongest tags
-   * per provider, as written. Absent without provider data.
+   * With a single artist (the lean needs two): that artist's strongest tags on
+   * Last.fm and MusicBrainz together, as written, strongest first. Absent
+   * without provider data.
    */
-  artistTags: Array<{ provider: 'lastfm' | 'musicbrainz'; tags: string[] }> | null;
+  artistTags: string[] | null;
   /** What the audio model says about these tracks; null when none are analysed. */
   audio: GenreAudioEvidence | null;
   /** A starting answer, when the evidence agrees; the admin still applies it. */

@@ -3936,11 +3936,89 @@ a:focus-visible > .genre-card .genre-card__label {
   font-size: 0.84rem;
 }
 
-.genre-review-evidence__suggestion {
+/* Evidence sources in the genre review: a heading, a line saying where the
+   data comes from, then the data. Sound takes more room (two lists). */
+.genre-review-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-md) var(--spacing-lg);
+  border-top: 1px solid var(--glass-border);
+  padding-top: var(--spacing-md);
+}
+
+.genre-review-source {
+  flex: 3 1 320px;
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+
+.genre-review-source + .genre-review-source {
+  flex: 2 1 220px;
+}
+
+.genre-review-source__title {
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 0.82rem;
-  line-height: 1.5;
+  font-size: 0.84rem;
+  font-weight: 650;
+}
+
+.genre-review-source__desc {
+  margin: 0;
+  max-width: 62ch;
+  color: var(--color-text-muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.genre-review-source__lists {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--spacing-md);
+  margin-top: 4px;
+}
+
+/* Counts right-aligned so the column scans; kept narrow so they stay near the names. */
+.genre-review-counts {
+  align-content: start;
+}
+
+.genre-review-counts ul {
+  max-width: 280px;
+}
+
+@media (max-width: 520px) {
+  .genre-review-source__lists {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.genre-review-counts li {
+  justify-content: space-between;
+}
+
+.genre-review-source__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.genre-review-source__fact {
+  margin: 4px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+}
+
+.genre-review-why {
+  margin: var(--spacing-sm) 0 0;
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.45;
 }
 
 .genre-review-hint {

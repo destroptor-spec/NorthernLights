@@ -280,17 +280,15 @@ export async function getGenreReviewEvidence(db: Pool, key: string): Promise<Gen
   const [leanGenre, leanArtists] = [...leanCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0] || [];
   const lean = leanGenre ? { genre: leanGenre, artists: leanArtists!, of: artistGenres.length } : null;
 
-  // One artist has no lean to show, so show their own tags instead.
+  // One artist has no lean to show, so show their own tags instead: both
+  // providers together, one entry per tag, by its stronger weight.
   let artistTags: GenreReviewEvidence['artistTags'] = null;
   if (artistRows.length === 1) {
-    const rows = (await db.query(`
-      SELECT provider, tag FROM (
-        SELECT provider, tag, weight, ROW_NUMBER() OVER (PARTITION BY provider ORDER BY weight DESC, tag) AS rank
-        FROM artist_tags WHERE artist_id = $1 AND weight >= 0.2
-      ) ranked WHERE rank <= 4 ORDER BY provider, rank`, [artistRows[0].id])).rows;
-    const byProvider = new Map<'lastfm' | 'musicbrainz', string[]>();
-    for (const row of rows) byProvider.set(row.provider, [...(byProvider.get(row.provider) || []), row.tag]);
-    if (byProvider.size) artistTags = [...byProvider.entries()].map(([provider, tags]) => ({ provider, tags }));
+    const tags = (await db.query(`
+      SELECT mode() WITHIN GROUP (ORDER BY tag) AS tag, MAX(weight) AS weight
+      FROM artist_tags WHERE artist_id = $1 AND weight >= 0.2
+      GROUP BY tag_key ORDER BY weight DESC, tag_key LIMIT 8`, [artistRows[0].id])).rows.map((r: any) => String(r.tag));
+    if (tags.length) artistTags = tags;
   }
 
   const audio = await loadAudioEvidence(db, tracksSql, param, entry.totalTracks);

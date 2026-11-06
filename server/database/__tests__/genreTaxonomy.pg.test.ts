@@ -248,8 +248,8 @@ describeDb('genre & style taxonomy on a fresh database', () => {
       ($1, 'musicbrainz', 'hip hop', 'hip hop', 2, 1), ($1, 'musicbrainz', 'electronic', 'electronic', 1, 0.5)`, [artistId]);
     await taxonomy.runTagMapping(pool);
     evidence = (await review.getGenreReviewEvidence(pool, key))!;
-    expect(evidence.artistTags).toEqual([
-      { provider: 'lastfm', tags: ['electronic', 'funk'] }, { provider: 'musicbrainz', tags: ['hip hop', 'electronic'] }]);
+    // Both providers in one list, each tag once at its stronger weight.
+    expect(evidence.artistTags).toEqual(['electronic', 'hip hop', 'funk']);
     expect(evidence.lean).toBeNull();
     expect(evidence.suggestion?.basis).toBe('both');
 

@@ -90,7 +90,9 @@ test('heads the queue with coverage and the count, and opens the first question 
   const row = screen.getByRole('button', { name: /Electronic or Funk \/ Soul\?.*Disco/ });
   expect(row.getAttribute('aria-expanded')).toBe('true');
   expect(await screen.findByText('Boney M.')).toBeTruthy();
-  expect(screen.getByText(/lean Funk \/ Soul: 7 of 9 artists/)).toBeTruthy();
+  expect(screen.getByText('Mostly Funk / Soul for 7 of 9 artists')).toBeTruthy();
+  // Not analysed yet: the sound section says so rather than disappearing.
+  expect(screen.getByText('None of these tracks has been analysed yet.')).toBeTruthy();
   // A style with no tracks yet is marked new; one with tracks shows how many.
   const electronic = screen.getByText('Electronic › Disco', { selector: '.entity-review-outcome__text' }).closest('label')!;
   expect(within(electronic).getByText('New')).toBeTruthy();
@@ -130,7 +132,7 @@ test('a lone artist\'s tags and the audio fill in a suggestion, and a style few 
   evidenceFor = key => ({
     ...evidence, key, lean: null, targetTracks: {},
     artists: [{ name: 'Pretty Lights', imageUrl: null, tracks: 135 }],
-    artistTags: [{ provider: 'lastfm', tags: ['electronic', 'downtempo'] }, { provider: 'musicbrainz', tags: ['hip hop', 'soul'] }],
+    artistTags: ['electronic', 'downtempo', 'hip hop', 'soul'],
     audio: {
       analysed: 135, sampled: false,
       genres: [{ genre: 'Electronic', tracks: 95 }, { genre: 'Hip Hop', tracks: 15 }],
@@ -139,10 +141,14 @@ test('a lone artist\'s tags and the audio fill in a suggestion, and a style few 
     suggestion: { targets: [{ genre: 'Electronic', styleId: null, style: null }], basis: 'both', stylesVary: true },
   });
   render(<GenreEntitiesTab />);
-  expect(await screen.findByText('Artist tags: Last.fm electronic, downtempo · MusicBrainz hip hop, soul')).toBeTruthy();
-  expect(screen.getByText('Audio, 135 tracks: Electronic 95 · Hip Hop 15')).toBeTruthy();
-  expect(screen.getByText('Top styles: Downtempo 32 · Instrumental (Hip Hop) 11')).toBeTruthy();
-  expect(screen.getByText(/^Suggested: Electronic, audio and artist tags agree\. No style/)).toBeTruthy();
+  // Each source says what it is and where it comes from.
+  expect(await screen.findByText('How the tracks sound')).toBeTruthy();
+  expect(screen.getByText(/^From Aurora's analysis of the audio in all 135 tracks\./)).toBeTruthy();
+  expect(screen.getByText('Instrumental (Hip Hop)')).toBeTruthy();
+  expect(screen.getByText(/^What listeners tag Pretty Lights with on Last\.fm and MusicBrainz/)).toBeTruthy();
+  expect(screen.getByText('downtempo')).toBeTruthy();
+  // The reason sits in the suggested card.
+  expect(screen.getByText(/^Suggested\. The sound of the tracks and the artist tags both point to Electronic\. No style: the tracks sound like different ones \(Downtempo\)/)).toBeTruthy();
 
   // The picker starts with the suggestion, so Apply is one step.
   const chip = await screen.findByRole('button', { name: 'Remove Electronic' });
@@ -152,8 +158,25 @@ test('a lone artist\'s tags and the audio fill in a suggestion, and a style few 
   // Swapping in a style that only a quarter of the tracks have says so.
   fireEvent.click(chip);
   fireEvent.change(screen.getByLabelText('Genre or style for Electric Hip Hop Soul'), { target: { value: 'Disco · Electronic' } });
-  expect(screen.getByText(/^Disco is the audio's top style for 0 of 135 tracks/)).toBeTruthy();
+  expect(screen.getByText(/^Only 0 of the 135 analysed tracks sound most like Disco, but all 135 tracks/)).toBeTruthy();
   expect(screen.queryByText('Suggested')).toBeNull();
+  expect(screen.queryByText(/^Suggested\./)).toBeNull();
+});
+
+test('a suggestion for a style under two genres settles the genre without saying "no style"', async () => {
+  state.entries = [disco];
+  evidenceFor = key => ({
+    ...evidence, key, lean: { genre: 'Electronic', artists: 5, of: 6 },
+    audio: {
+      analysed: 154, sampled: false, genres: [{ genre: 'Electronic', tracks: 120 }],
+      styles: [{ genre: 'Electronic', styleId: 1, style: 'House', tracks: 40 }, { genre: 'Electronic', styleId: 53, style: 'Disco', tracks: 30 }],
+    },
+    suggestion: { targets: [{ genre: 'Electronic', styleId: null, style: null }], basis: 'both', stylesVary: true },
+  });
+  render(<GenreEntitiesTab />);
+  const radio = await screen.findByRole('radio', { name: /Electronic › Disco/ });
+  await waitFor(() => expect((radio as HTMLInputElement).checked).toBe(true));
+  expect(screen.getByText('Suggested. The sound of the tracks and the artist tags both point to Electronic.')).toBeTruthy();
 });
 
 test('keeping spellings from different parts of the genre tree asks first', async () => {
