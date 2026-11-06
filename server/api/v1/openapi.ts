@@ -2,8 +2,17 @@ import { OpenAPIRegistry, OpenApiGeneratorV31 } from '@asteasolutions/zod-to-ope
 import { z, type ZodType } from 'zod';
 import {
   albumDetailSchema,
+  albumStyleProfileSchema,
   albumSummarySchema,
   apiErrorSchema,
+  artistStyleProfileSchema,
+  browseAlbumSchema,
+  browseArtistSchema,
+  browseGenreDetailSchema,
+  browseGenresSchema,
+  browseSearchResultSchema,
+  browseStyleDetailSchema,
+  browseUnsortedSchema,
   appKeyCreateSchema,
   artistDetailSchema,
   artistRadioEligibilitySchema,
@@ -82,6 +91,15 @@ const schemas = {
   PlaybackOutputReportResult: registry.register('PlaybackOutputReportResult', playbackOutputReportResultSchema),
   Preferences: registry.register('ListenerPreferences', listenerPreferencesSchema),
   Lyrics: registry.register('TrackLyrics', lyricsSchema),
+  BrowseGenres: registry.register('BrowseGenres', browseGenresSchema),
+  BrowseGenreDetail: registry.register('BrowseGenreDetail', browseGenreDetailSchema),
+  BrowseStyleDetail: registry.register('BrowseStyleDetail', browseStyleDetailSchema),
+  BrowseAlbum: registry.register('BrowseAlbum', browseAlbumSchema),
+  BrowseArtist: registry.register('BrowseArtist', browseArtistSchema),
+  BrowseSearchResult: registry.register('BrowseSearchResult', browseSearchResultSchema),
+  BrowseUnsorted: registry.register('BrowseUnsorted', browseUnsortedSchema),
+  AlbumStyleProfile: registry.register('AlbumStyleProfile', albumStyleProfileSchema),
+  ArtistStyleProfile: registry.register('ArtistStyleProfile', artistStyleProfileSchema),
 };
 
 const requestId = z.string().describe('Request ID echoed in the X-Request-Id response header.');
@@ -163,6 +181,27 @@ path({ method: 'get', path: '/tracks/{id}', summary: 'Get one path-free track re
 path({ method: 'get', path: '/tracks/{id}/lyrics', summary: 'Get embedded synced or unsynced lyrics', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(schemas.Lyrics) });
 path({ method: 'get', path: '/search', summary: 'Search the listener library', tags: ['Library'], security: authed, request: { query: z.object({ q: z.string().min(1), limit: z.coerce.number().int().min(1).max(100).optional(), artistLimit: z.coerce.number().int().min(1).max(100).optional(), albumLimit: z.coerce.number().int().min(1).max(100).optional(), trackLimit: z.coerce.number().int().min(1).max(100).optional() }) }, responses: ok(unknownObject) });
 path({ method: 'get', path: '/search/ranked', summary: 'Relevance-ranked search across artists, albums and tracks, paginated', tags: ['Library'], security: authed, request: { query: z.object({ q: z.string().min(1), limit: z.coerce.number().int().min(1).max(100).optional(), cursor: z.string().optional() }) }, responses: ok(unknownObject) });
+
+const browseList = z.object({
+  genre: z.string().optional().describe('A genre name, e.g. "Electronic".'),
+  style: z.coerce.number().int().positive().optional().describe('A style id.'),
+  noStyle: z.enum(['true', 'false']).optional().describe('With genre: only tracks in it without a style (tracks only).'),
+  decade: z.coerce.number().int().optional().describe('1990 for the 1990s.'),
+  unsorted: z.enum(['true', 'false']).optional().describe('Tracks without a genre (tracks only).'),
+  tag: z.string().optional().describe('With unsorted: only tracks carrying this genre tag.'),
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+});
+path({ method: 'get', path: '/browse/genres', summary: 'Genres with their top styles, and the unsorted count', tags: ['Browse'], security: authed, request: { query: z.object({ hidden: z.enum(['true', 'false']).optional().describe('Include hidden genres (Non-Music).') }) }, responses: ok(schemas.BrowseGenres) });
+path({ method: 'get', path: '/browse/genres/{genre}', summary: 'A genre: its styles, albums, artists and decades', tags: ['Browse'], security: authed, request: { params: z.object({ genre: z.string() }) }, responses: ok(schemas.BrowseGenreDetail) });
+path({ method: 'get', path: '/browse/styles/{id}', summary: 'A style: its albums, artists and decades', tags: ['Browse'], security: authed, request: { params: z.object({ id: z.coerce.number().int().positive() }) }, responses: ok(schemas.BrowseStyleDetail) });
+path({ method: 'get', path: '/browse/tracks', summary: 'Tracks in a genre, style or unsorted, strongest first', tags: ['Browse'], security: authed, request: { query: browseList }, responses: paged(z.array(schemas.Track)) });
+path({ method: 'get', path: '/browse/albums', summary: 'Albums most in a genre or style', tags: ['Browse'], security: authed, request: { query: browseList }, responses: paged(z.array(schemas.BrowseAlbum)) });
+path({ method: 'get', path: '/browse/artists', summary: 'Artists most in a genre or style, each album counted once', tags: ['Browse'], security: authed, request: { query: browseList }, responses: paged(z.array(schemas.BrowseArtist)) });
+path({ method: 'get', path: '/browse/search', summary: 'Find genres and styles by name or by a tag that maps to them', tags: ['Browse'], security: authed, request: { query: z.object({ q: z.string().min(1).max(100) }) }, responses: ok(z.array(schemas.BrowseSearchResult)) });
+path({ method: 'get', path: '/browse/unsorted', summary: 'Genre tags on tracks without a genre', tags: ['Browse'], security: authed, responses: ok(schemas.BrowseUnsorted) });
+path({ method: 'get', path: '/albums/{id}/styles', summary: "An album's genres and styles, from its tracks", tags: ['Browse'], security: authed, request: { params: idParams }, responses: ok(schemas.AlbumStyleProfile) });
+path({ method: 'get', path: '/artists/{id}/styles', summary: "An artist's genres and styles, each album counted once, and listener tags", tags: ['Browse'], security: authed, request: { params: idParams }, responses: ok(schemas.ArtistStyleProfile) });
 
 path({ method: 'get', path: '/playlists', summary: 'List readable playlists', tags: ['Playlists'], security: authed, responses: ok(z.array(schemas.Playlist)) });
 path({ method: 'get', path: '/playlists/discover', summary: 'List public playlists from other users', tags: ['Playlists'], security: authed, responses: ok(z.array(schemas.Playlist)) });

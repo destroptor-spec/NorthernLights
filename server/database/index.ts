@@ -3990,25 +3990,9 @@ export async function getAllAlbums() {
   return res.rows;
 }
 
-export async function getAlbumsPage(options: EntityListPageOptions) {
-  const db = await initDB();
-  const limit = Math.max(1, Math.min(201, Math.trunc(options.limit)));
-  const after = options.after || null;
-  const res = await db.query(`
-    WITH page_albums AS (
-      SELECT a.*
-      FROM albums a
-      WHERE $1::text IS NULL OR (a.title, a.id::text) > ($1::text, $2::text)
-      ORDER BY a.title ASC, a.id::text ASC
-      LIMIT $3
-    )
-    SELECT a.*,
-      COALESCE(agg.track_count, 0) AS track_count,
-      agg.derived_year,
-      agg.derived_genres,
-      agg.art_hash,
-      COALESCE(agg.derived_release_type, 'Album') AS derived_release_type
-    FROM page_albums a
+// Track-derived fields of an album card (year, genres, art, release type),
+// shared by the album list and the bulk loader.
+const ALBUM_CARD_AGGREGATE = `
     LEFT JOIN LATERAL (
       SELECT
         COUNT(*)::int AS track_count,
@@ -4024,9 +4008,53 @@ export async function getAlbumsPage(options: EntityListPageOptions) {
       FROM tracks t
       LEFT JOIN genres canonical_genre ON canonical_genre.id = t.genre_id
       WHERE t.album_id = a.id
-    ) agg ON TRUE
+    ) agg ON TRUE`;
+const ALBUM_CARD_COLUMNS = `a.*,
+      COALESCE(agg.track_count, 0) AS track_count,
+      agg.derived_year,
+      agg.derived_genres,
+      agg.art_hash,
+      COALESCE(agg.derived_release_type, 'Album') AS derived_release_type`;
+
+export async function getAlbumsPage(options: EntityListPageOptions) {
+  const db = await initDB();
+  const limit = Math.max(1, Math.min(201, Math.trunc(options.limit)));
+  const after = options.after || null;
+  const res = await db.query(`
+    WITH page_albums AS (
+      SELECT a.*
+      FROM albums a
+      WHERE $1::text IS NULL OR (a.title, a.id::text) > ($1::text, $2::text)
+      ORDER BY a.title ASC, a.id::text ASC
+      LIMIT $3
+    )
+    SELECT ${ALBUM_CARD_COLUMNS}
+    FROM page_albums a
+    ${ALBUM_CARD_AGGREGATE}
     ORDER BY a.title ASC, a.id ASC
   `, [after?.sort || null, after?.id || null, limit]);
+  return res.rows;
+}
+
+/** Album card rows (same shape as getAlbumsPage) for the given ids, in no particular order. */
+export async function getAlbumCardsByIds(ids: string[]) {
+  if (ids.length === 0) return [];
+  const db = await initDB();
+  const res = await db.query(`
+    SELECT ${ALBUM_CARD_COLUMNS}
+    FROM albums a
+    ${ALBUM_CARD_AGGREGATE}
+    WHERE a.id = ANY($1::uuid[])`, [ids]);
+  return res.rows;
+}
+
+/** Artist card rows (same shape as getArtistsPage) for the given ids, in no particular order. */
+export async function getArtistCardsByIds(ids: string[]) {
+  if (ids.length === 0) return [];
+  const db = await initDB();
+  const res = await db.query(
+    `SELECT id, name, image_url, artwork_url, genres, community_tags, artist_type, area, lifespan_begin
+       FROM artists WHERE id = ANY($1::uuid[])`, [ids]);
   return res.rows;
 }
 

@@ -350,4 +350,45 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     expect(await rowsOf(styled)).toContainEqual({ genre: 'Electronic', style: 'Techno', source: 'override', strength: 1 });
     expect(await rowsOf(untagged)).toHaveLength(2);
   });
+
+  test('browse lists genres and styles from the fused results, finds styles by alias, and shows unsorted tracks and profiles', async () => {
+    const browse = await import('../../services/browse.service');
+    const none = { albums: async () => [], artists: async () => [] };
+    const genres = await browse.listBrowseGenres(pool);
+    const electronic = genres.genres.find(g => g.name === 'Electronic')!;
+    expect(electronic.trackCount).toBeGreaterThanOrEqual(2);
+    expect(electronic.styles.map(s => s.name)).toEqual(expect.arrayContaining(['House', 'Techno']));
+    expect(genres.genres.some(g => g.hidden)).toBe(false);
+    expect(genres.unsorted.trackCount).toBeGreaterThanOrEqual(1);
+
+    const rock = (await browse.getBrowseGenre(pool, 'Rock', none))!;
+    expect(rock.styles.find(s => s.name === 'Pop Rock')?.trackCount).toBeGreaterThanOrEqual(1);
+    // fz-rock-sim (simulated) is Rock without a style.
+    const noStyle = await browse.listBrowseTrackIds(pool, { genre: 'Rock', noStyle: true }, 0, 500);
+    expect(noStyle.ids).toContain(idOf('fz-rock-sim'));
+    expect(noStyle.ids).not.toContain(idOf('fz-rock'));
+    expect(await browse.getBrowseGenre(pool, 'Polka', none)).toBeNull();
+
+    const house = (await pool.query(`SELECT id FROM style WHERE genre = 'Electronic' AND name = 'House'`)).rows[0].id;
+    const style = (await browse.getBrowseStyle(pool, house, none))!;
+    expect(style.style).toMatchObject({ genre: 'Electronic', name: 'House' });
+    const albums = await browse.listBrowseAlbumRows(pool, { styleId: house }, 0, 10);
+    const fusionA = (await pool.query(`SELECT id FROM albums WHERE title = 'Fusion A'`)).rows[0].id;
+    expect(albums.rows.map(r => r.albumId)).toContain(fusionA);
+
+    // A tag that maps to a style finds it ("Deep House" is a style; the House tag is its own name).
+    const results = await browse.searchBrowseStyles(pool, 'house');
+    expect(results[0]).toMatchObject({ genre: 'Electronic', label: 'House · Electronic', matchedAlias: null });
+
+    const unsorted = await browse.getBrowseUnsorted(pool);
+    expect(unsorted.untaggedTrackCount).toBeGreaterThanOrEqual(1);
+    const unsortedIds = await browse.listBrowseTrackIds(pool, { unsorted: true }, 0, 500);
+    expect(unsortedIds.ids).toContain(idOf('fz-unsorted'));
+
+    const artist = (await pool.query(`SELECT id FROM artists WHERE name = 'Fusion Artist'`)).rows[0].id;
+    const profile = await browse.getArtistStyleProfile(pool, artist);
+    expect(profile.entries.filter(e => e.styleId === null).map(e => e.genre).sort()).toEqual(['Electronic', 'Rock']);
+    expect(profile.listenerTags).toEqual(['electronic']);
+    expect((await browse.getAlbumStyleProfile(pool, fusionA)).entries.length).toBeGreaterThan(0);
+  });
 });

@@ -491,7 +491,7 @@ Browse becomes Genre → Style → music, with Play at every level, consistent c
 6. **Facets** on genre and style pages: decade, energy, acoustic ↔ electronic, from features Aurora already computes.
 7. **Provenance in details only.** "Aurora rays from {title}" says where each style came from (tag, model, neighbours, manual) and offers "Remove style", which writes an override; album and artist pages show their profiles (see Three levels). Cards carry no source badges.
 
-API: `GET /api/browse/genres`, `GET /api/browse/genres/:genre`, `GET /api/browse/styles/:id` (members, neighbours, facets), `GET /api/browse/search?q=`, `GET /api/browse/unsorted`, plus `GET /api/browse/tracks/:id/rays` and the album and artist profiles. All read fused, member rows of `track_styles`, `album_styles`, `artist_styles` and `style_centroids`; nothing loads the full library.
+API (built in phase 2, on API v1 like every listener feature): `GET /api/v1/browse/genres`, `/browse/genres/:genre`, `/browse/styles/:id`, `/browse/tracks` (filtered, strongest first, for lists and Play), `/browse/albums`, `/browse/artists`, `/browse/search?q=`, `/browse/unsorted`, `/albums/:id/styles` and `/artists/:id/styles` (the profiles); `/tracks/:id/rays` follows with the view. Neighbours ("Sounds close to") join in phase 3; energy and acoustic facets follow the decade facet. All read fused, member rows of `track_styles`, `album_styles`, `artist_styles` and `style_centroids`; nothing loads the full library.
 
 ## Migration and rollout
 

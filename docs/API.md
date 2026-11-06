@@ -142,6 +142,24 @@ A Hub collection is rebuilt on a schedule under the same id, so renames and trac
 
 Playback reports carry a caller-generated UUID `eventId`; retrying the same event is idempotent. `nowPlaying`, `played`, and `skipped` are distinct report kinds.
 
+### Browse: Genre → Style
+
+Aurora's own 15 genres and 400 styles (docs/Aurora genre and style redesign.md), from each track's file tags, its sound and, when the server has them, artist tags. A style name can exist under two genres ("Trip Hop" in Electronic and Hip Hop), so styles are addressed by numeric id. Every list is ranked: tracks by how strongly they belong, albums by how much of the album is in the genre or style, artists by the same with each of their albums counted once.
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/v1/browse/genres` | Genres with track counts, their 3 biggest styles, up to 4 covers (`artworkIds`), and the unsorted count. `?hidden=true` includes hidden genres (Non-Music). |
+| `GET` | `/api/v1/browse/genres/:genre` | A genre by name: every style with tracks, tracks without a style (`noStyleTrackCount`), the first 24 albums and artists, and track counts per decade. |
+| `GET` | `/api/v1/browse/styles/:id` | A style: the first 24 albums and artists, and decades. |
+| `GET` | `/api/v1/browse/tracks` | Tracks, strongest first, cursor-paged (`limit` up to 500). Filter: `genre`, `style`, `noStyle=true` (with `genre`), `decade=1990`, or `unsorted=true` with an optional `tag`. |
+| `GET` | `/api/v1/browse/albums`, `/api/v1/browse/artists` | More albums or artists for `genre` or `style`, cursor-paged; each item has `share` (0–1). |
+| `GET` | `/api/v1/browse/search?q=` | Genres and styles by name, or by a genre tag that maps to them (`matchedAlias`: "Drum & Bass" finds Drum n Bass). Only those with tracks. |
+| `GET` | `/api/v1/browse/unsorted` | Genre tags on tracks without a genre, and how many tracks have no genre tag at all. |
+| `GET` | `/api/v1/albums/:id/styles` | The album's genres and styles from its tracks: those held by at least 20 % of its tracks, or among its 3 strongest. |
+| `GET` | `/api/v1/artists/:id/styles` | The same for an artist, each album counted once, plus `listenerTags` (Last.fm and MusicBrainz, empty without provider data). |
+
+A filter that names nothing, or a cursor that is not one Aurora issued, is `400 INVALID_BROWSE_FILTER`; an unknown genre or style is `404 GENRE_NOT_FOUND` / `STYLE_NOT_FOUND`. Rankings change whenever the server recomputes genres (after scans and reviews), so a cursor reflects the order when it was issued.
+
 ### Playback sources
 
 Resolve a playable source immediately before playback:

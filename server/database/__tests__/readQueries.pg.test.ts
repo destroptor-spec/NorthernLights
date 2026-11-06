@@ -811,6 +811,8 @@ describeDb('database read queries', () => {
         getTrackById: [`${TRACK_ID}0`],
         getAlbumById: [seeded.albumId],
         getArtistById: [seeded.artistId],
+        getAlbumCardsByIds: [[seeded.albumId]],
+        getArtistCardsByIds: [[seeded.artistId]],
         getGenreById: [seeded.genreId],
         getTracksByAlbum: [seeded.albumId, USER_ID],
         getTracksByArtist: [seeded.artistId, USER_ID],
