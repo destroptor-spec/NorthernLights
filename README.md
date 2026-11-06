@@ -4,7 +4,7 @@ Aurora is a self-hosted web music player for local libraries. It scans folders o
 
 ## Status
 
-Current release: `1.0.0-rc.6`
+Current release: `1.0.0-rc.7`
 
 Aurora is ready for early self-hosted production use. Expect fast iteration and occasional migrations before the first stable `1.0.0` release.
 

@@ -1,6 +1,6 @@
 {
   "name": "modern-web-music-player",
-  "version": "1.0.0-rc.6",
+  "version": "1.0.0-rc.7",
   "private": true,
   "scripts": {
     "dev": "concurrently \"VITE_CONFIG_NATIVE_IGNORE_WARNING=true vite\" \"tsx watch server/index.ts\"",

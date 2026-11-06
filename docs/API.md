@@ -349,7 +349,7 @@ Every structured response includes:
     "status": "ok",
     "version": "1.16.1",
     "type": "aurora",
-    "serverVersion": "Aurora 1.0.0-rc.6",
+    "serverVersion": "Aurora 1.0.0-rc.7",
     "openSubsonic": true
   }
 }

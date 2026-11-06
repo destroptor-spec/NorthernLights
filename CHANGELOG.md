@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [v1.0.0-rc.7] - 2026-11-06
+
 ### Features
 - **Connect and playback across devices:** See where music is playing, control it from another device, transfer playback, and share queue edits across devices. A device that isn't playing can also change repeat, shuffle, Infinity Mode, and volume.
 - **Listen Together:** Invite people to a shared listening session with join links, guest controls, and discoverable gigs with configurable participation levels. Each gig has a panel that lists its members, with an option to remove them, and Aurora avatars appear throughout the app.
