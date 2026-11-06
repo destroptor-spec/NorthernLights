@@ -10,7 +10,7 @@ import { PLAYBACK_SYNC_MODES } from '../../shared/playbackSync';
 
 const router = Router();
 
-const userKeys = new Set(['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'playedThresholdPercent', 'llmPlaylistDiversity', 'llmVetoMode', 'llmGenreCohesion', 'llmDiscoveryBias', 'llmArtistSpread', 'genrePenaltyCurve', 'llmRecoveryStrength', 'llmAdjacentReach', 'llmTracksPerPlaylist', 'llmPlaylistCount', 'lastFmScrobbleEnabled', 'listenBrainzScrobbleEnabled', 'subsonicProviderScrobbleEnabled', 'subsonicProviderLoveSyncEnabled', 'concertsEnabled', 'concertsLat', 'concertsLng', 'concertsLocationLabel', 'concertsRadiusKm', 'concertsAutoAddEnabled', 'loudnessNormEnabled', 'loudnessTargetLufs', 'loudnessPreampDb', 'loudnessMode', 'playbackSyncEnabled']);
+const userKeys = new Set(['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'playedThresholdPercent', 'llmPlaylistDiversity', 'llmVetoMode', 'llmGenreCohesion', 'llmDiscoveryBias', 'llmArtistSpread', 'genrePenaltyCurve', 'llmRecoveryStrength', 'llmAdjacentReach', 'llmTracksPerPlaylist', 'llmPlaylistCount', 'lastFmScrobbleEnabled', 'listenBrainzScrobbleEnabled', 'subsonicProviderScrobbleEnabled', 'subsonicProviderLoveSyncEnabled', 'concertsEnabled', 'concertsLat', 'concertsLng', 'concertsLocationLabel', 'concertsRadiusKm', 'concertsAutoAddEnabled', 'loudnessNormEnabled', 'loudnessTargetLufs', 'loudnessPreampDb', 'loudnessMode', 'playbackSyncEnabled', 'newBrowseEnabled']);
 const serverKeys = new Set(['llmBaseUrl', 'llmApiKey', 'llmModelName', 'hubGenerationSchedule', 'systemPlaylistConfig', 'audioAnalysisCpu', 'scannerConcurrency', 'loudnessComputeMode', 'geniusApiKey', 'lastFmApiKey', 'lastFmSharedSecret', 'musicBrainzEnabled', 'musicBrainzClientId', 'musicBrainzClientSecret', 'musicBrainzRedirectUri', 'providerArtistImage', 'providerArtistArtwork', 'providerArtistBio', 'providerAlbumArt', 'autoFolderWalk', 'jambaseEnabled', 'jambaseMaxSubscriptionsPerUser', 'jambaseCacheTtlDays', 'jambaseMonthlyCap', 'jambaseHardStop', 'youtubeEnabled', 'youtubeApiKey', 'youtubeCacheTtlDays', 'youtubeDailyQuotaCap', 'youtubeHardStop', ...Object.keys(SERVER_LOGGING_SETTINGS), 'openSubsonicEnabled', 'turnstileEnabled', 'turnstileSiteKey', 'turnstileSecretKey', 'playbackSyncMode']);
 const secretServerKeys = new Set(['llmApiKey', 'geniusApiKey', 'lastFmApiKey', 'lastFmSharedSecret', 'musicBrainzClientSecret', 'youtubeApiKey', 'turnstileSecretKey']);
 const nonAdminReadableServerKeys = new Set(['hubGenerationSchedule', 'systemPlaylistConfig', 'providerArtistImage', 'providerArtistArtwork', 'providerArtistBio', 'providerAlbumArt', 'musicBrainzEnabled', 'musicBrainzConnected', 'openSubsonicEnabled', 'youtubeEnabled', 'playbackSyncMode']);
@@ -34,8 +34,8 @@ router.get('/settings', async (req, res) => {
     }
 
     // User-level settings (includes Last.fm which is per-user)
-    const allUserKeys = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'playedThresholdPercent', 'llmPlaylistDiversity', 'llmVetoMode', 'llmGenreCohesion', 'llmDiscoveryBias', 'llmArtistSpread', 'genrePenaltyCurve', 'llmRecoveryStrength', 'llmAdjacentReach', 'llmTracksPerPlaylist', 'llmPlaylistCount', 'lastFmScrobbleEnabled', 'lastFmConnected', 'lastFmUsername', 'listenBrainzScrobbleEnabled', 'listenBrainzConnected', 'listenBrainzUsername', 'subsonicProviderScrobbleEnabled', 'subsonicProviderLoveSyncEnabled', 'concertsEnabled', 'concertsLat', 'concertsLng', 'concertsLocationLabel', 'concertsRadiusKm', 'concertsAutoAddEnabled', 'loudnessNormEnabled', 'loudnessTargetLufs', 'loudnessPreampDb', 'loudnessMode', 'playbackSyncEnabled'];
-    const userOnlyKeys = ['playbackSyncEnabled', 'lastFmConnected', 'lastFmUsername', 'lastFmScrobbleEnabled', 'listenBrainzConnected', 'listenBrainzUsername', 'listenBrainzScrobbleEnabled', 'subsonicProviderScrobbleEnabled', 'subsonicProviderLoveSyncEnabled'];
+    const allUserKeys = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'playedThresholdPercent', 'llmPlaylistDiversity', 'llmVetoMode', 'llmGenreCohesion', 'llmDiscoveryBias', 'llmArtistSpread', 'genrePenaltyCurve', 'llmRecoveryStrength', 'llmAdjacentReach', 'llmTracksPerPlaylist', 'llmPlaylistCount', 'lastFmScrobbleEnabled', 'lastFmConnected', 'lastFmUsername', 'listenBrainzScrobbleEnabled', 'listenBrainzConnected', 'listenBrainzUsername', 'subsonicProviderScrobbleEnabled', 'subsonicProviderLoveSyncEnabled', 'concertsEnabled', 'concertsLat', 'concertsLng', 'concertsLocationLabel', 'concertsRadiusKm', 'concertsAutoAddEnabled', 'loudnessNormEnabled', 'loudnessTargetLufs', 'loudnessPreampDb', 'loudnessMode', 'playbackSyncEnabled', 'newBrowseEnabled'];
+    const userOnlyKeys = ['playbackSyncEnabled', 'newBrowseEnabled', 'lastFmConnected', 'lastFmUsername', 'lastFmScrobbleEnabled', 'listenBrainzConnected', 'listenBrainzUsername', 'listenBrainzScrobbleEnabled', 'subsonicProviderScrobbleEnabled', 'subsonicProviderLoveSyncEnabled'];
     if (userId) {
       for (const k of allUserKeys) {
         const userVal = await getUserSetting(userId, k);
@@ -107,6 +107,10 @@ router.post('/settings', async (req, res) => {
     }
     if (Object.hasOwn(settings, 'playbackSyncEnabled') && typeof settings.playbackSyncEnabled !== 'boolean') {
       return res.status(400).json({ error: 'playbackSyncEnabled must be a boolean', keys: ['playbackSyncEnabled'] });
+    }
+    // Genre & style browse (preview, genre redesign phase 2): per user.
+    if (Object.hasOwn(settings, 'newBrowseEnabled') && typeof settings.newBrowseEnabled !== 'boolean') {
+      return res.status(400).json({ error: 'newBrowseEnabled must be a boolean', keys: ['newBrowseEnabled'] });
     }
 
     const invalidLoggingKeys = Object.keys(SERVER_LOGGING_SETTINGS)

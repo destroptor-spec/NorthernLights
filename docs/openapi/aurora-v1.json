@@ -1556,6 +1556,10 @@
           "subsonicProviderLoveSyncEnabled": {
             "type": "boolean",
             "description": "Mirror stars from OpenSubsonic clients to Last.fm and MusicBrainz. Defaults to true."
+          },
+          "newBrowseEnabled": {
+            "type": "boolean",
+            "description": "Browse by Aurora's genres and styles instead of the old genre list (preview). Defaults to false."
           }
         },
         "required": [
@@ -1567,7 +1571,8 @@
           "loudnessPreampDb",
           "loudnessMode",
           "subsonicProviderScrobbleEnabled",
-          "subsonicProviderLoveSyncEnabled"
+          "subsonicProviderLoveSyncEnabled",
+          "newBrowseEnabled"
         ]
       },
       "TrackLyrics": {
@@ -10238,6 +10243,10 @@
                   "subsonicProviderLoveSyncEnabled": {
                     "type": "boolean",
                     "description": "Mirror stars from OpenSubsonic clients to Last.fm and MusicBrainz. Defaults to true."
+                  },
+                  "newBrowseEnabled": {
+                    "type": "boolean",
+                    "description": "Browse by Aurora's genres and styles instead of the old genre list (preview). Defaults to false."
                   }
                 }
               }

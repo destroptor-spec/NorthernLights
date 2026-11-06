@@ -568,6 +568,8 @@ export const listenerPreferencesSchema = z.object({
   subsonicProviderScrobbleEnabled: z.boolean(),
   subsonicProviderLoveSyncEnabled: z.boolean()
     .describe('Mirror stars from OpenSubsonic clients to Last.fm and MusicBrainz. Defaults to true.'),
+  newBrowseEnabled: z.boolean()
+    .describe('Browse by Aurora\'s genres and styles instead of the old genre list (preview). Defaults to false.'),
 }).meta({ id: 'ListenerPreferences' });
 
 export const hubRegenerationSchema = z.object({

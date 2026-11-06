@@ -753,6 +753,13 @@ export interface PlayerState {
   /** Admin only. */
   savePlaybackSyncMode: (mode: PlaybackSyncMode) => Promise<void>;
   savePlaybackSyncUserEnabled: (enabled: boolean) => Promise<void>;
+  /**
+   * Genre & style browse (preview, genre redesign phase 2): Library → Genres
+   * shows Aurora's genres and styles instead of the old genre list. Stored per
+   * user on the server so every device agrees; persisted locally for reloads.
+   */
+  newBrowseEnabled: boolean;
+  saveNewBrowseEnabled: (enabled: boolean) => Promise<void>;
   /** Re-reads the two settings, e.g. after another device or an admin changed them. */
   refreshPlaybackSync: () => Promise<void>;
   /** Another device plays the user's session and this idle one follows it (SessionFollower). Not persisted. */
@@ -1526,6 +1533,7 @@ export const usePlayerStore = create<PlayerState>()(
         playbackSyncMode: 'off' as PlaybackSyncMode,
         playbackSyncUserEnabled: false as boolean,
         syncPlaybackAcrossDevices: false as boolean,
+        newBrowseEnabled: false as boolean,
         sessionFollow: null as FollowedOutput | null,
         remoteControlOutputId: null as string | null,
         remoteVolumeIntent: null as number | null,
@@ -1822,6 +1830,17 @@ export const usePlayerStore = create<PlayerState>()(
           }
         },
 
+        saveNewBrowseEnabled: async (enabled: boolean) => {
+          const previous = get().newBrowseEnabled;
+          set({ newBrowseEnabled: enabled });
+          try {
+            await postSettings(get().getAuthHeader(), { newBrowseEnabled: enabled });
+          } catch (error) {
+            set({ newBrowseEnabled: previous });
+            get().addToast(error instanceof Error ? error.message : 'Could not change the browse setting.', 'error');
+          }
+        },
+
         refreshPlaybackSync: async () => {
           if (!get().authToken) return;
           try {
@@ -2033,6 +2052,7 @@ export const usePlayerStore = create<PlayerState>()(
                 loudnessLoggingEnabled: data.loudnessLoggingEnabled === true,
                 openSubsonicEnabled: data.openSubsonicEnabled !== false,
                 ...playbackSyncFrom(data.playbackSyncMode, data.playbackSyncEnabled),
+                newBrowseEnabled: data.newBrowseEnabled === true,
                 loudnessNormEnabled: data.loudnessNormEnabled === true,
                 loudnessTargetLufs: typeof data.loudnessTargetLufs === 'number' ? data.loudnessTargetLufs : -18,
                 loudnessPreampDb: typeof data.loudnessPreampDb === 'number' ? data.loudnessPreampDb : 0,
@@ -3569,6 +3589,7 @@ export const usePlayerStore = create<PlayerState>()(
         repeat: state.repeat,
         theme: state.theme,
         reducedMotion: state.reducedMotion,
+        newBrowseEnabled: state.newBrowseEnabled,
         mobileVideoBackgrounds: state.mobileVideoBackgrounds,
         lastFmApiKey: state.lastFmApiKey,
         lastFmScrobbleEnabled: state.lastFmScrobbleEnabled,

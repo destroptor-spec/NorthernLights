@@ -6,7 +6,7 @@ Every step needed to take branch `genre-engine-next` to prod, in one place. Each
 | --- | --- | --- |
 | 0 | Python 3.14 venv, new analysis models, `track_style_scores`, full re-analysis | Built (`038e736`), not deployed |
 | 1 | Genre list, MusicBrainz genre snapshot, tag mapping, artist-tag split, Last.fm backfill, genre review | Built (1a: taxonomy, snapshot, tag mapping, artist tags, backfill; 1b: review queue), not deployed |
-| 2 | Fusion (genres and styles per track, album and artist profiles), new Browse behind a setting, "Aurora rays from {title}" | In progress: fusion built, not deployed |
+| 2 | Fusion (genres and styles per track, album and artist profiles), new Browse behind a setting, "Aurora rays from {title}" | In progress: fusion, Browse API and Browse (preview switch) built, not deployed |
 | 3 | Audio, KNN and Last.fm evidence; style centroids | Not built |
 | 4 | Engine scoring; Genre Matrix and MBDB import retired | Not built |
 
@@ -154,6 +154,10 @@ Run it after phase 0's re-analysis if possible: without style scores, genre-only
 
 - [ ] `GET /api/admin/genre-taxonomy/fusion` returns a status with `version` 1, `unsorted` small (dev: 57 of 30,746), and `audioGenres` listing the genres the sound may name on its own (dev: Electronic, Rock, Jazz).
 - [ ] `SELECT COUNT(*) FROM album_styles` and `artist_styles` are not zero.
+
+### 4. Try the new Browse (per user, off by default)
+
+Settings → Appearance → **Genre and style browse (preview)**. Library → Genres then shows Aurora's genres; everyone else keeps the old genre list until they turn it on. Check a few genre and style pages, Shuffle, the decade buttons, search ("drum & bass" should find Drum n Bass) and Unsorted. The switch is stored per user on the server (`newBrowseEnabled`), so it follows you across devices.
 
 ## Phase 3: audio and artist-tag evidence
 

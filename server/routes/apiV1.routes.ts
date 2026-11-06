@@ -1140,6 +1140,7 @@ const preferenceDefaults = {
   streamingQuality: 'auto', prebufferPolicy: 'conservative', playedThresholdPercent: 50,
   loudnessNormEnabled: false, loudnessTargetLufs: -18, loudnessPreampDb: 0,
   loudnessMode: 'track', subsonicProviderScrobbleEnabled: false, subsonicProviderLoveSyncEnabled: true,
+  newBrowseEnabled: false,
 } as const;
 
 router.get('/preferences', async (req, res) => {

@@ -1397,6 +1397,402 @@ a:focus-visible > .genre-card .genre-card__label {
   }
 }
 
+/* Browse (genre & style preview): a line under the genre card name. */
+.genre-card__meta {
+  display: grid;
+  gap: 2px;
+  padding-inline: 0.125rem;
+  margin-top: -0.375rem;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--color-text-muted);
+}
+
+.genre-card__count {
+  font-variant-numeric: tabular-nums;
+}
+
+.genre-card__styles {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+}
+
+/* ── Browse: Genre → Style (genre redesign, phase 2) ─────────────────────── */
+.browse-home__head {
+  margin-bottom: 1.5rem;
+}
+
+.browse-home__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  margin-top: 2rem;
+}
+
+.browse-empty {
+  color: var(--color-text-secondary);
+  font-size: 0.95rem;
+}
+
+.browse-error {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  color: var(--color-text-secondary);
+}
+
+.browse-error p {
+  margin: 0;
+}
+
+/* Search: a field, then results as rows directly below (no popover). */
+.browse-search {
+  max-width: 34rem;
+}
+
+.browse-search__field {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-height: 44px;
+  padding: 0 0.875rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-pill);
+  background: var(--glass-bg);
+  color: var(--color-text-muted);
+  transition: border-color 160ms ease-out, box-shadow 160ms ease-out;
+}
+
+.browse-search__field:focus-within {
+  border-color: color-mix(in srgb, var(--color-primary) 55%, var(--glass-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 18%, transparent);
+}
+
+.browse-search__field input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 0.95rem;
+}
+
+.browse-search__empty {
+  margin: 0.75rem 0.875rem 0;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+.browse-search__results {
+  display: grid;
+  gap: 2px;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.browse-search__result {
+  display: flex;
+  align-items: baseline;
+  gap: 0.625rem;
+  min-height: 44px;
+  align-content: center;
+  padding: 0.625rem 0.875rem;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  text-decoration: none;
+  outline: none;
+  transition: background-color 140ms ease-out;
+}
+
+.browse-search__result:hover,
+.browse-search__result:focus-visible {
+  background: var(--glass-bg-hover);
+  color: var(--color-primary);
+}
+
+.browse-search__label {
+  font-weight: 600;
+}
+
+.browse-search__alias {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+.browse-search__count {
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Genre and style page header. */
+.browse-hero {
+  margin-bottom: 2.5rem;
+}
+
+.browse-hero__eyebrow {
+  display: inline-block;
+  margin-bottom: 0.5rem;
+  color: var(--color-text-secondary);
+  font-size: 0.9rem;
+  letter-spacing: 0.05em;
+  text-decoration: none;
+}
+
+.browse-hero__eyebrow:hover,
+.browse-hero__eyebrow:focus-visible {
+  color: var(--color-primary);
+}
+
+.browse-hero__title {
+  margin: 0 0 0.5rem;
+  font-size: clamp(2.25rem, 6vw, 4.5rem);
+  line-height: 1.02;
+  color: var(--color-primary);
+  overflow-wrap: anywhere;
+}
+
+.browse-hero__meta {
+  margin: 0 0 1.25rem;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.browse-hero__lede {
+  max-width: 62ch;
+  margin: 0;
+  color: var(--color-text-secondary);
+  line-height: 1.55;
+}
+
+.browse-hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1.25rem;
+}
+
+.browse-decades {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.browse-decades__label {
+  margin-right: 0.25rem;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+.browse-section {
+  margin-bottom: 2.75rem;
+}
+
+.browse-section__title {
+  margin: 0 0 1rem;
+  font-size: 1.25rem;
+  color: var(--color-text-secondary);
+}
+
+.browse-more {
+  margin-top: 1.25rem;
+}
+
+/* Every style of a genre: an index in columns, scanned rather than browsed
+   as covers. Counts sit right so the column reads at a glance. */
+.browse-index {
+  columns: 1;
+  column-gap: 2rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (min-width: 640px) {
+  .browse-index { columns: 2; }
+}
+
+@media (min-width: 1024px) {
+  .browse-index { columns: 3; }
+}
+
+.browse-index--single {
+  columns: 1 !important;
+  max-width: 40rem;
+}
+
+.browse-index li {
+  break-inside: avoid;
+}
+
+.browse-index__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  width: 100%;
+  min-height: 44px;
+  padding: 0.5rem 0.75rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-primary);
+  text-align: left;
+  text-decoration: none;
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 140ms ease-out, color 140ms ease-out;
+}
+
+.browse-index__row:hover,
+.browse-index__row:focus-visible {
+  background: var(--glass-bg-hover);
+  color: var(--color-primary);
+  outline: none;
+}
+
+.browse-index__row:focus-visible {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-primary) 60%, transparent);
+}
+
+.browse-index__row:disabled {
+  cursor: progress;
+}
+
+.browse-index__row--plain .browse-index__name {
+  color: var(--color-text-secondary);
+}
+
+.browse-index__name {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.browse-index__count {
+  flex: none;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Artist cards: round image, name, how much of their music is here. */
+.browse-artist {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+  color: var(--color-text-primary);
+  border-radius: var(--radius);
+  outline: none;
+}
+
+.browse-artist__image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  margin-bottom: 0.375rem;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  box-shadow: var(--shadow-sm);
+  transition: border-color 200ms ease-out, box-shadow 200ms ease-out;
+}
+
+.browse-artist__image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.browse-artist:hover .browse-artist__image,
+.browse-artist:focus-visible .browse-artist__image {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-md);
+}
+
+.browse-artist__name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.browse-artist:hover .browse-artist__name,
+.browse-artist:focus-visible .browse-artist__name {
+  color: var(--color-primary);
+}
+
+.browse-artist__meta {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+/* Unsorted, at the foot of the genres. */
+.browse-row-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex: 1 1 18rem;
+  max-width: 28rem;
+  min-height: 44px;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  transition: border-color 160ms ease-out, color 160ms ease-out;
+}
+
+.browse-row-link:hover,
+.browse-row-link:focus-visible {
+  border-color: var(--glass-border-hover);
+  color: var(--color-primary);
+  outline: none;
+}
+
+.browse-row-link > span {
+  display: grid;
+  gap: 2px;
+}
+
+.browse-row-link__title {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.browse-row-link__meta {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .browse-search__field,
+  .browse-search__result,
+  .browse-index__row,
+  .browse-artist__image,
+  .browse-row-link {
+    transition: none;
+  }
+}
+
 /* ── Genre rails ───────────────────────────────────────────────────────────
    When the MBDB taxonomy is available, genres are grouped under their parent
    genre as horizontal shelves, borrowing the Hub's rail vocabulary: lowercase
