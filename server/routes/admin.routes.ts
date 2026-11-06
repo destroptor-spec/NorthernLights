@@ -588,4 +588,26 @@ router.get('/service/status', adminReadRateLimit, requireAdmin, async (_req, res
   });
 });
 
+// ── Genre & style taxonomy (docs/Aurora genre and style redesign.md, phase 1) ──
+// Coverage of the tag mapping and the phase-1 gate.
+router.get('/genre-taxonomy/coverage', adminReadRateLimit, requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 100, 0), 1000);
+    const { getMappingCoverage } = await import('../services/genreTaxonomy');
+    res.json(await getMappingCoverage(await initDB(), limit));
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || 'Coverage failed' });
+  }
+});
+
+// Re-run tag mapping. full=true re-resolves every tag without a manual decision.
+router.post('/genre-taxonomy/remap', adminMutationRateLimit, requireAdmin, async (req, res) => {
+  try {
+    const { runTagMapping } = await import('../services/genreTaxonomy');
+    res.json(await runTagMapping(await initDB(), { full: req.body?.full === true }));
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || 'Remap failed' });
+  }
+});
+
 export default router;

@@ -654,6 +654,8 @@ async function processMetadataBatch(input: Array<Buffer | ScanItem>, concurrency
 
   const duration = ((Date.now() - startTime) / 1000).toFixed(1);
   logScanner(`[Scanner] Phase: metadata - Duration: ${duration}s, Errors: ${errorCount}`);
+  // New or changed genre tags: map them shortly after (debounced, incremental).
+  if (total > 0) void import('../services/genreTaxonomy').then(m => m.scheduleTagMapping()).catch(() => {});
 }
 
 // ─── Phase 3: Parallel audio analysis (ffmpeg + Essentia) ────────────

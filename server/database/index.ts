@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { ARTWORK_EXTRACTION_VERSION } from '../services/artworkVersion';
 import { AUDIO_FEATURE_VERSION, PENDING_AUDIO_FEATURES_SQL, STYLE_SCORE_COUNT, STYLE_SCORE_MODEL, STYLE_SCORE_VERSION } from '../services/audioFeatureVersion';
+import { replaceTrackTags } from '../services/genreTaxonomy/trackTags';
 import type { LibraryDirectoryStats } from '../../shared/libraryStats';
 import { normalizeGenreIdentity } from '../utils/genreIdentity';
 import { artistImageSql } from '../utils/artistImage';
@@ -818,6 +819,82 @@ export async function initDB(): Promise<Pool> {
           ON genre_duplicate_reviews(candidate_key, signature, created_at DESC);
         CREATE INDEX IF NOT EXISTS genre_duplicate_reviews_canonical_idx
           ON genre_duplicate_reviews(canonical_genre_id, created_at DESC);
+
+        -- ── Genre & style taxonomy (docs/Aurora genre and style redesign.md) ──
+        -- Seeded at startup from server/data/genre-taxonomy/discogs400-labels.json.
+        CREATE TABLE IF NOT EXISTS taxonomy_genre (
+          name             TEXT PRIMARY KEY,
+          hidden           BOOLEAN NOT NULL DEFAULT FALSE,
+          taxonomy_version INTEGER NOT NULL
+        );
+        -- A style is the full 'Genre---Style' label: 16 style names repeat
+        -- across genres. A new taxonomy version updates rows in place.
+        CREATE TABLE IF NOT EXISTS style (
+          id               SERIAL PRIMARY KEY,
+          label            TEXT UNIQUE NOT NULL,
+          genre            TEXT NOT NULL REFERENCES taxonomy_genre(name),
+          name             TEXT NOT NULL,
+          model_index      SMALLINT UNIQUE,
+          source           TEXT NOT NULL DEFAULT 'discogs' CHECK (source IN ('discogs', 'local')),
+          taxonomy_version INTEGER NOT NULL,
+          UNIQUE (id, genre)
+        );
+        -- Every original genre tag, verbatim, split from tracks.genres.
+        CREATE TABLE IF NOT EXISTS track_tags (
+          track_id TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+          tag      TEXT NOT NULL,
+          tag_key  TEXT NOT NULL,
+          position SMALLINT NOT NULL,
+          PRIMARY KEY (track_id, tag)
+        );
+        CREATE INDEX IF NOT EXISTS track_tags_tag_key_idx ON track_tags (tag_key);
+        -- Normalised tag -> genre, or genre + style. Manual rows survive remaps.
+        CREATE TABLE IF NOT EXISTS tag_map (
+          id              SERIAL PRIMARY KEY,
+          tag             TEXT NOT NULL,
+          genre           TEXT NOT NULL REFERENCES taxonomy_genre(name),
+          style_id        INTEGER,
+          method          TEXT NOT NULL CHECK (method IN ('exact', 'alias', 'merge', 'mb_alias', 'mb_parent', 'compound', 'llm', 'manual')),
+          reliability     REAL NOT NULL CHECK (reliability BETWEEN 0 AND 1),
+          mapping_version INTEGER NOT NULL,
+          detail          TEXT,
+          reviewed_at     TIMESTAMPTZ,
+          reviewed_by     UUID REFERENCES users(id) ON DELETE SET NULL,
+          FOREIGN KEY (style_id, genre) REFERENCES style(id, genre),
+          UNIQUE NULLS NOT DISTINCT (tag, genre, style_id)
+        );
+        CREATE INDEX IF NOT EXISTS tag_map_tag_idx ON tag_map (tag);
+        -- Tags deliberately left unmapped ("Other", "None", noise).
+        CREATE TABLE IF NOT EXISTS tag_ignored (
+          tag         TEXT PRIMARY KEY,
+          reason      TEXT,
+          source      TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('seed', 'manual')),
+          reviewed_at TIMESTAMPTZ,
+          reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL
+        );
+        -- Community artist tags, one row per provider; weights are normalised
+        -- per artist and provider, never summed across providers.
+        CREATE TABLE IF NOT EXISTS artist_tags (
+          artist_id  UUID NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+          provider   TEXT NOT NULL CHECK (provider IN ('lastfm', 'musicbrainz')),
+          tag        TEXT NOT NULL,
+          tag_key    TEXT NOT NULL,
+          raw_count  INTEGER NOT NULL,
+          weight     REAL NOT NULL CHECK (weight BETWEEN 0 AND 1),
+          fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (artist_id, provider, tag)
+        );
+        CREATE INDEX IF NOT EXISTS artist_tags_tag_key_idx ON artist_tags (tag_key);
+        -- One row per artist and provider fetch, including "no tags", so the
+        -- backfill can resume and never refetches an artist it already asked.
+        CREATE TABLE IF NOT EXISTS artist_tag_fetches (
+          artist_id  UUID NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+          provider   TEXT NOT NULL CHECK (provider IN ('lastfm', 'musicbrainz')),
+          fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          tag_count  INTEGER NOT NULL DEFAULT 0,
+          error      TEXT,
+          PRIMARY KEY (artist_id, provider)
+        );
 
         CREATE TABLE IF NOT EXISTS user_playback_stats (
           user_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -3124,6 +3201,9 @@ async function replaceTrackGenreAssociations(
   const uniqueIds = Array.from(new Set(genreIds));
 
   await db.query('DELETE FROM track_genres WHERE track_id = $1', [trackId]);
+  // The genre & style taxonomy keeps every original tag verbatim (track_tags);
+  // the "Unknown Genre" placeholder for untagged tracks is not a tag.
+  await replaceTrackTags(db, trackId, names.filter(name => name !== UNKNOWN_GENRE));
   if (uniqueIds.length > 0) {
     const params: Array<string | number> = [];
     const values = uniqueIds.map((genreId, index) => {

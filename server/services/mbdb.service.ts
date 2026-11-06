@@ -93,6 +93,9 @@ export class MBDBService {
         duration: totalSeconds,
         counts
       }));
+      // The genre & style taxonomy compares this with its shipped snapshot and
+      // never replaces a newer import with an older snapshot.
+      await setSystemSetting('mbGenreSource', { kind: 'import', version: `mb-${dataTag}` });
 
     } catch (err: any) {
       console.error('[MBDB] Import failed:', err);

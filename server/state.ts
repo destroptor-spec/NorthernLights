@@ -50,6 +50,11 @@ export async function initDatabaseConnection(retries = 15, initialDelay = 1000) 
       } catch (e: any) {
         console.error('[DB] Logging settings load failed (non-fatal):', e.message || e);
       }
+      // Genre & style taxonomy: seeding, track-tag backfill and tag mapping run
+      // in the background so they never delay startup.
+      import('./services/genreTaxonomy')
+        .then(m => m.initializeGenreTaxonomy())
+        .catch((e: any) => console.error('[GenreTaxonomy] Initialisation failed (non-fatal):', e?.message || e));
       isInitializing = false;
       return;
     } catch (e: any) {

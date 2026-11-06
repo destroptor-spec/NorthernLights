@@ -5,7 +5,7 @@ Every step needed to take branch `genre-engine-next` to prod, in one place. Each
 | Phase | What it changes on prod | Status |
 | --- | --- | --- |
 | 0 | Python 3.14 venv, new analysis models, `track_style_scores`, full re-analysis | Built (`038e736`), not deployed |
-| 1 | Genre list, MusicBrainz genre snapshot, tag mapping, artist-tag split, Last.fm backfill | Not built |
+| 1 | Genre list, MusicBrainz genre snapshot, tag mapping, artist-tag split, Last.fm backfill | 1a in progress (taxonomy, snapshot, tag mapping built); review screen (1b) not built |
 | 2 | New Browse behind a setting | Not built |
 | 3 | Audio, KNN and Last.fm evidence; style centroids | Not built |
 | 4 | Engine scoring; Genre Matrix and MBDB import retired | Not built |
@@ -80,7 +80,38 @@ SQL
 
 ## Phase 1: genre list and tag mapping
 
-Steps are added here when phase 1 is built. Known so far: the Discogs genre list and MusicBrainz genre snapshot are seeded at startup (schema change, so another automatic export); Last.fm and MusicBrainz artist tags are split per provider; and a slow, rate-limited Last.fm backfill runs in the background (about 4,800 artists on prod).
+Built so far: genre list, MusicBrainz genre snapshot, original-tag table, tag mapping and coverage report. The artist-tag split, Last.fm backfill and the review screen will add their steps here.
+
+### 1. Deploy (schema change)
+
+New tables at startup: `taxonomy_genre`, `style`, `track_tags`, `tag_map`, `tag_ignored`, `artist_tags`, `artist_tag_fetches`. `deploy-prod.sh` exports the database first, as for any schema change.
+
+### 2. Automatic on first start (nothing to run)
+
+In the background after the database connects, in this order:
+
+1. Seeds 15 genres and 400 styles from `server/data/genre-taxonomy/discogs400-labels.json`.
+2. Loads the shipped MusicBrainz genre snapshot (`mb-20260408-002212`) into `genre`, `genre_alias` and `l_genre_genre`, and rebuilds `genre_tree_paths`. This happens only if those tables are empty or hold older data. A newer MBDB import is kept and recorded as the source.
+3. Copies every track's original genre tags into `track_tags` (about 30,000 tracks: seconds).
+4. Maps every tag key. Later scans map new tags automatically.
+
+The server log shows `[GenreTaxonomy] Coverage NN.N % of tagged tracks; …`. Dev reached 98.3 %, with 41 tags unmapped and 237 mappings to review.
+
+### 3. Verify
+
+- [ ] The log line above appears without `[GenreTaxonomy] Initialisation failed`.
+- [ ] Coverage and gate (admin): `GET /api/admin/genre-taxonomy/coverage` returns `gate.coverageMet: true`. `gate.allReviewed` stays false until the review screen (1b) has been worked through.
+
+```sql
+SELECT (SELECT COUNT(*) FROM style) AS styles,              -- 400
+       (SELECT COUNT(*) FROM track_tags) AS track_tags,
+       (SELECT COUNT(*) FROM tag_map) AS mappings,
+       (SELECT value FROM system_settings WHERE key = 'mbGenreSource') AS mb_source;
+```
+
+### Rollback
+
+`--rollback` is safe: the old code ignores the new tables, and the MusicBrainz tables keep the same shape (the snapshot only refreshes their contents).
 
 ## Phase 2: new Browse
 

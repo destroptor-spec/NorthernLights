@@ -478,11 +478,13 @@ Rollback: phases 1–3 add tables and leave `tracks.genres`, `track_genres` and 
 | GPU (ROCm) for analysis? | No. Analysis is decode-bound, the prod VM has no GPU, and other self-hosters need the CPU path. |
 | MAEST-30s instead of more windows? | No. It is still one region of the track, so it does not fix the round 1 misses, and it replaces Infinity's embedding space. Revisit only if style accuracy for Pop and Jazz matters after phase 3. |
 | Genre penalty in the engine? | Removed in phase 4; style overlap is a bonus only. Banned genres remain a hard veto. |
+| LLM step in tag mapping | Deferred (decided 2026-11-06). Exact names, hand aliases and MusicBrainz aliases and parents reach about 97 % of Picard tag uses; leftovers go to the review screen. |
+| Where does the mapping review live? | Settings → Library Entities → Genres. Adding it includes reworking that whole sub-tab to the standard of the Artists sub-tab (previews, undo, clearer actions). |
 | Tuning weights and thresholds | Tuned against reviewed labels. Loves and skips personalise recommendations only, never shared genre truth. |
 
 Still open:
 
-- [ ] Size of the reviewed sample and the coverage and correctness targets for the phase 1 gate.
+- [x] Phase 1 gate (decided 2026-11-06): at least 95 % of tagged tracks have a mapping, and every mapping is reviewed in the review screen. Dev has 261 distinct Picard genre tags (the top 100 cover 96 % of uses), so a full review replaces sampling.
 - [x] Phase 0: blind A/B round, 35 % window vs mean of 20 / 50 / 80 % (mean won 13–7).
 - [ ] Optional: a second blind round of 20 to firm up the window result before re-analysing.
 
