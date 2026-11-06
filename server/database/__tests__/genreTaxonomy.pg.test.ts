@@ -208,6 +208,56 @@ describeDb('genre & style taxonomy on a fresh database', () => {
       .toEqual(['Hard Rock/Heavy Metal → Rock › Hard Rock', 'Trip Hop → Electronic › Trip Hop']);
   });
 
+  test('the evidence counts each track under its top style, shows a lone artist\'s tags and suggests the genre when styles vary', async () => {
+    const review = await import('../../services/genreTaxonomy/review');
+    const styleIndex = async (genre: string, name: string) => (await pool.query(
+      'SELECT model_index FROM style WHERE genre = $1 AND name = $2', [genre, name])).rows[0].model_index as number;
+    const tops = [
+      ['Electronic', 'Downtempo'], ['Electronic', 'Downtempo'], ['Electronic', 'Glitch'],
+      ['Electronic', 'Dubstep'], ['Hip Hop', 'Instrumental'],
+    ] as const;
+    for (const [i, [genre, style]] of tops.entries()) {
+      await db.addTrack({ ...track(`t-lights-${i}`, ['Glitch Soul']), artist: 'Lights Artist', album: `Lights ${i % 2}` });
+      const scores = Array(400).fill(0.01);
+      scores[await styleIndex(genre, style)] = 0.4;
+      await pool.query(`INSERT INTO track_features (track_id) VALUES ($1)`, [idOf(`t-lights-${i}`)]);
+      await pool.query(`INSERT INTO track_style_scores (track_id, scores, model, windows, genre_version) VALUES ($1, $2, 'test', '20,50,80', 1)`,
+        [idOf(`t-lights-${i}`), scores]);
+    }
+    // A simulated track never counts.
+    await db.addTrack({ ...track('t-lights-sim', ['Glitch Soul']), artist: 'Lights Artist' });
+    await pool.query(`INSERT INTO track_features (track_id, is_simulated) VALUES ($1, true)`, [idOf('t-lights-sim')]);
+    await pool.query(`INSERT INTO track_style_scores (track_id, scores, model, windows, genre_version) VALUES ($1, $2, 'test', '20,50,80', 1)`,
+      [idOf('t-lights-sim'), Array(400).fill(0.5)]);
+    await taxonomy.runTagMapping(pool);
+
+    const key = 'tag:glitch soul';
+    let evidence = (await review.getGenreReviewEvidence(pool, key))!;
+    expect(evidence.audio).toMatchObject({ analysed: 5, sampled: false, genres: [{ genre: 'Electronic', tracks: 4 }, { genre: 'Hip Hop', tracks: 1 }] });
+    expect(evidence.audio!.styles[0]).toMatchObject({ genre: 'Electronic', style: 'Downtempo', tracks: 2 });
+    // Without artist tags, audio alone suggests the genre (4 of 5); Downtempo is 2 of 5, so no style.
+    expect(evidence.artistTags).toBeNull();
+    expect(evidence.suggestion).toEqual({ targets: [{ genre: 'Electronic', styleId: null, style: null }], basis: 'audio', stylesVary: true });
+
+    // With artist tags that agree, the suggestion says both; one artist shows their own tags.
+    // addTrack leaves the artist entity to the scanner; link the tracks by hand.
+    const artistId = (await pool.query(`INSERT INTO artists (name) VALUES ('Lights Artist') RETURNING id`)).rows[0].id;
+    await pool.query(`UPDATE tracks SET artist_id = $1 WHERE artist = 'Lights Artist'`, [artistId]);
+    await pool.query(`INSERT INTO artist_tags (artist_id, provider, tag, tag_key, raw_count, weight) VALUES
+      ($1, 'lastfm', 'electronic', 'electronic', 100, 1), ($1, 'lastfm', 'funk', 'funk', 31, 0.31),
+      ($1, 'musicbrainz', 'hip hop', 'hip hop', 2, 1), ($1, 'musicbrainz', 'electronic', 'electronic', 1, 0.5)`, [artistId]);
+    await taxonomy.runTagMapping(pool);
+    evidence = (await review.getGenreReviewEvidence(pool, key))!;
+    expect(evidence.artistTags).toEqual([
+      { provider: 'lastfm', tags: ['electronic', 'funk'] }, { provider: 'musicbrainz', tags: ['hip hop', 'electronic'] }]);
+    expect(evidence.lean).toBeNull();
+    expect(evidence.suggestion?.basis).toBe('both');
+
+    // Artist tags that disagree with the audio leave the choice open.
+    await pool.query(`UPDATE artist_tags SET weight = 0.1 WHERE artist_id = $1 AND tag = 'electronic'`, [artistId]);
+    expect((await review.getGenreReviewEvidence(pool, key))!.suggestion).toBeNull();
+  });
+
   test('two spellings of one genre are kept as one in the old genre list, and the undo separates them again', async () => {
     const review = await import('../../services/genreTaxonomy/review');
     await db.addTrack(track('t-alt-1', ['Alternative Rock']));

@@ -73,8 +73,35 @@ export interface GenreReviewEvidence {
    * lean that way. Optional evidence; absent without provider data.
    */
   lean: { genre: string; artists: number; of: number } | null;
+  /**
+   * With a single artist (the lean needs two): that artist's strongest tags
+   * per provider, as written. Absent without provider data.
+   */
+  artistTags: Array<{ provider: 'lastfm' | 'musicbrainz'; tags: string[] }> | null;
+  /** What the audio model says about these tracks; null when none are analysed. */
+  audio: GenreAudioEvidence | null;
+  /** A starting answer, when the evidence agrees; the admin still applies it. */
+  suggestion: GenreSuggestion | null;
   /** Tracks each outcome target holds today from other tags, keyed by targetKey(). */
   targetTracks: Record<string, number>;
+}
+
+export interface GenreAudioEvidence {
+  /** Tracks counted (analysed, not simulated; at most a sample of 1,000). */
+  analysed: number;
+  sampled: boolean;
+  /** Each track counts once, for the genre of its top style; most tracks first. */
+  genres: Array<{ genre: string; tracks: number }>;
+  /** Each track counts once, for its top style; most tracks first. */
+  styles: Array<GenreTarget & { tracks: number }>;
+}
+
+export interface GenreSuggestion {
+  targets: GenreTarget[];
+  /** both: audio and artist tags agree; audio or artists: the only source there is. */
+  basis: 'both' | 'audio' | 'artists';
+  /** No style suggested because the tracks' top styles are spread out. */
+  stylesVary: boolean;
 }
 
 export interface GenreExactMatch {

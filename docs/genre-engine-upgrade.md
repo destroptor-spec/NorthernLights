@@ -125,10 +125,10 @@ SELECT (SELECT COUNT(*) FROM style) AS styles,              -- 400
 
 ### 5. Review the genres (by hand; can wait until the backfill has run)
 
-Settings → Library Entities → Genres. The header shows the share of tagged tracks that have a genre and how many questions are open. Artist-tag evidence ("tags for these artists lean Electronic") appears once the backfill in step 3 has reached those artists, so reviewing after it helps but is not required.
+Settings → Library Entities → Genres. The header shows the share of tagged tracks that have a genre and how many questions are open. Each question shows what the audio says (the tracks' top genres and styles, from the re-analysis in the phase 0 steps) and artist-tag evidence once the backfill in step 3 has reached those artists, and starts from a suggested answer when they agree. Reviewing after both helps but is not required: without them the questions simply come without suggestions.
 
 - [ ] Open **Name matches**, check the list (tags whose name is a genre or style), and **Accept all**. One Undo takes the whole batch back.
-- [ ] Work through the queue. Filters: No genre, Two genres, Guessed (from MusicBrainz parents), Several in one, Spellings. Keys 1–9 choose an outcome, S skips, Enter applies.
+- [ ] Work through the queue. For a tag one artist uses across varied albums, prefer the genre alone (the suggestion does this when the tracks' styles vary): the audio then gives each track its own style. Filters: No genre, Two genres, Guessed (from MusicBrainz parents), Several in one, Spellings. Keys 1–9 choose an outcome, S skips, Enter applies.
 - [ ] Spelling answers group the old genre list (`genres.merged_into`) as the old duplicate tool did, so the current engine follows them until phase 4.
 - [ ] The phase-1 gate is met when the header reads "Every tag is reviewed" and the coverage endpoint returns `gate.passed: true`.
 

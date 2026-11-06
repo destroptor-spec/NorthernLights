@@ -1,6 +1,7 @@
 /** @jest-environment node */
 import { loadDiscogsLabels, loadMbSnapshot, loadTagAliases, tagKey, validateAliases, validateLabels } from './data';
 import { buildContext, resolveTag } from './mapping';
+import { suggestGenre } from './review';
 import { parseSetting, snapshotDecision } from './seed';
 import { splitStoredGenres } from './trackTags';
 
@@ -130,5 +131,35 @@ describe('artist tags per provider', () => {
       { name: 'trip-hop', count: 100, providers: ['lastfm', 'musicbrainz'] },
     ]);
     expect(mergeForDisplay({})).toBeUndefined();
+  });
+});
+
+describe('the review suggestion', () => {
+  const audio = (genres: Array<[string, number]>, styles: Array<[string, number, string, number]>) => ({
+    analysed: genres.reduce((n, [, t]) => n + t, 0), sampled: false,
+    genres: genres.map(([genre, tracks]) => ({ genre, tracks })),
+    styles: styles.map(([genre, styleId, style, tracks]) => ({ genre, styleId, style, tracks })),
+  });
+  // Pretty Lights on dev: mostly Electronic, its top styles spread out.
+  const spread = audio([['Electronic', 95], ['Hip Hop', 15], ['Funk / Soul', 3]],
+    [['Electronic', 1, 'Downtempo', 32], ['Electronic', 2, 'Glitch', 16], ['Hip Hop', 3, 'Instrumental', 11]]);
+
+  test('styles that vary give the genre alone; a weak artist lean counts when the audio agrees', () => {
+    expect(suggestGenre(spread, { genre: 'Electronic', strong: false })).toEqual({ targets: [{ genre: 'Electronic', styleId: null, style: null }], basis: 'both', stylesVary: true });
+  });
+
+  test('a style most tracks share is suggested with its genre', () => {
+    const one = audio([['Electronic', 10]], [['Electronic', 7, 'Drum n Bass', 8], ['Electronic', 8, 'Jungle', 2]]);
+    expect(suggestGenre(one, null)?.targets).toEqual([{ genre: 'Electronic', styleId: 7, style: 'Drum n Bass' }]);
+  });
+
+  test('disagreement, thin audio or a weak audio majority suggests nothing; artist tags alone suggest the genre', () => {
+    expect(suggestGenre(spread, { genre: 'Funk / Soul', strong: true })).toBeNull();
+    // Audio alone needs 70 % of the tracks: 95 of 113 is enough, 6 of 10 is not.
+    expect(suggestGenre(spread, null)?.basis).toBe('audio');
+    expect(suggestGenre(audio([['Electronic', 6], ['Rock', 4]], [['Electronic', 1, 'House', 6]]), null)).toBeNull();
+    expect(suggestGenre(audio([['Electronic', 2]], [['Electronic', 1, 'House', 2]]), null)).toBeNull();
+    expect(suggestGenre(null, { genre: 'Rock', strong: false })).toBeNull();
+    expect(suggestGenre(null, { genre: 'Rock', strong: true })).toEqual({ targets: [{ genre: 'Rock', styleId: null, style: null }], basis: 'artists', stylesVary: false });
   });
 });

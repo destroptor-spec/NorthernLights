@@ -34,8 +34,12 @@ const evidence: GenreReviewEvidence = {
   artists: [{ name: 'Boney M.', imageUrl: null, tracks: 83 }],
   albums: ['Nightflight to Venus'],
   lean: { genre: 'Funk / Soul', artists: 7, of: 9 },
+  artistTags: null,
+  audio: null,
+  suggestion: null,
   targetTracks: { 'Electronic|53': 0, 'Funk / Soul|168': 412 },
 };
+let evidenceFor: (key: string) => GenreReviewEvidence = key => ({ ...evidence, key });
 
 let state: GenreReviewState;
 const addToast = jest.fn();
@@ -46,7 +50,7 @@ const fetchMock = jest.fn(async (url: RequestInfo | URL, init?: RequestInit) => 
   if (path === '/api/library/genre-reviews/taxonomy') {
     return response({ genres: ['Electronic', 'Hip Hop'], styles: [{ id: 53, genre: 'Electronic', name: 'Disco' }, { id: 70, genre: 'Hip Hop', name: 'Trip Hop' }] });
   }
-  if (path.startsWith('/api/library/genre-reviews/preview')) return response({ ...evidence, key: decodeURIComponent(path.split('key=')[1]) });
+  if (path.startsWith('/api/library/genre-reviews/preview')) return response(evidenceFor(decodeURIComponent(path.split('key=')[1])));
   if (path === '/api/library/genre-reviews/decide' && init?.method === 'POST') {
     const body = JSON.parse(String(init.body));
     if (body.key === spelling.key && !body.acknowledgeConflict) return response({ error: 'conflict', code: 'GENRE_TAXONOMY_CONFLICT' }, 409);
@@ -69,6 +73,7 @@ beforeEach(() => {
     groups: [],
     coverage: { tagged: 1000, mapped: 983, ratio: 0.983, target: 0.95 },
   };
+  evidenceFor = key => ({ ...evidence, key });
   addToast.mockReset();
   fetchMock.mockClear();
   usePlayerStore.setState({ fetchLibraryFromServer: jest.fn(async () => {}), addToast } as never);
@@ -118,6 +123,37 @@ test('a tag with no genre is answered by picking a style from the list', async (
   fireEvent.click(apply);
   await waitFor(() => expect(decideBodies()).toHaveLength(1));
   expect(decideBodies()[0]).toMatchObject({ outcomeId: 'pick', targets: [{ genre: 'Hip Hop', styleId: 70, style: 'Trip Hop' }] });
+});
+
+test('a lone artist\'s tags and the audio fill in a suggestion, and a style few tracks share gets a warning', async () => {
+  state.entries = [unmapped];
+  evidenceFor = key => ({
+    ...evidence, key, lean: null, targetTracks: {},
+    artists: [{ name: 'Pretty Lights', imageUrl: null, tracks: 135 }],
+    artistTags: [{ provider: 'lastfm', tags: ['electronic', 'downtempo'] }, { provider: 'musicbrainz', tags: ['hip hop', 'soul'] }],
+    audio: {
+      analysed: 135, sampled: false,
+      genres: [{ genre: 'Electronic', tracks: 95 }, { genre: 'Hip Hop', tracks: 15 }],
+      styles: [{ genre: 'Electronic', styleId: 60, style: 'Downtempo', tracks: 32 }, { genre: 'Hip Hop', styleId: 71, style: 'Instrumental', tracks: 11 }],
+    },
+    suggestion: { targets: [{ genre: 'Electronic', styleId: null, style: null }], basis: 'both', stylesVary: true },
+  });
+  render(<GenreEntitiesTab />);
+  expect(await screen.findByText('Artist tags: Last.fm electronic, downtempo · MusicBrainz hip hop, soul')).toBeTruthy();
+  expect(screen.getByText('Audio, 135 tracks: Electronic 95 · Hip Hop 15')).toBeTruthy();
+  expect(screen.getByText('Top styles: Downtempo 32 · Instrumental (Hip Hop) 11')).toBeTruthy();
+  expect(screen.getByText(/^Suggested: Electronic, audio and artist tags agree\. No style/)).toBeTruthy();
+
+  // The picker starts with the suggestion, so Apply is one step.
+  const chip = await screen.findByRole('button', { name: 'Remove Electronic' });
+  expect(screen.getByText('Suggested')).toBeTruthy();
+  expect((screen.getByRole('button', { name: 'Apply' }) as HTMLButtonElement).disabled).toBe(false);
+
+  // Swapping in a style that only a quarter of the tracks have says so.
+  fireEvent.click(chip);
+  fireEvent.change(screen.getByLabelText('Genre or style for Electric Hip Hop Soul'), { target: { value: 'Disco · Electronic' } });
+  expect(screen.getByText(/^Disco is the audio's top style for 0 of 135 tracks/)).toBeTruthy();
+  expect(screen.queryByText('Suggested')).toBeNull();
 });
 
 test('keeping spellings from different parts of the genre tree asks first', async () => {

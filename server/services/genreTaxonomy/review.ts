@@ -19,6 +19,7 @@ import {
   listJoin,
   targetKey,
   targetLabel,
+  type GenreAudioEvidence,
   type GenreExactMatch,
   type GenreGroup,
   type GenreIgnoredTag,
@@ -29,6 +30,7 @@ import {
   type GenreReviewKind,
   type GenreReviewOutcome,
   type GenreReviewState,
+  type GenreSuggestion,
   type GenreTarget,
 } from '../../../shared/genreReview';
 import { getMappingCoverage, COVERAGE_TARGET } from './coverage';
@@ -38,6 +40,14 @@ import { mappingVersion, runTagMapping } from './mapping';
 const TAG_PREFIX = 'tag:';
 const SPELLING_PREFIX = 'spelling:';
 const LEAN_MIN_WEIGHT = 0.3;
+/** Share of artists that must lean one way before artist tags suggest a genre. */
+const LEAN_SUGGEST_SHARE = 0.6;
+/** Audio alone suggests a genre only when this share of the tracks agrees. */
+const AUDIO_ALONE_SHARE = 0.7;
+/** A style is suggested only when this share of the tracks has it as top style. */
+const STYLE_SUGGEST_SHARE = 0.5;
+const AUDIO_MIN_TRACKS = 3;
+const AUDIO_SAMPLE = 1000;
 
 export class GenreReviewError extends Error {
   constructor(message: string, public code?: string) { super(message); this.name = 'GenreReviewError'; }
@@ -248,21 +258,43 @@ export async function getGenreReviewEvidence(db: Pool, key: string): Promise<Gen
     SELECT al.title FROM t JOIN tracks tr ON tr.id = t.track_id JOIN albums al ON al.id = tr.album_id
     GROUP BY al.id, al.title ORDER BY COUNT(*) DESC, al.title LIMIT 3`, [param])).rows.map((r: any) => String(r.title));
 
-  // Optional: where provider artist tags put these artists. Without Last.fm or
+  // Optional: where provider artist tags put these artists. Per artist, each
+  // provider gives a genre its strongest mapped tag's weight; the providers'
+  // weights add up, and the highest genre is the artist's. Without Last.fm or
   // MusicBrainz data this is simply absent.
-  const lean = (await db.query(`
-    WITH per_genre AS (
-      SELECT at.artist_id, m.genre, MAX(at.weight) AS w
+  const artistIds = artistRows.map((r: any) => r.id);
+  const artistGenres = (await db.query(`
+    WITH per_provider AS (
+      SELECT at.artist_id, at.provider, m.genre, MAX(at.weight) AS w
       FROM artist_tags at JOIN tag_map m ON m.tag = at.tag_key
       WHERE at.artist_id = ANY($1::uuid[]) AND at.weight >= $2 AND m.reliability >= 0.8
         AND ($3::text IS NULL OR at.tag_key <> $3)
-      GROUP BY at.artist_id, m.genre
-    ), top AS (
-      SELECT DISTINCT ON (artist_id) artist_id, genre FROM per_genre ORDER BY artist_id, w DESC, genre
+      GROUP BY at.artist_id, at.provider, m.genre
+    ), per_genre AS (
+      SELECT artist_id, genre, SUM(w) AS w FROM per_provider GROUP BY artist_id, genre
     )
-    SELECT genre, COUNT(*)::int AS n, SUM(COUNT(*)) OVER ()::int AS total
-    FROM top GROUP BY genre ORDER BY n DESC, genre LIMIT 1`,
-  [artistRows.map((r: any) => r.id), LEAN_MIN_WEIGHT, entry.tagKey ?? null])).rows[0];
+    SELECT DISTINCT ON (artist_id) artist_id, genre FROM per_genre ORDER BY artist_id, w DESC, genre`,
+  [artistIds, LEAN_MIN_WEIGHT, entry.tagKey ?? null])).rows.map((r: any) => String(r.genre));
+  const leanCounts = new Map<string, number>();
+  for (const genre of artistGenres) leanCounts.set(genre, (leanCounts.get(genre) || 0) + 1);
+  const [leanGenre, leanArtists] = [...leanCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0] || [];
+  const lean = leanGenre ? { genre: leanGenre, artists: leanArtists!, of: artistGenres.length } : null;
+
+  // One artist has no lean to show, so show their own tags instead.
+  let artistTags: GenreReviewEvidence['artistTags'] = null;
+  if (artistRows.length === 1) {
+    const rows = (await db.query(`
+      SELECT provider, tag FROM (
+        SELECT provider, tag, weight, ROW_NUMBER() OVER (PARTITION BY provider ORDER BY weight DESC, tag) AS rank
+        FROM artist_tags WHERE artist_id = $1 AND weight >= 0.2
+      ) ranked WHERE rank <= 4 ORDER BY provider, rank`, [artistRows[0].id])).rows;
+    const byProvider = new Map<'lastfm' | 'musicbrainz', string[]>();
+    for (const row of rows) byProvider.set(row.provider, [...(byProvider.get(row.provider) || []), row.tag]);
+    if (byProvider.size) artistTags = [...byProvider.entries()].map(([provider, tags]) => ({ provider, tags }));
+  }
+
+  const audio = await loadAudioEvidence(db, tracksSql, param, entry.totalTracks);
+  const artistLean = lean && { genre: lean.genre, strong: lean.of === 1 || lean.artists / lean.of >= LEAN_SUGGEST_SHARE };
 
   const targets = new Map<string, GenreTarget>();
   for (const outcome of entry.outcomes) for (const target of outcome.targets || []) targets.set(targetKey(target), target);
@@ -283,9 +315,84 @@ export async function getGenreReviewEvidence(db: Pool, key: string): Promise<Gen
     key,
     artists: artistRows.slice(0, 3).map((r: any) => ({ name: r.name, imageUrl: r.image_url || null, tracks: r.tracks })),
     albums,
-    lean: lean && lean.total >= 2 ? { genre: lean.genre, artists: lean.n, of: lean.total } : null,
+    lean: lean && lean.of >= 2 ? lean : null,
+    artistTags,
+    audio,
+    suggestion: suggestGenre(audio, artistLean),
     targetTracks,
   };
+}
+
+/**
+ * Per track, its top style among the 400 scores (and that style's genre),
+ * counted over the tag's analysed, non-simulated tracks. Large tags are
+ * sampled, which keeps this to about 0.1 s.
+ */
+async function loadAudioEvidence(db: Pool, tracksSql: string, param: unknown, totalTracks: number): Promise<GenreAudioEvidence | null> {
+  const rows = (await db.query(`
+    WITH t AS (${tracksSql}),
+    scored AS (
+      SELECT t.track_id, ss.scores
+      FROM t JOIN track_style_scores ss ON ss.track_id = t.track_id
+      JOIN track_features tf ON tf.track_id = t.track_id AND tf.is_simulated IS NOT TRUE
+      ORDER BY md5(t.track_id) LIMIT ${AUDIO_SAMPLE}
+    ), top AS (
+      SELECT (SELECT u.idx FROM unnest(scored.scores) WITH ORDINALITY u(score, idx) ORDER BY u.score DESC LIMIT 1) - 1 AS model_index
+      FROM scored
+    )
+    SELECT st.genre, st.id, st.name, COUNT(*)::int AS tracks
+    FROM top JOIN style st ON st.model_index = top.model_index
+    GROUP BY st.genre, st.id, st.name ORDER BY tracks DESC, st.genre, st.name`, [param])).rows;
+  const analysed = rows.reduce((sum: number, r: any) => sum + r.tracks, 0);
+  if (!analysed) return null;
+  const sampled = analysed === AUDIO_SAMPLE && totalTracks > AUDIO_SAMPLE;
+  const genres = new Map<string, number>();
+  for (const row of rows) genres.set(row.genre, (genres.get(row.genre) || 0) + row.tracks);
+  return {
+    analysed,
+    sampled,
+    genres: [...genres.entries()].map(([genre, tracks]) => ({ genre, tracks }))
+      .sort((a, b) => b.tracks - a.tracks || a.genre.localeCompare(b.genre)),
+    styles: rows.map((r: any) => ({ genre: r.genre, styleId: r.id, style: r.name, tracks: r.tracks })),
+  };
+}
+
+/**
+ * A starting answer from the audio and the optional artist tags. Artist tags
+ * describe the artist, and on genre they beat audio (docs: Artist tags), so
+ * when both exist they must agree. Alone, artist tags need a strong lean
+ * (most artists, or the only one) and audio most of the tracks. A style is
+ * suggested only when most tracks share it; otherwise the genre alone, so one
+ * tag doesn't stamp every track of an artist whose albums differ with one style.
+ */
+export function suggestGenre(
+  audio: GenreAudioEvidence | null,
+  artist: { genre: string; strong: boolean } | null,
+): GenreSuggestion | null {
+  const usable = audio && audio.analysed >= AUDIO_MIN_TRACKS ? audio : null;
+  const audioTop = usable?.genres[0] || null;
+  let genre: string;
+  let basis: GenreSuggestion['basis'];
+  if (artist && audioTop) {
+    if (audioTop.genre !== artist.genre) return null;
+    genre = artist.genre;
+    basis = 'both';
+  } else if (artist?.strong) {
+    genre = artist.genre;
+    basis = 'artists';
+  } else if (artist) {
+    return null;
+  } else if (audioTop && audioTop.tracks / usable!.analysed >= AUDIO_ALONE_SHARE) {
+    genre = audioTop.genre;
+    basis = 'audio';
+  } else {
+    return null;
+  }
+  const topStyle = usable?.styles.find(s => s.genre === genre);
+  if (topStyle && topStyle.tracks / usable!.analysed >= STYLE_SUGGEST_SHARE) {
+    return { targets: [{ genre, styleId: topStyle.styleId, style: topStyle.style }], basis, stylesVary: false };
+  }
+  return { targets: [{ genre, styleId: null, style: null }], basis, stylesVary: Boolean(usable) };
 }
 
 // ── Decisions ────────────────────────────────────────────────────────────
