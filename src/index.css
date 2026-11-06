@@ -1574,10 +1574,12 @@ a:focus-visible > .genre-card .genre-card__label {
 }
 
 /* Every style of a genre: an index in columns, scanned rather than browsed
-   as covers. Counts sit right so the column reads at a glance. */
+   as covers. Each row is a small "jump back in" tile (Hub): glass, hairline
+   border, the hover glass on hover. Counts sit right so a column reads at a
+   glance. */
 .browse-index {
   columns: 1;
-  column-gap: 2rem;
+  column-gap: 0.75rem;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1598,6 +1600,7 @@ a:focus-visible > .genre-card .genre-card__label {
 
 .browse-index li {
   break-inside: avoid;
+  padding-bottom: 0.5rem;
 }
 
 .browse-index__row {
@@ -1606,11 +1609,13 @@ a:focus-visible > .genre-card .genre-card__label {
   justify-content: space-between;
   gap: 1rem;
   width: 100%;
-  min-height: 44px;
-  padding: 0.5rem 0.75rem;
-  border: 0;
+  min-height: 48px;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
-  background: transparent;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
   color: var(--color-text-primary);
   text-align: left;
   text-decoration: none;
