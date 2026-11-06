@@ -37,9 +37,6 @@ const fetchMock = jest.fn(async (url: RequestInfo | URL) => {
   const path = String(url);
   if (path.startsWith('/api/v1/browse/genres?') || path === '/api/v1/browse/genres') return ok(genres);
   if (path === '/api/v1/browse/genres/Electronic') return ok(electronic);
-  if (path.startsWith('/api/v1/browse/search')) {
-    return ok([{ genre: 'Electronic', styleId: 58, label: 'Drum n Bass · Electronic', matchedAlias: 'drum & bass', trackCount: 1089 }]);
-  }
   if (path.startsWith('/api/v1/browse/tracks')) return ok([track('t1'), track('t2'), track('t3')], { nextCursor: null });
   return ok({});
 });
@@ -64,25 +61,16 @@ const renderAt = (path: string) => render(
   </MemoryRouter>,
 );
 
-test('genres show their track counts and biggest styles; hidden genres wait behind a toggle; unsorted is last', async () => {
+test('genre cards carry the name and one line: track count and biggest style; hidden genres wait behind a toggle; unsorted is last', async () => {
   renderAt('/library/genres');
-  const tile = (await screen.findByText('Electronic')).closest('a')!;
-  expect(tile.getAttribute('href')).toBe('/library/browse/genre/Electronic');
-  expect(within(tile).getByText('9,734 tracks')).toBeTruthy();
-  expect(within(tile).getByText('House · Trance · Drum n Bass')).toBeTruthy();
+  const card = (await screen.findByText('Electronic')).closest('a')!;
+  expect(card.getAttribute('href')).toBe('/library/browse/genre/Electronic');
+  expect(within(card).getByText('9,734 tracks · House')).toBeTruthy();
+  expect(screen.queryByLabelText('Find a genre or style')).toBeNull();
   expect(screen.queryByText('Non-Music')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Show Non-Music' }));
   expect(screen.getByText('Non-Music')).toBeTruthy();
   expect(screen.getByText('57 tracks without a genre yet').closest('a')!.getAttribute('href')).toBe('/library/browse/unsorted');
-});
-
-test('search finds a style by a tag that maps to it, and Enter opens the first result', async () => {
-  renderAt('/library/genres');
-  const input = await screen.findByLabelText('Find a genre or style');
-  fireEvent.change(input, { target: { value: 'drum & bass' } });
-  expect(await screen.findByText('matches “drum & bass”')).toBeTruthy();
-  fireEvent.keyDown(input, { key: 'Enter' });
-  await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/library/browse/style/58'));
 });
 
 test('a genre page shows its biggest styles as tiles, every other style in an index, and shuffles by genre or decade', async () => {
@@ -90,7 +78,9 @@ test('a genre page shows its biggest styles as tiles, every other style in an in
   expect(await screen.findByRole('heading', { level: 1, name: 'Electronic' })).toBeTruthy();
   expect(screen.getByText('9,734 tracks · 8 styles')).toBeTruthy();
   // 6 tiles, then the rest and the tracks without a style in the index.
-  expect(screen.getByText('Style 6').closest('a')!.getAttribute('href')).toBe('/library/browse/style/105');
+  const styleCard = screen.getByText('Style 6').closest('a')!;
+  expect(styleCard.getAttribute('href')).toBe('/library/browse/style/105');
+  expect(within(styleCard).getByText('750 tracks')).toBeTruthy();
   const index = screen.getByRole('list');
   expect(within(index).getByText('Style 7')).toBeTruthy();
   expect(within(index).queryByText('Style 1')).toBeNull();

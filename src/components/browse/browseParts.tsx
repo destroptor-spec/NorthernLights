@@ -1,21 +1,18 @@
-import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { Loader2, Search, Shuffle } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Loader2, Shuffle } from 'lucide-react';
 import { usePlayerStore } from '../../store/index';
 import { auroraApiRequest, type Track } from '../../api/auroraApi';
 import {
   fetchBrowseAlbums,
   fetchBrowseArtists,
   fetchBrowseTracks,
-  genrePath,
-  searchBrowseStyles,
-  stylePath,
   type BrowseFilter,
 } from '../../api/browse';
 import { toPlayableTracks } from '../../utils/playableTracks';
 import { AlbumCard, AlbumCardSkeleton } from '../library/AlbumCard';
 import { ArtistInitial } from '../library/ArtistInitial';
-import type { BrowseAlbum, BrowseArtist, BrowseDecade, BrowseSearchResult } from '../../../shared/api/v1';
+import type { BrowseAlbum, BrowseArtist, BrowseDecade } from '../../../shared/api/v1';
 
 const shuffled = <T,>(items: T[]): T[] => {
   const out = [...items];
@@ -211,80 +208,3 @@ export const BrowseError: React.FC<{ message: string; onRetry: () => void }> = (
     <button type="button" className="btn btn-ghost btn-sm" onClick={onRetry}>Retry</button>
   </div>
 );
-
-/**
- * Find a genre or style by name, or by a genre tag that maps to it
- * ("Drum & Bass" finds Drum n Bass). Results are links; arrow keys move
- * between them.
- */
-export const BrowseSearch: React.FC = () => {
-  const navigate = useNavigate();
-  const listId = useId();
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<BrowseSearchResult[] | null>(null);
-  const listRef = useRef<HTMLUListElement>(null);
-
-  useEffect(() => {
-    const q = query.trim();
-    if (!q) { setResults(null); return; }
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      searchBrowseStyles(usePlayerStore.getState().getAuthHeader(), q, controller.signal)
-        .then(setResults)
-        .catch(() => { if (!controller.signal.aborted) setResults([]); });
-    }, 200);
-    return () => { clearTimeout(timer); controller.abort(); };
-  }, [query]);
-
-  const pathOf = (r: BrowseSearchResult) => r.styleId === null ? genrePath(r.genre) : stylePath(r.styleId);
-  const focusResult = (index: number) => {
-    const links = listRef.current?.querySelectorAll<HTMLAnchorElement>('a');
-    links?.[Math.max(0, Math.min(index, links.length - 1))]?.focus();
-  };
-
-  return (
-    <div className="browse-search">
-      <label className="browse-search__field">
-        <Search size={16} aria-hidden="true" />
-        <input
-          type="search"
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'ArrowDown' && results?.length) { e.preventDefault(); focusResult(0); }
-            if (e.key === 'Enter' && results?.length) { e.preventDefault(); navigate(pathOf(results[0])); }
-          }}
-          placeholder="Find a genre or style"
-          aria-label="Find a genre or style"
-          aria-controls={results ? listId : undefined}
-          autoComplete="off"
-          spellCheck={false}
-        />
-      </label>
-      {results && (
-        results.length === 0
-          ? <p className="browse-search__empty">No genre or style by that name in your library.</p>
-          : (
-            <ul id={listId} ref={listRef} className="browse-search__results" aria-label="Genres and styles">
-              {results.map((r, index) => (
-                <li key={`${r.genre}|${r.styleId}`}>
-                  <Link
-                    to={pathOf(r)}
-                    className="browse-search__result"
-                    onKeyDown={e => {
-                      if (e.key === 'ArrowDown') { e.preventDefault(); focusResult(index + 1); }
-                      if (e.key === 'ArrowUp') { e.preventDefault(); index === 0 ? listRef.current?.parentElement?.querySelector('input')?.focus() : focusResult(index - 1); }
-                    }}
-                  >
-                    <span className="browse-search__label">{r.label}</span>
-                    {r.matchedAlias && <span className="browse-search__alias">matches “{r.matchedAlias}”</span>}
-                    <span className="browse-search__count">{r.trackCount.toLocaleString()}</span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )
-      )}
-    </div>
-  );
-};

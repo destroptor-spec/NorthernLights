@@ -4,7 +4,7 @@ import { Loader2, Shuffle } from 'lucide-react';
 import { usePlayerStore } from '../../store/index';
 import { fetchBrowseGenre, stylePath } from '../../api/browse';
 import { BackButton } from '../library/BackButton';
-import { GenreCard } from '../library/GenreCard';
+import { AuroraCard } from './AuroraCard';
 import {
   BrowseAlbumGrid,
   BrowseArtistGrid,
@@ -89,15 +89,15 @@ export const BrowseGenrePage: React.FC = () => {
           {featured.length > 0 && (
             <section className="browse-section" aria-label="Biggest styles">
               <h2 className="browse-section__title">Styles</h2>
-              <div className="genre-grid">
+              <div className="browse-card-grid">
                 {featured.map(style => (
-                  <Link key={style.id} to={stylePath(style.id)} state={{ backLabel }} className="no-underline">
-                    <GenreCard
-                      genre={style.name}
-                      imageFor={style.name}
-                      meta={<span className="genre-card__count">{style.trackCount.toLocaleString()} tracks</span>}
-                    />
-                  </Link>
+                  <AuroraCard
+                    key={style.id}
+                    name={style.name}
+                    meta={`${style.trackCount.toLocaleString()} ${style.trackCount === 1 ? 'track' : 'tracks'}`}
+                    to={stylePath(style.id)}
+                    backLabel={backLabel}
+                  />
                 ))}
               </div>
             </section>

@@ -15,6 +15,8 @@ const AURORA_HUES = [
     'var(--aurora-extra-glow)',
 ];
 
+// The hash is unsigned; shifts must be too (>>>), or half of all names get a
+// negative index: no second hue (an invalid gradient) and off-card origins.
 export function genreAurora(name: string): React.CSSProperties {
     let h = 2166136261;
     for (let i = 0; i < name.length; i++) {
@@ -24,23 +26,17 @@ export function genreAurora(name: string): React.CSSProperties {
         '--g-1': AURORA_HUES[h % AURORA_HUES.length],
         '--g-2': h % 11 === 0
             ? 'var(--aurora-pink)'
-            : AURORA_HUES[(h >> 4) % AURORA_HUES.length],
+            : AURORA_HUES[(h >>> 4) % AURORA_HUES.length],
         '--g-angle': `${h % 360}deg`,
-        '--g-ox': `${22 + ((h >> 9) % 56)}%`,
-        '--g-oy': `${18 + ((h >> 16) % 50)}%`,
+        '--g-ox': `${22 + ((h >>> 9) % 56)}%`,
+        '--g-oy': `${18 + ((h >>> 16) % 50)}%`,
     } as React.CSSProperties;
 }
 
-/**
- * A square aurora cover with the name below. `meta` adds a line under the
- * name (Browse: track count and top styles); `imageFor` names the external
- * genre image to blend in (defaults to the genre itself).
- */
-export const GenreCard: React.FC<{ genre: string; meta?: React.ReactNode; imageFor?: string | null }> = ({ genre, meta, imageFor }) => {
+/** A square aurora cover with the genre name below (Library → Genres). */
+export const GenreCard: React.FC<{ genre: string }> = ({ genre }) => {
     const [ref, inView] = useInView();
-    const imageName = imageFor === undefined ? genre : imageFor;
-    const { imageUrl } = useExternalImage(
-        () => imageName ? fetchGenreImage(imageName) : Promise.resolve(undefined), [imageName], { enabled: inView && !!imageName });
+    const { imageUrl } = useExternalImage(() => fetchGenreImage(genre), [genre], { enabled: inView });
     const aurora = useMemo(() => genreAurora(genre), [genre]);
 
     // The bloom follows the pointer over the cover. Writing CSS custom properties
@@ -72,7 +68,6 @@ export const GenreCard: React.FC<{ genre: string; meta?: React.ReactNode; imageF
                 <span className="genre-card__ribbon" aria-hidden="true" />
             </div>
             <p className="genre-card__label">{genre}</p>
-            {meta && <div className="genre-card__meta">{meta}</div>}
         </div>
     );
 };

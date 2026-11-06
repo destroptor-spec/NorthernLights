@@ -7,7 +7,6 @@ import type {
   BrowseArtist,
   BrowseGenreDetail,
   BrowseGenres,
-  BrowseSearchResult,
   BrowseStyleDetail,
   BrowseUnsorted,
 } from '../../shared/api/v1';
@@ -44,9 +43,6 @@ export const fetchBrowseGenre = (auth: Auth, genre: string) =>
 
 export const fetchBrowseStyle = (auth: Auth, styleId: number) =>
   auroraApiRequest<BrowseStyleDetail>(`/browse/styles/${styleId}`, auth);
-
-export const searchBrowseStyles = (auth: Auth, q: string, signal?: AbortSignal) =>
-  auroraApiRequest<BrowseSearchResult[]>(`/browse/search?q=${encodeURIComponent(q)}`, auth, { signal });
 
 export const fetchBrowseUnsorted = (auth: Auth) => auroraApiRequest<BrowseUnsorted>('/browse/unsorted', auth);
 

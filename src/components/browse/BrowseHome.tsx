@@ -3,36 +3,19 @@ import { Link } from 'react-router-dom';
 import { ChevronRight } from 'lucide-react';
 import { usePlayerStore } from '../../store/index';
 import { fetchBrowseGenres, genrePath, UNSORTED_PATH } from '../../api/browse';
-import { GenreCard } from '../library/GenreCard';
-import { BrowseError, BrowseSearch } from './browseParts';
+import { AuroraCard, AuroraCardSkeleton } from './AuroraCard';
+import { BrowseError } from './browseParts';
 import type { BrowseGenre, BrowseGenres } from '../../../shared/api/v1';
 
-const GenreTileSkeleton: React.FC = () => (
-  <div className="flex flex-col gap-2.5 animate-pulse motion-reduce:animate-none" aria-hidden="true">
-    <div className="aspect-square w-full rounded-[var(--radius)] bg-[var(--color-surface-variant)]" />
-    <div className="h-4 w-2/3 rounded bg-[var(--color-surface-variant)]" />
-    <div className="h-3 w-5/6 rounded bg-[var(--color-surface-variant)]" />
-  </div>
-);
-
-const GenreTile: React.FC<{ genre: BrowseGenre }> = ({ genre }) => (
-  <Link to={genrePath(genre.name)} state={{ backLabel: 'Back to Genres' }} className="no-underline">
-    <GenreCard
-      genre={genre.name}
-      meta={(
-        <>
-          <span className="genre-card__count">{genre.trackCount.toLocaleString()} tracks</span>
-          {genre.styles.length > 0 && <span className="genre-card__styles">{genre.styles.map(s => s.name).join(' · ')}</span>}
-        </>
-      )}
-    />
-  </Link>
-);
+const genreMeta = (genre: BrowseGenre) => {
+  const tracks = `${genre.trackCount.toLocaleString()} ${genre.trackCount === 1 ? 'track' : 'tracks'}`;
+  return genre.styles[0] ? `${tracks} · ${genre.styles[0].name}` : tracks;
+};
 
 /**
- * Library → Genres with genre & style browse on: Aurora's genres as tiles,
- * biggest first, each with its 3 biggest styles; search for any genre or
- * style; hidden genres (Non-Music) behind a toggle; Unsorted last.
+ * Library → Genres with genre & style browse on: Aurora's genres as cards,
+ * biggest first, each with its track count and biggest style; hidden genres
+ * (Non-Music) behind a toggle; Unsorted last.
  */
 export const BrowseHome: React.FC = () => {
   const [data, setData] = useState<BrowseGenres | null>(null);
@@ -52,21 +35,21 @@ export const BrowseHome: React.FC = () => {
 
   return (
     <div className="library-home page-container browse">
-      <div className="browse-home__head">
-        <BrowseSearch />
-      </div>
-
       {error && <BrowseError message={error} onRetry={load} />}
 
       {!data && !error && (
-        <div className="genre-grid">{Array.from({ length: 12 }).map((_, i) => <GenreTileSkeleton key={i} />)}</div>
+        <div className="browse-card-grid">{Array.from({ length: 12 }).map((_, i) => <AuroraCardSkeleton key={i} />)}</div>
       )}
 
       {data && (
         <>
           {visible.length === 0
             ? <p className="browse-empty">No genres yet. They appear once the library has been scanned.</p>
-            : <div className="genre-grid">{visible.map(g => <GenreTile key={g.name} genre={g} />)}</div>}
+            : (
+              <div className="browse-card-grid">
+                {visible.map(g => <AuroraCard key={g.name} name={g.name} meta={genreMeta(g)} to={genrePath(g.name)} backLabel="Back to Genres" />)}
+              </div>
+            )}
 
           <div className="browse-home__foot">
             {data.unsorted.trackCount > 0 && (
