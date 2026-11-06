@@ -1446,6 +1446,56 @@ a:focus-visible > .genre-card .genre-card__label {
   .browse-card-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
+/* The card and its Play button side by side (a button can't sit in a link). */
+.browse-card-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+/* Play, as on the Hub cards: hidden on touch (no hover, and an invisible
+   button would still catch taps); with hover it rises in on hover or focus,
+   and stays while its tracks load. */
+.browse-card__play {
+  display: none;
+}
+
+@media (hover: hover) {
+  .browse-card__play {
+    position: absolute;
+    right: 0.875rem;
+    bottom: 0.875rem;
+    z-index: 2;
+    display: inline-flex;
+    width: 2.5rem;
+    height: 2.5rem;
+    opacity: 0;
+    transform: translateY(0.5rem);
+    transition:
+      opacity 200ms cubic-bezier(0.22, 1, 0.36, 1),
+      transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
+      background-color var(--transition-fast);
+  }
+
+  .browse-card-wrap:hover .browse-card__play,
+  .browse-card-wrap:focus-within .browse-card__play,
+  .browse-card-wrap[data-busy='true'] .browse-card__play {
+    opacity: 1;
+    transform: none;
+  }
+
+  /* Room for the button, so a long meta line never runs under it. */
+  .browse-card {
+    padding-right: 4rem;
+  }
+}
+
+@media (hover: hover) and (prefers-reduced-motion: reduce) {
+  .browse-card__play {
+    transform: none;
+    transition: opacity 120ms linear;
+  }
+}
+
 .browse-card {
   position: relative;
   display: flex;

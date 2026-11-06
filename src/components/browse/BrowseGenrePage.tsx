@@ -97,6 +97,8 @@ export const BrowseGenrePage: React.FC = () => {
                     meta={`${style.trackCount.toLocaleString()} ${style.trackCount === 1 ? 'track' : 'tracks'}`}
                     to={stylePath(style.id)}
                     backLabel={backLabel}
+                    onPlay={() => playFilter(`style:${style.id}`, { style: style.id })}
+                    busy={busy === `style:${style.id}`}
                   />
                 ))}
               </div>

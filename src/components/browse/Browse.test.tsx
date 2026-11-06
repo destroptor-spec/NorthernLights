@@ -104,3 +104,13 @@ test('a card takes one of the Hub cover gradients, the same one for a name every
     expect(coverGradientFor(name)).toBe(gradient);
   }
 });
+
+test("a card's Play shuffles that genre and stays on the page; the button is beside the link, not in it", async () => {
+  renderAt('/library/genres');
+  const play = await screen.findByRole('button', { name: 'Shuffle Rock' });
+  expect(play.closest('a')).toBeNull();
+  fireEvent.click(play);
+  await waitFor(() => expect(setPlaylist).toHaveBeenCalledTimes(1));
+  expect(fetchMock.mock.calls.some(([u]) => String(u) === '/api/v1/browse/tracks?genre=Rock&limit=500')).toBe(true);
+  expect(screen.getByTestId('where').textContent).toBe('/library/genres');
+});

@@ -4,7 +4,7 @@ import { ChevronRight } from 'lucide-react';
 import { usePlayerStore } from '../../store/index';
 import { fetchBrowseGenres, genrePath, UNSORTED_PATH } from '../../api/browse';
 import { AuroraCard, AuroraCardSkeleton } from './AuroraCard';
-import { BrowseError } from './browseParts';
+import { BrowseError, useBrowsePlayer } from './browseParts';
 import type { BrowseGenre, BrowseGenres } from '../../../shared/api/v1';
 
 const genreMeta = (genre: BrowseGenre) => {
@@ -21,6 +21,7 @@ export const BrowseHome: React.FC = () => {
   const [data, setData] = useState<BrowseGenres | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showHidden, setShowHidden] = useState(false);
+  const { busy, playFilter } = useBrowsePlayer();
 
   const load = useCallback(() => {
     setError(null);
@@ -47,7 +48,17 @@ export const BrowseHome: React.FC = () => {
             ? <p className="browse-empty">No genres yet. They appear once the library has been scanned.</p>
             : (
               <div className="browse-card-grid">
-                {visible.map(g => <AuroraCard key={g.name} name={g.name} meta={genreMeta(g)} to={genrePath(g.name)} backLabel="Back to Genres" />)}
+                {visible.map(g => (
+                  <AuroraCard
+                    key={g.name}
+                    name={g.name}
+                    meta={genreMeta(g)}
+                    to={genrePath(g.name)}
+                    backLabel="Back to Genres"
+                    onPlay={() => playFilter(`genre:${g.name}`, { genre: g.name })}
+                    busy={busy === `genre:${g.name}`}
+                  />
+                ))}
               </div>
             )}
 
