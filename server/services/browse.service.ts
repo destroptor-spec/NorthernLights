@@ -18,6 +18,7 @@ import type {
   StyleProfileEntry,
 } from '../../shared/api/v1';
 import { tagKey } from './genreTaxonomy/data';
+import { stylesNearStyle } from './genreTaxonomy/centroids';
 
 /** Albums and artists on a genre or style page before "more". */
 export const BROWSE_PAGE_ENTITIES = 24;
@@ -127,10 +128,10 @@ export async function getBrowseStyle(
            (SELECT COUNT(*) FROM track_styles ts WHERE ts.style_id = s.id)::int AS tracks
     FROM style s WHERE s.id = $1`, [styleId])).rows[0];
   if (!style) return null;
-  const [albums, artists, decades] = await Promise.all([
-    load.albums({ styleId }), load.artists({ styleId }), browseDecades(db, { styleId }),
+  const [albums, artists, decades, soundsCloseTo] = await Promise.all([
+    load.albums({ styleId }), load.artists({ styleId }), browseDecades(db, { styleId }), stylesNearStyle(db, styleId),
   ]);
-  return { style: styleRef(style), albums, artists, decades };
+  return { style: styleRef(style), albums, artists, decades, soundsCloseTo };
 }
 
 // ── Lists ────────────────────────────────────────────────────────────────

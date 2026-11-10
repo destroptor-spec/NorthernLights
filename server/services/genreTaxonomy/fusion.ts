@@ -16,12 +16,15 @@
  *   with tags on at least 70 % of tagged tracks (measured on this library).
  *   Styles come from the sound within that genre. Neither: Unsorted.
  * - Hand corrections (track_style_overrides) apply last.
+ * - Style centroids (centroids.ts) are rebuilt from the tag and hand-set
+ *   memberships at the end of every run.
  *
  * Simulated tracks (placeholder vectors) never use audio evidence.
  */
 import type { Pool, PoolClient } from 'pg';
 import { getSystemSetting, setSystemSetting } from '../../database';
 import { parseSetting } from './seed';
+import { rebuildCentroids } from './centroids';
 
 /** Bump when the rules or thresholds change; a stale version triggers a full run at startup. */
 export const FUSION_VERSION = 1;
@@ -234,6 +237,8 @@ export async function runFusion(db: Pool, { trackIds }: { trackIds?: string[] } 
     [FUSION_VERSION]);
 
     await rebuildProfiles(client, full);
+    // Centroids follow the tag and hand-set memberships, which any run can change.
+    await rebuildCentroids(client, FUSION_VERSION);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});

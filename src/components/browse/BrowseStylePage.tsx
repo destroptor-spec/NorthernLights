@@ -9,12 +9,16 @@ import {
   BrowseError,
   BrowseGridSkeleton,
   DecadeButtons,
+  NearStyleCards,
   ShuffleButton,
   useBrowsePlayer,
 } from './browseParts';
 import type { BrowseStyleDetail } from '../../../shared/api/v1';
 
-/** One style: its genre, Shuffle, decades, and the albums and artists most in it. */
+/**
+ * One style: its genre, Shuffle, decades, the albums and artists most in it,
+ * and the styles that sound closest (once it has a centroid).
+ */
 export const BrowseStylePage: React.FC = () => {
   const { styleId: rawId = '' } = useParams<{ styleId: string }>();
   const styleId = Number(rawId);
@@ -76,6 +80,19 @@ export const BrowseStylePage: React.FC = () => {
           <BrowseArtistGrid filter={filter} initial={detail.artists} title="Artists" backLabel={backLabel} name={style.name} />
           {detail.albums.length === 0 && detail.artists.length === 0 && (
             <p className="browse-empty">No albums in this style yet.</p>
+          )}
+
+          {detail.soundsCloseTo.length > 0 && (
+            <section className="browse-section" aria-label="Sounds close to">
+              <h2 className="browse-section__title">Sounds close to</h2>
+              <p className="browse-section__lede">Styles whose tagged tracks sound most like {style.name}'s, from any genre.</p>
+              <NearStyleCards
+                styles={detail.soundsCloseTo}
+                backLabel={backLabel}
+                busy={busy}
+                onPlay={near => playFilter(`style:${near.id}`, { style: near.id })}
+              />
+            </section>
           )}
         </>
       )}

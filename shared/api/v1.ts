@@ -673,6 +673,8 @@ export const browseStyleDetailSchema = z.object({
   albums: z.array(browseAlbumSchema),
   artists: z.array(browseArtistSchema),
   decades: z.array(browseDecadeSchema),
+  soundsCloseTo: z.array(browseStyleRefSchema)
+    .describe('The styles that sound nearest, from any genre, nearest first (by the centroids of their tagged tracks\' audio embeddings). Empty until the style has a centroid: at least 8 tagged tracks by 3 artists.'),
 }).meta({ id: 'BrowseStyleDetail' });
 
 export const browseSearchResultSchema = z.object({
@@ -758,6 +760,10 @@ export const trackRaysSchema = z.object({
   otherArtists: z.array(raysArtistSchema.extend({
     role: z.enum(['artist', 'featured', 'remixer']).describe('artist: billed alongside the track\'s own artist.'),
   })).describe('The other billed artists, the featured artists and the remixers, in that order, each once; only artists in the library, at most 10.'),
+  soundsCloseTo: z.object({
+    styles: z.array(browseStyleRefSchema).describe('Styles whose centroids sit nearest the track\'s sound, its own styles left out, nearest first.'),
+    tracks: z.array(trackSchema).describe('The nearest tracks by sound: none from its album or recording, one version of a song, at most two per artist; up to 12.'),
+  }).nullable().describe('null for a track without a real audio embedding.'),
   otherAlbums: z.array(z.object({
     trackId: z.string(),
     albumId: z.string().nullable(),

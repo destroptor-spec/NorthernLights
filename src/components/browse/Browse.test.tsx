@@ -2,9 +2,10 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { BrowseHome } from './BrowseHome';
 import { BrowseGenrePage } from './BrowseGenrePage';
+import { BrowseStylePage } from './BrowseStylePage';
 import { COVER_GRADIENTS, coverGradientFor } from './AuroraCard';
 import { usePlayerStore } from '../../store';
-import type { BrowseGenreDetail, BrowseGenres } from '../../../shared/api/v1';
+import type { BrowseGenreDetail, BrowseGenres, BrowseStyleDetail } from '../../../shared/api/v1';
 
 jest.mock('../../hooks/useExternalImage', () => ({ useExternalImage: () => ({ imageUrl: undefined, isLoading: false, error: null }) }));
 jest.mock('../../hooks/useInView', () => ({ useInView: () => [() => {}, false] }));
@@ -33,11 +34,17 @@ const electronic: BrowseGenreDetail = {
   decades: [{ decade: 1990, trackCount: 372 }, { decade: 2000, trackCount: 3330 }],
 };
 
+const grunge = (soundsCloseTo: BrowseStyleDetail['soundsCloseTo']): BrowseStyleDetail => ({
+  style: style(51, 'Grunge', 151, 'Rock'), albums: [], artists: [], decades: [], soundsCloseTo,
+});
+let grungeDetail = grunge([]);
+
 const track = (id: string) => ({ id, title: id, artists: [], album: null, durationMs: 1000, artworkUrl: null });
 const fetchMock = jest.fn(async (url: RequestInfo | URL) => {
   const path = String(url);
   if (path.startsWith('/api/v1/browse/genres?') || path === '/api/v1/browse/genres') return ok(genres);
   if (path === '/api/v1/browse/genres/Electronic') return ok(electronic);
+  if (path === '/api/v1/browse/styles/51') return ok(grungeDetail);
   if (path.startsWith('/api/v1/browse/mix')) return ok([track('t1'), track('t2'), track('t3')]);
   return ok({});
 });
@@ -57,6 +64,7 @@ const renderAt = (path: string) => render(
     <Routes>
       <Route path="/library/genres" element={<><BrowseHome /><Where /></>} />
       <Route path="/library/browse/genre/:genre" element={<><BrowseGenrePage /><Where /></>} />
+      <Route path="/library/browse/style/:styleId" element={<><BrowseStylePage /><Where /></>} />
       <Route path="*" element={<Where />} />
     </Routes>
   </MemoryRouter>,
@@ -114,4 +122,20 @@ test("a card's Play shuffles that genre and stays on the page; the button is bes
   await waitFor(() => expect(setPlaylist).toHaveBeenCalledTimes(1));
   expect(fetchMock.mock.calls.some(([u]) => String(u) === '/api/v1/browse/mix?genre=Rock')).toBe(true);
   expect(screen.getByTestId('where').textContent).toBe('/library/genres');
+});
+
+test('a style page shows what sounds close to it, with the genre on each card, once it has a centroid', async () => {
+  grungeDetail = grunge([style(52, 'Punk', 107, 'Rock'), style(92, 'House', 2823)]);
+  const { unmount } = renderAt('/library/browse/style/51');
+  const section = await screen.findByRole('region', { name: 'Sounds close to' });
+  const house = within(section).getByText('House').closest('a')!;
+  expect(house.getAttribute('href')).toBe('/library/browse/style/92');
+  expect(within(house).getByText('Electronic')).toBeTruthy();
+  unmount();
+
+  // Without a centroid there is nothing to say yet.
+  grungeDetail = grunge([]);
+  renderAt('/library/browse/style/51');
+  expect(await screen.findByRole('heading', { level: 1, name: 'Grunge' })).toBeTruthy();
+  expect(screen.queryByRole('region', { name: 'Sounds close to' })).toBeNull();
 });

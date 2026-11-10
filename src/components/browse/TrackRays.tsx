@@ -15,7 +15,7 @@ import { BackButton } from '../library/BackButton';
 import { ArtistInitial } from '../library/ArtistInitial';
 import { FadedHeroImage } from '../library/FadedHeroImage';
 import { StylePicker, type GenreTaxonomy } from '../settings/StylePicker';
-import { BrowseError, coverUrlFor } from './browseParts';
+import { BrowseError, NearStyleCards, coverUrlFor, useBrowsePlayer } from './browseParts';
 import type { StyleProfileEntry, TrackRays as Rays } from '../../../shared/api/v1';
 import type { GenreTarget } from '../../../shared/genreReview';
 
@@ -460,6 +460,13 @@ export const TrackRays: React.FC = () => {
   const portrait = artistData.imageUrl || rays?.artist?.imageUrl || null;
   const banner = artistData.artworkUrl || rays?.artist?.artworkUrl || null;
   const playable = useMemo(() => (rays ? toPlayableTracks([rays.track]) : []), [rays]);
+  const { busy: nearBusy, playFilter } = useBrowsePlayer();
+  // The nearby tracks play as a list from the one picked; Infinity carries on.
+  const playNear = async (index: number) => {
+    const tracks = rays?.soundsCloseTo?.tracks;
+    if (!tracks?.length) return;
+    await usePlayerStore.getState().setPlaylist(toPlayableTracks(tracks), index, null);
+  };
   const cover = playable[0]?.artUrl;
   // The cover's own light glows behind it: the rays of the title. The most
   // vivid of its colours, not the most common (that is often near-black).
@@ -678,6 +685,44 @@ export const TrackRays: React.FC = () => {
               </div>
             </div>
           </section>
+
+          {rays.soundsCloseTo && (rays.soundsCloseTo.styles.length > 0 || rays.soundsCloseTo.tracks.length > 0) && (
+            <section className="browse-section" aria-label="Sounds close to">
+              <h2 className="browse-section__title">Sounds close to</h2>
+              <p className="browse-section__lede">From Aurora's analysis of the audio: the styles and tracks in your library that sound most like this one.</p>
+              {rays.soundsCloseTo.styles.length > 0 && (
+                <NearStyleCards
+                  styles={rays.soundsCloseTo.styles}
+                  backLabel={`Back to ${track.title}`}
+                  busy={nearBusy}
+                  onPlay={near => playFilter(`style:${near.id}`, { style: near.id })}
+                  compact
+                />
+              )}
+              {rays.soundsCloseTo.tracks.length > 0 && (
+                <ul className="browse-index rays-near-tracks" aria-label="Tracks that sound close">
+                  {rays.soundsCloseTo.tracks.map((t, index) => (
+                    <li key={t.id}>
+                      <button
+                        type="button"
+                        className="browse-index__row rays-album-row"
+                        onClick={() => void playNear(index)}
+                        aria-label={`Play ${t.title} by ${t.artist}`}
+                      >
+                        <span className="browse-index__name">
+                          <CoverThumb artworkId={t.artworkId} title={t.album} artist={t.artist} />
+                          <span className="rays-near-track">
+                            <span className="rays-near-track__title">{t.title}</span>
+                            <span className="rays-near-track__artist">{t.artist}</span>
+                          </span>
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
 
           {rays.otherAlbums.length > 0 && (
             <section className="browse-section" aria-label="Also on">

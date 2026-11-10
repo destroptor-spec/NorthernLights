@@ -9,6 +9,7 @@ import type { TrackRays } from '../../shared/api/v1';
 import { creditRoleRank } from '../../shared/trackCredits';
 import { splitArtistNames, splitAtFeaturing } from '../../shared/artistCredit';
 import { getAlbumStyleProfile, getArtistStyleProfile } from './browse.service';
+import { nearTrack } from './genreTaxonomy/centroids';
 
 const CLOSEST_STYLES = 12;
 const OTHER_ALBUMS = 20;
@@ -25,8 +26,13 @@ const parseVector = (value: unknown): number[] | null => {
 };
 const unit = (n: number | undefined) => (Number.isFinite(n) ? Math.max(0, Math.min(1, n as number)) : 0);
 
+/** The rays as the service builds them: the route adds the v1 track and turns nearby track ids into v1 tracks. */
+export type TrackRaysRows = Omit<TrackRays, 'track' | 'soundsCloseTo'> & {
+  soundsCloseTo: { styles: NonNullable<TrackRays['soundsCloseTo']>['styles']; trackIds: string[] } | null;
+};
+
 /** Everything but the v1 track itself (the route adds it); null for an unknown track. */
-export async function getTrackRays(db: Pool, trackId: string): Promise<Omit<TrackRays, 'track'> | null> {
+export async function getTrackRays(db: Pool, trackId: string): Promise<TrackRaysRows | null> {
   const head = (await db.query(
     `SELECT id, title, artist, artists, album_id, artist_id, mb_recording_id FROM tracks WHERE id = $1`, [trackId])).rows[0];
   if (!head) return null;
@@ -100,13 +106,14 @@ export async function getTrackRays(db: Pool, trackId: string): Promise<Omit<Trac
     ? (await db.query(`
         SELECT id, name, image_url, artwork_url, mbid FROM artists
         WHERE id = $1 AND COALESCE(is_va_pseudo, FALSE) = FALSE`, [head.artist_id])).rows[0] : null;
-  const [albumProfile, artistProfile, otherArtists] = await Promise.all([
+  const [albumProfile, artistProfile, otherArtists, soundsCloseTo] = await Promise.all([
     albumRow ? getAlbumStyleProfile(db, String(albumRow.id)) : null,
     artistRow ? getArtistStyleProfile(db, String(artistRow.id)) : null,
     contextArtists(db, [
       ...billed,
       ...credits.rows.filter((r: any) => r.role === 'remixer').map((r: any) => ({ role: 'remixer', artistId: String(r.artist_id) })),
     ], artistRow ? String(artistRow.id) : null),
+    vector ? nearTrack(db, trackId) : null,
   ]);
 
   return {
@@ -138,6 +145,7 @@ export async function getTrackRays(db: Pool, trackId: string): Promise<Omit<Trac
       entries: artistProfile.entries, listenerTags: artistProfile.listenerTags,
     } : null,
     otherArtists,
+    soundsCloseTo,
     otherAlbums: others.rows.map((r: any) => ({
       trackId: String(r.id),
       albumId: r.album_id ? String(r.album_id) : null,

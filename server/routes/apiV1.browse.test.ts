@@ -107,9 +107,14 @@ describe('browse albums and genres', () => {
 
 describe('GET /tracks/:id/rays', () => {
   it('answers with the v1 track and its rays, or 404 for an unknown track', async () => {
-    jest.mocked(getTrackRays).mockResolvedValue({ credits: [], tags: ['Rock'], styles: [], sound: null, album: null, artist: null, otherArtists: [], otherAlbums: [] });
+    const near = { styles: [{ id: 5, genre: 'Rock', name: 'Grunge', trackCount: 9 }], trackIds: ['n2', 'n1'] };
+    jest.mocked(getTrackRays).mockResolvedValue({ credits: [], tags: ['Rock'], styles: [], sound: null, album: null, artist: null, otherArtists: [], soundsCloseTo: near, otherAlbums: [] });
     const res = await get('/tracks/:id/rays', {}, { id: 't1' });
     expect(body(res).data).toMatchObject({ track: { id: 't1' }, tags: ['Rock'] });
+    // Nearby tracks come back as v1 tracks, nearest first, without their paths.
+    expect(body(res).data.soundsCloseTo.styles).toEqual(near.styles);
+    expect(body(res).data.soundsCloseTo.tracks.map((t: { id: string }) => t.id)).toEqual(['n2', 'n1']);
+    expect(body(res).data.soundsCloseTo).not.toHaveProperty('trackIds');
     expect(JSON.stringify(body(res))).not.toContain('secret');
 
     jest.mocked(getTrackRays).mockResolvedValue(null);

@@ -1871,13 +1871,21 @@
             "items": {
               "$ref": "#/components/schemas/BrowseDecade"
             }
+          },
+          "soundsCloseTo": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowseStyleRef"
+            },
+            "description": "The styles that sound nearest, from any genre, nearest first (by the centroids of their tagged tracks' audio embeddings). Empty until the style has a centroid: at least 8 tagged tracks by 3 artists."
           }
         },
         "required": [
           "style",
           "albums",
           "artists",
-          "decades"
+          "decades",
+          "soundsCloseTo"
         ]
       },
       "BrowseSearchResult": {
@@ -2507,6 +2515,33 @@
             },
             "description": "The other billed artists, the featured artists and the remixers, in that order, each once; only artists in the library, at most 10."
           },
+          "soundsCloseTo": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "styles": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/BrowseStyleRef"
+                },
+                "description": "Styles whose centroids sit nearest the track's sound, its own styles left out, nearest first."
+              },
+              "tracks": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Track"
+                },
+                "description": "The nearest tracks by sound: none from its album or recording, one version of a song, at most two per artist; up to 12."
+              }
+            },
+            "required": [
+              "styles",
+              "tracks"
+            ],
+            "description": "null for a track without a real audio embedding."
+          },
           "otherAlbums": {
             "type": "array",
             "items": {
@@ -2561,6 +2596,7 @@
           "album",
           "artist",
           "otherArtists",
+          "soundsCloseTo",
           "otherAlbums"
         ]
       },

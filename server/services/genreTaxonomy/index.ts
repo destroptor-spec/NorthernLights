@@ -1,8 +1,8 @@
 /**
- * Genre & style taxonomy: startup seeding, tag mapping (phase 1) and fusion
- * (phase 2) of docs/Aurora genre and style redesign.md. Runs in the
- * background after the database connects; nothing here blocks playback or
- * scanning.
+ * Genre & style taxonomy: startup seeding, tag mapping (phase 1), fusion
+ * (phase 2) and style centroids (phase 3) of docs/Aurora genre and style
+ * redesign.md. Runs in the background after the database connects; nothing
+ * here blocks playback or scanning.
  */
 import { initDB } from '../../database';
 import { getMappingCoverage } from './coverage';
@@ -10,7 +10,8 @@ import { mappingIsCurrent, runTagMapping } from './mapping';
 import { loadMbSnapshotIfNeeded, seedTaxonomy } from './seed';
 import { backfillTrackTags } from './trackTags';
 import { runArtistTagBackfill } from './artistTagBackfill';
-import { fusionIsCurrent, runFusion } from './fusion';
+import { FUSION_VERSION, fusionIsCurrent, runFusion } from './fusion';
+import { rebuildCentroids } from './centroids';
 
 export { getMappingCoverage } from './coverage';
 export { runTagMapping } from './mapping';
@@ -45,6 +46,11 @@ export async function initializeGenreTaxonomy(): Promise<void> {
     log(`Coverage ${(coverage.tracks.coverage * 100).toFixed(1)} % of tagged tracks; ${coverage.tags.unmapped} unmapped tag(s), ${coverage.mappings.unreviewed} mapping(s) to review`);
     // Fusion has never run, or its rules changed: rebuild every track now.
     if (!(await fusionIsCurrent())) await fuseNow();
+    // Fused before centroids existed (phase 3): build them once without a full fusion run.
+    else if (!(await db.query('SELECT 1 FROM style_centroids LIMIT 1')).rowCount) {
+      const built = await rebuildCentroids(db, FUSION_VERSION);
+      log(`Built ${built} style centroids`);
+    }
   })().finally(() => { running = null; });
   // Optional provider evidence: slow, resumable; does nothing without a provider.
   void running.then(() => startArtistTagBackfill()).catch(() => {});

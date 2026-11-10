@@ -472,4 +472,65 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     await pool.query('UPDATE tracks SET artist_id = $1 WHERE id = $2', [fusion, idOf('t-feat-2')]);
     expect((await getTrackRays(pool, idOf('t-feat-2')))!.otherArtists).toEqual([]);
   });
+  test('style centroids come from tagged tracks only, and say what sounds close to a style and a track', async () => {
+    const { stylesNearStyle, nearTrack, CENTROID_MIN_TRACKS } = await import('../../services/genreTaxonomy/centroids');
+    const fusion = await import('../../services/genreTaxonomy/fusion');
+    // 1280-d embeddings: Grunge and Punk share half their direction, Techno none.
+    const vec = (from: number, jitter: number) => {
+      const v = Array(1280).fill(0);
+      for (let i = from; i < from + 10; i++) v[i] = 1;
+      v[1000 + jitter] = 0.2;
+      return `[${v.join(',')}]`;
+    };
+    const artists = await Promise.all(['C One', 'C Two', 'C Three', 'C Four'].map(async n =>
+      (await pool.query('INSERT INTO artists (name) VALUES ($1) RETURNING id', [n])).rows[0].id as string));
+    let n = 0;
+    const addTagged = async (name: string, tag: string, base: number, artistId: string, opts: { simulated?: boolean; title?: string } = {}) => {
+      await db.addTrack({ ...track(name, [tag]), title: opts.title ?? name } as never);
+      const id = idOf(name);
+      await pool.query('UPDATE tracks SET artist_id = $2 WHERE id = $1', [id, artistId]);
+      await pool.query('INSERT INTO track_features (track_id, embedding_vector, is_simulated) VALUES ($1, $2, $3)', [id, vec(base, n++ % 200), opts.simulated ?? false]);
+      return id;
+    };
+    for (let i = 0; i < CENTROID_MIN_TRACKS; i++) {
+      await addTagged(`c-grunge-${i}`, 'Grunge', 0, artists[i % 3]);
+      await addTagged(`c-punk-${i}`, 'Punk', 5, artists[i % 3]);
+      await addTagged(`c-techno-${i}`, 'Techno', 100, artists[i % 3]);
+    }
+    // One short of a centroid, and one artist only: no centroid either way.
+    for (let i = 0; i < CENTROID_MIN_TRACKS - 1; i++) await addTagged(`c-grind-${i}`, 'Grindcore', 0, artists[i % 3]);
+    for (let i = 0; i < CENTROID_MIN_TRACKS; i++) await addTagged(`c-sludge-${i}`, 'Sludge Metal', 0, artists[3]);
+    // A simulated Grunge track far from the rest must not move the centroid.
+    await addTagged('c-grunge-sim', 'Grunge', 100, artists[0], { simulated: true });
+    // Two versions of one song, near Grunge: "Sounds close to" keeps one.
+    await addTagged('c-version-a', 'Alternative Rock', 0, artists[3], { title: 'Same Song' });
+    await addTagged('c-version-b', 'Alternative Rock', 0, artists[3], { title: 'Same Song (Live)' });
+    await taxonomy.runTagMapping(pool);
+    await fusion.runFusion(pool);
+
+    const centroids = (await pool.query(`
+      SELECT s.name, c.tracks, c.artists, c.p90_distance FROM style_centroids c JOIN style s ON s.id = c.style_id ORDER BY s.name`)).rows;
+    expect(centroids.map(c => c.name)).toEqual(['Grunge', 'Punk', 'Techno']);
+    expect(centroids[0]).toMatchObject({ tracks: CENTROID_MIN_TRACKS, artists: 3 });
+    expect(centroids[0].p90_distance).toBeGreaterThan(0);
+    expect(centroids[0].p90_distance).toBeLessThan(0.1);
+
+    const styleId = async (name: string) => (await pool.query('SELECT id FROM style WHERE name = $1', [name])).rows[0].id as number;
+    const near = await stylesNearStyle(pool, await styleId('Grunge'));
+    expect(near.map(s => `${s.genre} › ${s.name}`)).toEqual(['Rock › Punk', 'Electronic › Techno']);
+    expect(near[0].trackCount).toBe(CENTROID_MIN_TRACKS);
+    expect(await stylesNearStyle(pool, await styleId('Grindcore'))).toEqual([]);
+
+    // A Grunge track: its own style left out, Punk nearest; its neighbours
+    // two per artist, one version of a song, nearest first.
+    const probe = (await nearTrack(pool, idOf('c-grunge-0')))!;
+    expect(probe.styles.map(s => s.name)).toEqual(['Punk', 'Techno']);
+    const titles = (await pool.query('SELECT id, title, artist_id FROM tracks WHERE id = ANY($1)', [probe.trackIds])).rows;
+    const byArtist = new Map<string, number>();
+    for (const t of titles) byArtist.set(t.artist_id, (byArtist.get(t.artist_id) || 0) + 1);
+    expect(Math.max(...byArtist.values())).toBe(2);
+    expect(titles.filter(t => t.title.startsWith('Same Song'))).toHaveLength(1);
+    expect(probe.trackIds).not.toContain(idOf('c-grunge-0'));
+    expect(await nearTrack(pool, idOf('c-grunge-sim'))).toBeNull();
+  });
 });

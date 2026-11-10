@@ -796,12 +796,20 @@ router.get('/tracks/:id', async (req, res) => {
 });
 
 // "Aurora rays from {title}": credits, genres and styles with their sources,
-// sound, album and artist context, and other albums with the recording.
+// sound, album and artist context, what it sounds close to, and other albums
+// with the recording.
 router.get('/tracks/:id/rays', async (req, res) => {
   const id = routeParam(req, 'id');
   const [track, rays] = await Promise.all([getApiV1TrackById(req.apiV1!.userId, id), getTrackRays(await initDB(), id)]);
   if (!track || !rays) return sendApiV1Error(req, res, 404, 'TRACK_NOT_FOUND', 'Track not found.');
-  dataResponse(req, res, { track, ...rays });
+  const near = rays.soundsCloseTo;
+  const nearTracks = near?.trackIds.length ? await getApiV1TracksByIds(req.apiV1!.userId, near.trackIds) : [];
+  const nearById = new Map(nearTracks.map(t => [t.id, t]));
+  dataResponse(req, res, {
+    track,
+    ...rays,
+    soundsCloseTo: near ? { styles: near.styles, tracks: near.trackIds.map(t => nearById.get(t)).filter(Boolean) } : null,
+  });
 });
 
 router.get('/tracks/:id/lyrics', async (req, res) => {

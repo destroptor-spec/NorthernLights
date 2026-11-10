@@ -7,12 +7,14 @@ import {
   fetchBrowseAlbums,
   fetchBrowseArtists,
   fetchBrowseMix,
+  stylePath,
   type BrowseFilter,
 } from '../../api/browse';
 import { toPlayableTracks } from '../../utils/playableTracks';
 import { AlbumCard, AlbumCardSkeleton } from '../library/AlbumCard';
 import { ArtistInitial } from '../library/ArtistInitial';
-import type { BrowseAlbum, BrowseArtist, BrowseDecade } from '../../../shared/api/v1';
+import { AuroraCard } from './AuroraCard';
+import type { BrowseAlbum, BrowseArtist, BrowseDecade, BrowseStyleRef } from '../../../shared/api/v1';
 
 /**
  * Starts playback from Browse. Shuffle plays a mix the server picks: a
@@ -200,5 +202,30 @@ export const BrowseError: React.FC<{ message: string; onRetry: () => void }> = (
   <div className="browse-error" role="alert">
     <p>{message}</p>
     <button type="button" className="btn btn-ghost btn-sm" onClick={onRetry}>Retry</button>
+  </div>
+);
+
+/**
+ * "Sounds close to": nearby styles as Browse cards. The line under each name
+ * is its genre, since the nearest styles often sit in another one; Play
+ * shuffles the style. Compact: one row of smaller cards, for a page where
+ * the styles support something else (a track's rays).
+ */
+export const NearStyleCards: React.FC<{
+  styles: BrowseStyleRef[]; backLabel: string; busy: string | null;
+  onPlay: (style: BrowseStyleRef) => void; compact?: boolean;
+}> = ({ styles, backLabel, busy, onPlay, compact = false }) => (
+  <div className={compact ? 'browse-card-grid browse-card-grid--compact' : 'browse-card-grid'}>
+    {styles.map(style => (
+      <AuroraCard
+        key={style.id}
+        name={style.name}
+        meta={style.genre}
+        to={stylePath(style.id)}
+        backLabel={backLabel}
+        onPlay={() => onPlay(style)}
+        busy={busy === `style:${style.id}`}
+      />
+    ))}
   </div>
 );

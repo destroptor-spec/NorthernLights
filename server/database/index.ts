@@ -967,6 +967,19 @@ export async function initDB(): Promise<Pool> {
         );
         CREATE INDEX IF NOT EXISTS artist_styles_style_idx ON artist_styles (style_id, share DESC) WHERE style_id IS NOT NULL;
         CREATE INDEX IF NOT EXISTS artist_styles_genre_idx ON artist_styles (genre, share DESC) WHERE style_id IS NULL;
+        -- Style centroids (phase 3): the mean EffNet embedding of each style's
+        -- tag and hand-set members, for "Sounds close to" and disputed tags.
+        -- Rebuilt with fusion (services/genreTaxonomy/centroids.ts).
+        CREATE TABLE IF NOT EXISTS style_centroids (
+          style_id       INTEGER PRIMARY KEY,
+          genre          TEXT NOT NULL REFERENCES taxonomy_genre(name),
+          centroid       VECTOR(1280) NOT NULL,
+          tracks         INTEGER NOT NULL,
+          artists        INTEGER NOT NULL,
+          p90_distance   REAL,
+          fusion_version INTEGER NOT NULL,
+          FOREIGN KEY (style_id, genre) REFERENCES style(id, genre) ON DELETE CASCADE
+        );
 
         CREATE TABLE IF NOT EXISTS user_playback_stats (
           user_id UUID REFERENCES users(id) ON DELETE CASCADE,

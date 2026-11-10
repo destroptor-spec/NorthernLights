@@ -47,6 +47,7 @@ const rays = (): Rays => ({
     { role: 'remixer', id: 'ar7', name: 'Remix Person', imageUrl: null, artworkUrl: null, musicBrainzId: null,
       entries: [{ genre: 'Electronic', styleId: 56, style: 'Downtempo', share: 0.8, trackCount: 4, albumCount: 1 }], listenerTags: ['chillout'] },
   ],
+  soundsCloseTo: null,
   otherAlbums: [{ trackId: 't9', albumId: 'al9', albumTitle: 'Best Of', artistName: 'Pretty Lights', year: 2015, artworkId: 'hash9' }],
 });
 
@@ -195,4 +196,24 @@ test('album and artist pages show their profile only while genre and style brows
   const { container } = render(<MemoryRouter><StyleProfileChips kind="album" id="al1" /></MemoryRouter>);
   expect(container.textContent).toBe('');
   expect(fetchMock).not.toHaveBeenCalled();
+});
+
+test('sounds close to: nearby styles as cards, and nearby tracks that play from the one picked', async () => {
+  const setPlaylist = jest.fn(async () => {});
+  usePlayerStore.setState({ setPlaylist } as never);
+  const near = (id: string, title: string) => ({ id, title, artist: `${title} Artist`, album: 'A', artworkId: null } as Rays['track']);
+  fetchMock.mockImplementation(async (url: RequestInfo | URL) => String(url) === '/api/v1/tracks/t1/rays'
+    ? ok({ ...rays(), soundsCloseTo: { styles: [{ id: 51, genre: 'Rock', name: 'Grunge', trackCount: 151 }], tracks: [near('n1', 'First'), near('n2', 'Second')] } })
+    : ok({}));
+  renderRays();
+  const section = await screen.findByRole('region', { name: 'Sounds close to' });
+  expect(within(section).getByText('Grunge').closest('a')!.getAttribute('href')).toBe('/library/browse/style/51');
+  expect(within(within(section).getByText('Grunge').closest('a')!).getByText('Rock')).toBeTruthy();
+  fireEvent.click(within(section).getByRole('button', { name: 'Play Second by Second Artist' }));
+  await waitFor(() => expect(setPlaylist).toHaveBeenCalled());
+  expect((setPlaylist.mock.calls[0] as unknown[])[1]).toBe(1);
+  expect(((setPlaylist.mock.calls[0] as unknown[])[0] as Array<{ id: string }>).map(t => t.id)).toEqual(['n1', 'n2']);
+  // Sections in order: Sounds close to sits between Sound and style and Also on.
+  expect([...document.querySelectorAll('section')].map(el => el.getAttribute('aria-label')))
+    .toEqual(['Credits', 'In context', 'Sound and style', 'Sounds close to', 'Also on']);
 });
