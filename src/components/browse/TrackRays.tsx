@@ -238,11 +238,18 @@ const niceMax = (values: number[]) => Math.min(1, Math.max(0.1, Math.ceil(Math.m
  */
 const StyleScoreChart: React.FC<{ scores: NonNullable<Rays['sound']>['closestStyles']; memberIds: Set<number> }> = ({ scores, memberIds }) => {
   const max = niceMax(scores.map(s => s.score));
+  // Name a style's genre only where it differs from most of the list, so a
+  // list of Electronic styles doesn't say Electronic twelve times.
+  const genreCount = new Map<string, number>();
+  for (const s of scores) genreCount.set(s.genre, (genreCount.get(s.genre) || 0) + 1);
+  const leadGenre = [...genreCount.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
   return (
     <figure className="rays-chart">
       <figcaption className="rays-chart__head">
         <span className="rays-chart__title">Styles the audio model hears</span>
-        <span className="rays-chart__note">Each style scored 0 to 1 on its own; a track can score high on several.</span>
+        <span className="rays-chart__note">
+          Each style scored 0 to 1 on its own; a track can score high on several.{leadGenre && genreCount.size > 1 ? ` Styles outside ${leadGenre} name their genre.` : leadGenre ? ` All in ${leadGenre}.` : ''}
+        </span>
         <span className="rays-chart__legend">
           <span><span className="rays-swatch rays-swatch--emphasis" aria-hidden="true" />This track's styles</span>
           <span><span className="rays-swatch rays-swatch--context" aria-hidden="true" />Other styles it is close to</span>
@@ -262,7 +269,7 @@ const StyleScoreChart: React.FC<{ scores: NonNullable<Rays['sound']>['closestSty
                 <span className="rays-bar__label">
                   {member && <Check size={13} className="rays-bar__check" aria-label="One of this track's styles" />}
                   <span className="rays-bar__name">{s.style}</span>
-                  <span className="rays-bar__genre">{s.genre}</span>
+                  {s.genre !== leadGenre && <span className="rays-bar__genre">{s.genre}</span>}
                 </span>
                 <span className="rays-bar__track" aria-hidden="true">
                   <span className="rays-bar__fill" style={{ width: `${(s.score / max) * 100}%` }} />
@@ -502,57 +509,66 @@ export const TrackRays: React.FC = () => {
 
               <div className="rays-card" role="group" aria-labelledby="rays-styles-title">
                 <h3 className="rays-card__title" id="rays-styles-title">Styles</h3>
-                {rays.sound && (rays.sound.closestStyles.length > 0 || rays.sound.genreMix.length > 0) && (
-                  <RiseOnView className="rays-charts">
-                    {rays.sound.closestStyles.length > 0 && <StyleScoreChart scores={rays.sound.closestStyles} memberIds={memberStyleIds} />}
-                    {rays.sound.genreMix.length > 0 && <GenreMixChart mix={rays.sound.genreMix} />}
-                  </RiseOnView>
-                )}
-
-                <h4 className="rays-card__subtitle">Genres and styles</h4>
-                {rays.styles.length === 0
-                  ? <p className="browse-empty">Aurora hasn't placed this track in a genre yet{rays.tags.length ? ` (its tags: ${rays.tags.join(', ')})` : ''}.</p>
-                  : (
-                    <ul className="browse-index browse-index--single">
-                      {rays.styles.map(row => {
-                        const key = `${row.genre}|${row.styleId}`;
-                        return (
-                          <li key={key} className="rays-style">
-                            <Link to={linkFor(row)} className="browse-index__row rays-style__row">
-                              <span className="rays-style__name">
-                                <span>{styleLabel(row)}</span>
-                                <span className="rays-muted">{sourceText(row)}</span>
-                              </span>
-                            </Link>
-                            {isAdmin && (
-                              <button
-                                type="button"
-                                className="btn btn-ghost btn-sm btn-icon rays-style__remove"
-                                onClick={() => void change(row, 'remove')}
-                                disabled={saving !== null}
-                                aria-label={`Remove ${styleLabel(row)} from this track`}
-                              >
-                                {saving === `remove:${key}` ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <X size={14} aria-hidden="true" />}
-                              </button>
-                            )}
-                          </li>
-                        );
-                      })}
-                    </ul>
+                <div className="rays-styles">
+                  {rays.sound && rays.sound.closestStyles.length > 0 && (
+                    <RiseOnView className="rays-styles__evidence">
+                      <StyleScoreChart scores={rays.sound.closestStyles} memberIds={memberStyleIds} />
+                    </RiseOnView>
                   )}
-                {isAdmin && (
-                  <div className="rays-add">
-                    <StylePicker taxonomy={taxonomy} value={adding} onChange={setAdding} disabled={saving !== null} label="Add a genre or style to this track" />
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      disabled={adding.length === 0 || saving !== null}
-                      onClick={async () => { for (const t of adding) await change(t, 'add'); setAdding([]); }}
-                    >
-                      Add
-                    </button>
+                  <div className="rays-styles__summary">
+                    {rays.sound && rays.sound.genreMix.length > 0 && (
+                      <RiseOnView className="rays-styles__mix">
+                        <GenreMixChart mix={rays.sound.genreMix} />
+                      </RiseOnView>
+                    )}
+                    <div className="rays-styles__outcome">
+                      <h4 className="rays-card__subtitle">Genres and styles</h4>
+                      {rays.styles.length === 0
+                        ? <p className="browse-empty">Aurora hasn't placed this track in a genre yet{rays.tags.length ? ` (its tags: ${rays.tags.join(', ')})` : ''}.</p>
+                        : (
+                          <ul className="browse-index browse-index--single">
+                            {rays.styles.map(row => {
+                              const key = `${row.genre}|${row.styleId}`;
+                              return (
+                                <li key={key} className="rays-style">
+                                  <Link to={linkFor(row)} className="browse-index__row rays-style__row">
+                                    <span className="rays-style__name">
+                                      <span>{styleLabel(row)}</span>
+                                      <span className="rays-muted">{sourceText(row)}</span>
+                                    </span>
+                                  </Link>
+                                  {isAdmin && (
+                                    <button
+                                      type="button"
+                                      className="btn btn-ghost btn-sm btn-icon rays-style__remove"
+                                      onClick={() => void change(row, 'remove')}
+                                      disabled={saving !== null}
+                                      aria-label={`Remove ${styleLabel(row)} from this track`}
+                                    >
+                                      {saving === `remove:${key}` ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <X size={14} aria-hidden="true" />}
+                                    </button>
+                                  )}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                      {isAdmin && (
+                        <div className="rays-add">
+                          <StylePicker taxonomy={taxonomy} value={adding} onChange={setAdding} disabled={saving !== null} label="Add a genre or style to this track" />
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            disabled={adding.length === 0 || saving !== null}
+                            onClick={async () => { for (const t of adding) await change(t, 'add'); setAdding([]); }}
+                          >
+                            Add
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                )}
+                </div>
               </div>
             </div>
           </section>

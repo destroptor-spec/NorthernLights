@@ -1960,18 +1960,6 @@ a:focus-visible > .genre-card .genre-card__label {
    thin marks with rounded ends, every bar labelled (name, value). Emphasis:
    --chart-emphasis for the track's own styles (plus a check), --chart-context
    for the rest. */
-.rays-charts {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 2rem 3rem;
-  max-width: 72rem;
-  margin-top: 2rem;
-}
-
-@media (min-width: 1024px) {
-  .rays-charts { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
-}
-
 .rays-chart {
   display: grid;
   align-content: start;
@@ -1985,10 +1973,7 @@ a:focus-visible > .genre-card .genre-card__label {
   gap: 0.25rem;
 }
 
-.rays-chart__title {
-  color: var(--color-text-primary);
-  font-weight: 600;
-}
+
 
 .rays-chart__note {
   color: var(--color-text-muted);
@@ -2248,8 +2233,32 @@ a.rays-bar:focus-visible {
 
 .rays-card__title {
   margin: 0 0 0.25rem;
-  font-size: 1.1rem;
+  font-size: 1.2rem;
   color: var(--color-text-primary);
+}
+
+/* Styles card: the evidence (the model's style scores) on the left; the
+   summary on the right, read downward: the genre mix, then the outcome, the
+   track's genres and styles. One column below 1024px, in the same order. */
+.rays-styles {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2.5rem;
+  margin-top: 1.25rem;
+}
+
+@media (min-width: 1024px) {
+  .rays-styles {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    align-items: start;
+    column-gap: 3rem;
+  }
+}
+
+.rays-styles__summary {
+  display: grid;
+  gap: 2.5rem;
+  min-width: 0;
 }
 
 .rays-card__lede {
@@ -2259,9 +2268,18 @@ a.rays-bar:focus-visible {
 }
 
 .rays-card__subtitle {
-  margin: 2rem 0 0.75rem;
-  font-size: 0.95rem;
-  color: var(--color-text-secondary);
+  margin: 0 0 0.75rem;
+}
+
+/* One subhead level inside a card: the chart titles and Genres and styles,
+   both in the heading face (DESIGN.md: h1-h4 in Cal Sans, regular, 0.05em). */
+.rays-card__subtitle,
+.rays-chart__title {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  color: var(--color-text-primary);
 }
 
 /* The meters fill the Sound card: one column on a phone, two, then three. */
@@ -2278,11 +2296,9 @@ a.rays-bar:focus-visible {
   .rays-card .rays-sound { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
-.rays-card .rays-charts {
-  margin-top: 1rem;
-}
-
 .rays-card .browse-index__row {
+  /* One left edge: the rows line up with the chart labels above. */
+  padding-inline: 0.5rem;
   border-color: transparent;
   background: transparent;
   -webkit-backdrop-filter: none;
