@@ -2025,13 +2025,29 @@ a:focus-visible > .genre-card .genre-card__label {
   font-size: 0.85rem;
 }
 
+/* Admins toggle a style on the track from its bar. */
+button.rays-bar {
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.rays-bar:disabled { cursor: progress; }
+
 a.rays-bar:hover,
-a.rays-bar:focus-visible {
+a.rays-bar:focus-visible,
+button.rays-bar:hover:not(:disabled),
+button.rays-bar:focus-visible {
   background: var(--glass-bg-hover);
   outline: none;
 }
 
-a.rays-bar:focus-visible {
+a.rays-bar:focus-visible,
+button.rays-bar:focus-visible {
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-primary) 60%, transparent);
 }
 
@@ -2237,9 +2253,10 @@ a.rays-bar:focus-visible {
   color: var(--color-text-primary);
 }
 
-/* Styles card: the evidence (the model's style scores) on the left; the
-   summary on the right, read downward: the genre mix, then the outcome, the
-   track's genres and styles. One column below 1024px, in the same order. */
+/* Styles card: the evidence (the model's style scores) on the left, the
+   genre mix on the right; one column below 1024px, in the same order. The
+   track's genres and styles, with their sources and the manual editor, wait
+   behind Advanced at the foot of the card and extend it when opened. */
 .rays-styles {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -2339,6 +2356,30 @@ a.rays-bar:focus-visible {
 .rays-style__remove {
   align-self: center;
   flex: none;
+}
+
+.rays-advanced {
+  display: grid;
+  gap: 1.25rem;
+  margin-top: 1.75rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--glass-border);
+}
+
+.rays-advanced__toggle {
+  justify-self: start;
+}
+
+.rays-advanced__chevron {
+  transition: transform var(--transition-normal);
+}
+
+.rays-advanced__toggle[aria-expanded='true'] .rays-advanced__chevron {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rays-advanced__chevron { transition: none; }
 }
 
 .rays-add {

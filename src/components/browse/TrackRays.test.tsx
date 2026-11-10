@@ -70,9 +70,6 @@ test('says where each genre and style came from, groups credits by person, and s
   renderRays();
   const heading = await screen.findByRole('heading', { level: 1 });
   expect(heading.textContent).toBe('Aurora rays from Finally Moving');
-  expect(screen.getByText('From the file tag “Electric Hip Hop Soul”')).toBeTruthy();
-  expect(screen.getByText('From the sound')).toBeTruthy();
-  expect(screen.getByText('Electronic › Glitch').closest('a')!.getAttribute('href')).toBe('/library/browse/style/78');
   // One card per person in the credits rail: every role in order, then the
   // instruments; the first role is the badge; the stored image when there is one.
   expect(screen.getAllByText('John Shanks')).toHaveLength(1);
@@ -101,13 +98,23 @@ test('says where each genre and style came from, groups credits by person, and s
   const albumCard = screen.getByText('Taking Up Your Precious Time', { selector: '.rays-context-card__title' }).closest('article')!;
   expect(within(albumCard).getByText('Taking Up Your Precious Time', { selector: 'a' }).getAttribute('href')).toBe('/library/album/al1');
   expect(within(albumCard).getByText('Glitch, where Downtempo leads Taking Up Your Precious Time (60 %).')).toBeTruthy();
-  // Sound and style: a Sound card and a Styles card, genres and styles last in Styles.
+  // Sound and style: a Sound card and a Styles card; the track's genres and
+  // styles wait behind Advanced at the foot of the Styles card.
   const styles = screen.getByRole('group', { name: 'Styles' });
+  expect(within(styles).queryByText('Genres and styles')).toBeNull();
+  const advanced = within(styles).getByRole('button', { name: 'Advanced' });
+  expect(advanced.getAttribute('aria-expanded')).toBe('false');
+  fireEvent.click(advanced);
+  expect(advanced.getAttribute('aria-expanded')).toBe('true');
   const headings = [...styles.querySelectorAll('h3, h4, figcaption .rays-chart__title')].map(el => el.textContent);
   expect(headings[headings.length - 1]).toBe('Genres and styles');
+  expect(screen.getByText('From the file tag “Electric Hip Hop Soul”')).toBeTruthy();
+  expect(screen.getByText('From the sound')).toBeTruthy();
+  expect(screen.getByText('Electronic › Glitch').closest('a')!.getAttribute('href')).toBe('/library/browse/style/78');
   expect(within(screen.getByRole('group', { name: 'Sound' })).getByRole('meter', { name: 'Energy' })).toBeTruthy();
-  // Listeners can't change genres; there's no Remove.
+  // Listeners can't change genres: no Remove, and the bars open the style.
   expect(screen.queryByRole('button', { name: /^Remove / })).toBeNull();
+  expect(glitchBar.tagName).toBe('A');
 });
 
 test('when this is the track playing, the page says so and Play becomes Pause, then Resume', async () => {
@@ -128,12 +135,36 @@ test('when this is the track playing, the page says so and Play becomes Pause, t
 test('an admin removes a style from the track, with Undo', async () => {
   usePlayerStore.setState({ currentUser: { role: 'admin' } } as never);
   renderRays();
+  fireEvent.click(await screen.findByRole('button', { name: 'Advanced' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Remove Electronic › Glitch from this track' }));
   await waitFor(() => expect(usePlayerStore.getState().addToast).toHaveBeenCalled());
   const call = fetchMock.mock.calls.find(([u]) => String(u).startsWith('/api/library/track-styles/'))!;
   expect(JSON.parse(String(call[1].body))).toEqual({ genre: 'Electronic', styleId: 78, action: 'remove' });
   expect((usePlayerStore.getState().addToast as jest.Mock).mock.calls[0][0]).toBe('Removed Electronic › Glitch');
   expect((usePlayerStore.getState().addToast as jest.Mock).mock.calls[0][2].actionLabel).toBe('Undo');
+});
+
+test('an admin toggles a style on the track from its bar', async () => {
+  usePlayerStore.setState({ currentUser: { role: 'admin' } } as never);
+  renderRays();
+  const posted = () => fetchMock.mock.calls
+    .filter(([u]) => String(u).startsWith('/api/library/track-styles/'))
+    .map(([, init]) => JSON.parse(String(init.body)));
+
+  // Downtempo isn't one of its styles: selecting it adds it.
+  const downtempo = await screen.findByTitle('Downtempo (Electronic): 0.31. Add it to this track');
+  expect(downtempo.tagName).toBe('BUTTON');
+  expect(downtempo.getAttribute('aria-pressed')).toBe('false');
+  fireEvent.click(downtempo);
+  await waitFor(() => expect(posted()).toEqual([{ genre: 'Electronic', styleId: 56, action: 'add' }]));
+  await waitFor(() => expect((usePlayerStore.getState().addToast as jest.Mock).mock.calls[0][0]).toBe('Added Electronic › Downtempo'));
+
+  // Glitch is: selecting it takes it off.
+  const glitch = screen.getByTitle('Glitch (Electronic): 0.50. Take it off this track');
+  expect(glitch.getAttribute('aria-pressed')).toBe('true');
+  await waitFor(() => expect((glitch as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(glitch);
+  await waitFor(() => expect(posted()[1]).toEqual({ genre: 'Electronic', styleId: 78, action: 'remove' }));
 });
 
 test('album and artist pages show their profile only while genre and style browse is on', async () => {

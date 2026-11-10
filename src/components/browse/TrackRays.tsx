@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Check, Loader2, Pause, Play, User2, X } from 'lucide-react';
+import { Check, ChevronDown, Loader2, Pause, Play, User2, X } from 'lucide-react';
 import { HorizontalScrollRail } from '../HorizontalScrollRail';
 import { usePlayerStore } from '../../store/index';
 import { fetchTaxonomy, fetchTrackRays, genrePath, setTrackStyle, stylePath } from '../../api/browse';
@@ -236,7 +236,18 @@ const niceMax = (values: number[]) => Math.min(1, Math.max(0.1, Math.ceil(Math.m
  * score high on several), ranked. Emphasis form: the styles the track is in
  * are emerald and carry a check, the rest grey; every bar is labelled.
  */
-const StyleScoreChart: React.FC<{ scores: NonNullable<Rays['sound']>['closestStyles']; memberIds: Set<number> }> = ({ scores, memberIds }) => {
+type StyleScore = NonNullable<Rays['sound']>['closestStyles'][number];
+
+/** The key `change` marks a save with, so a bar can show its own spinner. */
+const saveKey = (action: 'add' | 'remove', genre: string, styleId: number | null) => `${action}:${genre}|${styleId}`;
+
+const StyleScoreChart: React.FC<{
+  scores: StyleScore[];
+  memberIds: Set<number>;
+  /** Admins: a bar toggles the style on the track instead of opening it. */
+  onToggle?: (score: StyleScore) => void;
+  saving?: string | null;
+}> = ({ scores, memberIds, onToggle, saving = null }) => {
   const max = niceMax(scores.map(s => s.score));
   // Name a style's genre only where it differs from most of the list, so a
   // list of Electronic styles doesn't say Electronic twelve times.
@@ -248,7 +259,7 @@ const StyleScoreChart: React.FC<{ scores: NonNullable<Rays['sound']>['closestSty
       <figcaption className="rays-chart__head">
         <span className="rays-chart__title">Styles the audio model hears</span>
         <span className="rays-chart__note">
-          Each style scored 0 to 1 on its own; a track can score high on several.{leadGenre && genreCount.size > 1 ? ` Styles outside ${leadGenre} name their genre.` : leadGenre ? ` All in ${leadGenre}.` : ''}
+          Each style scored 0 to 1 on its own; a track can score high on several.{leadGenre && genreCount.size > 1 ? ` Styles outside ${leadGenre} name their genre.` : leadGenre ? ` All in ${leadGenre}.` : ''}{onToggle ? ' Select a style to add it to this track, or again to take it off.' : ''}
         </span>
         <span className="rays-chart__legend">
           <span><span className="rays-swatch rays-swatch--emphasis" aria-hidden="true" />This track's styles</span>
@@ -258,24 +269,48 @@ const StyleScoreChart: React.FC<{ scores: NonNullable<Rays['sound']>['closestSty
       <ul className="rays-bars">
         {scores.map((s, index) => {
           const member = memberIds.has(s.styleId);
+          const pending = saving === saveKey(member ? 'remove' : 'add', s.genre, s.styleId);
+          const body = (
+            <>
+              <span className="rays-bar__label">
+                {pending
+                  ? <Loader2 size={13} className="rays-bar__check animate-spin" aria-hidden="true" />
+                  : member && <Check size={13} className="rays-bar__check" aria-label={onToggle ? undefined : "One of this track's styles"} aria-hidden={onToggle ? true : undefined} />}
+                <span className="rays-bar__name">{s.style}</span>
+                {s.genre !== leadGenre && <span className="rays-bar__genre">{s.genre}</span>}
+              </span>
+              <span className="rays-bar__track" aria-hidden="true">
+                <span className="rays-bar__fill" style={{ width: `${(s.score / max) * 100}%` }} />
+              </span>
+              <span className="rays-bar__value">{s.score.toFixed(2)}</span>
+            </>
+          );
+          const facts = `${s.style} (${s.genre}): ${s.score.toFixed(2)}`;
           return (
             <li key={s.styleId} style={{ '--i': index } as React.CSSProperties}>
-              <Link
-                to={stylePath(s.styleId)}
-                className="rays-bar"
-                data-member={member ? 'true' : undefined}
-                title={`${s.style} (${s.genre}): ${s.score.toFixed(2)}${member ? ', one of this track\'s styles' : ''}`}
-              >
-                <span className="rays-bar__label">
-                  {member && <Check size={13} className="rays-bar__check" aria-label="One of this track's styles" />}
-                  <span className="rays-bar__name">{s.style}</span>
-                  {s.genre !== leadGenre && <span className="rays-bar__genre">{s.genre}</span>}
-                </span>
-                <span className="rays-bar__track" aria-hidden="true">
-                  <span className="rays-bar__fill" style={{ width: `${(s.score / max) * 100}%` }} />
-                </span>
-                <span className="rays-bar__value">{s.score.toFixed(2)}</span>
-              </Link>
+              {onToggle ? (
+                <button
+                  type="button"
+                  className="rays-bar"
+                  data-member={member ? 'true' : undefined}
+                  aria-pressed={member}
+                  aria-busy={pending || undefined}
+                  disabled={saving !== null}
+                  onClick={() => onToggle(s)}
+                  title={`${facts}. ${member ? 'Take it off this track' : 'Add it to this track'}`}
+                >
+                  {body}
+                </button>
+              ) : (
+                <Link
+                  to={stylePath(s.styleId)}
+                  className="rays-bar"
+                  data-member={member ? 'true' : undefined}
+                  title={`${facts}${member ? ', one of this track\'s styles' : ''}`}
+                >
+                  {body}
+                </Link>
+              )}
             </li>
           );
         })}
@@ -329,6 +364,7 @@ export const TrackRays: React.FC = () => {
   const [saving, setSaving] = useState<string | null>(null);
   const [taxonomy, setTaxonomy] = useState<GenreTaxonomy | null>(null);
   const [adding, setAdding] = useState<GenreTarget[]>([]);
+  const [advanced, setAdvanced] = useState(false);
 
   const load = useCallback(() => {
     setError(null);
@@ -341,14 +377,13 @@ export const TrackRays: React.FC = () => {
   useEffect(() => { setRays(null); void load(); }, [load]);
 
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!isAdmin || !advanced || taxonomy) return;
     fetchTaxonomy(usePlayerStore.getState().getAuthHeader()).then(setTaxonomy).catch(() => {});
-  }, [isAdmin]);
+  }, [isAdmin, advanced, taxonomy]);
 
   const change = async (target: { genre: string; styleId: number | null; style: string | null }, action: 'add' | 'remove', undoable = true) => {
     const { getAuthHeader, addToast } = usePlayerStore.getState();
-    const key = `${action}:${target.genre}|${target.styleId}`;
-    setSaving(key);
+    setSaving(saveKey(action, target.genre, target.styleId));
     try {
       await setTrackStyle(getAuthHeader(), trackId, { genre: target.genre, styleId: target.styleId, action });
       await load();
@@ -512,7 +547,12 @@ export const TrackRays: React.FC = () => {
                 <div className="rays-styles">
                   {rays.sound && rays.sound.closestStyles.length > 0 && (
                     <RiseOnView className="rays-styles__evidence">
-                      <StyleScoreChart scores={rays.sound.closestStyles} memberIds={memberStyleIds} />
+                      <StyleScoreChart
+                        scores={rays.sound.closestStyles}
+                        memberIds={memberStyleIds}
+                        saving={saving}
+                        onToggle={isAdmin ? s => void change(s, memberStyleIds.has(s.styleId) ? 'remove' : 'add') : undefined}
+                      />
                     </RiseOnView>
                   )}
                   <div className="rays-styles__summary">
@@ -521,8 +561,23 @@ export const TrackRays: React.FC = () => {
                         <GenreMixChart mix={rays.sound.genreMix} />
                       </RiseOnView>
                     )}
-                    <div className="rays-styles__outcome">
+                  </div>
+                </div>
+                <div className="rays-advanced">
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm rays-advanced__toggle"
+                    aria-expanded={advanced}
+                    aria-controls="rays-styles-advanced"
+                    onClick={() => setAdvanced(open => !open)}
+                  >
+                    Advanced
+                    <ChevronDown size={14} aria-hidden="true" className="rays-advanced__chevron" />
+                  </button>
+                  {advanced && (
+                    <div className="rays-styles__outcome" id="rays-styles-advanced">
                       <h4 className="rays-card__subtitle">Genres and styles</h4>
+                      <p className="rays-card__lede">What Aurora files this track under, and where each came from.</p>
                       {rays.styles.length === 0
                         ? <p className="browse-empty">Aurora hasn't placed this track in a genre yet{rays.tags.length ? ` (its tags: ${rays.tags.join(', ')})` : ''}.</p>
                         : (
@@ -567,7 +622,7 @@ export const TrackRays: React.FC = () => {
                         </div>
                       )}
                     </div>
-                  </div>
+                  )}
                 </div>
               </div>
             </div>
