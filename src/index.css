@@ -2254,10 +2254,24 @@ button.rays-bar:focus-visible {
   .rays-context-card__body { padding: 0.75rem 0.875rem; }
 }
 
+/* On a card the chips can't wear the card's own glass, or they vanish into
+   it: a neutral lift mixed from the text colour, the same in both themes. */
 .rays-context-card .rays-chips .rays-chip {
   min-height: 1.75rem;
   padding: 0.2rem 0.6rem;
+  border-color: color-mix(in srgb, var(--color-text-primary) 16%, transparent);
+  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
   font-size: 0.78rem;
+}
+
+.rays-context-card .rays-chips a.rays-chip:hover,
+.rays-context-card .rays-chips a.rays-chip:focus-visible {
+  border-color: color-mix(in srgb, var(--color-primary) 55%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+}
+
+.rays-context-card .rays-chip__share {
+  color: var(--color-text-secondary);
 }
 
 .rays-chip {
