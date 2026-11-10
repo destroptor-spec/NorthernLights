@@ -110,6 +110,21 @@ test('says where each genre and style came from, groups credits by person, and s
   expect(screen.queryByRole('button', { name: /^Remove / })).toBeNull();
 });
 
+test('when this is the track playing, the page says so and Play becomes Pause, then Resume', async () => {
+  const pause = jest.fn();
+  const resume = jest.fn(async () => {});
+  usePlayerStore.setState({ playlist: [{ id: 't1' }], currentIndex: 0, playbackState: 'playing', pause, resume } as never);
+  renderRays();
+  fireEvent.click(await screen.findByRole('button', { name: 'Pause' }));
+  expect(pause).toHaveBeenCalled();
+  expect(screen.getByText('now playing')).toBeTruthy();
+
+  usePlayerStore.setState({ playbackState: 'paused' } as never);
+  fireEvent.click(await screen.findByRole('button', { name: 'Resume' }));
+  expect(resume).toHaveBeenCalled();
+  usePlayerStore.setState({ playlist: [], currentIndex: null, playbackState: 'stopped' } as never);
+});
+
 test('an admin removes a style from the track, with Undo', async () => {
   usePlayerStore.setState({ currentUser: { role: 'admin' } } as never);
   renderRays();

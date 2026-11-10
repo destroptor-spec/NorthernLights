@@ -1,11 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Check, Loader2, Play, User2, X } from 'lucide-react';
+import { Check, Loader2, Pause, Play, User2, X } from 'lucide-react';
 import { HorizontalScrollRail } from '../HorizontalScrollRail';
 import { usePlayerStore } from '../../store/index';
 import { fetchTaxonomy, fetchTrackRays, genrePath, setTrackStyle, stylePath } from '../../api/browse';
 import { toPlayableTracks } from '../../utils/playableTracks';
 import { useArtistData } from '../../hooks/useArtistData';
+import { useDominantColor } from '../../hooks/useDominantColor';
+import { useInView } from '../../hooks/useInView';
+import { NowPlayingBadge } from '../now-playing/NowPlayingBadge';
 import { AlbumArt } from '../AlbumArt';
 import { BackButton } from '../library/BackButton';
 import { ArtistInitial } from '../library/ArtistInitial';
@@ -183,9 +186,39 @@ const ProfileChips: React.FC<{ entries: StyleProfileEntry[] }> = ({ entries }) =
   </ul>
 );
 
+/**
+ * The cover colour with the most light in it: saturation weighted towards
+ * mid lightness, so neither near-black nor near-white wins. Undefined when
+ * the cover has no colour worth glowing (the CSS falls back to emerald).
+ */
+function mostVivid(hexes: string[]): string | undefined {
+  let best: { hex: string; score: number } | undefined;
+  for (const hex of hexes) {
+    const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+    if (!m) continue;
+    const [r, g, b] = [m[1], m[2], m[3]].map(v => parseInt(v, 16) / 255);
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const lightness = (max + min) / 2;
+    const chroma = max - min;
+    const score = chroma * (1 - Math.abs(2 * lightness - 1) * 0.6);
+    if (!best || score > best.score) best = { hex, score };
+  }
+  return best && best.score >= 0.12 ? best.hex : undefined;
+}
+
+/**
+ * Lets the bars inside rise once, when the block is well inside the view
+ * (not on page load, when it is still below the fold). Never repeats.
+ */
+const RiseOnView: React.FC<{ className: string; children: React.ReactNode }> = ({ className, children }) => {
+  const [ref, inView] = useInView({ rootMargin: '0px 0px -12% 0px' });
+  return <div ref={ref} className={`${className} rays-rise${inView ? ' is-risen' : ''}`}>{children}</div>;
+};
+
 /** A 0–1 value between two words, e.g. Acoustic ↔ Electronic. */
-const SoundMeter: React.FC<{ label: string; low: string; high: string; value: number }> = ({ label, low, high, value }) => (
-  <div className="rays-meter">
+const SoundMeter: React.FC<{ label: string; low: string; high: string; value: number; index: number }> = ({ label, low, high, value, index }) => (
+  <div className="rays-meter" style={{ '--i': index } as React.CSSProperties}>
     <span className="rays-meter__label">{label}</span>
     <div className="rays-meter__bar" role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100}
       aria-valuenow={Math.round(value * 100)} aria-valuetext={`${Math.round(value * 100)} % ${high.toLowerCase()}`}>
@@ -216,10 +249,10 @@ const StyleScoreChart: React.FC<{ scores: NonNullable<Rays['sound']>['closestSty
         </span>
       </figcaption>
       <ul className="rays-bars">
-        {scores.map(s => {
+        {scores.map((s, index) => {
           const member = memberIds.has(s.styleId);
           return (
-            <li key={s.styleId}>
+            <li key={s.styleId} style={{ '--i': index } as React.CSSProperties}>
               <Link
                 to={stylePath(s.styleId)}
                 className="rays-bar"
@@ -259,8 +292,8 @@ const GenreMixChart: React.FC<{ mix: NonNullable<Rays['sound']>['genreMix'] }> =
         <span className="rays-chart__note">Each genre's share of the scores over all 400 styles.</span>
       </figcaption>
       <ul className="rays-bars">
-        {rows.map(r => (
-          <li key={r.genre}>
+        {rows.map((r, index) => (
+          <li key={r.genre} style={{ '--i': index } as React.CSSProperties}>
             <span className="rays-bar rays-bar--static" title={`${r.genre}: ${Math.round(r.share * 100)} % of the scores`}>
               <span className="rays-bar__label"><span className="rays-bar__name">{r.genre}</span></span>
               <span className="rays-bar__track" aria-hidden="true">
@@ -324,9 +357,19 @@ export const TrackRays: React.FC = () => {
     }
   };
 
+  // When this is the track you're hearing, the page knows: the badge shows,
+  // and Play becomes Pause or Resume.
+  const currentTrackId = usePlayerStore(st => (st.currentIndex != null ? st.playlist[st.currentIndex]?.id : null) ?? null);
+  const playbackState = usePlayerStore(st => st.playbackState);
+  const isCurrent = !!rays && currentTrackId === rays.track.id && playbackState !== 'stopped';
+  const isPlayingHere = isCurrent && playbackState === 'playing';
+
   const play = async () => {
     if (!rays) return;
-    await usePlayerStore.getState().setPlaylist(toPlayableTracks([rays.track]), 0, null);
+    const store = usePlayerStore.getState();
+    if (isPlayingHere) return store.pause();
+    if (isCurrent) return store.resume();
+    await store.setPlaylist(toPlayableTracks([rays.track]), 0, null);
   };
 
   // The artist's portrait and wide banner come through the same cached
@@ -334,7 +377,12 @@ export const TrackRays: React.FC = () => {
   const artistData = useArtistData(rays?.artist?.name || '', rays?.artist?.musicBrainzId, { enabled: !!rays?.artist });
   const portrait = artistData.imageUrl || rays?.artist?.imageUrl || null;
   const banner = artistData.artworkUrl || rays?.artist?.artworkUrl || null;
-  const cover = useMemo(() => (rays ? toPlayableTracks([rays.track])[0]?.artUrl : undefined), [rays]);
+  const playable = useMemo(() => (rays ? toPlayableTracks([rays.track]) : []), [rays]);
+  const cover = playable[0]?.artUrl;
+  // The cover's own light glows behind it: the rays of the title. The most
+  // vivid of its colours, not the most common (that is often near-black).
+  const { colors: coverColors } = useDominantColor(playable);
+  const glow = useMemo(() => mostVivid(coverColors), [coverColors]);
 
   const credits = useMemo(() => (rays ? creditsByPerson(rays.credits) : []), [rays]);
   const memberStyleIds = useMemo(() => new Set((rays?.styles || []).filter(r => r.styleId !== null).map(r => r.styleId as number)), [rays]);
@@ -359,8 +407,11 @@ export const TrackRays: React.FC = () => {
       {rays && track && (
         <>
           <header className="rays-hero">
-            <div className="rays-hero__cover">
-              <AlbumArt artUrl={cover} album={rays.album?.title || track.album} artist={track.artist} size={400} className="w-full h-full object-cover" />
+            <div className="rays-hero__art" style={{ '--rays-glow': glow } as React.CSSProperties}>
+              <span className="rays-hero__glow" aria-hidden="true" />
+              <div className="rays-hero__cover">
+                <AlbumArt artUrl={cover} album={rays.album?.title || track.album} artist={track.artist} size={400} className="w-full h-full object-cover" />
+              </div>
             </div>
             <div className="rays-hero__text">
               <h1 className="rays-title">
@@ -378,8 +429,11 @@ export const TrackRays: React.FC = () => {
               </p>
               <div className="browse-hero__actions">
                 <button type="button" className="btn btn-primary" onClick={() => void play()}>
-                  <Play size={16} fill="currentColor" aria-hidden="true" /> Play
+                  {isPlayingHere
+                    ? <><Pause size={16} fill="currentColor" aria-hidden="true" /> Pause</>
+                    : <><Play size={16} fill="currentColor" aria-hidden="true" /> {isCurrent ? 'Resume' : 'Play'}</>}
                 </button>
+                {isCurrent && <NowPlayingBadge state={isPlayingHere ? 'playing' : 'paused'} />}
               </div>
             </div>
           </header>
@@ -434,14 +488,14 @@ export const TrackRays: React.FC = () => {
                 <div className="rays-card" role="group" aria-labelledby="rays-sound-title">
                   <h3 className="rays-card__title" id="rays-sound-title">Sound</h3>
                   <p className="rays-card__lede">From Aurora's analysis of the audio file.</p>
-                  <div className="rays-sound">
-                    <SoundMeter label="Energy" low="Calm" high="Energetic" value={rays.sound.energy} />
-                    <SoundMeter label="Danceability" low="Still" high="Danceable" value={rays.sound.danceability} />
-                    <SoundMeter label="Character" low="Acoustic" high="Electronic" value={1 - rays.sound.acousticness} />
-                    <SoundMeter label="Voice" low="Vocal" high="Instrumental" value={rays.sound.instrumentalness} />
-                    <SoundMeter label="Brightness" low="Dark" high="Bright" value={rays.sound.brightness} />
-                    <SoundMeter label="Percussion" low="Smooth" high="Percussive" value={rays.sound.percussiveness} />
-                  </div>
+                  <RiseOnView className="rays-sound">
+                    <SoundMeter index={0} label="Energy" low="Calm" high="Energetic" value={rays.sound.energy} />
+                    <SoundMeter index={1} label="Danceability" low="Still" high="Danceable" value={rays.sound.danceability} />
+                    <SoundMeter index={2} label="Character" low="Acoustic" high="Electronic" value={1 - rays.sound.acousticness} />
+                    <SoundMeter index={3} label="Voice" low="Vocal" high="Instrumental" value={rays.sound.instrumentalness} />
+                    <SoundMeter index={4} label="Brightness" low="Dark" high="Bright" value={rays.sound.brightness} />
+                    <SoundMeter index={5} label="Percussion" low="Smooth" high="Percussive" value={rays.sound.percussiveness} />
+                  </RiseOnView>
                   {rays.sound.bpm && <p className="rays-fact">Tempo <strong>{rays.sound.bpm} BPM</strong></p>}
                 </div>
               )}
@@ -449,10 +503,10 @@ export const TrackRays: React.FC = () => {
               <div className="rays-card" role="group" aria-labelledby="rays-styles-title">
                 <h3 className="rays-card__title" id="rays-styles-title">Styles</h3>
                 {rays.sound && (rays.sound.closestStyles.length > 0 || rays.sound.genreMix.length > 0) && (
-                  <div className="rays-charts">
+                  <RiseOnView className="rays-charts">
                     {rays.sound.closestStyles.length > 0 && <StyleScoreChart scores={rays.sound.closestStyles} memberIds={memberStyleIds} />}
                     {rays.sound.genreMix.length > 0 && <GenreMixChart mix={rays.sound.genreMix} />}
-                  </div>
+                  </RiseOnView>
                 )}
 
                 <h4 className="rays-card__subtitle">Genres and styles</h4>
