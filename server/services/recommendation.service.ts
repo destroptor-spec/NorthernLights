@@ -1,11 +1,11 @@
 import { getUserSetting, initDB, createPlaylist, addTracksToPlaylist, getPlaylists, getPlaylistTracks, getUserRecentTracks, getUserTopTracks, deleteSystemPlaylistsForUser, getSystemSetting } from '../database';
-import { genreMatrixService } from './genreMatrix.service';
 import { getLibraryProfile, GenreHealth } from './libraryProfile.service';
 import { compileConceptToLibrary } from './llmConceptCompiler.service';
 import { queryWithRetry } from '../utils/db';
 import { christmasExclusionSql, isChristmasSeason, isChristmasRow } from '../utils/seasonalFilter';
 import { countryCode, languageCode, placeFromTag } from '../../shared/places';
-import { engineOf, seedStyleVector, styleBeta, styleCosine, styleVectorForNames, styleVectors, type StyleVector } from './styleOverlap.service';
+import { seedStyleVector, styleBeta, styleCosine, styleVectorForNames, styleVectors, type StyleVector } from './styleOverlap.service';
+import { isRowBanned, pathsMatchSql, trackGenrePathsJoin } from './genreTaxonomy/paths';
 import { moodOf, vocalsOf, type Mood } from '../../shared/descriptors';
 
 // 1. Z-Score normalization is handled by scaling 0-1 mapped values in JS, but 
@@ -61,61 +61,6 @@ function getSongDedupKey(track: { title?: string, artist?: string, mb_recording_
 function getGenreRoot(row: any): string {
   const path = row.genre_path || row.genre || '';
   return normalizeLooseKey(String(path).split('.')[0] || path || 'unknown-genre');
-}
-
-function getPathHopCost(pathA: string, pathB: string): number {
-  const a = String(pathA || '').toLowerCase().trim();
-  const b = String(pathB || '').toLowerCase().trim();
-  if (!a || !b) return 2.0;
-  if (a === b) return 0.0;
-
-  const partsA = a.split('.');
-  const partsB = b.split('.');
-  let commonLevels = 0;
-
-  for (let index = 0; index < Math.min(partsA.length, partsB.length); index++) {
-    if (partsA[index] === partsB[index]) {
-      commonLevels++;
-    } else {
-      break;
-    }
-  }
-
-  if (commonLevels >= 3) return 0.05;
-  if (commonLevels === 2) return 0.20;
-  if (commonLevels === 1) return 0.50;
-  return 2.0;
-}
-
-function getHopCostForCandidate(referenceGenre: string, row: any): number {
-  if (!referenceGenre) return 0;
-
-  const leafGenre = (row.genre || '').toLowerCase();
-  const fullPath = row.genre_path || genreMatrixService.getGenrePath(leafGenre) || leafGenre;
-  const referencePath = referenceGenre.includes('.')
-    ? referenceGenre.toLowerCase()
-    : (genreMatrixService.getGenrePath(referenceGenre) || referenceGenre.toLowerCase());
-
-  if (referencePath.includes('.') && fullPath.includes('.')) {
-    return getPathHopCost(referencePath, fullPath);
-  }
-
-  return genreMatrixService.getHopCost(referenceGenre, leafGenre);
-}
-
-function isPathBlockedByBannedGenre(path: string, bannedGenres: string[]): boolean {
-  const cleanPath = String(path || '').toLowerCase().trim();
-  if (!cleanPath) return false;
-  return bannedGenres.some((genre) => {
-    const banned = String(genre || '').toLowerCase().trim();
-    if (!banned) return false;
-    return cleanPath === banned || cleanPath.startsWith(`${banned}.`) || cleanPath.includes(`.${banned}.`) || cleanPath.endsWith(`.${banned}`);
-  });
-}
-
-function getFullGenrePath(row: any): string {
-  const leafGenre = (row.genre || '').toLowerCase();
-  return row.genre_path || genreMatrixService.getGenrePath(leafGenre) || leafGenre;
 }
 
 function toSystemGenreSlug(genre: string): string {
@@ -437,18 +382,14 @@ export async function getHubCollections(
     llmGenreCohesion?: number,
     llmDiscoveryBias?: number,
     llmArtistSpread?: number,
-    genrePenaltyCurve?: number,
     llmRecoveryStrength?: number,
     llmAdjacentReach?: number,
     llmTracksPerPlaylist?: number,
     llmPlaylistDiversity?: number,
     llmVetoMode?: 'hard' | 'adaptive',
     llmGenerationSource?: 'hub' | 'custom',
-    /** classic: genre hop cost and root enforcement; styles: a style-overlap bonus (phase 4). */
-    recommendationEngine?: string
   } = {}
 ) {
-  const engine = engineOf(settings.recommendationEngine ?? (userId ? await getUserSetting(userId, 'recommendationEngine') : null));
   // Style vectors for genre references ("electronic.house"), read once per name.
   const nameStyleCache = new Map<string, Promise<StyleVector | null>>();
   const styleRefFor = (reference: string) => {
@@ -461,24 +402,15 @@ export async function getHubCollections(
   const genreBlend = (settings.llmGenreCohesion ?? 50) / 100; // 0.0 to 1.0
   const discoveryBias = (settings.llmDiscoveryBias ?? 45) / 100; // 0.0 to 1.0
   const artistSpread = (settings.llmArtistSpread ?? 70) / 100; // 0.0 to 1.0
-  const penaltyCurve = 0.5 + ((settings.genrePenaltyCurve ?? 50) / 100) * 1.5; // 0.5 to 2.0
   const recoveryStrength = (settings.llmRecoveryStrength ?? 50) / 100; // 0.0 to 1.0
   const adjacentReach = (settings.llmAdjacentReach ?? 50) / 100; // 0.0 to 1.0
   const tracksPerPlaylist = settings.llmTracksPerPlaylist ?? 10;
   const diversity = (settings.llmPlaylistDiversity ?? 50) / 100; // 0.0 to 1.0
   const allowSoftVetoRecovery = settings.llmVetoMode === 'adaptive';
-  const genreKeySql = `regexp_replace(lower(trim(COALESCE(canonical_genre.name, t.genre))), '[^[:alnum:]_[:space:]-]', '', 'g')`;
+  // Genre paths from the fused genres and styles ("electronic.house").
   const genrePathJoinSql = `
     LEFT JOIN genres canonical_genre ON canonical_genre.id = t.genre_id
-    LEFT JOIN subgenre_mappings sm ON ${genreKeySql} = sm.sub_genre
-    LEFT JOIN LATERAL (
-      (SELECT path FROM genre_tree_paths WHERE LOWER(genre_name) = ${genreKeySql} LIMIT 1)
-      UNION ALL
-      (SELECT gtp.path FROM genre_tree_paths gtp
-       JOIN genre_alias ga ON gtp.genre_id = ga.genre
-       WHERE LOWER(ga.name) = ${genreKeySql} LIMIT 1)
-      LIMIT 1
-    ) gm ON true
+    ${trackGenrePathsJoin('t')}
   `;
   const normalizedTitleSql = `regexp_replace(trim(regexp_replace(lower(coalesce(t.title, '')), '[^[:alnum:]]+', ' ', 'g')), '[[:space:]]+', ' ', 'g')`;
   const structuralTitleCue = `(intro|outro|interlude|skit|prelude|prologue|epilogue|segue|transition)`;
@@ -493,66 +425,32 @@ export async function getHubCollections(
     )
   `;
 
-  // Helper: re-rank a pool of tracks by blending vector distance with genre.
-  // Classic: genre hop cost scales distance via Math.pow(1 + hopCost, weight * curve),
-  // and at high weight root enforcement blocks tracks from other genre families.
-  // Styles (phase 4): no genre penalty; shared styles with the reference (a
-  // genre name or path, or `styleRef` from seed tracks) pull a track closer by
-  // β · cos, with β = weight × 0.2.
-  // bannedGenres: normally an absolute veto; optionally become a strong penalty in adaptive recovery mode.
-  const reRankByHopCost = async (
+  // Helper: re-rank a pool of tracks by sound and shared styles (phase 4 of
+  // the genre redesign). Shared styles with the reference (a genre path, or
+  // `styleRef` from seed tracks) pull a track closer by β · cos, with
+  // β = weight × 0.2; changing genre never counts against a track.
+  // bannedPaths: normally an absolute veto; optionally a strong penalty in adaptive recovery mode.
+  const reRankByStyle = async (
     rows: any[],
     referenceGenre: string,
     limit: number,
     blendWeight?: number,
-    bannedGenres?: string[],
+    bannedPaths?: string[],
     softVeto = false,
-    allowedRoots: string[] = [],
     styleRef?: StyleVector | null,
   ) => {
     const weight = blendWeight ?? genreBlend;
-    if (engine === 'styles') {
-      const reference = styleRef !== undefined ? styleRef : referenceGenre ? await styleRefFor(referenceGenre) : null;
-      const candidateStyles = reference ? await styleVectors(await initDB(), rows.map(row => row.id).filter(Boolean)) : null;
-      const beta = styleBeta(weight * 100);
-      const scoredStyles = rows.map(row => {
-        const fullPath = getFullGenrePath(row);
-        const isBanned = !!(bannedGenres && isPathBlockedByBannedGenre(fullPath, bannedGenres));
-        if (isBanned && !softVeto) return { ...row, combined: Infinity };
-        const distance = Number(row.distance ?? 0);
-        const vetoPenalty = isBanned ? (1.75 + weight) : 1;
-        const styleOverlap = styleCosine(reference, candidateStyles?.get(row.id));
-        const combined = (distance * vetoPenalty) + (isBanned ? 0.15 : 0) - beta * styleOverlap - Number(row.pool_bias ?? 0);
-        return { ...row, styleOverlap, combined };
-      }).filter(row => Number.isFinite(row.combined));
-      scoredStyles.sort((a, b) => a.combined - b.combined);
-      return scoredStyles.slice(0, limit);
-    }
-    const anchorRoot = referenceGenre ? referenceGenre.split('.')[0].toLowerCase() : null;
-    const allowedRootSet = new Set(allowedRoots.map((root) => String(root || '').toLowerCase().trim()).filter(Boolean));
-
+    const reference = styleRef !== undefined ? styleRef : referenceGenre ? await styleRefFor(referenceGenre) : null;
+    const candidateStyles = reference ? await styleVectors(await initDB(), rows.map(row => row.id).filter(Boolean)) : null;
+    const beta = styleBeta(weight * 100);
     const scored = rows.map(row => {
-      const fullPath = getFullGenrePath(row);
-      const trackRoot = fullPath.split('.')[0].toLowerCase();
-      const isBanned = !!(bannedGenres && isPathBlockedByBannedGenre(fullPath, bannedGenres));
-
-      // 1. Explicit LLM vetoes (full path check)
-      if (isBanned && !softVeto) {
-        return { ...row, combined: Infinity };
-      }
-
-      // 2. Root node enforcement: at high weight, block different genre families
-      if (weight > 0.8 && anchorRoot && trackRoot && anchorRoot !== trackRoot && !allowedRootSet.has(trackRoot)) {
-        return { ...row, combined: Infinity };
-      }
-
-      // 3. Multiplicative penalty
+      const isBanned = isRowBanned(row, bannedPaths ?? []);
+      if (isBanned && !softVeto) return { ...row, combined: Infinity };
       const distance = Number(row.distance ?? 0);
-      const hopCost = getHopCostForCandidate(referenceGenre, row);
       const vetoPenalty = isBanned ? (1.75 + weight) : 1;
-      const poolBias = Number(row.pool_bias ?? 0);
-      const combined = ((distance * Math.pow(1 + hopCost, weight * penaltyCurve) * vetoPenalty) + (isBanned ? 0.15 : 0)) - poolBias;
-      return { ...row, combined };
+      const styleOverlap = styleCosine(reference, candidateStyles?.get(row.id));
+      const combined = (distance * vetoPenalty) + (isBanned ? 0.15 : 0) - beta * styleOverlap - Number(row.pool_bias ?? 0);
+      return { ...row, styleOverlap, combined };
     }).filter(row => Number.isFinite(row.combined));
     scored.sort((a, b) => a.combined - b.combined);
     return scored.slice(0, limit);
@@ -846,13 +744,13 @@ export async function getHubCollections(
 
     if (pathPrefixes.length > 0) {
       params.push(pathPrefixes);
-      whereClauses.push(`EXISTS (SELECT 1 FROM unnest($${nextParam}::text[]) AS prefix WHERE COALESCE(sm.path, gm.path) LIKE prefix || '%')`);
+      whereClauses.push(pathsMatchSql(`$${nextParam}`));
       nextParam++;
     }
 
     if (excludePrefixes.length > 0) {
       params.push(excludePrefixes);
-      whereClauses.push(`NOT EXISTS (SELECT 1 FROM unnest($${nextParam}::text[]) AS prefix WHERE COALESCE(sm.path, gm.path) LIKE prefix || '%')`);
+      whereClauses.push(`NOT ${pathsMatchSql(`$${nextParam}`)}`);
       nextParam++;
     }
 
@@ -917,7 +815,8 @@ export async function getHubCollections(
         SELECT
           t.*,
           COALESCE(canonical_genre.name, t.genre) AS genre,
-          COALESCE(sm.path, gm.path) AS genre_path,
+          tgp.genre_path,
+          tgp.genre_paths,
           tf.acoustic_vector_8d::text AS acoustic_vector_text,
           (${distanceSql}) - ${moodBoostSql} AS distance,
           ${noveltySql} AS novelty_boost,
@@ -964,8 +863,7 @@ export async function getHubCollections(
   ) => rows.filter((row) => {
     if (options.excludedSongKeys?.has(getSongDedupKey(row))) return false;
     if (options.bannedGenres && options.bannedGenres.length > 0 && !options.softVeto) {
-      const fullPath = getFullGenrePath(row);
-      if (isPathBlockedByBannedGenre(fullPath, options.bannedGenres)) return false;
+      if (isRowBanned(row, options.bannedGenres)) return false;
     }
     return true;
   });
@@ -1329,7 +1227,7 @@ export async function getHubCollections(
         : Math.min(0.35, compiled.effectiveGenreBlend);
       const softVetoEnabled = allowSoftVetoRecovery && relaxationLevelReached >= 3;
       const vetoModeLabel = compiled.bannedGenres.length > 0
-        ? `${allowSoftVetoRecovery ? 'hard veto with adaptive recovery' : 'hard veto'} [${compiled.bannedGenres.join(', ')}]`
+        ? `${allowSoftVetoRecovery ? 'hard veto with adaptive recovery' : 'hard veto'} [${compiled.bannedNames.join(', ')} → ${compiled.bannedGenres.join(', ')}]`
         : 'none';
       const admissibleRows = getFilteredCandidateRows(candidateRows, {
         excludedSongKeys: assignedSongKeys,
@@ -1337,37 +1235,34 @@ export async function getHubCollections(
         softVeto: softVetoEnabled,
       });
 
-      let ranked = await reRankByHopCost(
+      let ranked = await reRankByStyle(
         candidateRows,
         referenceGenre,
         Math.max(tracksPerPlaylist * 3, 30),
         llmGenreWeight,
         compiled.bannedGenres,
-        softVetoEnabled,
-        compiled.rootPaths
+        softVetoEnabled
       );
       if (allowSoftVetoRecovery && ranked.length === 0 && compiled.bannedGenres.length > 0) {
         console.warn(`[LLM Hub] "${concept.title}" → hard veto removed every candidate; retrying with soft veto penalties.`);
-        ranked = await reRankByHopCost(
+        ranked = await reRankByStyle(
           candidateRows,
           referenceGenre,
           Math.max(tracksPerPlaylist * 3, 30),
           llmGenreWeight,
           compiled.bannedGenres,
-          true,
-          compiled.rootPaths
+          true
         );
       }
       if (ranked.length === 0 && admissibleRows.length > 0) {
         console.warn(`[LLM Hub] "${concept.title}" → anchored rerank returned 0 despite ${admissibleRows.length} admissible candidates; retrying with relaxed rerank.`);
-        ranked = await reRankByHopCost(
+        ranked = await reRankByStyle(
           admissibleRows,
           '',
           Math.max(tracksPerPlaylist * 3, 30),
           Math.min(0.25, llmGenreWeight),
           [],
-          true,
-          compiled.rootPaths
+          true
         );
       }
       if (ranked.length === 0 && admissibleRows.length > 0) {
@@ -1796,8 +1691,8 @@ export async function getHubCollections(
         }
 
         if (upNextRes.rows.length > 0) {
-          const ranked = await reRankByHopCost(upNextRes.rows, referenceGenre, 30, undefined, undefined, false, [],
-            engine === 'styles' ? await seedStyleVector(await initDB(), [...recentIds].reverse()) : undefined);
+          const ranked = await reRankByStyle(upNextRes.rows, referenceGenre, 30, undefined, undefined, false,
+            await seedStyleVector(await initDB(), [...recentIds].reverse()));
           const pool = ranked.sort(() => 0.5 - Math.random());
           const playlist = await persistSystem('upnext', 'Up Next', 'Based on what you just listened to.', pool);
           if (playlist) engineHubs.push(playlist);
@@ -1838,8 +1733,8 @@ export async function getHubCollections(
        }
 
        if (upNextRes.rows.length > 0) {
-         const ranked = await reRankByHopCost(upNextRes.rows, referenceGenre, 30, undefined, undefined, false, [],
-           engine === 'styles' ? await seedStyleVector(await initDB(), [...recentIds].reverse()) : undefined);
+         const ranked = await reRankByStyle(upNextRes.rows, referenceGenre, 30, undefined, undefined, false,
+           await seedStyleVector(await initDB(), [...recentIds].reverse()));
          const pool = ranked.sort(() => 0.5 - Math.random());
          const playlist = await persistSystem('upnext', 'Up Next', 'Based on what you just listened to.', pool);
          if (playlist) engineHubs.push(playlist);
@@ -1941,8 +1836,8 @@ export async function getHubCollections(
 
         if (vaultRes.rows.length > 0) {
           // Styles: the reference is the taste the Vault matches, the user's top tracks.
-          const ranked = await reRankByHopCost(vaultRes.rows, referenceGenre, 30, undefined, undefined, false, [],
-            engine === 'styles' ? await seedStyleVector(await initDB(), topIds) : undefined);
+          const ranked = await reRankByStyle(vaultRes.rows, referenceGenre, 30, undefined, undefined, false,
+            await seedStyleVector(await initDB(), topIds));
           const shuffled = ranked.sort(() => 0.5 - Math.random());
           const playlist = await persistSystem('vault', 'The Vault', 'Unplayed tracks that match your taste.', shuffled);
           if (playlist) engineHubs.push(playlist);
@@ -1982,8 +1877,8 @@ export async function getHubCollections(
        }
 
        if (vaultRes.rows.length > 0) {
-         const ranked = await reRankByHopCost(vaultRes.rows, referenceGenre, 30, undefined, undefined, false, [],
-           engine === 'styles' ? await seedStyleVector(await initDB(), topTracksRes.rows.map((r: any) => r.id)) : undefined);
+         const ranked = await reRankByStyle(vaultRes.rows, referenceGenre, 30, undefined, undefined, false,
+           await seedStyleVector(await initDB(), topTracksRes.rows.map((r: any) => r.id)));
          const shuffled = ranked.sort(() => 0.5 - Math.random());
          const playlist = await persistSystem('vault', 'The Vault', 'Unplayed tracks that match your taste.', shuffled);
          if (playlist) engineHubs.push(playlist);
@@ -2376,12 +2271,10 @@ export async function calculateNextInfinityTrack(
   let discoveryLevel = settings.discoveryLevel ?? 50; // 1-100
   let genreStrictness = settings.genreStrictness ?? 50; // 0-100
   
-  // Base parameters. Classic: genre strictness scales the hop-cost penalty.
-  // Styles (phase 4): it sets β, the style-overlap bonus; no genre penalty.
-  const engine = engineOf(settings.recommendationEngine);
-  let genreWeight = (genreStrictness / 100) * 3.0;
+  // Base parameters. Genre strictness ("Style match") sets β, the
+  // style-overlap bonus; changing genre never counts against a track.
   let styleWeight = styleBeta(genreStrictness);
-  const seedStyles = engine === 'styles' && seedTrackIds.length > 0
+  const seedStyles = seedTrackIds.length > 0
     ? await seedStyleVector(await initDB(), seedTrackIds)
     : null;
   let poolSize = Math.max(5, Math.floor(discoveryLevel / 2));
@@ -2389,20 +2282,6 @@ export async function calculateNextInfinityTrack(
                       ? settings.artistAmnesiaLimit 
                       : constraints.historyPenaltySize;
                       
-  let currentGenre = '';
-  if (seedTrackIds.length > 0) {
-    const lastTrackId = seedTrackIds[seedTrackIds.length - 1];
-    const lastTrackRes = await queryWithRetry(`
-      SELECT COALESCE(g.name, t.genre) AS genre
-      FROM tracks t
-      LEFT JOIN genres g ON g.id = t.genre_id
-      WHERE t.id = $1
-    `, [lastTrackId]);
-    if (lastTrackRes.rows.length > 0 && (lastTrackRes.rows[0] as any).genre) {
-      currentGenre = (lastTrackRes.rows[0] as any).genre as string;
-    }
-  }
-
   let finalCandidates: any[] = [];
 
   // Iterative Relaxation Loop
@@ -2449,20 +2328,12 @@ export async function calculateNextInfinityTrack(
 
     if (res.rows.length > 0) {
       const finite = res.rows.filter(row => Number.isFinite(row.distance));
-      // Step 4.2: genre. Styles: shared styles pull a candidate closer
-      // (d − β·cos); a seed without styles adds nothing. Classic: hop cost.
+      // Step 4.2: shared styles pull a candidate closer (d − β·cos); a seed
+      // without genres or styles adds nothing.
       const candidateStyles = seedStyles ? await styleVectors(await initDB(), finite.map((row: any) => row.id)) : null;
       const scored = finite.map((row: any) => {
-        if (engine === 'styles') {
-          const styleOverlap = styleCosine(seedStyles, candidateStyles?.get(row.id));
-          return { ...row, hopCost: 0, styleOverlap, originalDistance: row.distance, finalScore: row.distance - styleWeight * styleOverlap };
-        }
-        // An untagged anchor has no genre to stay near. Scoring it would give
-        // every tagged candidate the "unknown genre" maximum and steer Infinity
-        // toward other untagged tracks, so genre strictness sits out instead.
-        const hopCost = currentGenre ? genreMatrixService.getHopCost(currentGenre, row.genre || '') : 0;
-        const finalScore = row.distance * Math.pow(1 + hopCost, genreWeight / 3.0);
-        return { ...row, hopCost, originalDistance: row.distance, finalScore };
+        const styleOverlap = styleCosine(seedStyles, candidateStyles?.get(row.id));
+        return { ...row, styleOverlap, originalDistance: row.distance, finalScore: row.distance - styleWeight * styleOverlap };
       });
 
       // Step 4.2b: Filter out "Same Song" duplicates (different albums/remasters)
@@ -2487,11 +2358,8 @@ export async function calculateNextInfinityTrack(
       finalCandidates = pool.slice(0, poolSize);
       if (finalCandidates.length > 0) {
         const avgMatch = finalCandidates.reduce((sum, c) => sum + (c.finalScore || 0), 0) / finalCandidates.length;
-        const avgHop = finalCandidates.reduce((sum, c) => sum + (c.hopCost || 0), 0) / finalCandidates.length;
         const avgOverlap = finalCandidates.reduce((sum, c) => sum + (c.styleOverlap || 0), 0) / finalCandidates.length;
-        console.log(engine === 'styles'
-          ? `[Engine] (styles) Found tracks after ${attempt} relaxation(s). AvgMatch: ${avgMatch.toFixed(3)}, AvgStyleOverlap: ${avgOverlap.toFixed(2)}, PenaltySize: ${penaltySize}, Beta: ${styleWeight.toFixed(3)}${seedStyles ? '' : ' (seed has no styles)'}`
-          : `[Engine] Found tracks after ${attempt} relaxation(s). AvgMatch: ${avgMatch.toFixed(3)}, AvgHop: ${avgHop.toFixed(2)}, PenaltySize: ${penaltySize}, GenWt: ${genreWeight.toFixed(2)}`);
+        console.log(`[Engine] Found tracks after ${attempt} relaxation(s). AvgMatch: ${avgMatch.toFixed(3)}, AvgStyleOverlap: ${avgOverlap.toFixed(2)}, PenaltySize: ${penaltySize}, Beta: ${styleWeight.toFixed(3)}${seedStyles ? '' : ' (seed has no styles)'}`);
         break; // Met quota
       }
     }
@@ -2499,7 +2367,6 @@ export async function calculateNextInfinityTrack(
     // Relax Constraints. Repeat protection is the listener's explicit limit
     // and is never relaxed; widening the pool and loosening genre is enough.
     poolSize += 10;
-    genreWeight *= 0.75;
     styleWeight *= 0.75;
   }
 
@@ -2524,12 +2391,11 @@ export async function calculateNextInfinityTrack(
   }
 
   // Wander Factor: Pick a track from the final candidates using a weighted randomizer.
-  // Styles: scores can drop to zero or below (d − β·cos), so weigh by the
-  // score shifted by β, i.e. 1 / (d + β·(1 − cos)): positive, same order.
-  const scoreShift = engine === 'styles' ? styleWeight : 0;
+  // Scores can drop to zero or below (d − β·cos), so weigh by the score
+  // shifted by β, i.e. 1 / (d + β·(1 − cos)): positive, same order.
   const candidates = finalCandidates.map((row: any) => ({
       ...row,
-      weight: 1 / (Math.max(0.01, row.finalScore + scoreShift))
+      weight: 1 / (Math.max(0.01, row.finalScore + styleWeight))
   }));
 
   const totalWeight = candidates.reduce((sum, c) => sum + c.weight, 0);

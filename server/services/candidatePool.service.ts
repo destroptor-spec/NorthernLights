@@ -1,5 +1,7 @@
+import { initDB } from '../database';
 import { queryWithRetry } from '../utils/db';
 import { christmasExclusionSql } from '../utils/seasonalFilter';
+import { artistGenrePaths, isRowBanned, pathsMatchSql, resolveBannedPaths, resolveGenrePaths, trackGenrePathsJoin } from './genreTaxonomy/paths';
 
 // Shared multi-pool primitive used by smart-hub features (artist radio,
 // daylist). Concepts are borrowed from the LLM playlist generator
@@ -34,16 +36,8 @@ export function getSongDedupKey(row: { title?: string; artist?: string; mb_recor
 }
 
 // ─── Genre helpers ─────────────────────────────────────────
-
-export function isPathBlockedByBannedGenre(path: string, bannedGenres: string[]): boolean {
-  const clean = String(path || '').toLowerCase().trim();
-  if (!clean) return false;
-  return bannedGenres.some((g) => {
-    const banned = String(g || '').toLowerCase().trim();
-    if (!banned) return false;
-    return clean === banned || clean.startsWith(`${banned}.`) || clean.includes(`.${banned}.`) || clean.endsWith(`.${banned}`);
-  });
-}
+// Paths come from the fused genres and styles ("electronic.house"; see
+// genreTaxonomy/paths.ts).
 
 function getFullGenrePath(row: any): string {
   return String(row.genre_path || row.genre || '').toLowerCase();
@@ -106,19 +100,7 @@ const PLAYABLE_TRACK_SQL = `
   )
 `;
 
-const GENRE_KEY_SQL = `regexp_replace(lower(trim(COALESCE(canonical_genre.name, t.genre))), '[^[:alnum:]_[:space:]-]', '', 'g')`;
-const GENRE_PATH_JOIN_SQL = `
-  LEFT JOIN genres canonical_genre ON canonical_genre.id = t.genre_id
-  LEFT JOIN subgenre_mappings sm ON ${GENRE_KEY_SQL} = sm.sub_genre
-  LEFT JOIN LATERAL (
-    (SELECT path FROM genre_tree_paths WHERE LOWER(genre_name) = ${GENRE_KEY_SQL} LIMIT 1)
-    UNION ALL
-    (SELECT gtp.path FROM genre_tree_paths gtp
-     JOIN genre_alias ga ON gtp.genre_id = ga.genre
-     WHERE LOWER(ga.name) = ${GENRE_KEY_SQL} LIMIT 1)
-    LIMIT 1
-  ) gm ON true
-`;
+const GENRE_PATH_JOIN_SQL = trackGenrePathsJoin('t');
 
 // ─── Public types ──────────────────────────────────────────
 
@@ -143,6 +125,7 @@ export interface PoolSpec {
   vectorStr?: string | null;
   embeddingCentroidStr?: string | null;
   effnetWeight?: number;
+  /** Genre paths ("electronic", "rock.punk"): keep tracks with one of these or below. */
   pathPrefixes?: string[];
   excludePrefixes?: string[];
   enableDiscoveryBoost?: boolean;
@@ -155,7 +138,8 @@ export interface PoolSpec {
 export interface FetchPoolOptions extends PoolSpec {
   userId: string;
   excludeIds?: string[];
-  bannedGenres?: string[];
+  /** Banned genre paths (from resolveBannedPaths), a hard veto. */
+  bannedPaths?: string[];
 }
 
 export interface BuildPlaylistOptions {
@@ -163,6 +147,7 @@ export interface BuildPlaylistOptions {
   count: number;
   poolSpecs: PoolSpec[];
   poolTargets?: Map<PoolName, number>;
+  /** Genre or style names to keep out ("metal", "techno"); resolved to paths. */
   bannedGenres?: string[];
   excludeIds?: string[];
   artistSpread?: number;
@@ -274,13 +259,13 @@ export async function fetchCandidatePool(opts: FetchPoolOptions): Promise<any[]>
   if (opts.pathPrefixes && opts.pathPrefixes.length > 0) {
     params.push(opts.pathPrefixes);
     const p = nextParam++;
-    where.push(`EXISTS (SELECT 1 FROM unnest($${p}::text[]) AS prefix WHERE COALESCE(sm.path, gm.path) LIKE prefix || '%')`);
+    where.push(pathsMatchSql(`$${p}`));
   }
 
   if (opts.excludePrefixes && opts.excludePrefixes.length > 0) {
     params.push(opts.excludePrefixes);
     const p = nextParam++;
-    where.push(`NOT EXISTS (SELECT 1 FROM unnest($${p}::text[]) AS prefix WHERE COALESCE(sm.path, gm.path) LIKE prefix || '%')`);
+    where.push(`NOT ${pathsMatchSql(`$${p}`)}`);
   }
 
   if (opts.restrictArtistIds && opts.restrictArtistIds.length > 0) {
@@ -295,20 +280,14 @@ export async function fetchCandidatePool(opts: FetchPoolOptions): Promise<any[]>
     where.push(`NOT (t.id::text = ANY($${p}::text[]))`);
   }
 
-  if (opts.bannedGenres && opts.bannedGenres.length > 0) {
+  if (opts.bannedPaths && opts.bannedPaths.length > 0) {
     if (!needsGenreJoin) {
       joinSql += GENRE_PATH_JOIN_SQL;
       needsGenreJoin = true;
     }
-    params.push(opts.bannedGenres);
+    params.push(opts.bannedPaths);
     const p = nextParam++;
-    where.push(`NOT EXISTS (
-      SELECT 1 FROM unnest($${p}::text[]) AS banned(name)
-      WHERE COALESCE(sm.path, gm.path, lower(canonical_genre.name), lower(t.genre), '') = banned.name
-         OR COALESCE(sm.path, gm.path, lower(canonical_genre.name), lower(t.genre), '') LIKE banned.name || '.%'
-         OR COALESCE(sm.path, gm.path, lower(canonical_genre.name), lower(t.genre), '') LIKE '%.' || banned.name
-         OR COALESCE(sm.path, gm.path, lower(canonical_genre.name), lower(t.genre), '') LIKE '%.' || banned.name || '.%'
-    )`);
+    where.push(`NOT ${pathsMatchSql(`$${p}`)}`);
   }
 
   // Christmas / VA filters are always-on.
@@ -346,7 +325,8 @@ export async function fetchCandidatePool(opts: FetchPoolOptions): Promise<any[]>
     SELECT * FROM (
       SELECT
         t.*,
-        ${needsGenreJoin ? `COALESCE(sm.path, gm.path)` : `NULL::text`} AS genre_path,
+        ${needsGenreJoin ? `tgp.genre_path` : `NULL::text`} AS genre_path,
+        ${needsGenreJoin ? `tgp.genre_paths` : `NULL::text[]`} AS genre_paths,
         CASE WHEN COALESCE(tf.is_simulated, FALSE) THEN NULL
              ELSE tf.acoustic_vector_8d::text END AS acoustic_vector_text,
         ${distanceSql} AS distance,
@@ -570,14 +550,14 @@ export function selectDiverseTracks(rows: any[], count: number, opts: SelectOpti
 async function fetchPoolsParallel(
   userId: string,
   specs: PoolSpec[],
-  bannedGenres: string[],
+  bannedPaths: string[],
   excludeIds: string[],
 ): Promise<any[]> {
   const results = await Promise.all(
     specs.map((spec) => fetchCandidatePool({
       ...spec,
       userId,
-      bannedGenres,
+      bannedPaths,
       excludeIds,
     }).catch((e) => {
       console.error(`[CandidatePool] Pool '${spec.name}' failed`, e);
@@ -591,7 +571,7 @@ export async function buildPlaylistFromPools(opts: BuildPlaylistOptions): Promis
   const artistSpread = opts.artistSpread ?? 0.70;
   const diversity = opts.diversity ?? 0.50;
   const discoveryBias = opts.discoveryBias ?? 0.45;
-  const bannedGenres = opts.bannedGenres ?? [];
+  const bannedPaths = opts.bannedGenres?.length ? await resolveBannedPaths(await initDB(), opts.bannedGenres) : [];
   const excludeIds = opts.excludeIds ?? [];
 
   const attempts: Array<{ specs: PoolSpec[]; targets?: Map<PoolName, number>; softVeto: boolean; level: number }> = [
@@ -612,7 +592,7 @@ export async function buildPlaylistFromPools(opts: BuildPlaylistOptions): Promis
   let best: BuildPlaylistResult | null = null;
 
   for (const attempt of attempts) {
-    const rows = await fetchPoolsParallel(opts.userId, attempt.specs, attempt.softVeto ? [] : bannedGenres, excludeIds);
+    const rows = await fetchPoolsParallel(opts.userId, attempt.specs, attempt.softVeto ? [] : bannedPaths, excludeIds);
     if (rows.length === 0) continue;
 
     // Banned-genre soft veto: keep but penalise rows that match a banned path.
@@ -620,8 +600,7 @@ export async function buildPlaylistFromPools(opts: BuildPlaylistOptions): Promis
     // played track pulls strongly toward the front without dwarfing acoustic
     // signal entirely.
     const ranked = rows.map((r) => {
-      const path = getFullGenrePath(r);
-      const banned = bannedGenres.length > 0 && isPathBlockedByBannedGenre(path, bannedGenres);
+      const banned = isRowBanned(r, bannedPaths);
       const distance = Number(r.distance ?? 0);
       const poolBias = Number(r.pool_bias ?? 0);
       const novelty = Number(r.novelty_boost ?? 0);
@@ -802,59 +781,21 @@ export async function getLibraryMainstreamVector(): Promise<string | null> {
 
 // ─── Genre path resolver ───────────────────────────────────
 
+/** The first path for a genre or style name (see genreTaxonomy/paths.ts). */
 export async function resolveGenrePath(genre: string): Promise<string | null> {
-  const clean = String(genre || '').toLowerCase().trim();
-  if (!clean) return null;
-  const res = await queryWithRetry(
-    `(SELECT path FROM genre_tree_paths WHERE LOWER(genre_name) = $1 LIMIT 1)
-     UNION ALL
-     (SELECT gtp.path FROM genre_tree_paths gtp
-      JOIN genre_alias ga ON gtp.genre_id = ga.genre
-      WHERE LOWER(ga.name) = $1 LIMIT 1)
-     LIMIT 1`,
-    [clean]
-  );
-  return (res.rows[0] as any)?.path || null;
+  return (await resolveGenrePaths(await initDB(), genre))[0] ?? null;
 }
 
 // ─── Seed-artist genre paths ──────────────────────────────
 
-// For artist radio: derive the seed artist's primary genre path + simple
-// adjacent paths (sharing one or two parent levels). Read-only SQL; if the
-// artist has no resolvable genre, returns empty arrays and the radio falls
-// back to embedding K-NN with no genre filter.
+// For artist radio: the seed artist's strongest style, their next styles as
+// adjacent paths, and the genre as the root, from the artist's profile
+// (artist_styles). An artist with no profile gets empty paths and the radio
+// falls back to embedding K-NN with no genre filter.
 export async function getArtistGenrePaths(artistId: string): Promise<{
   primaryPath: string | null;
   adjacentPaths: string[];
   rootPath: string | null;
 }> {
-  const res = await queryWithRetry(
-    `
-    SELECT g.name AS genre, COUNT(*) AS n
-    FROM tracks t
-    JOIN genres g ON g.id = t.genre_id AND g.merged_into IS NULL
-    WHERE t.artist_id::text = $1
-      AND g.name <> ''
-    GROUP BY g.id, g.name
-    ORDER BY n DESC
-    LIMIT 4
-    `,
-    [artistId]
-  );
-
-  if (res.rowCount === 0) return { primaryPath: null, adjacentPaths: [], rootPath: null };
-
-  const genres = (res.rows as any[]).map((r) => String(r.genre).toLowerCase());
-  const paths: string[] = [];
-  for (const g of genres) {
-    const p = await resolveGenrePath(g);
-    if (p) paths.push(p);
-  }
-
-  if (paths.length === 0) return { primaryPath: null, adjacentPaths: [], rootPath: null };
-
-  const primaryPath = paths[0];
-  const root = primaryPath.split('.')[0];
-  const adjacent = Array.from(new Set(paths.slice(1))).filter((p) => p !== primaryPath);
-  return { primaryPath, adjacentPaths: adjacent, rootPath: root };
+  return artistGenrePaths(await initDB(), artistId);
 }

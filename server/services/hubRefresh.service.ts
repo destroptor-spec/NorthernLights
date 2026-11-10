@@ -43,7 +43,6 @@ export async function getLlmPlaylistSettings(userId: string): Promise<{
   llmGenreCohesion: number;
   llmDiscoveryBias: number;
   llmArtistSpread: number;
-  genrePenaltyCurve: number;
   llmRecoveryStrength: number;
   llmAdjacentReach: number;
   llmTracksPerPlaylist: number;
@@ -54,7 +53,6 @@ export async function getLlmPlaylistSettings(userId: string): Promise<{
   const legacyGenreBlendRaw = genreCohesionRaw === null ? await getUserSetting(userId, 'genreBlendWeight') : null;
   const discoveryBiasRaw = await getUserSetting(userId, 'llmDiscoveryBias');
   const artistSpreadRaw = await getUserSetting(userId, 'llmArtistSpread');
-  const penaltyCurveRaw = await getUserSetting(userId, 'genrePenaltyCurve');
   const recoveryStrengthRaw = await getUserSetting(userId, 'llmRecoveryStrength');
   const adjacentReachRaw = await getUserSetting(userId, 'llmAdjacentReach');
   const tracksPerRaw = await getUserSetting(userId, 'llmTracksPerPlaylist');
@@ -65,7 +63,6 @@ export async function getLlmPlaylistSettings(userId: string): Promise<{
     llmGenreCohesion: genreCohesionRaw !== null ? Number(genreCohesionRaw) : (legacyGenreBlendRaw !== null ? Number(legacyGenreBlendRaw) : 50),
     llmDiscoveryBias: discoveryBiasRaw !== null ? Number(discoveryBiasRaw) : 45,
     llmArtistSpread: artistSpreadRaw !== null ? Number(artistSpreadRaw) : 70,
-    genrePenaltyCurve: penaltyCurveRaw !== null ? Number(penaltyCurveRaw) : 50,
     llmRecoveryStrength: recoveryStrengthRaw !== null ? Number(recoveryStrengthRaw) : 50,
     llmAdjacentReach: adjacentReachRaw !== null ? Number(adjacentReachRaw) : 50,
     llmTracksPerPlaylist: tracksPerRaw !== null ? Number(tracksPerRaw) : 10,

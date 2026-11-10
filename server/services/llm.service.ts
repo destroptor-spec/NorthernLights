@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
-import { getSystemSetting } from '../database';
-import { getGenreVocabulary } from './genreMatrix.service';
+import { getSystemSetting, initDB } from '../database';
+import { getStyleVocabulary } from './genreTaxonomy/paths';
 import { MOOD_NAMES } from '../../shared/descriptors';
 
 export async function getLlmConfig() {
@@ -70,10 +70,10 @@ export async function generateHubConcepts(
 
   const conceptCount = context.count ?? 3;
 
-  // Fetch MBDB vocabulary to constrain LLM genre choices
-  const vocabulary = await getGenreVocabulary();
+  // The library's own genres and styles, so the AI's choices map onto tracks.
+  const vocabulary = await getStyleVocabulary(await initDB());
   const vocabStr = vocabulary.length > 0
-    ? `\nYou MUST only use genre names from this vocabulary for "target_genres" and "banned_genres":\n${vocabulary.join(', ')}\nPrefer specific library-supported genres from the vocabulary over broad root genres. Use broad roots only when no specific vocabulary term fits.\n`
+    ? `\nYou MUST only use names from this list of the listener's genres and styles (most common first) for "target_genres" and "banned_genres":\n${vocabulary.join(', ')}\nPrefer specific styles over the broad genres at the start of the list. Use a broad genre only when no style fits.\n`
     : '';
 
   const prompt = `
@@ -94,8 +94,8 @@ Only output valid JSON matching this schema:
       "section": "Time-of-Day",
       "title": "Deep Work Coding",
       "description": "Driving electronic beats with zero vocals.",
-      "target_genres": ["electronic", "ambient", "techno"],
-      "banned_genres": ["rock", "metal", "country", "classical"],
+      "target_genres": ["Ambient", "Techno", "Downtempo"],
+      "banned_genres": ["Rock", "Heavy Metal", "Country", "Classical"],
       "target_vector": [0.6, 0.3, 0.8, 0.5, 0.9, 0.1, 0.8, 0.7] 
     }
   ]
@@ -204,10 +204,10 @@ export async function generateCustomPlaylist(userPrompt: string): Promise<HubCol
 
   const openai = new OpenAI({ baseURL: baseUrl, apiKey });
 
-  // Fetch MBDB vocabulary to constrain LLM genre choices
-  const vocabulary = await getGenreVocabulary();
+  // The library's own genres and styles, so the AI's choices map onto tracks.
+  const vocabulary = await getStyleVocabulary(await initDB());
   const vocabStr = vocabulary.length > 0
-    ? `\nYou MUST only use genre names from this vocabulary for "target_genres" and "banned_genres":\n${vocabulary.join(', ')}\nPrefer specific library-supported genres from the vocabulary over broad root genres. Use broad roots only when no specific vocabulary term fits.\n`
+    ? `\nYou MUST only use names from this list of the listener's genres and styles (most common first) for "target_genres" and "banned_genres":\n${vocabulary.join(', ')}\nPrefer specific styles over the broad genres at the start of the list. Use a broad genre only when no style fits.\n`
     : '';
 
   const prompt = `
@@ -244,8 +244,8 @@ Only output valid JSON matching this schema exactly (countries, languages, year_
   "section": "Custom",
   "title": "A short, catchy title for the playlist",
   "description": "A very short description matching the mood.",
-  "target_genres": ["rock", "indie", "alternative"],
-  "banned_genres": ["classical", "opera", "country"],
+  "target_genres": ["Indie Rock", "Alternative Rock", "Shoegaze"],
+  "banned_genres": ["Classical", "Opera", "Country"],
   "target_vector": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
   "countries": ["DK"],
   "languages": ["da"],

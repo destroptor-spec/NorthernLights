@@ -705,4 +705,67 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     expect(await styleVectorForNames(pool, ['no such genre'])).toBeNull();
     expect(styleCosine(grunge, await seedStyleVector(pool, [idOf('v2-other-genre'), idOf('v2-grunge-1')]))).toBeGreaterThan(overlap);
   });
+
+  test('genre paths (phase 4): tracks, names, banned names and artists map onto the fused genres and styles', async () => {
+    const paths = await import('../../services/genreTaxonomy/paths');
+    const { getLibraryProfile, clearLibraryProfileCache } = await import('../../services/libraryProfile.service');
+    paths.clearGenrePathCache();
+    const styleId = async (genre: string, name: string) => (await pool.query('SELECT id FROM style WHERE genre = $1 AND name = $2', [genre, name])).rows[0].id;
+    const punk = await styleId('Rock', 'Punk');
+    const artist = (await pool.query(`INSERT INTO artists (name) VALUES ('Paths Artist') RETURNING id`)).rows[0].id;
+    for (const name of ['p-punk', 'p-pop']) {
+      await db.addTrack(track(name, null));
+      await pool.query('UPDATE tracks SET artist_id = $2 WHERE id = $1', [idOf(name), artist]);
+      await pool.query(`INSERT INTO track_features (track_id, acoustic_vector_8d, is_simulated) VALUES ($1, '[0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5]', false)`, [idOf(name)]);
+    }
+    const member = (id: string, genre: string, style: number | null, strength: number) => pool.query(
+      `INSERT INTO track_styles (track_id, genre, style_id, source, strength, confidence, fusion_version) VALUES ($1, $2, $3, 'override', $4, 1, 2)`,
+      [id, genre, style, strength]);
+    await member(idOf('p-punk'), 'Rock', punk, 0.9);
+    await member(idOf('p-punk'), 'Pop', null, 0.5);
+    await member(idOf('p-pop'), 'Pop', null, 0.8);
+    await pool.query(`INSERT INTO artist_styles (artist_id, genre, style_id, share, albums, tracks, fusion_version)
+      VALUES ($1, 'Rock', $2, 0.5, 1, 1, 2), ($1, 'Pop', NULL, 1, 1, 2, 2), ($1, 'Rock', NULL, 0.5, 1, 1, 2)`, [artist, punk]);
+
+    // Names as the AI writes them.
+    expect(await paths.resolveGenrePaths(pool, 'Deep House')).toEqual(['electronic.deep house']);
+    expect((await paths.resolveGenrePaths(pool, 'trip hop')).sort()).toEqual(['electronic.trip hop', 'hip hop.trip hop']);
+    expect(await paths.resolveGenrePaths(pool, 'Hip Hop')).toEqual(['hip hop']);
+    expect(await paths.resolveGenrePaths(pool, 'electronic.house')).toEqual(['electronic.house']);
+    expect(await paths.resolveGenrePaths(pool, 'P.Funk')).toEqual(['funk / soul.p funk']);
+    expect(await paths.resolveGenrePaths(pool, 'no such genre')).toEqual([]);
+    // Banned names: a family word bans every style ending in it, never the whole genre.
+    const metal = await paths.resolveBannedPaths(pool, ['metal']);
+    expect(metal).toEqual(expect.arrayContaining(['rock.heavy metal', 'rock.death metal', 'rock.doom metal']));
+    expect(metal).not.toContain('rock');
+    expect(await paths.resolveBannedPaths(pool, ['Rock'])).toEqual(['rock']);
+
+    // A track's paths: one per membership, the strongest first.
+    const rows = (await pool.query(`SELECT t.id, tgp.genre_path, tgp.genre_paths FROM tracks t ${paths.trackGenrePathsJoin('t')} WHERE t.id = ANY($1) ORDER BY t.title`,
+      [[idOf('p-punk'), idOf('p-pop'), idOf('t-untagged')]])).rows;
+    const byId = new Map(rows.map(r => [r.id, r]));
+    expect(byId.get(idOf('p-punk'))).toMatchObject({ genre_path: 'rock.punk', genre_paths: ['rock.punk', 'pop'] });
+    expect(byId.get(idOf('p-pop'))).toMatchObject({ genre_path: 'pop', genre_paths: ['pop'] });
+    const matching = async (prefixes: string[]) => (await pool.query(
+      `SELECT t.id FROM tracks t ${paths.trackGenrePathsJoin('t')} WHERE t.id = ANY($1) AND ${paths.pathsMatchSql('$2')} ORDER BY t.id`,
+      [[idOf('p-punk'), idOf('p-pop')], prefixes])).rows.map(r => r.id);
+    expect(await matching(['rock'])).toEqual([idOf('p-punk')]);
+    expect(await matching(['pop'])).toEqual([idOf('p-punk'), idOf('p-pop')].sort());
+    expect(await matching(['rock.pu'])).toEqual([]);
+    expect(paths.isRowBanned(byId.get(idOf('p-punk')), await paths.resolveBannedPaths(pool, ['punk']))).toBe(true);
+    expect(paths.isRowBanned(byId.get(idOf('p-pop')), await paths.resolveBannedPaths(pool, ['punk']))).toBe(false);
+
+    // Artist radio: the strongest style, then the rest, and the genre of the strongest.
+    expect(await paths.artistGenrePaths(pool, artist)).toEqual({ primaryPath: 'rock.punk', adjacentPaths: ['pop', 'rock'], rootPath: 'rock' });
+    // The AI's vocabulary: the library's genres first, then its styles.
+    const vocabulary = await paths.getStyleVocabulary(pool);
+    expect(vocabulary.indexOf('Rock')).toBeLessThan(vocabulary.indexOf('Punk'));
+    expect(vocabulary).not.toContain('Gabber');
+    // Genre health counts a track under its genre and each of its styles.
+    clearLibraryProfileCache();
+    const profile = await getLibraryProfile();
+    expect(profile.genreHealth.get('rock.punk')?.trackCount).toBeGreaterThanOrEqual(1);
+    expect(profile.genreHealth.get('pop')!.trackCount).toBeGreaterThanOrEqual(2);
+    expect(profile.genreHealth.get('rock')!.trackCount).toBeGreaterThanOrEqual(profile.genreHealth.get('rock.punk')!.trackCount);
+  });
 });

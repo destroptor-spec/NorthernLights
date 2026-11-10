@@ -1,4 +1,6 @@
+import { initDB } from '../database';
 import { queryWithRetry } from '../utils/db';
+import { pathUnder, resolveBannedPaths, resolveGenrePaths } from './genreTaxonomy/paths';
 import { adaptGenreBlendForHealth, adaptVectorToLibrary, GenreHealth, getGenreHealthForPrefix, LibraryProfile } from './libraryProfile.service';
 
 export interface RawLlmConcept {
@@ -22,7 +24,10 @@ export interface CompiledLlmConcept {
   primaryPath: string;
   primaryHealth: GenreHealth | null;
   effectiveGenreBlend: number;
+  /** Banned genre paths (resolved from the concept's banned_genres), a hard veto. */
   bannedGenres: string[];
+  /** The banned names as the AI wrote them. */
+  bannedNames: string[];
   mode: 'genre-anchored' | 'hybrid' | 'acoustic-only';
   diagnostics: {
     notes: string[];
@@ -51,27 +56,30 @@ function uniqueNonEmpty(values: string[]): string[] {
   return Array.from(new Set(values.map((value) => String(value || '').trim()).filter(Boolean)));
 }
 
-async function resolveGenrePath(genre: string): Promise<string | null> {
-  const clean = String(genre || '').toLowerCase().trim();
-  if (!clean) return null;
-
+/**
+ * The styles whose centroids sit nearest a style path ("electronic.house"),
+ * from any genre: the concept's neighbours beyond its own genre.
+ */
+async function nearStylePaths(path: string): Promise<Set<string>> {
+  if (!path.includes('.')) return new Set();
   const res = await queryWithRetry(
-    `(SELECT path FROM genre_tree_paths WHERE LOWER(genre_name) = $1 LIMIT 1)
-     UNION ALL
-     (SELECT gtp.path FROM genre_tree_paths gtp
-      JOIN genre_alias ga ON gtp.genre_id = ga.genre
-      WHERE LOWER(ga.name) = $1 LIMIT 1)
-     LIMIT 1`,
-    [clean]
-  );
-
-  return res.rows[0]?.path || null;
+    `SELECT lower(replace(n.genre, '.', ' ')) || '.' || lower(replace(n.name, '.', ' ')) AS path
+     FROM style s
+     JOIN style_centroids me ON me.style_id = s.id
+     JOIN style_centroids c ON c.style_id <> me.style_id
+     JOIN style n ON n.id = c.style_id
+     WHERE lower(replace(s.genre, '.', ' ')) || '.' || lower(replace(s.name, '.', ' ')) = $1
+     ORDER BY c.centroid <=> me.centroid
+     LIMIT 6`,
+    [path]
+  ).catch(() => null);
+  return new Set((res?.rows ?? []).map((row: any) => String(row.path)));
 }
 
+/** A whole genre ("rock") rather than one of its styles ("rock.punk"). */
 function isBroadRootPath(path: string): boolean {
   const clean = String(path || '').toLowerCase().trim();
-  if (!clean || clean.includes('.')) return false;
-  return ['pop', 'rock', 'electronic', 'dance', 'jazz', 'blues', 'ambient', 'new age'].includes(clean);
+  return Boolean(clean) && !clean.includes('.');
 }
 
 function getPathSpecificityScore(path: string): number {
@@ -111,11 +119,12 @@ function pickPrimaryPath(paths: string[], profile: LibraryProfile): { path: stri
   return { path: bestPath, health: bestHealth };
 }
 
+/** One path is the other or below it ("rock" and "rock.punk"), never "electronic.tech" and "electronic.tech house". */
 function overlapsPrefix(a: string, b: string): boolean {
-  return a.startsWith(b) || b.startsWith(a);
+  return pathUnder(a, b) || pathUnder(b, a);
 }
 
-function getPathHopCost(pathA: string, pathB: string): number {
+function pathDistance(pathA: string, pathB: string): number {
   const a = String(pathA || '').toLowerCase().trim();
   const b = String(pathB || '').toLowerCase().trim();
   if (!a || !b) return 2.0;
@@ -139,23 +148,20 @@ function getPathHopCost(pathA: string, pathB: string): number {
   return 2.0;
 }
 
-function isPathBlockedByBannedGenre(path: string, bannedGenres: string[]): boolean {
+function isPathBlockedByBannedGenre(path: string, bannedPaths: string[]): boolean {
   const cleanPath = String(path || '').toLowerCase().trim();
-  if (!cleanPath) return false;
-  return bannedGenres.some((genre) => {
-    const banned = String(genre || '').toLowerCase().trim();
-    if (!banned) return false;
-    return cleanPath === banned || cleanPath.startsWith(`${banned}.`) || cleanPath.includes(`.${banned}.`) || cleanPath.endsWith(`.${banned}`);
-  });
+  return Boolean(cleanPath) && bannedPaths.some((banned) => pathUnder(cleanPath, banned));
 }
 
-function pickAdjacentPaths(primaryPath: string, profile: LibraryProfile, tracksPerPlaylist: number, adjacentReach: number): string[] {
+// Adjacent paths: other styles of the primary's genre, and the styles that
+// sound closest to it (centroids), from any genre.
+function pickAdjacentPaths(primaryPath: string, profile: LibraryProfile, tracksPerPlaylist: number, adjacentReach: number, nearPaths: Set<string> = new Set()): string[] {
   if (!primaryPath) return [];
 
   const candidates: Array<{ path: string; score: number }> = [];
   const minTrackCount = Math.max(3, Math.ceil(tracksPerPlaylist / 3));
   const reach = clamp01(adjacentReach);
-  const maxHopCost = reach < 0.35 ? 0.20 : 0.50;
+  const maxDistance = reach < 0.35 ? 0.20 : 0.50;
   const sameRootBonus = 0.20 + ((1 - reach) * 0.25);
   const maxAdjacentPaths = Math.max(2, Math.round(2 + (reach * 5)));
 
@@ -163,13 +169,14 @@ function pickAdjacentPaths(primaryPath: string, profile: LibraryProfile, tracksP
     if (!health.path || overlapsPrefix(health.path, primaryPath)) continue;
     if (health.trackCount < minTrackCount || health.artistCount < 2) continue;
 
-    const hopCost = getPathHopCost(primaryPath, health.path);
+    const near = nearPaths.has(health.path);
+    const distance = near ? 0.20 : pathDistance(primaryPath, health.path);
     const sharesRoot = health.root === primaryPath.split('.')[0];
-    if (hopCost > maxHopCost && !sharesRoot) continue;
+    if (distance > maxDistance && !sharesRoot) continue;
 
     const score =
       (sharesRoot ? sameRootBonus : 0) +
-      ((0.65 - Math.min(hopCost, 0.65)) * 1.6) +
+      ((0.65 - Math.min(distance, 0.65)) * 1.6) +
       (health.health * 0.9) +
       Math.min(0.25, health.artistCount / 30) +
       Math.min(0.15, health.trackCount / 120);
@@ -242,13 +249,13 @@ export async function compileConceptToLibrary(
   options: CompileOptions
 ): Promise<CompiledLlmConcept> {
   const targetGenres = uniqueNonEmpty((concept.target_genres || []).map((genre) => String(genre).toLowerCase()));
-  const bannedGenres = uniqueNonEmpty((concept.banned_genres || []).map((genre) => String(genre).toLowerCase()));
+  const bannedNames = uniqueNonEmpty((concept.banned_genres || []).map((genre) => String(genre).toLowerCase()));
   const notes: string[] = [];
+  const db = await initDB();
+  const bannedGenres = await resolveBannedPaths(db, bannedNames);
 
   const initiallyResolvedPaths = uniqueNonEmpty(
-    (
-      await Promise.all(targetGenres.map(async (genre) => resolveGenrePath(genre)))
-    ).filter((path): path is string => Boolean(path))
+    (await Promise.all(targetGenres.map((genre) => resolveGenrePaths(db, genre)))).flat()
   );
 
   const resolvedPaths = initiallyResolvedPaths.filter((path) => !isPathBlockedByBannedGenre(path, bannedGenres));
@@ -259,11 +266,11 @@ export async function compileConceptToLibrary(
   }
 
   if (targetGenres.length > 0 && resolvedPaths.length === 0) {
-    notes.push('No target genres resolved to local MBDB paths; falling back to acoustic-only compilation.');
+    notes.push('No target genres matched a genre or style; falling back to acoustic-only compilation.');
   }
 
   const { path: primaryPath, health: primaryHealth } = pickPrimaryPath(resolvedPaths, profile);
-  const rawAdjacentPaths = pickAdjacentPaths(primaryPath, profile, options.tracksPerPlaylist, options.adjacentReach);
+  const rawAdjacentPaths = pickAdjacentPaths(primaryPath, profile, options.tracksPerPlaylist, options.adjacentReach, await nearStylePaths(primaryPath));
   const adjacentPaths = rawAdjacentPaths.filter((path) => !isPathBlockedByBannedGenre(path, bannedGenres));
   const conflictingAdjacentPaths = rawAdjacentPaths.filter((path) => isPathBlockedByBannedGenre(path, bannedGenres));
   const rootPaths = uniqueNonEmpty(resolvedPaths.map((path) => path.split('.')[0] || path))
@@ -314,6 +321,7 @@ export async function compileConceptToLibrary(
     primaryHealth,
     effectiveGenreBlend,
     bannedGenres,
+    bannedNames,
     mode,
     diagnostics: {
       notes,

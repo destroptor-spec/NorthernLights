@@ -2937,20 +2937,12 @@
             "type": "number",
             "minimum": 0,
             "maximum": 100,
-            "description": "classic engine: how strongly a genre change is penalised; styles engine: the style-overlap weight β (0 to 0.2)."
+            "description": "Style match: how much sharing styles with the queue lifts a close-sounding track (β from 0 to 0.2). Changing genre never counts against a track."
           },
           "artistAmnesiaLimit": {
             "type": "integer",
             "minimum": 0,
             "maximum": 200
-          },
-          "recommendationEngine": {
-            "type": "string",
-            "enum": [
-              "classic",
-              "styles"
-            ],
-            "description": "classic: genre hop cost; styles: shared styles pull candidates closer, no genre penalty (phase 4 of the genre redesign)."
           }
         },
         "default": {},

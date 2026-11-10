@@ -1,4 +1,5 @@
 import { queryWithRetry } from '../utils/db';
+import { PATH_SQL } from './genreTaxonomy/paths';
 
 export interface VectorDimensionProfile {
   p10: number;
@@ -114,8 +115,6 @@ export async function getLibraryProfile(): Promise<LibraryProfile> {
     return cachedProfile.value;
   }
 
-  const genreKeySql = `regexp_replace(lower(trim(COALESCE(canonical_genre.name, t.genre))), '[^[:alnum:]_[:space:]-]', '', 'g')`;
-
   const [summaryRes, vectorRes, genreRes] = await Promise.all([
     queryWithRetry(`
       SELECT
@@ -139,34 +138,29 @@ export async function getLibraryProfile(): Promise<LibraryProfile> {
       FROM track_features
       WHERE acoustic_vector_8d IS NOT NULL
     `),
+    // Genre health from the fused genres and styles: every analysed track
+    // counts for each of its genres ("electronic") and styles
+    // ("electronic.house"), so a genre's health covers all its styles.
     queryWithRetry(`
-      WITH resolved AS (
-        SELECT
-          COALESCE(sm.path, gm.path) AS path,
-          lower(trim(COALESCE(t.artist, 'unknown-artist'))) AS artist_key,
-          COALESCE(NULLIF(t.mb_recording_id, ''), lower(trim(COALESCE(t.artist, ''))) || ':' || lower(trim(COALESCE(t.title, '')))) AS song_key
-        FROM tracks t
-        JOIN track_features tf ON t.id = tf.track_id AND tf.acoustic_vector_8d IS NOT NULL
-        LEFT JOIN genres canonical_genre ON canonical_genre.id = t.genre_id
-        LEFT JOIN subgenre_mappings sm ON ${genreKeySql} = sm.sub_genre
-        LEFT JOIN LATERAL (
-          (SELECT path FROM genre_tree_paths WHERE LOWER(genre_name) = ${genreKeySql} LIMIT 1)
-          UNION ALL
-          (SELECT gtp.path FROM genre_tree_paths gtp
-           JOIN genre_alias ga ON gtp.genre_id = ga.genre
-           WHERE LOWER(ga.name) = ${genreKeySql} LIMIT 1)
-          LIMIT 1
-        ) gm ON true
-        WHERE COALESCE(sm.path, gm.path) IS NOT NULL
+      WITH member AS (
+        SELECT ts.track_id, lower(replace(ts.genre, '.', ' ')) AS root, ${PATH_SQL} AS path
+        FROM track_styles ts
+        LEFT JOIN style s ON s.id = ts.style_id
+        JOIN track_features tf ON tf.track_id = ts.track_id AND tf.acoustic_vector_8d IS NOT NULL
+      ), resolved AS (
+        SELECT track_id, root, path FROM member
+        UNION
+        SELECT track_id, root, root FROM member
       )
       SELECT
-        lower(path) AS path,
-        split_part(lower(path), '.', 1) AS root,
+        r.path,
+        r.root,
         COUNT(*)::int AS track_count,
-        COUNT(DISTINCT artist_key)::int AS artist_count,
-        COUNT(DISTINCT song_key)::int AS song_count
-      FROM resolved
-      GROUP BY lower(path), split_part(lower(path), '.', 1)
+        COUNT(DISTINCT lower(trim(COALESCE(t.artist, 'unknown-artist'))))::int AS artist_count,
+        COUNT(DISTINCT COALESCE(NULLIF(t.mb_recording_id, ''), lower(trim(COALESCE(t.artist, ''))) || ':' || lower(trim(COALESCE(t.title, '')))))::int AS song_count
+      FROM resolved r
+      JOIN tracks t ON t.id = r.track_id
+      GROUP BY r.path, r.root
     `),
   ]);
 

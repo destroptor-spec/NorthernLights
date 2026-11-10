@@ -13,19 +13,12 @@
  * β = 0.1 (strictness 50) brings about 3 of the 10 nearest in from a little
  * further down (the 10th nearest is a median 0.066 away from the nearest).
  *
- * The classic engine (genre hop cost) stays selectable per user while the two
- * are compared.
+ * It replaced the genre hop cost on 2026-11-10 after a blind comparison
+ * (Styles 9, hop cost 8, no difference 3): as good, and it needs only the
+ * genres and styles Aurora keeps.
  */
 import type { Pool, PoolClient } from 'pg';
-import { tagKey } from './genreTaxonomy/data';
-
-export type RecommendationEngine = 'classic' | 'styles';
-export const RECOMMENDATION_ENGINES: readonly RecommendationEngine[] = ['classic', 'styles'];
-/** The engine until the blind comparison says otherwise. */
-export const DEFAULT_RECOMMENDATION_ENGINE: RecommendationEngine = 'classic';
-
-export const engineOf = (value: unknown): RecommendationEngine =>
-  value === 'styles' || value === 'classic' ? value : DEFAULT_RECOMMENDATION_ENGINE;
+import { resolveGenrePaths } from './genreTaxonomy/paths';
 
 /** β at full genre strictness (100). */
 export const STYLE_OVERLAP_MAX_BETA = 0.2;
@@ -92,20 +85,28 @@ export async function seedStyleVector(db: Pool | PoolClient, orderedTrackIds: st
 }
 
 /**
- * A style vector for genre names as the old engine and the AI playlist
- * prompts write them ("deep house", "electronic.house.deep house", "Hip
- * Hop"): each name (a path's last part) through the tag mapping, its styles
- * at 1 and its genres at half. Null when no name maps.
+ * A style vector for genre names or paths as the AI playlists write them
+ * ("deep house", "electronic.house", "Hip Hop"), resolved like
+ * genreTaxonomy/paths.ts resolves them: a genre name or path is its genre,
+ * a style name every style of that name, otherwise the library's tag
+ * mapping. Styles count 1 and their genres half. Null when no name resolves.
  */
 export async function styleVectorForNames(db: Pool | PoolClient, names: string[]): Promise<StyleVector | null> {
-  const keys = [...new Set(names.map(n => String(n || '').split('.').pop() || '').map(n => tagKey(n)).filter(Boolean))];
-  if (!keys.length) return null;
+  const paths = [...new Set((await Promise.all(names.map(n => resolveGenrePaths(db, n)))).flat())];
+  if (!paths.length) return null;
   const rows = (await db.query(
-    `SELECT DISTINCT genre, style_id FROM tag_map WHERE tag = ANY($1::text[]) AND reliability >= 0.8`, [keys])).rows as Array<{ genre: string; style_id: number | null }>;
+    `SELECT tg.name AS genre, s.id AS style_id, lower(replace(tg.name, '.', ' ')) AS gpath,
+            lower(replace(tg.name, '.', ' ')) || COALESCE('.' || lower(replace(s.name, '.', ' ')), '') AS path
+     FROM taxonomy_genre tg LEFT JOIN style s ON s.genre = tg.name`)).rows as Array<{ genre: string; style_id: number | null; gpath: string; path: string }>;
+  const wanted = new Set(paths);
   const v = new Map<string, number>();
   for (const r of rows) {
-    if (r.style_id !== null) v.set(`s${r.style_id}`, 1);
-    v.set(`g${r.genre}`, Math.max(v.get(`g${r.genre}`) ?? 0, GENRE_WEIGHT));
+    if (r.style_id !== null && wanted.has(r.path)) {
+      v.set(`s${r.style_id}`, 1);
+      v.set(`g${r.genre}`, Math.max(v.get(`g${r.genre}`) ?? 0, GENRE_WEIGHT));
+    } else if (wanted.has(r.gpath)) {
+      v.set(`g${r.genre}`, 1);
+    }
   }
   return normalise(v);
 }

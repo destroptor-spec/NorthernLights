@@ -791,8 +791,6 @@ export interface PlayerState {
   // Global Engine Settings
   discoveryLevel: number;
   genreStrictness: number;
-  /** classic: genre hop cost; styles: style overlap (phase 4). Saved per user on the server. */
-  recommendationEngine: 'classic' | 'styles';
   artistAmnesiaLimit: number;
   // Fraction of a track (percent, 1-100) that must be listened to before it is
   // marked as played — gates both the server play-count and scrobbling.
@@ -802,7 +800,6 @@ export interface PlayerState {
   llmGenreCohesion: number;
   llmDiscoveryBias: number;
   llmArtistSpread: number;
-  genrePenaltyCurve: number;
   llmRecoveryStrength: number;
   llmAdjacentReach: number;
   llmTracksPerPlaylist: number;
@@ -1589,7 +1586,6 @@ export const usePlayerStore = create<PlayerState>()(
 
         discoveryLevel: 50,
         genreStrictness: 50,
-        recommendationEngine: 'classic',
         artistAmnesiaLimit: 50,
         // Standard scrobble threshold (Last.fm/ListenBrainz): ~half a track (or
         // 4 min). 95% was effectively "finish the song", so casual listening
@@ -1600,7 +1596,6 @@ export const usePlayerStore = create<PlayerState>()(
         llmGenreCohesion: 50,
         llmDiscoveryBias: 45,
         llmArtistSpread: 70,
-        genrePenaltyCurve: 50,
         llmRecoveryStrength: 50,
         llmAdjacentReach: 50,
         llmTracksPerPlaylist: 10,
@@ -2031,7 +2026,6 @@ export const usePlayerStore = create<PlayerState>()(
               set({
                 discoveryLevel: data.discoveryLevel !== undefined ? data.discoveryLevel : 50,
                 genreStrictness: data.genreStrictness !== undefined ? data.genreStrictness : 50,
-                recommendationEngine: data.recommendationEngine === 'styles' ? 'styles' : 'classic',
                 artistAmnesiaLimit: data.artistAmnesiaLimit !== undefined ? data.artistAmnesiaLimit : 50,
                 playedThresholdPercent: data.playedThresholdPercent !== undefined ? Number(data.playedThresholdPercent) : 50,
                 llmPlaylistDiversity: data.llmPlaylistDiversity !== undefined ? data.llmPlaylistDiversity : 50,
@@ -2039,7 +2033,6 @@ export const usePlayerStore = create<PlayerState>()(
                 llmGenreCohesion: data.llmGenreCohesion !== undefined ? data.llmGenreCohesion : (data.genreBlendWeight !== undefined ? data.genreBlendWeight : 50),
                 llmDiscoveryBias: data.llmDiscoveryBias !== undefined ? data.llmDiscoveryBias : 45,
                 llmArtistSpread: data.llmArtistSpread !== undefined ? data.llmArtistSpread : 70,
-                genrePenaltyCurve: data.genrePenaltyCurve !== undefined ? data.genrePenaltyCurve : 50,
                 llmRecoveryStrength: data.llmRecoveryStrength !== undefined ? data.llmRecoveryStrength : 50,
                 llmAdjacentReach: data.llmAdjacentReach !== undefined ? data.llmAdjacentReach : 50,
                 llmTracksPerPlaylist: data.llmTracksPerPlaylist !== undefined ? data.llmTracksPerPlaylist : 10,
@@ -2153,7 +2146,6 @@ export const usePlayerStore = create<PlayerState>()(
               const payload = {
                 discoveryLevel: state.discoveryLevel,
                 genreStrictness: state.genreStrictness,
-                recommendationEngine: state.recommendationEngine,
                 artistAmnesiaLimit: state.artistAmnesiaLimit,
                 playedThresholdPercent: state.playedThresholdPercent,
                 llmPlaylistDiversity: state.llmPlaylistDiversity,
@@ -2161,7 +2153,6 @@ export const usePlayerStore = create<PlayerState>()(
                 llmGenreCohesion: state.llmGenreCohesion,
                 llmDiscoveryBias: state.llmDiscoveryBias,
                 llmArtistSpread: state.llmArtistSpread,
-                genrePenaltyCurve: state.genrePenaltyCurve,
                 llmRecoveryStrength: state.llmRecoveryStrength,
                 llmAdjacentReach: state.llmAdjacentReach,
                 llmTracksPerPlaylist: state.llmTracksPerPlaylist,
@@ -2289,7 +2280,6 @@ export const usePlayerStore = create<PlayerState>()(
               settings: {
                 discoveryLevel: state.discoveryLevel,
                 genreStrictness: state.genreStrictness,
-                recommendationEngine: state.recommendationEngine,
                 artistAmnesiaLimit: state.artistAmnesiaLimit,
               }
             };

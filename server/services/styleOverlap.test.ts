@@ -1,4 +1,4 @@
-import { blendStyleVectors, engineOf, styleBeta, styleCosine, type StyleVector } from './styleOverlap.service';
+import { blendStyleVectors, styleBeta, styleCosine, type StyleVector } from './styleOverlap.service';
 
 const v = (entries: Record<string, number>): StyleVector => {
   const m = new Map(Object.entries(entries));
@@ -22,12 +22,9 @@ test('a run of seeds blends towards the newest, like the acoustic centroid', () 
   expect(blendStyleVectors([null, undefined])).toBeNull();
 });
 
-test('genre strictness sets beta, from 0 to 0.2; the classic engine stays the default', () => {
+test('genre strictness (style match) sets beta, from 0 to 0.2', () => {
   expect(styleBeta(0)).toBe(0);
   expect(styleBeta(50)).toBeCloseTo(0.1);
   expect(styleBeta(100)).toBeCloseTo(0.2);
   expect(styleBeta(250)).toBeCloseTo(0.2);
-  expect(engineOf('styles')).toBe('styles');
-  expect(engineOf(undefined)).toBe('classic');
-  expect(engineOf('nonsense')).toBe('classic');
 });

@@ -214,11 +214,12 @@ The old code ignores `track_credit_lookups`; drop it or leave it. Credits alread
 
 ## Phase 4: engine switch and retirements
 
-### Step 1: the styles engine, selectable (no schema change)
+### Step 1 and 2a: the styles engine for everyone (no schema change)
 
-Nothing to run. Each user picks the engine in Settings → Playback → Infinity → Recommendation engine (Styles or Classic; Classic until the comparison is decided). It applies to Infinity and to Hub and AI playlists. With Styles, the Infinity log reads `[Engine] (styles) Found tracks … AvgStyleOverlap: … Beta: 0.100`.
+Nothing to run. Style overlap is the only engine (the blind comparison came out even, 9–8 with 3 ties, and it needs only the new genres and styles). Infinity, the Hub and AI playlists, artist radio and the daylist read genres and styles from `track_styles`; nothing reads `subgenre_mappings` or `genre_tree_paths` for recommendations any more. The saved per-user settings `recommendationEngine` and `genrePenaltyCurve` are ignored and can stay in `user_settings`.
 
-- [ ] Switch to Styles, play a song with Infinity on, and check the server log line above.
-- [ ] Regenerate the Hub with Styles on; Up Next and The Vault still fill.
+- [ ] Play a song with Infinity on; the server log reads `[Engine] Found tracks … AvgStyleOverlap: … Beta: 0.100`.
+- [ ] Regenerate the Hub; Up Next and The Vault fill, and the AI playlists log `targets=` with paths like `electronic.deep house` and `hard veto [metal → rock.heavy metal, …]` when a concept bans genres.
+- [ ] Start an artist radio; it plays.
 
-Steps for step 2 (retirements) are added here when it is built. Known so far: the MBDB import (4 GB download) and the Genre Matrix are retired, and `tracks.genre_id` / `track_genres` are rebuilt from the new genres.
+Steps for the rest of step 2 (retirements) are added here when they are built. Known so far: the MBDB import (4 GB download) and the Genre Matrix are retired, and `tracks.genre_id` / `track_genres` are rebuilt from the new genres.

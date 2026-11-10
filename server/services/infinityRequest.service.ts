@@ -3,7 +3,7 @@ import { getUserSetting } from '../database';
 import { getSessionHistory } from '../state';
 import { calculateNextInfinityTrack } from './recommendation.service';
 
-const SETTING_KEYS = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'recommendationEngine'] as const;
+const SETTING_KEYS = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit'] as const;
 
 /** Shared by the listener API and the legacy browser compatibility adapter. */
 export async function getNextInfinityTrackForUser(userId: string | undefined, input: NextRecommendationRequest) {
@@ -16,7 +16,7 @@ export async function getNextInfinityTrackForUser(userId: string | undefined, in
     ...clientHistory,
   ].slice(-50);
 
-  const saved: Partial<Record<typeof SETTING_KEYS[number], number | string>> = {};
+  const saved: Partial<Record<typeof SETTING_KEYS[number], number>> = {};
   if (userId) {
     await Promise.all(SETTING_KEYS.map(async key => {
       const parsed = infinitySettingsSchema.shape[key].safeParse(await getUserSetting(userId, key));
