@@ -85,10 +85,11 @@ test('says where each genre and style came from, groups credits by person, and s
   expect([...document.querySelectorAll('section')].map(el => el.getAttribute('aria-label')))
     .toEqual(['Credits', 'In context', 'Sound and style', 'Also on']);
   // The model's scores: Glitch is one of the track's styles (check), Downtempo only close to it.
-  const glitchBar = screen.getByTitle(/^Glitch \(Electronic\): 0\.50, one of this track's styles$/);
+  const glitchBar = screen.getByTitle("Glitch (Electronic): strong, model score 0.50, one of this track's styles");
+  expect(within(glitchBar).getByText('Strong')).toBeTruthy();
   expect(glitchBar.getAttribute('data-member')).toBe('true');
   expect(within(glitchBar).getByLabelText("One of this track's styles")).toBeTruthy();
-  expect(screen.getByTitle('Downtempo (Electronic): 0.31').getAttribute('data-member')).toBeNull();
+  expect(screen.getByTitle('Downtempo (Electronic): clear, model score 0.31').getAttribute('data-member')).toBeNull();
   expect(screen.getByTitle('Hip Hop: 20 % of the scores')).toBeTruthy();
   expect(screen.getByRole('meter', { name: 'Brightness' }).getAttribute('aria-valuenow')).toBe('40');
   expect(screen.getByText('Glitch, where Downtempo leads Taking Up Your Precious Time (60 %).')).toBeTruthy();
@@ -152,7 +153,7 @@ test('an admin toggles a style on the track from its bar', async () => {
     .map(([, init]) => JSON.parse(String(init.body)));
 
   // Downtempo isn't one of its styles: selecting it adds it.
-  const downtempo = await screen.findByTitle('Downtempo (Electronic): 0.31. Add it to this track');
+  const downtempo = await screen.findByTitle('Downtempo (Electronic): clear, model score 0.31. Add it to this track');
   expect(downtempo.tagName).toBe('BUTTON');
   expect(downtempo.getAttribute('aria-pressed')).toBe('false');
   fireEvent.click(downtempo);
@@ -160,7 +161,7 @@ test('an admin toggles a style on the track from its bar', async () => {
   await waitFor(() => expect((usePlayerStore.getState().addToast as jest.Mock).mock.calls[0][0]).toBe('Added Electronic › Downtempo'));
 
   // Glitch is: selecting it takes it off.
-  const glitch = screen.getByTitle('Glitch (Electronic): 0.50. Take it off this track');
+  const glitch = screen.getByTitle('Glitch (Electronic): strong, model score 0.50. Take it off this track');
   expect(glitch.getAttribute('aria-pressed')).toBe('true');
   await waitFor(() => expect((glitch as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(glitch);

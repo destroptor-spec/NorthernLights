@@ -5,6 +5,7 @@ import { HorizontalScrollRail } from '../HorizontalScrollRail';
 import { usePlayerStore } from '../../store/index';
 import { fetchTaxonomy, fetchTrackRays, genrePath, setTrackStyle, stylePath } from '../../api/browse';
 import { toPlayableTracks } from '../../utils/playableTracks';
+import { scoreWord } from '../../utils/styleScore';
 import { useArtistData } from '../../hooks/useArtistData';
 import { useDominantColor } from '../../hooks/useDominantColor';
 import { useInView } from '../../hooks/useInView';
@@ -232,9 +233,10 @@ const SoundMeter: React.FC<{ label: string; low: string; high: string; value: nu
 const niceMax = (values: number[]) => Math.min(1, Math.max(0.1, Math.ceil(Math.max(0, ...values) * 10) / 10));
 
 /**
- * The audio model's raw style scores (0–1 each, independent: a track can
- * score high on several), ranked. Emphasis form: the styles the track is in
- * are emerald and carry a check, the rest grey; every bar is labelled.
+ * The audio model's style scores (0–1 each, independent: a track can
+ * score high on several), ranked and told in words (`scoreWord`), the exact
+ * score in the tooltip. The styles the track is in are emerald and carry a
+ * check, the rest grey.
  */
 type StyleScore = NonNullable<Rays['sound']>['closestStyles'][number];
 
@@ -259,14 +261,14 @@ const StyleScoreChart: React.FC<{
       <figcaption className="rays-chart__head">
         <span className="rays-chart__title">Styles the audio model hears</span>
         <span className="rays-chart__note">
-          Each style scored 0 to 1 on its own; a track can score high on several.{leadGenre && genreCount.size > 1 ? ` Styles outside ${leadGenre} name their genre.` : leadGenre ? ` All in ${leadGenre}.` : ''}{onToggle ? ' Select a style to add it to this track, or again to take it off.' : ''}
+          How much the track sounds like each style, from faint to strong. A track can sound strongly like several.{leadGenre && genreCount.size > 1 ? ` Styles outside ${leadGenre} name their genre.` : leadGenre ? ` All in ${leadGenre}.` : ''}{onToggle ? ' Select a style to add it to this track, or again to take it off.' : ''}
         </span>
         <span className="rays-chart__legend">
           <span><span className="rays-swatch rays-swatch--emphasis" aria-hidden="true" />This track's styles</span>
           <span><span className="rays-swatch rays-swatch--context" aria-hidden="true" />Other styles it is close to</span>
         </span>
       </figcaption>
-      <ul className="rays-bars">
+      <ul className="rays-bars rays-bars--words">
         {scores.map((s, index) => {
           const member = memberIds.has(s.styleId);
           const pending = saving === saveKey(member ? 'remove' : 'add', s.genre, s.styleId);
@@ -282,10 +284,10 @@ const StyleScoreChart: React.FC<{
               <span className="rays-bar__track" aria-hidden="true">
                 <span className="rays-bar__fill" style={{ width: `${(s.score / max) * 100}%` }} />
               </span>
-              <span className="rays-bar__value">{s.score.toFixed(2)}</span>
+              <span className="rays-bar__value">{scoreWord(s.score)}</span>
             </>
           );
-          const facts = `${s.style} (${s.genre}): ${s.score.toFixed(2)}`;
+          const facts = `${s.style} (${s.genre}): ${scoreWord(s.score).toLowerCase()}, model score ${s.score.toFixed(2)}`;
           return (
             <li key={s.styleId} style={{ '--i': index } as React.CSSProperties}>
               {onToggle ? (
@@ -315,7 +317,6 @@ const StyleScoreChart: React.FC<{
           );
         })}
       </ul>
-      <span className="rays-chart__axis" aria-hidden="true"><span className="rays-chart__scale"><span>0</span><span>{max.toFixed(1)}</span></span></span>
     </figure>
   );
 };
