@@ -15,7 +15,8 @@ import { AlbumCard, AlbumCardSkeleton } from '../library/AlbumCard';
 import { AlbumArt } from '../AlbumArt';
 import { ArtistInitial } from '../library/ArtistInitial';
 import { AuroraCard } from './AuroraCard';
-import type { BrowseAlbum, BrowseArtist, BrowseDecade, BrowseStyleRef } from '../../../shared/api/v1';
+import type { BrowseAlbum, BrowseArtist, BrowseCountry, BrowseDecade, BrowseStyleRef } from '../../../shared/api/v1';
+import { countryName } from '../../../shared/places';
 
 /**
  * Starts playback from Browse. Shuffle plays a mix the server picks: a
@@ -58,32 +59,74 @@ export const ShuffleButton: React.FC<{ busy: boolean; onClick: () => void; label
   </button>
 );
 
-/** "Play the 1990s": one button per decade that has tracks. */
-export const DecadeButtons: React.FC<{
-  decades: BrowseDecade[]; busyKey: string | null; keyPrefix: string; name: string; onPlay: (decade: number) => void;
-}> = ({ decades, busyKey, keyPrefix, name, onPlay }) => {
-  const shown = decades.filter(d => d.trackCount > 0);
-  if (shown.length < 2) return null;
+/**
+ * Shuffle, narrowed by decade and country: each row is a set of toggles (one
+ * pick per row, again to clear), and the one Shuffle plays what's picked:
+ * "Hip Hop · Denmark · 1990s". A row with fewer than two choices is hidden.
+ */
+export const ShuffleFilters: React.FC<{
+  name: string;
+  decades: BrowseDecade[];
+  countries: BrowseCountry[];
+  busy: boolean;
+  onShuffle: (narrow: { decade?: number; country?: string }) => void;
+}> = ({ name, decades, countries, busy, onShuffle }) => {
+  const [decade, setDecade] = useState<number | null>(null);
+  const [country, setCountry] = useState<string | null>(null);
+  const shownDecades = decades.filter(d => d.trackCount > 0);
+  const parts = [country ? countryName(country) : null, decade !== null ? `${decade}s` : null].filter(Boolean);
+  const label = `Shuffle ${[name, ...parts].join(' · ')}`;
   return (
-    <div className="browse-decades" role="group" aria-label={`Shuffle ${name} by decade`}>
-      <span className="browse-decades__label">By decade</span>
-      {shown.map(d => {
-        const busy = busyKey === `${keyPrefix}:${d.decade}`;
-        return (
-          <button
-            key={d.decade}
-            type="button"
-            className="btn btn-tab btn-sm"
-            onClick={() => onPlay(d.decade)}
-            disabled={busy}
-            aria-label={`Shuffle ${name} from the ${d.decade}s, ${d.trackCount} tracks`}
-          >
-            {busy && <Loader2 size={13} className="animate-spin" aria-hidden="true" />}
-            {d.decade}s
-          </button>
-        );
-      })}
-    </div>
+    <>
+      <button
+        type="button"
+        className="btn btn-primary"
+        onClick={() => onShuffle({ decade: decade ?? undefined, country: country ?? undefined })}
+        disabled={busy}
+        aria-label={label}
+      >
+        {busy ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Shuffle size={16} aria-hidden="true" />}
+        Shuffle{parts.length > 0 && <span className="browse-shuffle__narrow">· {parts.join(' · ')}</span>}
+      </button>
+      {(shownDecades.length > 1 || countries.length > 1) && (
+        <div className="browse-filters">
+          {shownDecades.length > 1 && (
+            <div className="browse-decades" role="group" aria-label={`Narrow Shuffle ${name} to a decade`}>
+              <span className="browse-decades__label">Decade</span>
+              {shownDecades.map(d => (
+                <button
+                  key={d.decade}
+                  type="button"
+                  className={`btn btn-tab btn-sm${decade === d.decade ? ' active' : ''}`}
+                  aria-pressed={decade === d.decade}
+                  onClick={() => setDecade(current => (current === d.decade ? null : d.decade))}
+                  title={`${d.trackCount.toLocaleString()} ${d.trackCount === 1 ? 'track' : 'tracks'}`}
+                >
+                  {d.decade}s
+                </button>
+              ))}
+            </div>
+          )}
+          {countries.length > 1 && (
+            <div className="browse-decades" role="group" aria-label={`Narrow Shuffle ${name} to a country`}>
+              <span className="browse-decades__label">Country</span>
+              {countries.map(c => (
+                <button
+                  key={c.country}
+                  type="button"
+                  className={`btn btn-tab btn-sm${country === c.country ? ' active' : ''}`}
+                  aria-pressed={country === c.country}
+                  onClick={() => setCountry(current => (current === c.country ? null : c.country))}
+                  title={`${c.trackCount.toLocaleString()} ${c.trackCount === 1 ? 'track' : 'tracks'}`}
+                >
+                  {countryName(c.country)}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </>
   );
 };
 

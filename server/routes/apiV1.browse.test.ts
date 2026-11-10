@@ -76,8 +76,8 @@ describe('GET /browse/tracks', () => {
 describe('GET /browse/mix', () => {
   it('returns the mix in the order the server picked it, and needs a genre, style or unsorted', async () => {
     jest.mocked(pickBrowseMix).mockResolvedValue(['t3', 't1', 't2']);
-    const res = await get('/browse/mix', { style: '92', decade: '2000' });
-    expect(jest.mocked(pickBrowseMix).mock.calls[0][1]).toMatchObject({ styleId: 92, decade: 2000 });
+    const res = await get('/browse/mix', { style: '92', decade: '2000', country: 'dk' });
+    expect(jest.mocked(pickBrowseMix).mock.calls[0][1]).toMatchObject({ styleId: 92, decade: 2000, country: 'DK' });
     expect(body(res).data.map((t: { id: string }) => t.id)).toEqual(['t3', 't1', 't2']);
     expect((await get('/browse/mix', {})).status).toHaveBeenCalledWith(400);
   });

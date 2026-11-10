@@ -430,6 +430,11 @@ process.stdin.on('data', async (chunk: string) => {
             mbAlbumArtistId: firstTagValue(metadata.common.musicbrainz_albumartistid),
             mbReleaseGroupId: metadata.common.musicbrainz_releasegroupid || null,
             mbWorkId: metadata.common.musicbrainz_workid || null,
+            // Where and in what language (filters and playlists): the release
+            // country Picard writes, and the lyrics language (TLAN / LANGUAGE).
+            originRead: true,
+            releaseCountry: metadata.common.releasecountry || null,
+            lyricsLanguage: firstTagValue(metadata.common.language) || null,
             rawUrls: rawUrls.length > 0 ? rawUrls : null,
             credits: extractCredits(metadata, (artistPeople || []).map(person => person.name)),
         }

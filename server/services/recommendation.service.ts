@@ -4,6 +4,7 @@ import { getLibraryProfile, GenreHealth } from './libraryProfile.service';
 import { compileConceptToLibrary } from './llmConceptCompiler.service';
 import { queryWithRetry } from '../utils/db';
 import { christmasExclusionSql, isChristmasSeason, isChristmasRow } from '../utils/seasonalFilter';
+import { countryCode, languageCode, placeFromTag } from '../../shared/places';
 
 // 1. Z-Score normalization is handled by scaling 0-1 mapped values in JS, but 
 // for simplicity we assume vectors are already [0,1] normalized.
@@ -341,8 +342,48 @@ function acousticDistance(a: number[] | null, b: number[] | null): number | null
   return Math.sqrt(sum / a.length);
 }
 
+/** A custom playlist's hard filters, normalised (see originFilterOf). */
+export interface OriginFilter {
+  countries: string[];
+  languages: string[];
+  yearFrom: number | null;
+  yearTo: number | null;
+}
+
+const asYear = (value: unknown): number | null => {
+  const year = Math.round(Number(value));
+  return Number.isFinite(year) && year >= 1900 && year <= 2100 ? year : null;
+};
+
+/**
+ * The hard filters a concept asks for, as ISO codes and years, or null when
+ * it asks for none. Unknown spellings are dropped, so a model that writes
+ * "Denmark" or "dansk" still filters on DK and da.
+ */
+export function originFilterOf(concept: { countries?: unknown; languages?: unknown; year_from?: unknown; year_to?: unknown }): OriginFilter | null {
+  const list = (value: unknown) => (Array.isArray(value) ? value : value == null ? [] : [value]).map(String);
+  const countries = [...new Set(list(concept.countries).map(c => countryCode(c) ?? placeFromTag(c)).filter((c): c is string => !!c))];
+  const languages = [...new Set(list(concept.languages).map(l => languageCode(l)).filter((l): l is string => !!l))];
+  let yearFrom = asYear(concept.year_from);
+  let yearTo = asYear(concept.year_to);
+  if (yearFrom != null && yearTo != null && yearFrom > yearTo) [yearFrom, yearTo] = [yearTo, yearFrom];
+  if (!countries.length && !languages.length && yearFrom == null && yearTo == null) return null;
+  return { countries, languages, yearFrom, yearTo };
+}
+
+export function describeOriginFilter(filter: OriginFilter): string {
+  const parts: string[] = [];
+  if (filter.countries.length || filter.languages.length) parts.push(`from ${[...filter.countries, ...filter.languages.map(l => `language ${l}`)].join(' or ')}`);
+  if (filter.yearFrom != null || filter.yearTo != null) parts.push(`years ${filter.yearFrom ?? '…'}–${filter.yearTo ?? '…'}`);
+  return parts.join(', ');
+}
+
 export async function getHubCollections(
-  llmConcepts: { section: string, title?: string, description: string, target_vector: number[], target_genres?: string[], banned_genres?: string[] }[],
+  llmConcepts: {
+    section: string, title?: string, description: string, target_vector: number[], target_genres?: string[], banned_genres?: string[],
+    /** Hard filters (custom playlists): where the music is from, what it's sung in, and when it came out. */
+    countries?: string[], languages?: string[], year_from?: number, year_to?: number,
+  }[],
   userId: string | null = null,
   settings: {
     llmGenreCohesion?: number,
@@ -645,6 +686,7 @@ export async function getHubCollections(
     excludeIds = [],
     excludePrefixes = [],
     enableDiscoveryBoost = false,
+    origin = null,
   }: {
     poolName: 'core' | 'adjacent' | 'root' | 'acoustic' | 'discovery' | 'bridge';
     vectorStr: string;
@@ -655,6 +697,7 @@ export async function getHubCollections(
     excludeIds?: string[];
     excludePrefixes?: string[];
     enableDiscoveryBoost?: boolean;
+    origin?: OriginFilter | null;
   }): Promise<any[]> => {
     if (limit <= 0) return [];
 
@@ -737,6 +780,26 @@ export async function getHubCollections(
     if (excludeIds.length > 0) {
       params.push(excludeIds);
       whereClauses.push(`NOT (t.id = ANY($${nextParam}::text[]))`);
+      nextParam++;
+    }
+
+    // "Dansk rap fra 90'erne": a track matches a country or a language asked
+    // for (track_origin), and the years. Hard filters, through every
+    // relaxation step: a Danish playlist never backfills with other music.
+    if (origin && (origin.countries.length > 0 || origin.languages.length > 0)) {
+      params.push(origin.countries, origin.languages);
+      whereClauses.push(`EXISTS (SELECT 1 FROM track_origin o WHERE o.track_id = t.id
+        AND (o.country = ANY($${nextParam}::text[]) OR o.language = ANY($${nextParam + 1}::text[])))`);
+      nextParam += 2;
+    }
+    if (origin?.yearFrom != null) {
+      params.push(origin.yearFrom);
+      whereClauses.push(`t.year >= $${nextParam}`);
+      nextParam++;
+    }
+    if (origin?.yearTo != null) {
+      params.push(origin.yearTo);
+      whereClauses.push(`t.year <= $${nextParam}`);
       nextParam++;
     }
 
@@ -984,6 +1047,10 @@ export async function getHubCollections(
         }
       );
 
+      const originFilter = originFilterOf(concept);
+      if (originFilter) {
+        console.log(`[LLM Hub] "${concept.title}" → only ${describeOriginFilter(originFilter)}`);
+      }
       const vectorStr = `[${compiled.adaptedTargetVector.join(',')}]`;
       const bridgeVectorStr = `[${compiled.bridgeVector.join(',')}]`;
       const targetAcousticness = compiled.adaptedTargetVector[5];
@@ -1024,6 +1091,7 @@ export async function getHubCollections(
       const [coreRows, adjacentRows, rootRows, acousticRows, discoveryRows, bridgeRows] = await Promise.all([
         compiled.corePaths.length > 0
           ? fetchLlmPool({
+              origin: originFilter,
               poolName: 'core',
               vectorStr,
               embeddingCentroidStr,
@@ -1035,6 +1103,7 @@ export async function getHubCollections(
           : Promise.resolve([]),
         compiled.adjacentPaths.length > 0
           ? fetchLlmPool({
+              origin: originFilter,
               poolName: 'adjacent',
               vectorStr,
               embeddingCentroidStr,
@@ -1047,6 +1116,7 @@ export async function getHubCollections(
           : Promise.resolve([]),
         compiled.rootPaths.length > 0
           ? fetchLlmPool({
+              origin: originFilter,
               poolName: 'root',
               vectorStr,
               embeddingCentroidStr,
@@ -1058,6 +1128,7 @@ export async function getHubCollections(
             })
           : Promise.resolve([]),
         fetchLlmPool({
+          origin: originFilter,
           poolName: 'acoustic',
           vectorStr,
           embeddingCentroidStr,
@@ -1066,6 +1137,7 @@ export async function getHubCollections(
           excludeIds: assignedIds,
         }),
         fetchLlmPool({
+          origin: originFilter,
           poolName: 'discovery',
           vectorStr,
           embeddingCentroidStr,
@@ -1075,6 +1147,7 @@ export async function getHubCollections(
           enableDiscoveryBoost: true,
         }),
         fetchLlmPool({
+          origin: originFilter,
           poolName: 'bridge',
           vectorStr: bridgeVectorStr,
           embeddingCentroidStr,

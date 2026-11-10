@@ -8,6 +8,7 @@ import type { Pool } from 'pg';
 import type {
   AlbumStyleProfile,
   ArtistStyleProfile,
+  BrowseCountry,
   BrowseDecade,
   BrowseGenreDetail,
   BrowseGenres,
@@ -33,6 +34,8 @@ export interface BrowseFilter {
   /** With genre: only tracks in the genre without a style in it. */
   noStyle?: boolean;
   decade?: number;
+  /** ISO 3166-1 alpha-2: only tracks from this country (track_origin). */
+  country?: string;
   /** Tracks without a genre; with tag, only those carrying that genre tag. */
   unsorted?: boolean;
   tag?: string;
@@ -96,7 +99,7 @@ export async function getBrowseGenre(
            (SELECT COUNT(*) FROM track_styles ts WHERE ts.genre = g.name AND ts.style_id IS NULL)::int AS tracks
     FROM taxonomy_genre g WHERE g.name = $1`, [genre])).rows[0];
   if (!head) return null;
-  const [styles, noStyle, albums, artists, decades] = await Promise.all([
+  const [styles, noStyle, albums, artists, decades, countries] = await Promise.all([
     db.query(`
       SELECT ts.genre, ts.style_id, s.name, COUNT(*)::int AS tracks
       FROM track_styles ts JOIN style s ON s.id = ts.style_id
@@ -108,6 +111,7 @@ export async function getBrowseGenre(
     load.albums({ genre }),
     load.artists({ genre }),
     browseDecades(db, { genre }),
+    browseCountries(db, { genre }),
   ]);
   return {
     genre: { name: head.name, hidden: head.hidden, trackCount: head.tracks },
@@ -116,6 +120,7 @@ export async function getBrowseGenre(
     albums,
     artists,
     decades,
+    countries,
   };
 }
 
@@ -128,10 +133,10 @@ export async function getBrowseStyle(
            (SELECT COUNT(*) FROM track_styles ts WHERE ts.style_id = s.id)::int AS tracks
     FROM style s WHERE s.id = $1`, [styleId])).rows[0];
   if (!style) return null;
-  const [albums, artists, decades, soundsCloseTo] = await Promise.all([
-    load.albums({ styleId }), load.artists({ styleId }), browseDecades(db, { styleId }), stylesNearStyle(db, styleId),
+  const [albums, artists, decades, countries, soundsCloseTo] = await Promise.all([
+    load.albums({ styleId }), load.artists({ styleId }), browseDecades(db, { styleId }), browseCountries(db, { styleId }), stylesNearStyle(db, styleId),
   ]);
-  return { style: styleRef(style), albums, artists, decades, soundsCloseTo };
+  return { style: styleRef(style), albums, artists, decades, countries, soundsCloseTo };
 }
 
 // ── Lists ────────────────────────────────────────────────────────────────
@@ -142,8 +147,10 @@ export async function getBrowseStyle(
  */
 function trackSelection(filter: BrowseFilter, params: unknown[]): string {
   const p = (value: unknown) => { params.push(value); return `$${params.length}`; };
-  const decade = filter.decade !== undefined
-    ? ` AND t.year >= ${p(filter.decade)} AND t.year < ${p(filter.decade + 10)}` : '';
+  const decade = (filter.decade !== undefined
+    ? ` AND t.year >= ${p(filter.decade)} AND t.year < ${p(filter.decade + 10)}` : '')
+    + (filter.country !== undefined
+      ? ` AND EXISTS (SELECT 1 FROM track_origin o WHERE o.track_id = t.id AND o.country = ${p(filter.country)})` : '');
   if (filter.unsorted) {
     const tag = filter.tag !== undefined
       ? ` AND EXISTS (SELECT 1 FROM track_tags tt WHERE tt.track_id = t.id AND tt.tag_key = ${p(tagKey(filter.tag))})` : '';
@@ -260,6 +267,17 @@ async function browseDecades(db: Pool, filter: BrowseFilter): Promise<BrowseDeca
     FROM (${sql}) sel JOIN tracks t ON t.id = sel.track_id
     WHERE t.year BETWEEN 1000 AND 2999 GROUP BY 1 ORDER BY 1`, params)).rows;
   return rows.map((r: any) => ({ decade: Number(r.decade), trackCount: r.tracks }));
+}
+
+/** Where a genre's or style's tracks are from: countries with at least 3 tracks, most first. */
+async function browseCountries(db: Pool, filter: BrowseFilter): Promise<BrowseCountry[]> {
+  const params: unknown[] = [];
+  const sql = trackSelection(filter, params);
+  const rows = (await db.query(`
+    SELECT o.country, COUNT(*)::int AS tracks
+    FROM (${sql}) sel JOIN track_origin o ON o.track_id = sel.track_id
+    WHERE o.country IS NOT NULL GROUP BY 1 HAVING COUNT(*) >= 3 ORDER BY 2 DESC, 1 LIMIT 12`, params)).rows;
+  return rows.map((r: any) => ({ country: String(r.country), trackCount: r.tracks }));
 }
 
 /** Albums most in a genre or style: by strength (share × how sure), then size. */

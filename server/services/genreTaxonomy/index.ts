@@ -12,6 +12,7 @@ import { backfillTrackTags } from './trackTags';
 import { runArtistTagBackfill } from './artistTagBackfill';
 import { FUSION_VERSION, fusionIsCurrent, runFusion } from './fusion';
 import { rebuildCentroids } from './centroids';
+import { backfillArtistCountries, rebuildTrackOrigin, startFileOriginBackfill } from '../trackOrigin.service';
 
 export { getMappingCoverage } from './coverage';
 export { runTagMapping } from './mapping';
@@ -52,9 +53,17 @@ export async function initializeGenreTaxonomy(): Promise<void> {
       const built = await rebuildCentroids(db, FUSION_VERSION);
       log(`Built ${built} style centroids`);
     }
+    // Fused before track origins existed: build them once from stored data.
+    if (!(await db.query('SELECT 1 FROM track_origin LIMIT 1')).rowCount) {
+      const artists = await backfillArtistCountries(db);
+      const placed = await rebuildTrackOrigin(db);
+      log(`Placed ${placed} tracks (${artists} artist countries from their areas)`);
+    }
   })().finally(() => { running = null; });
   // Optional provider evidence: slow, resumable; does nothing without a provider.
   void running.then(() => startArtistTagBackfill()).catch(() => {});
+  // Release country and lyrics language of files scanned before Aurora kept them.
+  void running.then(() => startFileOriginBackfill(initDB)).catch(() => {});
   return running;
 }
 

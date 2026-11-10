@@ -28,6 +28,7 @@ import type { Pool, PoolClient } from 'pg';
 import { getSystemSetting, setSystemSetting } from '../../database';
 import { parseSetting } from './seed';
 import { rebuildCentroids } from './centroids';
+import { backfillArtistCountries, rebuildTrackOrigin } from '../trackOrigin.service';
 
 /** Bump when the rules or thresholds change; a stale version triggers a full run at startup. */
 export const FUSION_VERSION = 2;
@@ -302,6 +303,10 @@ export async function runFusion(db: Pool, { trackIds }: { trackIds?: string[] } 
     // Centroids follow the tag and hand-set memberships, which any run can change.
     await rebuildCentroids(client, FUSION_VERSION);
     await markDisputed(client, trusted.map(t => t.genre));
+    // Where tracks are from and their language (filters, playlists): stored
+    // data only, so it rides along with every run.
+    if (full) await backfillArtistCountries(client);
+    await rebuildTrackOrigin(client, trackIds);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});

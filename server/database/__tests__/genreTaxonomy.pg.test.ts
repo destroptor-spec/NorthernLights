@@ -596,4 +596,56 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     expect((await rows(far)).find(r => r.style === 'Grunge')).toMatchObject({ source: 'override', disputed: false });
     expect((await listDisputedStyles(pool)).total).toBe(0);
   });
+  test('track origin: one country and language per track, from the artist, its place tags, then the file', async () => {
+    const { backfillArtistCountries, rebuildTrackOrigin } = await import('../../services/trackOrigin.service');
+    const artist = async (name: string, cols: { country?: string; area?: string } = {}) => (await pool.query(
+      'INSERT INTO artists (name, country, area) VALUES ($1, $2, $3) RETURNING id', [name, cols.country ?? null, cols.area ?? null])).rows[0].id as string;
+    const mbDane = await artist('O Dane', { country: 'DK' });
+    const english = await artist('O English', { area: 'England' });
+    const tagged = await artist('O Tagged');
+    const nowhere = await artist('O Nowhere');
+    await pool.query(`INSERT INTO artist_tags (artist_id, provider, tag, tag_key, raw_count, weight) VALUES
+      ($1, 'lastfm', 'dansk', 'dansk', 60, 0.6), ($1, 'lastfm', 'electronic', 'electronic', 100, 1),
+      ($2, 'lastfm', 'indie', 'indie', 100, 1)`, [tagged, nowhere]);
+    const add = async (name: string, artistId: string, file: { releaseCountry?: string; lyricsLanguage?: string }) => {
+      await db.addTrack({ ...track(name, null), originRead: true, ...file } as never);
+      await pool.query('UPDATE tracks SET artist_id = $2 WHERE id = $1', [idOf(name), artistId]);
+      return idOf(name);
+    };
+    const a = await add('o-mb', mbDane, { releaseCountry: 'US', lyricsLanguage: 'dan' });
+    const b = await add('o-area', english, { lyricsLanguage: 'zxx' });
+    const c = await add('o-tags', tagged, { releaseCountry: 'XE' });
+    const d = await add('o-release', nowhere, { releaseCountry: 'SE', lyricsLanguage: 'swe' });
+    const e = await add('o-europe', nowhere, { releaseCountry: 'XE' });
+
+    expect(await backfillArtistCountries(pool)).toBeGreaterThanOrEqual(1);
+    await rebuildTrackOrigin(pool);
+    const origin = async (id: string) => (await pool.query(
+      'SELECT country, country_source, language, language_source FROM track_origin WHERE track_id = $1', [id])).rows[0] ?? null;
+    // MusicBrainz's country beats the release country; the file says Danish.
+    expect(await origin(a)).toEqual({ country: 'DK', country_source: 'artist', language: 'da', language_source: 'file' });
+    // An area that names a UK nation is the UK; "no lyrics" is no language.
+    expect(await origin(b)).toEqual({ country: 'GB', country_source: 'artist', language: null, language_source: null });
+    // No MusicBrainz country: the artist's place tag ("dansk"); Europe (XE) isn't a country.
+    expect(await origin(c)).toMatchObject({ country: 'DK', country_source: 'artist-tags' });
+    // Nothing on the artist ("indie" is no place): the release country, the weakest hint.
+    expect(await origin(d)).toEqual({ country: 'SE', country_source: 'release', language: 'sv', language_source: 'file' });
+    expect(await origin(e)).toBeNull();
+
+    // Browse narrows by country: the tracks of a filter, and the countries it offers.
+    const browse = await import('../../services/browse.service');
+    await pool.query(`INSERT INTO track_styles (track_id, genre, style_id, source, strength, confidence, fusion_version)
+      SELECT id, 'Hip Hop', NULL, 'tag', 1, 1, 2 FROM tracks WHERE id = ANY($1)`, [[a, b, c, d]]);
+    expect((await browse.listBrowseTrackIds(pool, { genre: 'Hip Hop', country: 'DK' }, 0, 50)).ids.sort()).toEqual([a, c].sort());
+
+    // A rescan that finds the tag removed clears it; one that couldn't read the file keeps it.
+    await db.addTrack({ ...track('o-release', null), originRead: true, releaseCountry: null, lyricsLanguage: 'swe' } as never);
+    await pool.query('UPDATE tracks SET artist_id = $2 WHERE id = $1', [d, nowhere]);
+    await db.addTrack({ ...track('o-mb', null) } as never);
+    await pool.query('UPDATE tracks SET artist_id = $2 WHERE id = $1', [a, mbDane]);
+    await rebuildTrackOrigin(pool, [a, d]);
+    expect(await origin(d)).toEqual({ country: null, country_source: null, language: 'sv', language_source: 'file' });
+    expect((await pool.query('SELECT release_country, lyrics_language FROM tracks WHERE id = $1', [a])).rows[0])
+      .toEqual({ release_country: 'US', lyrics_language: 'dan' });
+  });
 });

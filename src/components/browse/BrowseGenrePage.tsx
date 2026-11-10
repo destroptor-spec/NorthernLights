@@ -10,8 +10,7 @@ import {
   BrowseArtistGrid,
   BrowseError,
   BrowseGridSkeleton,
-  DecadeButtons,
-  ShuffleButton,
+  ShuffleFilters,
   useBrowsePlayer,
 } from './browseParts';
 import type { BrowseGenreDetail } from '../../../shared/api/v1';
@@ -75,13 +74,12 @@ export const BrowseGenrePage: React.FC = () => {
               {detail.styles.length > 0 && ` · ${detail.styles.length} ${detail.styles.length === 1 ? 'style' : 'styles'}`}
             </p>
             <div className="browse-hero__actions">
-              <ShuffleButton busy={busy === 'genre'} onClick={() => playFilter('genre', filter)} label={`Shuffle ${detail.genre.name}`} />
-              <DecadeButtons
-                decades={detail.decades}
-                busyKey={busy}
-                keyPrefix="decade"
+              <ShuffleFilters
                 name={detail.genre.name}
-                onPlay={decade => playFilter(`decade:${decade}`, { genre, decade })}
+                decades={detail.decades}
+                countries={detail.countries}
+                busy={busy === 'genre'}
+                onShuffle={narrow => playFilter('genre', { ...filter, ...narrow })}
               />
             </div>
           </header>

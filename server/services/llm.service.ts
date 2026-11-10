@@ -43,6 +43,13 @@ export interface HubCollection {
   target_genres?: string[];
   banned_genres?: string[];
   target_genre?: string; // Legacy singular field
+  /** Custom playlists only, when asked for: ISO 3166-1 alpha-2 countries the artists are from. */
+  countries?: string[];
+  /** ISO 639-1 languages the songs are sung in. */
+  languages?: string[];
+  /** Release years, inclusive. */
+  year_from?: number;
+  year_to?: number;
 }
 
 export async function generateHubConcepts(
@@ -219,14 +226,24 @@ For example: "chill" or "wind-down" → low energy (0.1-0.3), high acousticness 
 You must also include "target_genres": an array of 2-4 genre names that best match the user's request. Prefer specific, library-supported genre names so the recommendation engine can anchor the playlist locally.
 You must also include "banned_genres": an array of 2-5 genre names that should be ABSOLUTELY EXCLUDED from this playlist. These are genres that clash with the playlist's mood.
 
-Only output valid JSON matching this schema exactly:
+The description may be written in any language (for example Danish: "Dansk rap fra 90'erne" means Danish rap from the 1990s). Write the title and description in the language the user wrote in.
+Only when the user asks for where the music is from, the language it is sung in, or when it was released, also include these hard filters (leave them out otherwise; every track must match them):
+- "countries": ISO 3166-1 alpha-2 codes of the countries the artists come from. "Dansk rap", "Danish rap" → ["DK"]; "Nordic pop" → ["DK", "SE", "NO", "FI", "IS"].
+- "languages": ISO 639-1 codes of the languages the songs are sung in. "på dansk", "sung in Danish" → ["da"]. For a nationality ("Dansk rap") give both the country and its language: a track matches either.
+- "year_from" and "year_to": release years, inclusive. "fra 90'erne", "from the 90s" → 1990 and 1999; "after 2010" → year_from 2010 only.
+
+Only output valid JSON matching this schema exactly (the last four fields only when asked for):
 {
   "section": "Custom",
   "title": "A short, catchy title for the playlist",
   "description": "A very short description matching the mood.",
   "target_genres": ["rock", "indie", "alternative"],
   "banned_genres": ["classical", "opera", "country"],
-  "target_vector": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+  "target_vector": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
+  "countries": ["DK"],
+  "languages": ["da"],
+  "year_from": 1990,
+  "year_to": 1999
 }
 `;
 

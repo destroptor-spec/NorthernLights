@@ -33,10 +33,11 @@ const electronic: BrowseGenreDetail = {
   albums: [],
   artists: [],
   decades: [{ decade: 1990, trackCount: 372 }, { decade: 2000, trackCount: 3330 }],
+  countries: [{ country: 'US', trackCount: 4100 }, { country: 'DK', trackCount: 640 }],
 };
 
 const grunge = (soundsCloseTo: BrowseStyleDetail['soundsCloseTo']): BrowseStyleDetail => ({
-  style: style(51, 'Grunge', 151, 'Rock'), albums: [], artists: [], decades: [], soundsCloseTo,
+  style: style(51, 'Grunge', 151, 'Rock'), albums: [], artists: [], decades: [], countries: [], soundsCloseTo,
 });
 let grungeDetail = grunge([]);
 const nuMetal = { genre: 'Rock', styleId: 61, style: 'Nu Metal', score: 0.002, fromTags: ['Nu Metal'] };
@@ -94,7 +95,7 @@ test('genre cards carry the name and one line: track count and biggest style; hi
   expect(screen.getByText('57 tracks without a genre yet').closest('a')!.getAttribute('href')).toBe('/library/browse/unsorted');
 });
 
-test('a genre page shows its biggest styles as tiles, every other style in an index, and shuffles by genre or decade', async () => {
+test('a genre page shows its biggest styles as tiles, every other style in an index, and shuffles by genre, decade and country', async () => {
   renderAt('/library/browse/genre/Electronic');
   expect(await screen.findByRole('heading', { level: 1, name: 'Electronic' })).toBeTruthy();
   expect(screen.getByText('9,734 tracks · 8 styles')).toBeTruthy();
@@ -113,9 +114,15 @@ test('a genre page shows its biggest styles as tiles, every other style in an in
   // The server picks and orders the mix; the client plays it as it comes.
   expect(((setPlaylist.mock.calls[0] as unknown[])[0] as Array<{ id: string }>).map(t => t.id)).toEqual(['t1', 't2', 't3']);
 
-  fireEvent.click(screen.getByRole('button', { name: /^Shuffle Electronic from the 1990s/ }));
+  // Decade and country narrow the one Shuffle; picking again clears.
+  fireEvent.click(screen.getByRole('button', { name: '1990s' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Denmark' }));
+  expect(screen.getByRole('button', { name: 'Denmark' }).getAttribute('aria-pressed')).toBe('true');
+  fireEvent.click(screen.getByRole('button', { name: 'Shuffle Electronic · Denmark · 1990s' }));
   await waitFor(() => expect(setPlaylist).toHaveBeenCalledTimes(2));
-  expect(fetchMock.mock.calls.some(([u]) => String(u) === '/api/v1/browse/mix?genre=Electronic&decade=1990')).toBe(true);
+  expect(fetchMock.mock.calls.some(([u]) => String(u) === '/api/v1/browse/mix?genre=Electronic&decade=1990&country=DK')).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: '1990s' }));
+  expect(screen.getByRole('button', { name: 'Shuffle Electronic · Denmark' })).toBeTruthy();
 });
 
 test('a card takes one of the Hub cover gradients, the same one for a name every time', () => {

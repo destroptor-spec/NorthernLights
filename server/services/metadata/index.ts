@@ -26,6 +26,7 @@ import {
 } from './providers/lastfm';
 import { geniusSearch, geniusGetArtist } from './providers/genius';
 import { extractMbLinks, extractMbMembers, mbGetArtist, mbGetAlbumCover, mbSearchReleaseGroup } from './providers/musicbrainz';
+import { countryCode } from '../../../shared/places';
 
 // ─── Types ──────────────────────────────────────────────────────────
 export interface ArtistData {
@@ -164,6 +165,8 @@ export async function getArtistData(
   const providerTags: Partial<Record<TagProvider, ProviderTag[]>> = {};
 
   // The stored id (from the files) wins over one the caller derived.
+  // ISO country from MusicBrainz, stored for filters and playlists.
+  let mbCountry: string | null = null;
   if (settings.musicBrainzEnabled && (cached?.mbid || mbArtistId)) {
     const mbid = cached?.mbid || mbArtistId;
     if (mbid) {
@@ -172,6 +175,7 @@ export async function getArtistData(
         if (mbArtist) {
           data.disambiguation = mbArtist.disambiguation || undefined;
           data.area = mbArtist.area?.name || undefined;
+          mbCountry = countryCode(mbArtist.country) ?? countryCode(mbArtist.area?.name);
           data.type = mbArtist.type || undefined;
           if (mbArtist['life-span']) {
             data.lifeSpan = {
@@ -408,6 +412,7 @@ export async function getArtistData(
       communityTags: data.communityTags && data.communityTags.length > 0 ? JSON.stringify(data.communityTags) : null,
       listeners: data.listeners ?? null,
       members: data.members && data.members.length > 0 ? JSON.stringify(data.members) : null,
+      country: mbCountry,
       artworkUrl: data.artworkUrl ?? null,
     };
     await upsertArtistCache(

@@ -161,15 +161,17 @@ Settings → Appearance → **Genre and style browse (preview)**. Library → Ge
 
 ## Phase 3: audio and artist-tag evidence
 
-Built so far: style centroids, "Sounds close to", and fusion version 2 ("trust, then verify": the sound adds styles to tagged tracks and flags tags it contradicts, for review). Descriptors (moods, places, eras from artist tags) follow; their steps are added here when they are built.
+Built so far: style centroids, "Sounds close to", fusion version 2 ("trust, then verify": the sound adds styles to tagged tracks and flags tags it contradicts, for review), and places and languages for filters and AI playlists. Mood and era descriptors follow; their steps are added here when they are built.
 
 ### 1. Deploy (schema change)
 
-New table `style_centroids` (one row per style: the mean audio embedding of its tagged tracks, with counts and the 90th-percentile member distance); nothing existing changes. The deploy script exports the database first.
+New table `style_centroids` (one row per style: the mean audio embedding of its tagged tracks, with counts and the 90th-percentile member distance) and `track_origin` (a country and language per track); new columns `tracks.release_country`, `tracks.lyrics_language`, `tracks.origin_read_at` and `artists.country`. Nothing existing changes. The deploy script exports the database first.
 
 ### 2. Automatic on first start (nothing to run)
 
 When fusion is already current (phase 2 ran), the server builds the centroids once at startup without a full fusion run. The log says `[GenreTaxonomy] Built N style centroids` (dev: 57 of the 297 styles in use; a style needs at least 8 tagged tracks by 3 artists). From then on every fusion run rebuilds them (about 0.2 s on dev). Needs phase 0's embeddings: tracks without a real embedding (simulated) never count.
+
+Places: the first start fills `artists.country` from stored areas and builds `track_origin` (log: `[TrackOrigin]`/`[GenreTaxonomy] Placed N tracks (M artist countries from their areas)`), then reads the release country and lyrics language from every file scanned before this version, in the background (`[TrackOrigin] Read release country and language from N files`; dev: about 45 files a second, so prod's larger library takes proportionally longer; it resumes after a restart). It reads local files only; no provider calls.
 
 Fusion version 2 runs once over the whole library at startup, because the version changed (dev: 11.4 s, about 1.5 s more than version 1). The log line now ends `…; N styles added from the sound, M disputed` (dev: 27,021 audio styles on tagged tracks, 476 disputed styles on 469 tracks).
 
@@ -177,13 +179,16 @@ Fusion version 2 runs once over the whole library at startup, because the versio
 
 - [ ] `GET /api/admin/genre-taxonomy/fusion` returns `version` 2 with `addedFromSound` and `disputed`.
 - [ ] As an admin, Library → Genres → Unsorted ends with **Disputed tags**: one row per track with Play, Keep and Remove. Try Keep and Remove on one track each, and Undo from the toast; **Aurora rays** for a disputed track says "The sound disagrees" after the tag.
+- [ ] `SELECT country_source, COUNT(*) FROM track_origin GROUP BY 1` after the file read finishes (`SELECT COUNT(*) FROM tracks WHERE origin_read_at IS NULL` is 0). Dev: artist 24,728, artist-tags 1,210, release 1,222.
+- [ ] A genre page (Hip Hop) shows Decade and Country toggles under Shuffle; pick Denmark and a decade and Shuffle plays only those.
+- [ ] With an LLM configured, a custom AI playlist "Dansk rap fra 90'erne" logs `[LLM Hub] "…" → only from DK or language da, years 1990–1999` and plays only Danish tracks from the 90s.
 - [ ] `SELECT COUNT(*), MIN(p90_distance), MAX(p90_distance) FROM style_centroids` is not zero (dev: 57, 0.09 to 0.52).
 - [ ] A style page with a centroid (Grunge, Trance, House) ends with **Sounds close to**: six style cards, each naming its genre (dev: Grunge → Hard Rock, Alternative Rock, Heavy Metal, Punk, Thrash, Progressive Metal).
 - [ ] **Aurora rays** for an analysed track shows **Sounds close to** between Sound and style and Also on: six compact style cards and up to 12 tracks, one version per song, at most two per artist, none from the track's own album.
 
 ### Rollback
 
-Drop `style_centroids`; nothing else reads it. Style pages and rays simply hide the section. Fusion version 2 adds no table: rolling back the code reruns version 1 at the next start, and Keep and Remove answers stay as ordinary hand corrections (`track_style_overrides`).
+Drop `style_centroids`; nothing else reads it. Style pages and rays simply hide the section. Fusion version 2 adds no table: rolling back the code reruns version 1 at the next start, and Keep and Remove answers stay as ordinary hand corrections (`track_style_overrides`). `track_origin` and the new columns can stay or be dropped; the old code ignores them.
 
 ## Phase 4: engine switch and retirements
 

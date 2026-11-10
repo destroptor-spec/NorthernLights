@@ -666,6 +666,7 @@ const browseFilterQuery = z.object({
   style: z.coerce.number().int().positive().optional(),
   noStyle: z.enum(['true', 'false']).optional(),
   decade: z.coerce.number().int().min(1000).max(2990).optional(),
+  country: z.string().regex(/^[A-Za-z]{2}$/).transform(c => c.toUpperCase()).optional(),
   unsorted: z.enum(['true', 'false']).optional(),
   tag: z.string().min(1).max(200).optional(),
   cursor: z.string().optional(),
@@ -682,7 +683,7 @@ function browseFilter(req: Request, res: Response, { tracks }: { tracks: boolean
   }
   const q = parsed.data;
   const filter: BrowseFilter = {
-    genre: q.genre, styleId: q.style, noStyle: q.noStyle === 'true', decade: q.decade,
+    genre: q.genre, styleId: q.style, noStyle: q.noStyle === 'true', decade: q.decade, country: q.country,
     unsorted: q.unsorted === 'true', tag: q.tag,
   };
   const scoped = filter.styleId !== undefined || filter.genre !== undefined || (tracks && filter.unsorted);

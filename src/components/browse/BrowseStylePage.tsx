@@ -8,9 +8,8 @@ import {
   BrowseArtistGrid,
   BrowseError,
   BrowseGridSkeleton,
-  DecadeButtons,
   NearStyleCards,
-  ShuffleButton,
+  ShuffleFilters,
   useBrowsePlayer,
 } from './browseParts';
 import type { BrowseStyleDetail } from '../../../shared/api/v1';
@@ -65,13 +64,12 @@ export const BrowseStylePage: React.FC = () => {
             <h1 className="browse-hero__title">{style.name}</h1>
             <p className="browse-hero__meta">{style.trackCount.toLocaleString()} {style.trackCount === 1 ? 'track' : 'tracks'}</p>
             <div className="browse-hero__actions">
-              <ShuffleButton busy={busy === 'style'} onClick={() => playFilter('style', filter)} label={`Shuffle ${style.name}`} />
-              <DecadeButtons
-                decades={detail.decades}
-                busyKey={busy}
-                keyPrefix="decade"
+              <ShuffleFilters
                 name={style.name}
-                onPlay={decade => playFilter(`decade:${decade}`, { style: styleId, decade })}
+                decades={detail.decades}
+                countries={detail.countries}
+                busy={busy === 'style'}
+                onShuffle={narrow => playFilter('style', { ...filter, ...narrow })}
               />
             </div>
           </header>

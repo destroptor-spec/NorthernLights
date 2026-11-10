@@ -659,6 +659,11 @@ export const browseDecadeSchema = z.object({
   trackCount: z.number().int().nonnegative(),
 }).meta({ id: 'BrowseDecade' });
 
+export const browseCountrySchema = z.object({
+  country: z.string().length(2).describe('ISO 3166-1 alpha-2: where the artists are from (MusicBrainz, artist tags, or the release country).'),
+  trackCount: z.number().int().nonnegative(),
+}).meta({ id: 'BrowseCountry' });
+
 export const browseGenreDetailSchema = z.object({
   genre: z.object({ name: z.string(), hidden: z.boolean(), trackCount: z.number().int().nonnegative() }),
   styles: z.array(browseStyleRefSchema).describe('Every style with tracks, most tracks first.'),
@@ -666,6 +671,7 @@ export const browseGenreDetailSchema = z.object({
   albums: z.array(browseAlbumSchema),
   artists: z.array(browseArtistSchema),
   decades: z.array(browseDecadeSchema),
+  countries: z.array(browseCountrySchema).describe('The countries with at least 3 tracks here, most tracks first, at most 12.'),
 }).meta({ id: 'BrowseGenreDetail' });
 
 export const browseStyleDetailSchema = z.object({
@@ -673,6 +679,7 @@ export const browseStyleDetailSchema = z.object({
   albums: z.array(browseAlbumSchema),
   artists: z.array(browseArtistSchema),
   decades: z.array(browseDecadeSchema),
+  countries: z.array(browseCountrySchema).describe('The countries with at least 3 tracks here, most tracks first, at most 12.'),
   soundsCloseTo: z.array(browseStyleRefSchema)
     .describe('The styles that sound nearest, from any genre, nearest first (by the centroids of their tagged tracks\' audio embeddings). Empty until the style has a centroid: at least 8 tagged tracks by 3 artists.'),
 }).meta({ id: 'BrowseStyleDetail' });
@@ -782,6 +789,7 @@ export type BrowseGenres = z.infer<typeof browseGenresSchema>;
 export type BrowseAlbum = z.infer<typeof browseAlbumSchema>;
 export type BrowseArtist = z.infer<typeof browseArtistSchema>;
 export type BrowseDecade = z.infer<typeof browseDecadeSchema>;
+export type BrowseCountry = z.infer<typeof browseCountrySchema>;
 export type BrowseGenreDetail = z.infer<typeof browseGenreDetailSchema>;
 export type BrowseStyleDetail = z.infer<typeof browseStyleDetailSchema>;
 export type BrowseSearchResult = z.infer<typeof browseSearchResultSchema>;

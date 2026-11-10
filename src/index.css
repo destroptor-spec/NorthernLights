@@ -1611,9 +1611,27 @@ a:focus-visible > .genre-card .genre-card__label {
 }
 
 .browse-decades__label {
+  min-width: 4rem;
   margin-right: 0.25rem;
   color: var(--color-text-muted);
   font-size: 0.8rem;
+}
+
+/* Decade and country toggles under Shuffle; Shuffle says what it's narrowed to. */
+.browse-filters {
+  display: grid;
+  gap: 0.5rem;
+  flex-basis: 100%;
+}
+
+.browse-shuffle__narrow {
+  font-weight: 400;
+  opacity: 0.85;
+}
+
+/* On a phone each row's label sits above its toggles. */
+@media (max-width: 639px) {
+  .browse-filters .browse-decades__label { flex-basis: 100%; }
 }
 
 .browse-section {
