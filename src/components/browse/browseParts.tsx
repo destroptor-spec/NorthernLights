@@ -6,7 +6,7 @@ import { auroraApiRequest, type Track } from '../../api/auroraApi';
 import {
   fetchBrowseAlbums,
   fetchBrowseArtists,
-  fetchBrowseTracks,
+  fetchBrowseMix,
   type BrowseFilter,
 } from '../../api/browse';
 import { toPlayableTracks } from '../../utils/playableTracks';
@@ -14,29 +14,22 @@ import { AlbumCard, AlbumCardSkeleton } from '../library/AlbumCard';
 import { ArtistInitial } from '../library/ArtistInitial';
 import type { BrowseAlbum, BrowseArtist, BrowseDecade } from '../../../shared/api/v1';
 
-const shuffled = <T,>(items: T[]): T[] => {
-  const out = [...items];
-  for (let i = out.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [out[i], out[j]] = [out[j], out[i]];
-  }
-  return out;
-};
-
 /**
- * Starts playback from Browse. A genre or style has no order of its own, so
- * its strongest 500 tracks are shuffled; an album plays in order. `busy`
- * names the control that is loading, so only its button shows a spinner.
+ * Starts playback from Browse. Shuffle plays a mix the server picks: a
+ * handful of a genre's or style's strongest tracks (15 to 30, or all of a
+ * small one), spread over artists; Infinity mode, when on, carries on from
+ * there. An album plays in order. `busy` names the control that is loading,
+ * so only its button shows a spinner.
  */
 export function useBrowsePlayer() {
   const [busy, setBusy] = useState<string | null>(null);
-  const run = useCallback(async (key: string, load: () => Promise<Track[]>, shuffle: boolean, source?: { kind: 'album'; id: string }) => {
+  const run = useCallback(async (key: string, load: () => Promise<Track[]>, source?: { kind: 'album'; id: string }) => {
     const { setPlaylist, addToast } = usePlayerStore.getState();
     setBusy(key);
     try {
       const tracks = toPlayableTracks(await load());
       if (tracks.length === 0) { addToast('No tracks to play here yet.', 'info'); return; }
-      await setPlaylist(shuffle ? shuffled(tracks) : tracks, 0, source ?? null);
+      await setPlaylist(tracks, 0, source ?? null);
     } catch {
       addToast('Could not load these tracks. Try again.', 'error');
     } finally {
@@ -44,12 +37,12 @@ export function useBrowsePlayer() {
     }
   }, []);
 
-  const playFilter = useCallback((key: string, filter: BrowseFilter) => run(key, async () =>
-    (await fetchBrowseTracks(usePlayerStore.getState().getAuthHeader(), filter)).data, true), [run]);
+  const playFilter = useCallback((key: string, filter: BrowseFilter) => run(key, () =>
+    fetchBrowseMix(usePlayerStore.getState().getAuthHeader(), filter)), [run]);
 
   const playAlbum = useCallback((albumId: string) => run(`album:${albumId}`, async () =>
     (await auroraApiRequest<{ tracks: Track[] }>(`/albums/${encodeURIComponent(albumId)}`, usePlayerStore.getState().getAuthHeader())).tracks,
-  false, { kind: 'album', id: albumId }), [run]);
+  { kind: 'album', id: albumId }), [run]);
 
   return { busy, playFilter, playAlbum };
 }

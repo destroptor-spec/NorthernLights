@@ -152,6 +152,7 @@ Aurora's own 15 genres and 400 styles (docs/Aurora genre and style redesign.md),
 | `GET` | `/api/v1/browse/genres/:genre` | A genre by name: every style with tracks, tracks without a style (`noStyleTrackCount`), the first 24 albums and artists, and track counts per decade. |
 | `GET` | `/api/v1/browse/styles/:id` | A style: the first 24 albums and artists, and decades. |
 | `GET` | `/api/v1/browse/tracks` | Tracks, strongest first, cursor-paged (`limit` up to 500). Filter: `genre`, `style`, `noStyle=true` (with `genre`), `decade=1990`, or `unsorted=true` with an optional `tag`. |
+| `GET` | `/api/v1/browse/mix` | What Shuffle plays, in play order: about a quarter of the genre or style, 15 to 30 tracks (all of one with 15 or fewer), drawn at random from its 300 strongest, at most 2 per artist, the same artist never twice in a row where avoidable. Same filter as `/browse/tracks`. Infinity mode, when on, continues from there. |
 | `GET` | `/api/v1/browse/albums`, `/api/v1/browse/artists` | More albums or artists for `genre` or `style`, cursor-paged; each item has `share` (0–1). |
 | `GET` | `/api/v1/browse/search?q=` | Genres and styles by name, or by a genre tag that maps to them (`matchedAlias`: "Drum & Bass" finds Drum n Bass). Only those with tracks. |
 | `GET` | `/api/v1/browse/unsorted` | Genre tags on tracks without a genre, and how many tracks have no genre tag at all. |

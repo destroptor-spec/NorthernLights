@@ -46,8 +46,9 @@ export const fetchBrowseStyle = (auth: Auth, styleId: number) =>
 
 export const fetchBrowseUnsorted = (auth: Auth) => auroraApiRequest<BrowseUnsorted>('/browse/unsorted', auth);
 
-export const fetchBrowseTracks = (auth: Auth, filter: BrowseFilter, limit = 500) =>
-  auroraApiPage<Track[]>(`/browse/tracks?${filterQuery(filter, { limit })}`, auth);
+/** What Shuffle plays: a handful of strong tracks, spread over artists, in play order. */
+export const fetchBrowseMix = (auth: Auth, filter: BrowseFilter) =>
+  auroraApiRequest<Track[]>(`/browse/mix?${filterQuery(filter)}`, auth);
 
 export const fetchBrowseAlbums = (auth: Auth, filter: BrowseFilter, cursor?: string | null, limit = 24) =>
   auroraApiPage<BrowseAlbum[]>(`/browse/albums?${filterQuery(filter, { limit, cursor: cursor ?? undefined })}`, auth);

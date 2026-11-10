@@ -170,6 +170,7 @@ import {
   listBrowseArtistRows,
   listBrowseGenres,
   listBrowseTrackIds,
+  pickBrowseMix,
   searchBrowseStyles,
   type BrowseFilter,
 } from '../services/browse.service';
@@ -739,6 +740,16 @@ router.get('/browse/tracks', async (req, res) => {
     page: { nextCursor: hasMore ? offsetCursor(request.offset + request.limit) : null },
     meta: { requestId: req.requestId },
   });
+});
+
+// What Shuffle plays: a random handful (15-30, or all of a small one) of the
+// strongest members, spread over artists. Infinity mode, when on, continues.
+router.get('/browse/mix', async (req, res) => {
+  const request = browseFilter(req, res, { tracks: true });
+  if (!request) return;
+  const ids = await pickBrowseMix(await initDB(), request.filter);
+  const byId = new Map((await getApiV1TracksByIds(req.apiV1!.userId, ids)).map(track => [track.id, track]));
+  dataResponse(req, res, ids.map(id => byId.get(id)).filter(Boolean));
 });
 
 router.get('/browse/albums', async (req, res) => {

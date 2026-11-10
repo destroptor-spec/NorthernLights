@@ -171,6 +171,86 @@ export async function listBrowseTrackIds(db: Pool, filter: BrowseFilter, offset:
   return { ids: rows.slice(0, limit).map((r: any) => String(r.track_id)), hasMore: rows.length > limit };
 }
 
+// ── Mix: what Shuffle plays ─────────────────────────────────────────────
+
+/** The strongest members a mix is drawn from. */
+const MIX_POOL = 300;
+const MIX_MAX = 30;
+const MIX_MIN = 15;
+const MIX_PER_ARTIST = 2;
+
+/**
+ * How many tracks Shuffle starts with: a quarter of the genre or style,
+ * 15 to 30; a small one plays whole. Infinity mode (when on) carries on.
+ */
+export function mixSize(total: number): number {
+  if (total <= MIX_MIN) return total;
+  return Math.min(MIX_MAX, Math.max(MIX_MIN, Math.round(total / 4)));
+}
+
+export interface MixCandidate { trackId: string; artist: string }
+
+/**
+ * A random handful of candidates: at most 2 per artist (relaxed only when
+ * there are too few artists to fill it), ordered so the same artist doesn't
+ * play twice in a row where that can be avoided.
+ */
+export function chooseMix(candidates: MixCandidate[], size: number, random: () => number = Math.random): string[] {
+  const pool = [...candidates];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  const picked: MixCandidate[] = [];
+  const perArtist = new Map<string, number>();
+  for (const candidate of pool) {
+    if (picked.length >= size) break;
+    const n = perArtist.get(candidate.artist) || 0;
+    if (n >= MIX_PER_ARTIST) continue;
+    perArtist.set(candidate.artist, n + 1);
+    picked.push(candidate);
+  }
+  for (const candidate of pool) {
+    if (picked.length >= size) break;
+    if (!picked.includes(candidate)) picked.push(candidate);
+  }
+  // Spread artists out: next comes the artist with the most tracks left
+  // (other than the one just played), so one artist's tracks don't pile up
+  // at the end.
+  const ordered: MixCandidate[] = [];
+  const rest = [...picked];
+  const left = new Map<string, number>();
+  for (const c of rest) left.set(c.artist, (left.get(c.artist) || 0) + 1);
+  while (rest.length) {
+    const previous = ordered[ordered.length - 1]?.artist;
+    let index = -1;
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i].artist === previous) continue;
+      if (index === -1 || left.get(rest[i].artist)! > left.get(rest[index].artist)!) index = i;
+    }
+    const next = rest.splice(index === -1 ? 0 : index, 1)[0];
+    left.set(next.artist, left.get(next.artist)! - 1);
+    ordered.push(next);
+  }
+  return ordered.map(c => c.trackId);
+}
+
+/** The tracks Shuffle plays for a filter, in play order. */
+export async function pickBrowseMix(db: Pool, filter: BrowseFilter, random: () => number = Math.random): Promise<string[]> {
+  const params: unknown[] = [];
+  const sql = trackSelection(filter, params);
+  params.push(MIX_POOL);
+  const rows = (await db.query(`
+    SELECT sel.track_id, COALESCE(tr.artist_id::text, lower(tr.artist), '') AS artist, COUNT(*) OVER () AS total
+    FROM (${sql}) sel JOIN tracks tr ON tr.id = sel.track_id
+    ORDER BY sel.strength DESC, random() LIMIT $${params.length}`, params)).rows;
+  // Ties (every track a tag puts in a genre has the same strength) are drawn
+  // at random: by id they'd be a few artists' folders (ids encode the path).
+  if (rows.length === 0) return [];
+  const total = Number(rows[0].total);
+  return chooseMix(rows.map((r: any) => ({ trackId: String(r.track_id), artist: String(r.artist) })), mixSize(total), random);
+}
+
 async function browseDecades(db: Pool, filter: BrowseFilter): Promise<BrowseDecade[]> {
   const params: unknown[] = [];
   const sql = trackSelection(filter, params);

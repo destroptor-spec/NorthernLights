@@ -380,6 +380,14 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     const results = await browse.searchBrowseStyles(pool, 'house');
     expect(results[0]).toMatchObject({ genre: 'Electronic', label: 'House · Electronic', matchedAlias: null });
 
+    // Shuffle: a genre this small (under 15 tracks) plays whole, each track once.
+    const rockIds = (await browse.listBrowseTrackIds(pool, { genre: 'Rock' }, 0, 500)).ids;
+    expect(rockIds.length).toBeLessThan(15);
+    const mix = await browse.pickBrowseMix(pool, { genre: 'Rock' });
+    expect([...mix].sort()).toEqual([...rockIds].sort());
+    expect(mix).toContain(idOf('fz-rock'));
+    expect(await browse.pickBrowseMix(pool, { genre: 'Polka' })).toEqual([]);
+
     const unsorted = await browse.getBrowseUnsorted(pool);
     expect(unsorted.untaggedTrackCount).toBeGreaterThanOrEqual(1);
     const unsortedIds = await browse.listBrowseTrackIds(pool, { unsorted: true }, 0, 500);

@@ -38,7 +38,7 @@ const fetchMock = jest.fn(async (url: RequestInfo | URL) => {
   const path = String(url);
   if (path.startsWith('/api/v1/browse/genres?') || path === '/api/v1/browse/genres') return ok(genres);
   if (path === '/api/v1/browse/genres/Electronic') return ok(electronic);
-  if (path.startsWith('/api/v1/browse/tracks')) return ok([track('t1'), track('t2'), track('t3')], { nextCursor: null });
+  if (path.startsWith('/api/v1/browse/mix')) return ok([track('t1'), track('t2'), track('t3')]);
   return ok({});
 });
 
@@ -89,12 +89,13 @@ test('a genre page shows its biggest styles as tiles, every other style in an in
 
   fireEvent.click(screen.getByRole('button', { name: 'Shuffle Electronic' }));
   await waitFor(() => expect(setPlaylist).toHaveBeenCalledTimes(1));
-  expect(String(fetchMock.mock.calls.find(([u]) => String(u).startsWith('/api/v1/browse/tracks'))![0])).toBe('/api/v1/browse/tracks?genre=Electronic&limit=500');
-  expect((setPlaylist.mock.calls[0] as unknown[])[0]).toHaveLength(3);
+  expect(String(fetchMock.mock.calls.find(([u]) => String(u).startsWith('/api/v1/browse/mix'))![0])).toBe('/api/v1/browse/mix?genre=Electronic');
+  // The server picks and orders the mix; the client plays it as it comes.
+  expect(((setPlaylist.mock.calls[0] as unknown[])[0] as Array<{ id: string }>).map(t => t.id)).toEqual(['t1', 't2', 't3']);
 
   fireEvent.click(screen.getByRole('button', { name: /^Shuffle Electronic from the 1990s/ }));
   await waitFor(() => expect(setPlaylist).toHaveBeenCalledTimes(2));
-  expect(fetchMock.mock.calls.some(([u]) => String(u) === '/api/v1/browse/tracks?genre=Electronic&decade=1990&limit=500')).toBe(true);
+  expect(fetchMock.mock.calls.some(([u]) => String(u) === '/api/v1/browse/mix?genre=Electronic&decade=1990')).toBe(true);
 });
 
 test('a card takes one of the Hub cover gradients, the same one for a name every time', () => {
@@ -111,6 +112,6 @@ test("a card's Play shuffles that genre and stays on the page; the button is bes
   expect(play.closest('a')).toBeNull();
   fireEvent.click(play);
   await waitFor(() => expect(setPlaylist).toHaveBeenCalledTimes(1));
-  expect(fetchMock.mock.calls.some(([u]) => String(u) === '/api/v1/browse/tracks?genre=Rock&limit=500')).toBe(true);
+  expect(fetchMock.mock.calls.some(([u]) => String(u) === '/api/v1/browse/mix?genre=Rock')).toBe(true);
   expect(screen.getByTestId('where').textContent).toBe('/library/genres');
 });

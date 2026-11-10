@@ -10,6 +10,7 @@ jest.mock('../database', () => ({
 jest.mock('../services/browse.service', () => ({
   ...jest.requireActual('../services/browse.service'),
   listBrowseTrackIds: jest.fn(),
+  pickBrowseMix: jest.fn(),
   listBrowseAlbumRows: jest.fn(),
   getBrowseGenre: jest.fn(),
   getAlbumStyleProfile: jest.fn(async () => ({ entries: [] })),
@@ -21,7 +22,7 @@ jest.mock('../services/apiV1Dto.service', () => ({
 import type { Request, Response } from 'express';
 import router from './apiV1.routes';
 import { getAlbumById } from '../database';
-import { getBrowseGenre, listBrowseAlbumRows, listBrowseTrackIds } from '../services/browse.service';
+import { getBrowseGenre, listBrowseAlbumRows, listBrowseTrackIds, pickBrowseMix } from '../services/browse.service';
 import { getApiV1TracksByIds, mapTrackV1 } from '../services/apiV1Dto.service';
 
 async function get(path: string, query: Record<string, string> = {}, params: Record<string, string> = {}) {
@@ -66,6 +67,16 @@ describe('GET /browse/tracks', () => {
     jest.mocked(listBrowseTrackIds).mockResolvedValue({ ids: [], hasMore: false });
     await get('/browse/tracks', { unsorted: 'true', tag: 'General Rap' });
     expect(jest.mocked(listBrowseTrackIds).mock.calls[0][1]).toMatchObject({ unsorted: true, tag: 'General Rap' });
+  });
+});
+
+describe('GET /browse/mix', () => {
+  it('returns the mix in the order the server picked it, and needs a genre, style or unsorted', async () => {
+    jest.mocked(pickBrowseMix).mockResolvedValue(['t3', 't1', 't2']);
+    const res = await get('/browse/mix', { style: '92', decade: '2000' });
+    expect(jest.mocked(pickBrowseMix).mock.calls[0][1]).toMatchObject({ styleId: 92, decade: 2000 });
+    expect(body(res).data.map((t: { id: string }) => t.id)).toEqual(['t3', 't1', 't2']);
+    expect((await get('/browse/mix', {})).status).toHaveBeenCalledWith(400);
   });
 });
 
