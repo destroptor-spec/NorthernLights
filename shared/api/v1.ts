@@ -709,6 +709,14 @@ export const artistStyleProfileSchema = z.object({
 }).meta({ id: 'ArtistStyleProfile' });
 
 /** "Aurora rays from {title}": everything Aurora knows about one track. */
+const raysArtistSchema = z.object({
+  id: z.string(), name: z.string(),
+  imageUrl: z.string().nullable(), artworkUrl: z.string().nullable(),
+  musicBrainzId: z.string().nullable(),
+  entries: z.array(styleProfileEntrySchema.extend({ albumCount: z.number().int().nonnegative() })),
+  listenerTags: z.array(z.string()),
+});
+
 export const trackRaysSchema = z.object({
   track: trackSchema,
   credits: z.array(z.object({
@@ -746,13 +754,10 @@ export const trackRaysSchema = z.object({
     artworkId: z.string().nullable().describe('Cover art of the album, as for AlbumSummary.'),
     entries: z.array(styleProfileEntrySchema),
   }).nullable(),
-  artist: z.object({
-    id: z.string(), name: z.string(),
-    imageUrl: z.string().nullable(), artworkUrl: z.string().nullable(),
-    musicBrainzId: z.string().nullable(),
-    entries: z.array(styleProfileEntrySchema.extend({ albumCount: z.number().int().nonnegative() })),
-    listenerTags: z.array(z.string()),
-  }).nullable(),
+  artist: raysArtistSchema.nullable().describe('The track\'s own artist.'),
+  otherArtists: z.array(raysArtistSchema.extend({
+    role: z.enum(['artist', 'featured', 'remixer']).describe('artist: billed alongside the track\'s own artist.'),
+  })).describe('The other billed artists, the featured artists and the remixers, in that order, each once; only artists in the library, at most 10.'),
   otherAlbums: z.array(z.object({
     trackId: z.string(),
     albumId: z.string().nullable(),

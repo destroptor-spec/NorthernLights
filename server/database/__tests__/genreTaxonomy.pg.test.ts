@@ -455,9 +455,21 @@ describeDb('genre & style taxonomy on a fresh database', () => {
       { role: 'featured', artistId: guest, name: 'Guest Singer', detail: null, imageUrl: null },
     ]);
 
+    // In context: the featured artist, then a remixer; the track's own
+    // artist has its own card, and a person with two roles shows once.
+    await pool.query('UPDATE tracks SET artist_id = $1 WHERE id = $2', [fusion, id]);
+    const remixer = (await pool.query(`INSERT INTO artists (name) VALUES ('Remix Person') RETURNING id`)).rows[0].id;
+    await pool.query(`INSERT INTO track_artist_credits (track_id, artist_id, role, position) VALUES ($1, $2, 'remixer', 0), ($1, $3, 'remixer', 1), ($1, $4, 'remixer', 2)`,
+      [id, remixer, guest, fusion]);
+    expect((await getTrackRays(pool, id))!.otherArtists.map(a => `${a.role}:${a.name}`))
+      .toEqual(['featured:Guest Singer', 'remixer:Remix Person']);
+
     // Without a library artist of that name the credit stays, unlinked.
     await db.addTrack({ ...track('t-feat-2', ['Pop']), artist: 'Fusion Artist feat. Nobody Known', artists: ['Fusion Artist', 'Nobody Known'] } as never);
     const unknown = (await getTrackRays(pool, idOf('t-feat-2')))!.credits.find(c => c.name === 'Nobody Known');
     expect(unknown).toMatchObject({ role: 'featured', artistId: null });
+    // ...and has no In context card: no page, no profile.
+    await pool.query('UPDATE tracks SET artist_id = $1 WHERE id = $2', [fusion, idOf('t-feat-2')]);
+    expect((await getTrackRays(pool, idOf('t-feat-2')))!.otherArtists).toEqual([]);
   });
 });

@@ -12,6 +12,8 @@ import { getAlbumStyleProfile, getArtistStyleProfile } from './browse.service';
 
 const CLOSEST_STYLES = 12;
 const OTHER_ALBUMS = 20;
+/** In context: at most this many artists besides the track's own. */
+const OTHER_ARTISTS = 10;
 
 /** Positions in track_features.acoustic_vector_8d (extractor.py). */
 const VECTOR = { energy: 0, brightness: 1, percussiveness: 2, instrumentalness: 4, acousticness: 5, danceability: 6 } as const;
@@ -98,9 +100,13 @@ export async function getTrackRays(db: Pool, trackId: string): Promise<Omit<Trac
     ? (await db.query(`
         SELECT id, name, image_url, artwork_url, mbid FROM artists
         WHERE id = $1 AND COALESCE(is_va_pseudo, FALSE) = FALSE`, [head.artist_id])).rows[0] : null;
-  const [albumProfile, artistProfile] = await Promise.all([
+  const [albumProfile, artistProfile, otherArtists] = await Promise.all([
     albumRow ? getAlbumStyleProfile(db, String(albumRow.id)) : null,
     artistRow ? getArtistStyleProfile(db, String(artistRow.id)) : null,
+    contextArtists(db, [
+      ...billed,
+      ...credits.rows.filter((r: any) => r.role === 'remixer').map((r: any) => ({ role: 'remixer', artistId: String(r.artist_id) })),
+    ], artistRow ? String(artistRow.id) : null),
   ]);
 
   return {
@@ -131,6 +137,7 @@ export async function getTrackRays(db: Pool, trackId: string): Promise<Omit<Trac
       imageUrl: artistRow.image_url ?? null, artworkUrl: artistRow.artwork_url ?? null, musicBrainzId: artistRow.mbid ?? null,
       entries: artistProfile.entries, listenerTags: artistProfile.listenerTags,
     } : null,
+    otherArtists,
     otherAlbums: others.rows.map((r: any) => ({
       trackId: String(r.id),
       albumId: r.album_id ? String(r.album_id) : null,
@@ -140,6 +147,40 @@ export async function getTrackRays(db: Pool, trackId: string): Promise<Omit<Trac
       artworkId: r.art_hash ?? null,
     })),
   };
+}
+
+/**
+ * In context beyond the track's own artist: the other billed artists, the
+ * featured artists and the remixers, in that order, each once (a person with
+ * two of those roles keeps the first), only those in the library (a name
+ * without an artist has no page and no profile). Stored images only: no
+ * provider lookups per person.
+ */
+async function contextArtists(
+  db: Pool, people: Array<{ role: string; artistId: string | null }>, ownArtistId: string | null,
+): Promise<TrackRays['otherArtists']> {
+  const picked = new Map<string, 'artist' | 'featured' | 'remixer'>();
+  for (const p of people) {
+    if (!p.artistId || p.artistId === ownArtistId || picked.has(p.artistId)) continue;
+    if (p.role === 'artist' || p.role === 'featured' || p.role === 'remixer') picked.set(p.artistId, p.role);
+  }
+  const ids = [...picked.keys()].slice(0, OTHER_ARTISTS);
+  if (!ids.length) return [];
+  const rows = (await db.query(`
+    SELECT id, name, image_url, artwork_url, mbid FROM artists
+    WHERE id = ANY($1::uuid[]) AND COALESCE(is_va_pseudo, FALSE) = FALSE`, [ids])).rows;
+  const byId = new Map(rows.map((r: any) => [String(r.id), r]));
+  const present = ids.filter(id => byId.has(id));
+  const profiles = await Promise.all(present.map(id => getArtistStyleProfile(db, id)));
+  return present.map((id, i) => {
+    const r: any = byId.get(id);
+    return {
+      role: picked.get(id)!,
+      id, name: String(r.name),
+      imageUrl: r.image_url ?? null, artworkUrl: r.artwork_url ?? null, musicBrainzId: r.mbid ?? null,
+      entries: profiles[i].entries, listenerTags: profiles[i].listenerTags,
+    };
+  });
 }
 
 /**

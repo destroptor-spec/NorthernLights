@@ -107,7 +107,7 @@ describe('browse albums and genres', () => {
 
 describe('GET /tracks/:id/rays', () => {
   it('answers with the v1 track and its rays, or 404 for an unknown track', async () => {
-    jest.mocked(getTrackRays).mockResolvedValue({ credits: [], tags: ['Rock'], styles: [], sound: null, album: null, artist: null, otherAlbums: [] });
+    jest.mocked(getTrackRays).mockResolvedValue({ credits: [], tags: ['Rock'], styles: [], sound: null, album: null, artist: null, otherArtists: [], otherAlbums: [] });
     const res = await get('/tracks/:id/rays', {}, { id: 't1' });
     expect(body(res).data).toMatchObject({ track: { id: 't1' }, tags: ['Rock'] });
     expect(JSON.stringify(body(res))).not.toContain('secret');

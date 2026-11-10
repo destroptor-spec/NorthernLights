@@ -2402,7 +2402,110 @@
               "musicBrainzId",
               "entries",
               "listenerTags"
-            ]
+            ],
+            "description": "The track's own artist."
+          },
+          "otherArtists": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "imageUrl": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "artworkUrl": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "musicBrainzId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "entries": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "genre": {
+                        "type": "string"
+                      },
+                      "styleId": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "style": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "share": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "trackCount": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "albumCount": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "genre",
+                      "styleId",
+                      "style",
+                      "share",
+                      "trackCount",
+                      "albumCount"
+                    ]
+                  }
+                },
+                "listenerTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "artist",
+                    "featured",
+                    "remixer"
+                  ],
+                  "description": "artist: billed alongside the track's own artist."
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "imageUrl",
+                "artworkUrl",
+                "musicBrainzId",
+                "entries",
+                "listenerTags",
+                "role"
+              ]
+            },
+            "description": "The other billed artists, the featured artists and the remixers, in that order, each once; only artists in the library, at most 10."
           },
           "otherAlbums": {
             "type": "array",
@@ -2457,6 +2560,7 @@
           "sound",
           "album",
           "artist",
+          "otherArtists",
           "otherAlbums"
         ]
       },

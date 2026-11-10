@@ -147,6 +147,13 @@ const PersonCover: React.FC<{ name: string; imageUrl?: string | null }> = ({ nam
     );
 };
 
+/** What an In context card says an artist other than the track's own is. */
+const OTHER_ARTIST_ROLE: Record<Rays['otherArtists'][number]['role'], string> = {
+  artist: 'Artist',
+  featured: 'Featured artist',
+  remixer: 'Remixer',
+};
+
 /**
  * A double-width card in the In context rail: the album's or artist's
  * artwork on the left; on the right its name, what it is, how the track sits
@@ -164,7 +171,9 @@ const ContextCard: React.FC<{
       <Link to={to} className="rays-context-card__title">{title}</Link>
       <span className="rays-context-card__info">{info}</span>
       {line && <p className="rays-context-card__line">{line}</p>}
-      {entries.length > 0 && <ProfileChips entries={entries.slice(0, 4)} />}
+      {entries.length > 0
+        ? <ProfileChips entries={entries.slice(0, 4)} />
+        : !line && tags.length === 0 && <p className="rays-context-card__line">No genres or styles of their own in your library yet.</p>}
       {tags.length > 0 && (
         <p className="rays-context-card__tags" title={tags.join(', ')}>
           <span className="rays-context-card__info">Listeners say </span>{tags.join(', ')}
@@ -493,7 +502,7 @@ export const TrackRays: React.FC = () => {
             </section>
           )}
 
-          {(rays.album || rays.artist) && (
+          {(rays.album || rays.artist || rays.otherArtists.length > 0) && (
             <section className="browse-section" aria-label="In context">
               <h2 className="browse-section__title">In context</h2>
               <HorizontalScrollRail
@@ -520,6 +529,17 @@ export const TrackRays: React.FC = () => {
                     tags={rays.artist.listenerTags}
                   />
                 )}
+                {rays.otherArtists.map(other => (
+                  <ContextCard
+                    key={other.id}
+                    to={`/library/artist/${other.id}`}
+                    art={<PersonCover name={other.name} imageUrl={other.imageUrl} />}
+                    title={other.name}
+                    info={OTHER_ARTIST_ROLE[other.role]}
+                    entries={other.entries}
+                    tags={other.listenerTags}
+                  />
+                ))}
               </HorizontalScrollRail>
             </section>
           )}

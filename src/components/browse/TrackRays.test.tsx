@@ -42,6 +42,11 @@ const rays = (): Rays => ({
     { genre: 'Electronic', styleId: 56, style: 'Downtempo', share: 0.6, trackCount: 9 },
   ] },
   artist: { id: 'ar1', name: 'Pretty Lights', imageUrl: null, artworkUrl: null, musicBrainzId: null, entries: [], listenerTags: ['electronic', 'downtempo'] },
+  otherArtists: [
+    { role: 'featured', id: 'ar5', name: 'Guest Star', imageUrl: null, artworkUrl: null, musicBrainzId: null, entries: [], listenerTags: [] },
+    { role: 'remixer', id: 'ar7', name: 'Remix Person', imageUrl: null, artworkUrl: null, musicBrainzId: null,
+      entries: [{ genre: 'Electronic', styleId: 56, style: 'Downtempo', share: 0.8, trackCount: 4, albumCount: 1 }], listenerTags: ['chillout'] },
+  ],
   otherAlbums: [{ trackId: 't9', albumId: 'al9', albumTitle: 'Best Of', artistName: 'Pretty Lights', year: 2015, artworkId: 'hash9' }],
 });
 
@@ -99,6 +104,14 @@ test('says where each genre and style came from, groups credits by person, and s
   const albumCard = screen.getByText('Taking Up Your Precious Time', { selector: '.rays-context-card__title' }).closest('article')!;
   expect(within(albumCard).getByText('Taking Up Your Precious Time', { selector: 'a' }).getAttribute('href')).toBe('/library/album/al1');
   expect(within(albumCard).getByText('Glitch, where Downtempo leads Taking Up Your Precious Time (60 %).')).toBeTruthy();
+  // After the album and the artist: a card per featured artist and remixer, saying which.
+  const contextCards = [...document.querySelectorAll('.rays-context-card')];
+  expect(contextCards.map(c => c.querySelector('.rays-context-card__info')!.textContent))
+    .toEqual(['The album', 'The artist', 'Featured artist', 'Remixer']);
+  const remixCard = contextCards[3] as HTMLElement;
+  expect(within(remixCard).getByText('Remix Person', { selector: 'a' }).getAttribute('href')).toBe('/library/artist/ar7');
+  expect(within(remixCard).getByText('Downtempo')).toBeTruthy();
+  expect(within(contextCards[2] as HTMLElement).getByText('No genres or styles of their own in your library yet.')).toBeTruthy();
   // Sound and style: a Sound card and a Styles card; the track's genres and
   // styles wait behind Advanced at the foot of the Styles card.
   const styles = screen.getByRole('group', { name: 'Styles' });
