@@ -25,10 +25,11 @@
  * Simulated tracks (placeholder vectors) never use audio evidence.
  */
 import type { Pool, PoolClient } from 'pg';
-import { getSystemSetting, setSystemSetting } from '../../database';
+import { getSystemSetting, invalidateGenreEntityCache, setSystemSetting } from '../../database';
 import { parseSetting } from './seed';
 import { rebuildCentroids } from './centroids';
 import { backfillArtistCountries, rebuildTrackOrigin } from '../trackOrigin.service';
+import { rebuildTrackGenres, TRACK_GENRES_SETTING, TRACK_GENRES_VERSION } from './trackGenres';
 
 /** Bump when the rules or thresholds change; a stale version triggers a full run at startup. */
 export const FUSION_VERSION = 2;
@@ -307,7 +308,11 @@ export async function runFusion(db: Pool, { trackIds }: { trackIds?: string[] } 
     // data only, so it rides along with every run.
     if (full) await backfillArtistCountries(client);
     await rebuildTrackOrigin(client, trackIds);
+    // The genres Subsonic apps, the API and the filters show (phase 4).
+    await rebuildTrackGenres(client, trackIds);
     await client.query('COMMIT');
+    invalidateGenreEntityCache();
+    if (full) await setSystemSetting(TRACK_GENRES_SETTING, TRACK_GENRES_VERSION);
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     throw error;

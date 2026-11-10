@@ -2269,7 +2269,6 @@ export async function addTrack(track: any) {
       format = EXCLUDED.format,
       artist_id = EXCLUDED.artist_id,
       album_id = EXCLUDED.album_id,
-      genre_id = EXCLUDED.genre_id,
       genres = EXCLUDED.genres,
       isrc = EXCLUDED.isrc,
       mb_recording_id = EXCLUDED.mb_recording_id,
@@ -2314,7 +2313,6 @@ export async function addTrack(track: any) {
       tracks.format IS DISTINCT FROM EXCLUDED.format OR
       tracks.artist_id IS DISTINCT FROM EXCLUDED.artist_id OR
       tracks.album_id IS DISTINCT FROM EXCLUDED.album_id OR
-      tracks.genre_id IS DISTINCT FROM EXCLUDED.genre_id OR
       tracks.genres IS DISTINCT FROM EXCLUDED.genres OR
       tracks.isrc IS DISTINCT FROM EXCLUDED.isrc OR
       tracks.mb_recording_id IS DISTINCT FROM EXCLUDED.mb_recording_id OR
@@ -2357,7 +2355,8 @@ export async function addTrack(track: any) {
     track.format || null,
     track.artistId || null,
     track.albumId || null,
-    track.genreId || null,
+    // genre_id comes from the fused genres and styles (genreTaxonomy/trackGenres.ts).
+    null,
     track.genres ? JSON.stringify(sanitizeArray(track.genres)) : null,
     track.isrc || null,
     track.mbRecordingId || null,
@@ -2884,6 +2883,8 @@ export async function purgeOrphanedEntities(): Promise<{ albums: number; artists
         AND NOT EXISTS (SELECT 1 FROM tracks t WHERE t.genre_id = g.id)
         AND NOT EXISTS (SELECT 1 FROM track_genres tg WHERE tg.genre_id = g.id)
         AND NOT EXISTS (SELECT 1 FROM genres alias WHERE alias.merged_into = g.id)
+        -- A file tag's spelling row stays for the spelling review.
+        AND NOT EXISTS (SELECT 1 FROM track_tags tt WHERE lower(tt.tag) = lower(g.name))
       RETURNING id
     `),
   ]);
@@ -3371,24 +3372,11 @@ async function replaceTrackGenreAssociations(
   for (const name of names) genreIds.push(await getOrCreateGenre(name));
   const uniqueIds = Array.from(new Set(genreIds));
 
-  await db.query('DELETE FROM track_genres WHERE track_id = $1', [trackId]);
   // The genre & style taxonomy keeps every original tag verbatim (track_tags);
-  // the "Unknown Genre" placeholder for untagged tracks is not a tag.
+  // the "Unknown Genre" placeholder for untagged tracks is not a tag. Each
+  // tag also keeps a `genres` row, for the spelling review; track_genres and
+  // genre_id come from the fused genres and styles (genreTaxonomy/trackGenres.ts).
   await replaceTrackTags(db, trackId, names.filter(name => name !== UNKNOWN_GENRE));
-  if (uniqueIds.length > 0) {
-    const params: Array<string | number> = [];
-    const values = uniqueIds.map((genreId, index) => {
-      params.push(trackId, genreId, index);
-      const offset = index * 3;
-      return `($${offset + 1}, $${offset + 2}, $${offset + 3})`;
-    });
-    await db.query(
-      `INSERT INTO track_genres (track_id, genre_id, position)
-       VALUES ${values.join(', ')}
-       ON CONFLICT (track_id, genre_id) DO UPDATE SET position = EXCLUDED.position`,
-      params,
-    );
-  }
   return uniqueIds;
 }
 
@@ -4088,6 +4076,7 @@ export async function getAllGenres() {
     LEFT JOIN genres alias ON alias.merged_into = g.id
     WHERE g.merged_into IS NULL
     GROUP BY g.id
+    HAVING COUNT(DISTINCT tg.track_id) > 0
     ORDER BY g.name ASC
   `);
   return res.rows;
@@ -4102,6 +4091,7 @@ export async function getGenresPage(options: EntityListPageOptions) {
       SELECT g.*
       FROM genres g
       WHERE g.merged_into IS NULL
+        AND EXISTS (SELECT 1 FROM track_genres tg WHERE tg.genre_id = g.id)
         AND ($1::text IS NULL OR (g.name, g.id::text) > ($1::text, $2::text))
       ORDER BY g.name ASC, g.id::text ASC
       LIMIT $3
@@ -5124,10 +5114,7 @@ async function backfillTrackGenreAssociations(db: Pool): Promise<void> {
     const parsed = parseStringArrayField(row.genres);
     const rawGenres = parsed.length > 0 ? parsed : splitGenreNames(row.genre);
     const names = rawGenres.length > 0 ? rawGenres : [UNKNOWN_GENRE];
-    const genreIds = await replaceTrackGenreAssociations(db, row.id, names);
-    if (genreIds[0]) {
-      await db.query('UPDATE tracks SET genre_id = $1 WHERE id = $2 AND genre_id IS DISTINCT FROM $1', [genreIds[0], row.id]);
-    }
+    await replaceTrackGenreAssociations(db, row.id, names);
     updated++;
   }
   await setSystemSetting(TRACK_GENRE_ASSOCIATION_BACKFILL_SETTING, true);
@@ -5195,7 +5182,6 @@ export async function migrateEntityIds() {
     FROM tracks
     WHERE artist_id IS NULL
       OR album_id IS NULL
-      OR genre_id IS NULL
       OR genres IS NULL
       OR artists IS NULL
       ${legacyFeatureCreditPredicate}
@@ -5258,7 +5244,8 @@ export async function migrateEntityIds() {
       releaseType: (row as any).release_type || null,
       isCompilation: (row as any).is_compilation || false,
     });
-    const genreId = await getOrCreateGenre(primaryGenreName);
+    // The tag's spelling row (genre_id itself comes from fusion).
+    if (primaryGenreName) await getOrCreateGenre(primaryGenreName);
 
     // Create/update entities for all individual artists to ensure they exist for 'Also appears on'
     for (const person of trackArtists.people) {
@@ -5270,8 +5257,8 @@ export async function migrateEntityIds() {
     const tracksArtistsJson = JSON.stringify(rawArtistsArray);
 
     await db.query(
-      'UPDATE tracks SET artist_id = $1, album_id = $2, genre_id = $3, genres = $4, artists = $5 WHERE id = $6',
-      [artistId, albumId, genreId, tracksGenresJson, tracksArtistsJson, trackId]
+      'UPDATE tracks SET artist_id = $1, album_id = $2, genres = $3, artists = $4 WHERE id = $5',
+      [artistId, albumId, tracksGenresJson, tracksArtistsJson, trackId]
     );
     count++;
   }

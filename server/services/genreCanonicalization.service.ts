@@ -48,10 +48,6 @@ function pathRoot(path: string | null): string | null {
   return path ? path.split('.')[0]?.trim().toLowerCase() || null : null;
 }
 
-function matrixGenreKey(name: string): string {
-  return String(name || '').toLowerCase().trim().replace(/[^\w\s-]/g, '');
-}
-
 function sortGenreRows(rows: GenreReviewRow[]): GenreReviewRow[] {
   return [...rows].sort((a, b) => b.trackCount - a.trackCount || a.name.localeCompare(b.name));
 }
@@ -75,27 +71,21 @@ async function fetchGenreReviewRows(client?: PoolClient): Promise<GenreReviewRow
       g.id,
       g.name,
       COALESCE(g.normalized_key, '') AS normalized_key,
-      COUNT(DISTINCT tg.track_id)::int AS track_count,
+      COUNT(DISTINCT tt.track_id)::int AS track_count,
       COUNT(DISTINCT t.album_id)::int AS album_count,
-      COALESCE(sm.path, mb.path) AS taxonomy_path,
-      mb.path AS exact_mb_path
+      mapped.genre AS taxonomy_path,
+      EXISTS (SELECT 1 FROM genre mb WHERE lower(mb.name) = lower(g.name)) AS is_mb_genre
     FROM genres g
-    LEFT JOIN track_genres tg ON tg.genre_id = g.id
-    LEFT JOIN tracks t ON t.id = tg.track_id
-    LEFT JOIN subgenre_mappings sm
-      ON sm.sub_genre = regexp_replace(lower(trim(g.name)), '[^[:alnum:]_[:space:]-]', '', 'g')
+    -- Spellings are file tags: count the tracks tagged with this exact one.
+    JOIN track_tags tt ON lower(tt.tag) = lower(g.name)
+    LEFT JOIN tracks t ON t.id = tt.track_id
+    -- The genre the tag maps to, so two spellings in different genres are flagged.
     LEFT JOIN LATERAL (
-      (SELECT path FROM genre_tree_paths WHERE lower(genre_name) = lower(trim(g.name)) LIMIT 1)
-      UNION ALL
-      (SELECT gtp.path
-         FROM genre_tree_paths gtp
-         JOIN genre_alias ga ON ga.genre = gtp.genre_id
-        WHERE lower(ga.name) = lower(trim(g.name))
-        LIMIT 1)
-      LIMIT 1
-    ) mb ON true
+      SELECT lower(m.genre) AS genre FROM tag_map m
+      WHERE m.tag = g.normalized_key ORDER BY m.reliability DESC, m.genre LIMIT 1
+    ) mapped ON true
     WHERE g.merged_into IS NULL
-    GROUP BY g.id, g.name, g.normalized_key, sm.path, mb.path
+    GROUP BY g.id, g.name, g.normalized_key, mapped.genre
     ORDER BY g.name ASC
   `);
 
@@ -106,7 +96,8 @@ async function fetchGenreReviewRows(client?: PoolClient): Promise<GenreReviewRow
     trackCount: Number(row.track_count || 0),
     albumCount: Number(row.album_count || 0),
     taxonomyPath: row.taxonomy_path || null,
-    exactMbPath: row.exact_mb_path || null,
+    // A MusicBrainz genre of its own (from the shipped snapshot), e.g. a real "A/B" name rather than a compound.
+    exactMbPath: row.is_mb_genre ? String(row.name).toLowerCase() : null,
   }));
 }
 
@@ -195,12 +186,12 @@ async function fetchActiveGroups(rows: GenreReviewRow[]): Promise<ActiveGenreGro
   const res = await db.query(`
     SELECT alias.id AS alias_id, alias.name AS alias_name, alias.normalized_key AS alias_normalized_key,
            canonical.id AS canonical_id, canonical.name AS canonical_name,
-           COUNT(DISTINCT tg.track_id)::int AS track_count,
+           COUNT(DISTINCT tt.track_id)::int AS track_count,
            COUNT(DISTINCT t.album_id)::int AS album_count
     FROM genres alias
     JOIN genres canonical ON canonical.id = alias.merged_into
-    LEFT JOIN track_genres tg ON tg.genre_id = canonical.id
-    LEFT JOIN tracks t ON t.id = tg.track_id
+    LEFT JOIN track_tags tt ON lower(tt.tag) = lower(canonical.name)
+    LEFT JOIN tracks t ON t.id = tt.track_id
     GROUP BY alias.id, alias.name, alias.normalized_key, canonical.id, canonical.name
     ORDER BY canonical.name, alias.name
   `);
@@ -305,8 +296,6 @@ async function selectedGenreRows(client: PoolClient, ids: string[]): Promise<Gen
 
 async function markGenreConsumersStale() {
   await setSystemSetting('systemPlaylistConfigUpdatedAt', Date.now());
-  const { genreMatrixService } = await import('./genreMatrix.service');
-  await genreMatrixService.reloadMappings();
 }
 
 export async function groupGenres(opts: {
@@ -335,32 +324,9 @@ export async function groupGenres(opts: {
       throw error;
     }
 
-    const canonical = rows.find(row => row.id === opts.canonicalGenreId)!;
-    if (!canonical.taxonomyPath) {
-      const fallbackPath = rows.find(row => row.exactMbPath)?.exactMbPath
-        || rows.find(row => row.taxonomyPath)?.taxonomyPath
-        || null;
-      if (fallbackPath) {
-        await client.query(`
-          INSERT INTO subgenre_mappings (sub_genre, path)
-          VALUES ($1, $2)
-          ON CONFLICT (sub_genre) DO UPDATE SET path = EXCLUDED.path
-        `, [matrixGenreKey(canonical.name), fallbackPath]);
-      }
-    }
-
+    // Grouping only says the spellings are one tag: the tag mapping reads
+    // it (merged_into), and track genres follow from fusion.
     await client.query('UPDATE genres SET merged_into = $1 WHERE id = ANY($2::uuid[])', [opts.canonicalGenreId, aliasIds]);
-    await client.query('UPDATE tracks SET genre_id = $1 WHERE genre_id = ANY($2::uuid[])', [opts.canonicalGenreId, aliasIds]);
-    await client.query(`
-      INSERT INTO track_genres (track_id, genre_id, position)
-      SELECT track_id, $1, MIN(position)
-      FROM track_genres
-      WHERE genre_id = ANY($2::uuid[])
-      GROUP BY track_id
-      ON CONFLICT (track_id, genre_id) DO UPDATE
-      SET position = LEAST(track_genres.position, EXCLUDED.position)
-    `, [opts.canonicalGenreId, aliasIds]);
-    await client.query('DELETE FROM track_genres WHERE genre_id = ANY($1::uuid[])', [aliasIds]);
 
     const candidateKey = opts.candidateKey || `genre-manual:${opts.canonicalGenreId}`;
     const signature = opts.signature || candidateSignature(rows);
@@ -384,18 +350,6 @@ export async function groupGenres(opts: {
   await markGenreConsumersStale();
 }
 
-function rawGenreNames(row: { genre?: string | null; genres?: string | null }): string[] {
-  if (row.genres) {
-    try {
-      const parsed = JSON.parse(row.genres);
-      if (Array.isArray(parsed)) return parsed.filter((name): name is string => typeof name === 'string');
-    } catch {
-      // Fall back to the primary raw tag below.
-    }
-  }
-  return row.genre ? [row.genre] : [];
-}
-
 export async function restoreGenreAlias(opts: { aliasGenreId: string; userId?: string | null }) {
   const db = await initDB();
   const client = await db.connect();
@@ -413,30 +367,6 @@ export async function restoreGenreAlias(opts: { aliasGenreId: string; userId?: s
     if (!alias.merged_into) throw new Error('Genre is not currently grouped');
 
     await client.query('UPDATE genres SET merged_into = NULL WHERE id = $1', [alias.id]);
-    const tracks = await client.query(`
-      SELECT id, genre, genres
-      FROM tracks
-      WHERE lower(trim(genre)) = lower($1)
-         OR genres ILIKE $2
-    `, [alias.name, `%"${alias.name}"%`]);
-
-    for (const track of tracks.rows) {
-      const names = rawGenreNames(track);
-      const aliasPosition = names.findIndex(name => name.trim().toLowerCase() === String(alias.name).trim().toLowerCase());
-      if (aliasPosition < 0) continue;
-      const canonicalStillRaw = names.some(name => name.trim().toLowerCase() === String(alias.canonical_name || '').trim().toLowerCase());
-      await client.query(`
-        INSERT INTO track_genres (track_id, genre_id, position)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (track_id, genre_id) DO UPDATE SET position = EXCLUDED.position
-      `, [track.id, alias.id, aliasPosition]);
-      if (!canonicalStillRaw) {
-        await client.query('DELETE FROM track_genres WHERE track_id = $1 AND genre_id = $2', [track.id, alias.merged_into]);
-      }
-      if (String(track.genre || '').trim().toLowerCase() === String(alias.name).trim().toLowerCase()) {
-        await client.query('UPDATE tracks SET genre_id = $1 WHERE id = $2', [alias.id, track.id]);
-      }
-    }
 
     await recordReview(client, {
       candidateKey: `genre-restore:${alias.id}`,

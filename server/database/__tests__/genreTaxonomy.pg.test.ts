@@ -768,4 +768,40 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     expect(profile.genreHealth.get('pop')!.trackCount).toBeGreaterThanOrEqual(2);
     expect(profile.genreHealth.get('rock')!.trackCount).toBeGreaterThanOrEqual(profile.genreHealth.get('rock.punk')!.trackCount);
   });
+
+  test('track genres (phase 4): derived from the fused genres and styles, kept through rescans, and the only genres listed', async () => {
+    const { rebuildTrackGenres } = await import('../../services/genreTaxonomy/trackGenres');
+    // A spelling row named like a taxonomy genre, grouped under another spelling.
+    const other = (await pool.query(`INSERT INTO genres (name) VALUES ('Pop Music') RETURNING id`)).rows[0].id;
+    await pool.query(`INSERT INTO genres (name, merged_into) VALUES ('Pop', $1) ON CONFLICT (name) DO UPDATE SET merged_into = $1`, [other]);
+    const ids = [idOf('p-punk'), idOf('p-pop'), idOf('t-untagged')];
+    expect(await rebuildTrackGenres(pool, ids)).toBe(2);
+    const genresOf = async (id: string) => (await pool.query(
+      `SELECT g.name FROM track_genres tg JOIN genres g ON g.id = tg.genre_id WHERE tg.track_id = $1 ORDER BY tg.position`, [id])).rows.map(r => r.name);
+    // Styles first, strongest first, then genres; position 0 is genre_id.
+    expect(await genresOf(idOf('p-punk'))).toEqual(['Punk', 'Pop']);
+    expect(await genresOf(idOf('p-pop'))).toEqual(['Pop']);
+    expect(await genresOf(idOf('t-untagged'))).toEqual([]);
+    const primary = async (id: string) => (await pool.query(
+      'SELECT g.name FROM tracks t LEFT JOIN genres g ON g.id = t.genre_id WHERE t.id = $1', [id])).rows[0].name;
+    expect(await primary(idOf('p-punk'))).toBe('Punk');
+    expect(await primary(idOf('t-untagged'))).toBeNull();
+    // "Pop" names a genre now, so it is no longer a spelling of "Pop Music".
+    expect((await pool.query(`SELECT merged_into FROM genres WHERE name = 'Pop'`)).rows[0].merged_into).toBeNull();
+
+    // A rescan records the file's tags but leaves the derived genres alone.
+    await db.addTrack({ ...track('p-punk', ['Skate Punk']), artist: 'Taxonomy Artist' });
+    expect(await genresOf(idOf('p-punk'))).toEqual(['Punk', 'Pop']);
+    expect(await primary(idOf('p-punk'))).toBe('Punk');
+    expect((await pool.query('SELECT tag FROM track_tags WHERE track_id = $1', [idOf('p-punk')])).rows.map(r => r.tag)).toEqual(['Skate Punk']);
+
+    // Genre lists (the app, API v1, Subsonic) show genres with tracks only;
+    // tag spellings stay for the review but aren't listed or purged.
+    const listed = (await db.getAllGenres()).map((g: any) => g.name);
+    expect(listed).toEqual(expect.arrayContaining(['Punk', 'Pop']));
+    expect(listed).not.toContain('Skate Punk');
+    expect((await db.getGenresPage({ limit: 200 })).map((g: any) => g.name)).not.toContain('Skate Punk');
+    await db.purgeOrphanedEntities();
+    expect((await pool.query(`SELECT 1 FROM genres WHERE name = 'Skate Punk'`)).rowCount).toBe(1);
+  });
 });

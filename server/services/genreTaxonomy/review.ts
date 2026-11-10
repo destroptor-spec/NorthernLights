@@ -247,7 +247,7 @@ export async function getGenreReviewEvidence(db: Pool, key: string): Promise<Gen
   // The tracks the question is about: by original tag, or by the old genre list for spellings.
   const tracksSql = entry.tagKey !== undefined
     ? 'SELECT DISTINCT track_id FROM track_tags WHERE tag_key = $1'
-    : 'SELECT DISTINCT track_id FROM track_genres WHERE genre_id = ANY($1::uuid[])';
+    : 'SELECT DISTINCT tt.track_id FROM track_tags tt JOIN genres g ON lower(g.name) = lower(tt.tag) WHERE g.id = ANY($1::uuid[])';
   const param = entry.tagKey !== undefined ? entry.tagKey : (entry.spellings || []).map(s => s.id);
 
   const artistRows = (await db.query(`

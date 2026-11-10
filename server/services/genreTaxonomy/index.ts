@@ -4,7 +4,8 @@
  * redesign.md. Runs in the background after the database connects; nothing
  * here blocks playback or scanning.
  */
-import { initDB } from '../../database';
+import { getSystemSetting, initDB, invalidateGenreEntityCache, setSystemSetting } from '../../database';
+import { rebuildTrackGenres, TRACK_GENRES_SETTING, TRACK_GENRES_VERSION } from './trackGenres';
 import { getMappingCoverage } from './coverage';
 import { mappingIsCurrent, runTagMapping } from './mapping';
 import { loadMbSnapshotIfNeeded, seedTaxonomy } from './seed';
@@ -52,6 +53,24 @@ export async function initializeGenreTaxonomy(): Promise<void> {
     else if (!(await db.query('SELECT 1 FROM style_centroids LIMIT 1')).rowCount) {
       const built = await rebuildCentroids(db, FUSION_VERSION);
       log(`Built ${built} style centroids`);
+    }
+    // Track genres still from file tags (before phase 4), or derived by an
+    // older rule: derive them from the fused genres and styles once.
+    if (Number(await getSystemSetting(TRACK_GENRES_SETTING)) !== TRACK_GENRES_VERSION) {
+      const client = await db.connect();
+      try {
+        await client.query('BEGIN');
+        const tracks = await rebuildTrackGenres(client);
+        await client.query('COMMIT');
+        invalidateGenreEntityCache();
+        await setSystemSetting(TRACK_GENRES_SETTING, TRACK_GENRES_VERSION);
+        log(`Track genres now come from the fused genres and styles: ${tracks} tracks`);
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw error;
+      } finally {
+        client.release();
+      }
     }
     // Fused before track origins existed: build them once from stored data.
     if (!(await db.query('SELECT 1 FROM track_origin LIMIT 1')).rowCount) {

@@ -222,4 +222,15 @@ Nothing to run. Style overlap is the only engine (the blind comparison came out 
 - [ ] Regenerate the Hub; Up Next and The Vault fill, and the AI playlists log `targets=` with paths like `electronic.deep house` and `hard veto [metal → rock.heavy metal, …]` when a concept bans genres.
 - [ ] Start an artist radio; it plays.
 
-Steps for the rest of step 2 (retirements) are added here when they are built. Known so far: the MBDB import (4 GB download) and the Genre Matrix are retired, and `tracks.genre_id` / `track_genres` are rebuilt from the new genres.
+### Step 2b: track genres from the fused genres and styles (runs by itself)
+
+Nothing to run by hand, but it rewrites data on first start: `track_genres` and `tracks.genre_id` are rebuilt from `track_styles` in one transaction (dev: 30,690 of 30,746 tracks, 76,350 rows, a few seconds), and every later fusion run keeps them current. New `genres` rows are created for genre and style names; a row whose name is now a genre or style is taken out of any spelling group (`merged_into` cleared). The scanner stops writing `track_genres` and `genre_id`; it still records the tags (`track_tags`) and a `genres` row per tag spelling for the spelling review, and the orphan purge keeps those.
+
+- [ ] Before deploying, back up the two things this rewrites: `pg_dump -t track_genres -t genres --data-only` plus `COPY (SELECT id, genre_id FROM tracks) TO …`.
+- [ ] After start, the log reads `[GenreTaxonomy] Track genres now come from the fused genres and styles: N tracks`, and `SELECT value FROM system_settings WHERE key = 'trackGenresVersion'` is 1.
+- [ ] In a Subsonic app (Symfonium), the genre list shows Aurora's genres and styles, and a song's genre is its strongest style.
+- [ ] Settings → Library Entities → Genres: the spelling questions still show their tracks.
+
+Rollback: restore the backup, or with the old code delete `system_settings` key `trackGenreAssociationBackfillV1` and restart; the old startup rebuilds `track_genres` and `genre_id` from the file tags.
+
+Steps for the rest of step 2 (retiring the Genre Matrix, the categorizer, `subgenre_mappings`, the MBDB import and `genre_tree_paths`) are added here when they are built.
