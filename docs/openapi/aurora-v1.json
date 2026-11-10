@@ -2063,6 +2063,320 @@
           "listenerTags"
         ]
       },
+      "TrackRays": {
+        "type": "object",
+        "properties": {
+          "track": {
+            "$ref": "#/components/schemas/Track"
+          },
+          "credits": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "role": {
+                  "type": "string",
+                  "description": "composer, producer, lyricist, performer, …"
+                },
+                "artistId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "An instrument for performers, when known."
+                }
+              },
+              "required": [
+                "role",
+                "artistId",
+                "name",
+                "detail"
+              ]
+            },
+            "description": "Every stored credit, in role order (performer, composer, conductor, lyricist, producer, …)."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The genre tags in the file, as written."
+          },
+          "styles": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "genre": {
+                  "type": "string"
+                },
+                "styleId": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "null: the genre row."
+                },
+                "style": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "tag",
+                    "audio",
+                    "artist",
+                    "override"
+                  ],
+                  "description": "tag: a genre tag in the file; audio: the sound; artist: the artist's tags on Last.fm or MusicBrainz; override: set by hand."
+                },
+                "strength": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "fromTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "With source tag: the file tags that map here."
+                }
+              },
+              "required": [
+                "genre",
+                "styleId",
+                "style",
+                "source",
+                "strength",
+                "fromTags"
+              ]
+            },
+            "description": "The track's genres and styles, genre rows first, strongest first."
+          },
+          "sound": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "energy": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "danceability": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "acousticness": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "instrumentalness": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "bpm": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "closestStyles": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "genre": {
+                      "type": "string"
+                    },
+                    "styleId": {
+                      "type": "integer"
+                    },
+                    "style": {
+                      "type": "string"
+                    },
+                    "score": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "genre",
+                    "styleId",
+                    "style",
+                    "score"
+                  ]
+                },
+                "description": "The 5 styles the sound is closest to, by the audio model."
+              }
+            },
+            "required": [
+              "energy",
+              "danceability",
+              "acousticness",
+              "instrumentalness",
+              "bpm",
+              "closestStyles"
+            ],
+            "description": "null before analysis, or for a track analysed without real audio."
+          },
+          "album": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "entries": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/StyleProfileEntry"
+                }
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "entries"
+            ]
+          },
+          "artist": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "entries": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "genre": {
+                      "type": "string"
+                    },
+                    "styleId": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "style": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "share": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "trackCount": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "albumCount": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "genre",
+                    "styleId",
+                    "style",
+                    "share",
+                    "trackCount",
+                    "albumCount"
+                  ]
+                }
+              },
+              "listenerTags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "entries",
+              "listenerTags"
+            ]
+          },
+          "otherAlbums": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "trackId": {
+                  "type": "string"
+                },
+                "albumId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "albumTitle": {
+                  "type": "string"
+                },
+                "artistName": {
+                  "type": "string"
+                },
+                "year": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "trackId",
+                "albumId",
+                "albumTitle",
+                "artistName",
+                "year"
+              ]
+            },
+            "description": "Other albums in the library with this recording (by MusicBrainz recording id, else artist and title)."
+          }
+        },
+        "required": [
+          "track",
+          "credits",
+          "tags",
+          "styles",
+          "sound",
+          "album",
+          "artist",
+          "otherAlbums"
+        ]
+      },
       "PairingRequest": {
         "type": "object",
         "properties": {
@@ -5605,6 +5919,123 @@
                   "properties": {
                     "data": {
                       "$ref": "#/components/schemas/Track"
+                    },
+                    "meta": {
+                      "type": "object",
+                      "properties": {
+                        "requestId": {
+                          "type": "string",
+                          "description": "Request ID echoed in the X-Request-Id response header."
+                        }
+                      },
+                      "required": [
+                        "requestId"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Revision or state conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tracks/{id}/rays": {
+      "get": {
+        "summary": "\"Aurora rays from {title}\": credits, genres and styles with their sources, sound, album and artist context, other albums with the recording",
+        "tags": [
+          "Library"
+        ],
+        "security": [
+          {
+            "listenerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TrackRays"
                     },
                     "meta": {
                       "type": "object",

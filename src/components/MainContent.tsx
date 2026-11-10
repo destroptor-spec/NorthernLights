@@ -12,6 +12,7 @@ const BrowseHome = React.lazy(() => import('./browse/BrowseHome').then(module =>
 const BrowseGenrePage = React.lazy(() => import('./browse/BrowseGenrePage').then(module => ({ default: module.BrowseGenrePage })));
 const BrowseStylePage = React.lazy(() => import('./browse/BrowseStylePage').then(module => ({ default: module.BrowseStylePage })));
 const BrowseUnsorted = React.lazy(() => import('./browse/BrowseUnsorted').then(module => ({ default: module.BrowseUnsorted })));
+const TrackRays = React.lazy(() => import('./browse/TrackRays').then(module => ({ default: module.TrackRays })));
 
 /** Library → Genres: Aurora's genres and styles when the preview is on, else the old genre list. */
 const GenresRoute: React.FC = () => {
@@ -128,6 +129,7 @@ export const MainContent: React.FC = () => {
               <Route path="/library/browse/genre/:genre" element={<BrowseGenrePage />} />
               <Route path="/library/browse/style/:styleId" element={<BrowseStylePage />} />
               <Route path="/library/browse/unsorted" element={<BrowseUnsorted />} />
+              <Route path="/library/rays/:trackId" element={<TrackRays />} />
               <Route path="/search" element={<SearchResultsPage />} />
               <Route path="/playlists" element={<Playlists />} />
               <Route path="/playlists/:playlistId" element={<PlaylistDetail />} />

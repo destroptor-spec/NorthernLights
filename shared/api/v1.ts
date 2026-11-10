@@ -708,6 +708,50 @@ export const artistStyleProfileSchema = z.object({
   listenerTags: z.array(z.string()).describe('What listeners tag the artist with on Last.fm and MusicBrainz; empty without provider data.'),
 }).meta({ id: 'ArtistStyleProfile' });
 
+/** "Aurora rays from {title}": everything Aurora knows about one track. */
+export const trackRaysSchema = z.object({
+  track: trackSchema,
+  credits: z.array(z.object({
+    role: z.string().describe('composer, producer, lyricist, performer, …'),
+    artistId: z.string(),
+    name: z.string(),
+    detail: z.string().nullable().describe('An instrument for performers, when known.'),
+  })).describe('Every stored credit, in role order (performer, composer, conductor, lyricist, producer, …).'),
+  tags: z.array(z.string()).describe('The genre tags in the file, as written.'),
+  styles: z.array(z.object({
+    genre: z.string(),
+    styleId: z.number().int().nullable().describe('null: the genre row.'),
+    style: z.string().nullable(),
+    source: z.enum(['tag', 'audio', 'artist', 'override'])
+      .describe('tag: a genre tag in the file; audio: the sound; artist: the artist\'s tags on Last.fm or MusicBrainz; override: set by hand.'),
+    strength: z.number().min(0).max(1),
+    fromTags: z.array(z.string()).describe('With source tag: the file tags that map here.'),
+  })).describe('The track\'s genres and styles, genre rows first, strongest first.'),
+  sound: z.object({
+    energy: z.number().min(0).max(1),
+    danceability: z.number().min(0).max(1),
+    acousticness: z.number().min(0).max(1),
+    instrumentalness: z.number().min(0).max(1),
+    bpm: z.number().int().nullable(),
+    closestStyles: z.array(z.object({ genre: z.string(), styleId: z.number().int(), style: z.string(), score: z.number() }))
+      .describe('The 5 styles the sound is closest to, by the audio model.'),
+  }).nullable().describe('null before analysis, or for a track analysed without real audio.'),
+  album: z.object({ id: z.string(), title: z.string(), entries: z.array(styleProfileEntrySchema) }).nullable(),
+  artist: z.object({
+    id: z.string(), name: z.string(),
+    entries: z.array(styleProfileEntrySchema.extend({ albumCount: z.number().int().nonnegative() })),
+    listenerTags: z.array(z.string()),
+  }).nullable(),
+  otherAlbums: z.array(z.object({
+    trackId: z.string(),
+    albumId: z.string().nullable(),
+    albumTitle: z.string(),
+    artistName: z.string(),
+    year: z.number().int().nullable(),
+  })).describe('Other albums in the library with this recording (by MusicBrainz recording id, else artist and title).'),
+}).meta({ id: 'TrackRays' });
+
+export type TrackRays = z.infer<typeof trackRaysSchema>;
 export type BrowseStyleRef = z.infer<typeof browseStyleRefSchema>;
 export type BrowseGenre = z.infer<typeof browseGenreSchema>;
 export type BrowseGenres = z.infer<typeof browseGenresSchema>;

@@ -14,7 +14,7 @@ import { fusionIsCurrent, runFusion } from './fusion';
 
 export { getMappingCoverage } from './coverage';
 export { runTagMapping } from './mapping';
-export { getFusionStatus, runFusion } from './fusion';
+export { getFusionStatus, runFusion, setTrackStyleOverride, TrackStyleOverrideError } from './fusion';
 export { getArtistTagBackfillStatus, stopArtistTagBackfill, countRemaining as countArtistTagsRemaining } from './artistTagBackfill';
 
 const log = (message: string) => console.log(`[GenreTaxonomy] ${message}`);

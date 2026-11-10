@@ -275,6 +275,29 @@ const afterGenreDecision = async () => {
   await publishApiV1LibraryRevision({ source: 'genreReview' });
 };
 
+// A hand correction of one track's genres and styles ("Aurora rays from
+// {title}"): add or remove a genre or style. Admin: it changes the library
+// for everyone. The track is fused again before the answer.
+router.post('/track-styles/:trackId', requireAdmin, async (req, res) => {
+  const { genre, styleId, action } = req.body || {};
+  if (typeof genre !== 'string' || !(styleId === null || Number.isInteger(styleId)) || !['add', 'remove'].includes(action)) {
+    return res.status(400).json({ error: 'Send genre, styleId (a number or null) and action (add or remove).' });
+  }
+  try {
+    const { setTrackStyleOverride } = await import('../services/genreTaxonomy');
+    const { initDB } = await import('../database');
+    await setTrackStyleOverride(await initDB(), {
+      trackId: String(req.params.trackId), genre, styleId, action, userId: (req as any).user?.userId ?? null,
+    });
+    await publishApiV1LibraryRevision({ source: 'trackStyles' });
+    res.json({ status: 'saved' });
+  } catch (error: any) {
+    if (error?.name === 'TrackStyleOverrideError') return res.status(error.status).json({ error: error.message });
+    console.error('[TrackStyles] Override failed:', error);
+    res.status(500).json({ error: 'Could not save the change.' });
+  }
+});
+
 router.post('/genre-reviews/decide', requireAdmin, async (req, res) => {
   try {
     const { key, signature, outcomeId, targets, acknowledgeConflict } = req.body || {};

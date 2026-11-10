@@ -175,6 +175,7 @@ import {
   type BrowseFilter,
 } from '../services/browse.service';
 import type { BrowseAlbum, BrowseArtist } from '../../shared/api/v1';
+import { getTrackRays } from '../services/trackRays.service';
 import { publishApiV1Event, replayApiV1Events, subscribeApiV1Events, noteClientListening, listConnectedDevices, isClientListening as isDeviceConnected } from '../services/apiV1Events.service';
 import { topUpSessionInfinity } from '../services/sessionInfinity.service';
 import { forgetSessionListen, noteSessionReport } from '../services/sessionListens.service';
@@ -792,6 +793,15 @@ router.get('/tracks/:id', async (req, res) => {
   const track = await getApiV1TrackById(req.apiV1!.userId, req.params.id);
   if (!track) return sendApiV1Error(req, res, 404, 'TRACK_NOT_FOUND', 'Track not found.');
   dataResponse(req, res, track);
+});
+
+// "Aurora rays from {title}": credits, genres and styles with their sources,
+// sound, album and artist context, and other albums with the recording.
+router.get('/tracks/:id/rays', async (req, res) => {
+  const id = routeParam(req, 'id');
+  const [track, rays] = await Promise.all([getApiV1TrackById(req.apiV1!.userId, id), getTrackRays(await initDB(), id)]);
+  if (!track || !rays) return sendApiV1Error(req, res, 404, 'TRACK_NOT_FOUND', 'Track not found.');
+  dataResponse(req, res, { track, ...rays });
 });
 
 router.get('/tracks/:id/lyrics', async (req, res) => {

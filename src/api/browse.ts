@@ -9,6 +9,7 @@ import type {
   BrowseGenres,
   BrowseStyleDetail,
   BrowseUnsorted,
+  TrackRays,
 } from '../../shared/api/v1';
 
 type Auth = Record<string, string>;
@@ -66,3 +67,29 @@ export const fetchArtistStyles = (auth: Auth, artistId: string) =>
 export const genrePath = (genre: string) => `/library/browse/genre/${encodeURIComponent(genre)}`;
 export const stylePath = (styleId: number) => `/library/browse/style/${styleId}`;
 export const UNSORTED_PATH = '/library/browse/unsorted';
+
+/** "Aurora rays from {title}". */
+export const fetchTrackRays = (auth: Auth, trackId: string) =>
+  auroraApiRequest<TrackRays>(`/tracks/${encodeURIComponent(trackId)}/rays`, auth);
+
+export const raysPath = (trackId: string) => `/library/rays/${encodeURIComponent(trackId)}`;
+
+/** Admin: add or remove a genre or style on one track (legacy API; admin stays off v1). */
+export async function setTrackStyle(auth: Auth, trackId: string, change: { genre: string; styleId: number | null; action: 'add' | 'remove' }) {
+  const response = await fetch(`/api/library/track-styles/${encodeURIComponent(trackId)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...auth },
+    body: JSON.stringify(change),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.error || 'Could not save the change.');
+  }
+}
+
+/** Admin: Aurora's genres and styles, for the picker. */
+export async function fetchTaxonomy(auth: Auth) {
+  const response = await fetch('/api/library/genre-reviews/taxonomy', { headers: auth });
+  if (!response.ok) throw new Error('Could not load the genre list.');
+  return response.json() as Promise<{ genres: string[]; styles: Array<{ id: number; genre: string; name: string }> }>;
+}

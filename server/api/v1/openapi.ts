@@ -13,6 +13,7 @@ import {
   browseSearchResultSchema,
   browseStyleDetailSchema,
   browseUnsortedSchema,
+  trackRaysSchema,
   appKeyCreateSchema,
   artistDetailSchema,
   artistRadioEligibilitySchema,
@@ -100,6 +101,7 @@ const schemas = {
   BrowseUnsorted: registry.register('BrowseUnsorted', browseUnsortedSchema),
   AlbumStyleProfile: registry.register('AlbumStyleProfile', albumStyleProfileSchema),
   ArtistStyleProfile: registry.register('ArtistStyleProfile', artistStyleProfileSchema),
+  TrackRays: registry.register('TrackRays', trackRaysSchema),
 };
 
 const requestId = z.string().describe('Request ID echoed in the X-Request-Id response header.');
@@ -178,6 +180,7 @@ path({ method: 'get', path: '/albums/{id}', summary: 'Get an album and tracks', 
 path({ method: 'get', path: '/genres', summary: 'List genres', tags: ['Library'], security: authed, request: { query: cursorQuery }, responses: paged(z.array(schemas.Genre)) });
 path({ method: 'get', path: '/genres/{id}', summary: 'Get a genre and tracks', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(schemas.GenreDetail) });
 path({ method: 'get', path: '/tracks/{id}', summary: 'Get one path-free track resource', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(schemas.Track) });
+path({ method: 'get', path: '/tracks/{id}/rays', summary: '"Aurora rays from {title}": credits, genres and styles with their sources, sound, album and artist context, other albums with the recording', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(schemas.TrackRays) });
 path({ method: 'get', path: '/tracks/{id}/lyrics', summary: 'Get embedded synced or unsynced lyrics', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(schemas.Lyrics) });
 path({ method: 'get', path: '/search', summary: 'Search the listener library', tags: ['Library'], security: authed, request: { query: z.object({ q: z.string().min(1), limit: z.coerce.number().int().min(1).max(100).optional(), artistLimit: z.coerce.number().int().min(1).max(100).optional(), albumLimit: z.coerce.number().int().min(1).max(100).optional(), trackLimit: z.coerce.number().int().min(1).max(100).optional() }) }, responses: ok(unknownObject) });
 path({ method: 'get', path: '/search/ranked', summary: 'Relevance-ranked search across artists, albums and tracks, paginated', tags: ['Library'], security: authed, request: { query: z.object({ q: z.string().min(1), limit: z.coerce.number().int().min(1).max(100).optional(), cursor: z.string().optional() }) }, responses: ok(unknownObject) });

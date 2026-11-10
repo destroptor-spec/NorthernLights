@@ -15,15 +15,18 @@ jest.mock('../services/browse.service', () => ({
   getBrowseGenre: jest.fn(),
   getAlbumStyleProfile: jest.fn(async () => ({ entries: [] })),
 }));
+jest.mock('../services/trackRays.service', () => ({ getTrackRays: jest.fn() }));
 jest.mock('../services/apiV1Dto.service', () => ({
   ...jest.requireActual('../services/apiV1Dto.service'),
   getApiV1TracksByIds: jest.fn(),
+  getApiV1TrackById: jest.fn(async (_u: string, id: string) => jest.requireActual('../services/apiV1Dto.service').mapTrackV1({ id, title: id, path: 'secret' })),
 }));
 import type { Request, Response } from 'express';
 import router from './apiV1.routes';
 import { getAlbumById } from '../database';
 import { getBrowseGenre, listBrowseAlbumRows, listBrowseTrackIds, pickBrowseMix } from '../services/browse.service';
 import { getApiV1TracksByIds, mapTrackV1 } from '../services/apiV1Dto.service';
+import { getTrackRays } from '../services/trackRays.service';
 
 async function get(path: string, query: Record<string, string> = {}, params: Record<string, string> = {}) {
   const layer = router.stack.find(l => l.route?.path === path && l.route.stack.some(h => h.method === 'get'))!;
@@ -99,5 +102,17 @@ describe('browse albums and genres', () => {
 
   it('refuses an empty style search', async () => {
     expect((await get('/browse/search', { q: '  ' })).status).toHaveBeenCalledWith(400);
+  });
+});
+
+describe('GET /tracks/:id/rays', () => {
+  it('answers with the v1 track and its rays, or 404 for an unknown track', async () => {
+    jest.mocked(getTrackRays).mockResolvedValue({ credits: [], tags: ['Rock'], styles: [], sound: null, album: null, artist: null, otherAlbums: [] });
+    const res = await get('/tracks/:id/rays', {}, { id: 't1' });
+    expect(body(res).data).toMatchObject({ track: { id: 't1' }, tags: ['Rock'] });
+    expect(JSON.stringify(body(res))).not.toContain('secret');
+
+    jest.mocked(getTrackRays).mockResolvedValue(null);
+    expect((await get('/tracks/:id/rays', {}, { id: 'gone' })).status).toHaveBeenCalledWith(404);
   });
 });

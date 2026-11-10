@@ -157,7 +157,7 @@ Run it after phase 0's re-analysis if possible: without style scores, genre-only
 
 ### 4. Try the new Browse (per user, off by default)
 
-Settings → Appearance → **Genre and style browse (preview)**. Library → Genres then shows Aurora's genres; everyone else keeps the old genre list until they turn it on. Check a few genre and style pages, Shuffle, the decade buttons and Unsorted. The switch is stored per user on the server (`newBrowseEnabled`), so it follows you across devices.
+Settings → Appearance → **Genre and style browse (preview)**. Library → Genres then shows Aurora's genres; everyone else keeps the old genre list until they turn it on. Check a few genre and style pages, Shuffle, the decade buttons and Unsorted; open **Aurora rays** from a track's menu, and look at the genres and styles on an album and an artist page. The switch is stored per user on the server (`newBrowseEnabled`), so it follows you across devices.
 
 ## Phase 3: audio and artist-tag evidence
 

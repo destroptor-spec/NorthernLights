@@ -321,3 +321,39 @@ export async function getFusionStatus(): Promise<FusionStatus | null> {
 export async function fusionIsCurrent(): Promise<boolean> {
   return (await getFusionStatus())?.version === FUSION_VERSION;
 }
+
+export class TrackStyleOverrideError extends Error {
+  constructor(message: string, public status = 400) { super(message); this.name = 'TrackStyleOverrideError'; }
+}
+
+/**
+ * A hand correction on one track ("Aurora rays from {title}"): `remove`
+ * takes back a style added by hand, or else excludes it from fusion; `add`
+ * lifts an exclusion, or else adds it. The track is fused again at once.
+ */
+export async function setTrackStyleOverride(db: Pool, opts: {
+  trackId: string; genre: string; styleId: number | null; action: 'add' | 'remove'; userId?: string | null;
+}): Promise<void> {
+  const { trackId, genre, styleId, action } = opts;
+  const valid = (await db.query(
+    `SELECT EXISTS (SELECT 1 FROM tracks WHERE id = $1) AS track,
+            EXISTS (SELECT 1 FROM taxonomy_genre WHERE name = $2) AS genre,
+            ($3::int IS NULL OR EXISTS (SELECT 1 FROM style WHERE id = $3 AND genre = $2)) AS style`,
+    [trackId, genre, styleId])).rows[0];
+  if (!valid.track) throw new TrackStyleOverrideError('Track not found.', 404);
+  if (!valid.genre || !valid.style) throw new TrackStyleOverrideError('No such genre or style.');
+
+  const current = (await db.query(
+    `SELECT action FROM track_style_overrides WHERE track_id = $1 AND genre = $2 AND style_id IS NOT DISTINCT FROM $3`,
+    [trackId, genre, styleId])).rows[0]?.action as 'add' | 'exclude' | undefined;
+  const opposite = action === 'add' ? 'exclude' : 'add';
+  if (current === opposite) {
+    await db.query(`DELETE FROM track_style_overrides WHERE track_id = $1 AND genre = $2 AND style_id IS NOT DISTINCT FROM $3`,
+      [trackId, genre, styleId]);
+  } else if (!current) {
+    await db.query(
+      `INSERT INTO track_style_overrides (track_id, genre, style_id, action, user_id) VALUES ($1, $2, $3, $4, $5)`,
+      [trackId, genre, styleId, action === 'add' ? 'add' : 'exclude', opts.userId ?? null]);
+  }
+  await runFusion(db, { trackIds: [trackId] });
+}

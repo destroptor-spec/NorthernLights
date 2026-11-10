@@ -399,4 +399,42 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     expect(profile.listenerTags).toEqual(['electronic']);
     expect((await browse.getAlbumStyleProfile(pool, fusionA)).entries.length).toBeGreaterThan(0);
   });
+
+  test('rays show where each genre and style came from, the album and artist context, and hand corrections re-fuse the track', async () => {
+    const { getTrackRays } = await import('../../services/trackRays.service');
+    const fusion = await import('../../services/genreTaxonomy/fusion');
+    const rock = idOf('fz-rock');
+    // energy, brightness, percussiveness, pitch, instrumentalness, acousticness, danceability, tempo (extractor.py)
+    await pool.query(`UPDATE track_features SET acoustic_vector_8d = '[0.8,0.5,0.4,0.5,0.1,0.2,0.6,0.6]', bpm = 120 WHERE track_id = $1`, [rock]);
+    let rays = (await getTrackRays(pool, rock))!;
+    expect(rays.sound).toMatchObject({ energy: 0.8, instrumentalness: 0.1, acousticness: 0.2, danceability: 0.6, bpm: 120 });
+    expect(rays.tags).toEqual(['Rock']);
+    expect(rays.styles[0]).toMatchObject({ genre: 'Rock', styleId: null, source: 'tag', fromTags: ['Rock'] });
+    // Hard Rock was excluded by hand in the fusion test; Pop Rock comes from the sound.
+    expect(rays.styles.map(r => `${r.style}:${r.source}`)).toEqual(['null:tag', 'Pop Rock:audio']);
+    expect(rays.sound!.closestStyles.map(s => s.style).slice(0, 3)).toEqual(['House', 'Hard Rock', 'Pop Rock']);
+    expect(rays.album?.title).toBe('Fusion A');
+    expect(rays.artist).toMatchObject({ name: 'Fusion Artist', listenerTags: ['electronic'] });
+    expect(await getTrackRays(pool, 'no-such-track')).toBeNull();
+
+    // Hard Rock is excluded by hand: adding it lifts the exclusion, and the sound's Hard Rock returns.
+    const hardRock = (await pool.query(`SELECT id FROM style WHERE genre = 'Rock' AND name = 'Hard Rock'`)).rows[0].id;
+    await fusion.setTrackStyleOverride(pool, { trackId: rock, genre: 'Rock', styleId: hardRock, action: 'add' });
+    rays = (await getTrackRays(pool, rock))!;
+    expect(rays.styles.find(r => r.style === 'Hard Rock')?.source).toBe('audio');
+    expect((await pool.query('SELECT COUNT(*)::int AS n FROM track_style_overrides WHERE track_id = $1 AND style_id = $2', [rock, hardRock])).rows[0].n).toBe(0);
+
+    // Removing a style the sound gave writes an exclusion; adding a new one writes an addition, and removing that takes it back.
+    await fusion.setTrackStyleOverride(pool, { trackId: rock, genre: 'Rock', styleId: hardRock, action: 'remove' });
+    expect((await getTrackRays(pool, rock))!.styles.some(r => r.style === 'Hard Rock')).toBe(false);
+    const punk = (await pool.query(`SELECT id FROM style WHERE genre = 'Rock' AND name = 'Punk'`)).rows[0].id;
+    await fusion.setTrackStyleOverride(pool, { trackId: rock, genre: 'Rock', styleId: punk, action: 'add' });
+    expect((await getTrackRays(pool, rock))!.styles.find(r => r.style === 'Punk')?.source).toBe('override');
+    await fusion.setTrackStyleOverride(pool, { trackId: rock, genre: 'Rock', styleId: punk, action: 'remove' });
+    expect((await getTrackRays(pool, rock))!.styles.some(r => r.style === 'Punk')).toBe(false);
+    expect((await pool.query('SELECT COUNT(*)::int AS n FROM track_style_overrides WHERE track_id = $1 AND style_id = $2', [rock, punk])).rows[0].n).toBe(0);
+
+    await expect(fusion.setTrackStyleOverride(pool, { trackId: rock, genre: 'Rock', styleId: 92, action: 'add' }))
+      .rejects.toThrow('No such genre or style.');
+  });
 });
