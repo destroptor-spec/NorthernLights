@@ -14,10 +14,9 @@ import { cleanupOrphanArt } from '../services/artCache';
 import { genreMatrixService } from '../services/genreMatrix.service';
 import { scanStatus, scanClients, broadcastScanStatus } from '../state';
 import { requireAdmin } from '../middleware/auth';
-import { startMbCreditsEnrichment, getMbCreditsProgress, startGeniusCreditsEnrichment, getGeniusCreditsProgress } from '../services/creditsEnrichment.service';
 import { enrichArtistImages, enrichArtistImagesInBackground } from '../services/artistImageEnrichment.service';
 import { resolveTrackArtists } from '../utils/trackArtists';
-import { getCreditsStatus, refreshArtistAudioProfiles, searchLibrary, searchLibraryRanked, InvalidSearchCursorError, getExistingTrackIds } from '../database';
+import { refreshArtistAudioProfiles, searchLibrary, searchLibraryRanked, InvalidSearchCursorError, getExistingTrackIds } from '../database';
 import { createRateLimiter } from '../middleware/rateLimit';
 import { areAnalysisModelsReady } from '../services/downloadModels';
 import { publishApiV1LibraryRevision } from '../services/apiV1Events.service';
@@ -379,51 +378,23 @@ router.post('/genre-reviews/decisions/:id/undo', requireAdmin, async (req, res) 
   }
 });
 
-// ─── Credit enrichment from external providers ──────────────────────
-// Admin-triggered. Aurora's role-credit table is populated from on-disk
-// tags during scan (always-on); these endpoints layer additional rows
-// from MusicBrainz and Genius when those providers are connected.
-
-router.get('/credits/status', requireAdmin, async (_req, res) => {
+// ─── Credit imports from external providers ─────────────────────────
+// Aurora's role-credit table is filled from on-disk tags during every scan;
+// MusicBrainz and Genius add rows on top through automatic server imports
+// (services/creditsEnrichment.service.ts). Nothing to start: this reports an
+// import's progress for its settings tab, and nudges it to start when it has
+// work (a key was just added, or new tracks arrived).
+router.get('/credits/import/:provider', requireAdmin, async (req, res) => {
+  const provider = String(req.params.provider);
+  if (provider !== 'musicbrainz' && provider !== 'genius') return res.status(404).json({ error: 'Unknown provider' });
   try {
-    const status = await getCreditsStatus();
-    res.json(status);
+    const { ensureCreditsImport, getCreditsImportStatus } = await import('../services/creditsEnrichment.service');
+    await ensureCreditsImport(provider);
+    res.json(await getCreditsImportStatus(provider));
   } catch (err: any) {
     console.error('[Credits] status error:', err);
-    res.status(500).json({ error: err?.message || 'Failed to read credits status' });
+    res.status(500).json({ error: err?.message || 'Failed to read the credit import' });
   }
-});
-
-// Start the MusicBrainz credit-enrichment background job (throttled to ~1 req/s,
-// so it can run for minutes). Returns immediately; the client polls /progress.
-router.post('/credits/enrich/musicbrainz', requireAdmin, async (_req, res) => {
-  try {
-    const result = await startMbCreditsEnrichment();
-    res.json(result);
-  } catch (err: any) {
-    console.error('[Credits] MB enrichment error:', err);
-    res.status(500).json({ error: err?.message || 'MusicBrainz enrichment failed' });
-  }
-});
-
-router.get('/credits/enrich/musicbrainz/progress', requireAdmin, (_req, res) => {
-  res.json(getMbCreditsProgress());
-});
-
-// Start the Genius credit-enrichment background job. Returns immediately; the
-// client polls /progress.
-router.post('/credits/enrich/genius', requireAdmin, async (_req, res) => {
-  try {
-    const result = await startGeniusCreditsEnrichment();
-    res.json(result);
-  } catch (err: any) {
-    console.error('[Credits] Genius enrichment error:', err);
-    res.status(500).json({ error: err?.message || 'Genius enrichment failed' });
-  }
-});
-
-router.get('/credits/enrich/genius/progress', requireAdmin, (_req, res) => {
-  res.json(getGeniusCreditsProgress());
 });
 
 // Backfill artist pictures for the whole library using the configured artist-image

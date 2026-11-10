@@ -23,107 +23,86 @@ type YoutubeStatusResp = {
   usage: { day: string; count: number; lastCallAt: string | null; cap: number; hardStopActive: boolean; stopped: boolean };
 };
 
-interface CreditsJobProgress {
-    running: boolean;
-    total: number;
-    processed: number;
-    succeeded: number;
-    skipped: number;
+/** A provider's automatic credit import, as the server reports it (GET /api/library/credits/import/:provider). */
+interface CreditsImportStatus {
+    state: 'running' | 'paused' | 'idle' | 'off';
+    eligible: number;
+    lookedUp: number;
+    withCredits: number;
+    withoutCredits: number;
     failed: number;
-    creditsWritten: number;
-    ranOutOfQuota: boolean;
-    startedAt: number | null;
-    finishedAt: number | null;
+    creditRows: number;
+    remaining: number;
+    resumesAt: number | null;
+    pauseReason: 'rate-limit' | 'failures' | null;
+    lastFinishedAt: number | null;
 }
 
-// Drives a provider's credit-enrichment background job: starts it, polls its
-// progress (~1.5s), surfaces a completion toast, and resumes the bar if a job is
-// already running when the tab mounts. Shared by MusicBrainz and Genius.
-function useCreditsJob(
-    provider: 'musicbrainz' | 'genius',
-    label: string,
-    notConnectedMsg: string,
-    getAuthHeader: () => Record<string, string>,
-    addToast: (msg: string, type: 'success' | 'error' | 'info') => void,
-    onDone: () => void,
-) {
-    const base = `/api/library/credits/enrich/${provider}`;
-    const [running, setRunning] = useState(false);
-    const [progress, setProgress] = useState<CreditsJobProgress | null>(null);
-    const pollRef = useRef<number | null>(null);
-
-    const stop = useCallback(() => {
-        if (pollRef.current) { window.clearInterval(pollRef.current); pollRef.current = null; }
-    }, []);
-
-    const poll = useCallback(async () => {
-        try {
-            const res = await fetch(`${base}/progress`, { headers: getAuthHeader() });
-            if (!res.ok) return;
-            const p: CreditsJobProgress = await res.json();
-            setProgress(p);
-            if (!p.running) {
-                stop();
-                setRunning(false);
-                const more = p.ranOutOfQuota ? ' · rate-limited, run again to continue' : '';
-                const skipped = p.skipped > 0 ? ` · ${p.skipped} had none` : '';
-                addToast(`${label}: ${p.succeeded} tracks credited (${p.creditsWritten} rows)${skipped}${more}`, p.succeeded > 0 ? 'success' : 'info');
-                onDone();
-            }
-        } catch { /* transient — keep polling */ }
-    }, [base, getAuthHeader, stop, addToast, label, onDone]);
-
-    const begin = useCallback(() => {
-        if (pollRef.current) return;
-        setRunning(true);
-        pollRef.current = window.setInterval(() => { void poll(); }, 1500);
-    }, [poll]);
-
-    // Resume the bar if a job is already running when this tab mounts.
+// The credit imports run on the server by themselves; the tab only shows their
+// progress, polled while it's open (and the poll nudges an idle import to start
+// when it has new work).
+function useCreditsImport(provider: 'musicbrainz' | 'genius', enabled: boolean, getAuthHeader: () => Record<string, string>) {
+    const [status, setStatus] = useState<CreditsImportStatus | null>(null);
     useEffect(() => {
+        if (!enabled) { setStatus(null); return; }
         let cancelled = false;
-        (async () => {
+        const load = async () => {
             try {
-                const res = await fetch(`${base}/progress`, { headers: getAuthHeader() });
-                if (!res.ok || cancelled) return;
-                const p: CreditsJobProgress = await res.json();
-                setProgress(p);
-                if (p.running) begin();
-            } catch { /* ignore */ }
-        })();
-        return () => { cancelled = true; stop(); };
-    }, [base, getAuthHeader, begin, stop]);
-
-    const start = useCallback(async () => {
-        setRunning(true);
-        try {
-            const res = await fetch(base, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-            });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) {
-                addToast(data.error || `${label} enrichment failed`, 'error');
-                setRunning(false);
-                return;
-            }
-            if (data.progress) setProgress(data.progress);
-            if (data.started || data.reason === 'already_running') {
-                begin();
-            } else {
-                setRunning(false);
-                if (data.reason === 'nothing_to_do') addToast(`${label}: nothing left to enrich`, 'info');
-                else if (data.reason === 'not_connected') addToast(notConnectedMsg, 'error');
-                onDone();
-            }
-        } catch (e: any) {
-            addToast(e?.message || 'Enrichment failed', 'error');
-            setRunning(false);
-        }
-    }, [base, getAuthHeader, addToast, label, notConnectedMsg, begin, onDone]);
-
-    return { running, progress, start };
+                const res = await fetch(`/api/library/credits/import/${provider}`, { headers: getAuthHeader() });
+                if (res.ok && !cancelled) setStatus(await res.json());
+            } catch { /* transient: the next poll tries again */ }
+        };
+        void load();
+        const timer = window.setInterval(() => { void load(); }, 5000);
+        return () => { cancelled = true; window.clearInterval(timer); };
+    }, [provider, enabled, getAuthHeader]);
+    return status;
 }
+
+const formatTime = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+/** A credit import's progress: what it's doing in words, and a bar while it works. */
+const CreditsImportPanel: React.FC<{ title: string; providerName: string; status: CreditsImportStatus | null }> = ({ title, providerName, status }) => {
+    const pct = status && status.eligible > 0 ? Math.min(100, Math.floor((status.lookedUp / status.eligible) * 100)) : 0;
+    const counts = status
+        ? `${status.lookedUp.toLocaleString()} of ${status.eligible.toLocaleString()} tracks looked up · ${status.withCredits.toLocaleString()} with credits`
+        : '';
+    let line = 'Reading the import\u2019s progress\u2026';
+    if (status) {
+        if (status.state === 'running') line = `Importing in the background. ${counts}`;
+        else if (status.state === 'paused') line = status.pauseReason === 'rate-limit'
+            ? `Paused: ${providerName} asked Aurora to slow down. Carries on at ${formatTime(status.resumesAt ?? Date.now())}. ${counts}`
+            : `Paused after repeated errors from ${providerName}. Tries again at ${formatTime(status.resumesAt ?? Date.now())}. ${counts}`;
+        else if (status.state === 'off') line = `${providerName} isn\u2019t set up, so nothing is imported.`;
+        else if (status.eligible === 0) line = `No tracks ${providerName} can look up yet.`;
+        else line = `Every track is looked up: ${status.withCredits.toLocaleString()} of ${status.eligible.toLocaleString()} have credits (${status.creditRows.toLocaleString()} credit rows). New tracks are looked up as they arrive.`;
+    }
+    const showBar = !!status && status.eligible > 0 && (status.state === 'running' || status.state === 'paused');
+    return (
+        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 mb-4 shadow-sm" role="status" aria-live="polite">
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{title}</div>
+            <div className="text-xs text-[var(--color-text-muted)] mt-1">{line}</div>
+            {showBar && (
+                <div className="mt-3">
+                    <div
+                        className="h-1.5 w-full rounded-full bg-[var(--glass-border)] overflow-hidden"
+                        role="progressbar"
+                        aria-label={`${title}: tracks looked up`}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={pct}
+                    >
+                        <div className="h-full rounded-full bg-[var(--color-primary)] transition-[width] duration-500 ease-out" style={{ width: `${pct}%` }} />
+                    </div>
+                    <div className="text-[10px] text-[var(--color-text-muted)] mt-1 tabular-nums">
+                        {pct}% · {status!.remaining.toLocaleString()} to go
+                        {status!.withoutCredits > 0 && ` · ${status!.withoutCredits.toLocaleString()} without credits on ${providerName}`}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
 
 export const MetadataTab: React.FC = () => {
     const lastFmApiKey = usePlayerStore(state => state.lastFmApiKey);
@@ -162,34 +141,12 @@ export const MetadataTab: React.FC = () => {
     const getAuthHeader = usePlayerStore(state => state.getAuthHeader);
     const { addToast } = useToast();
 
-    // ─── Track-credit enrichment (MusicBrainz / Genius) ───────────────
-    // Aurora populates track_artist_credits from on-disk tags during
-    // every scan. These two buttons layer additional rows from connected
-    // providers without touching the tag-derived rows.
-    interface CreditsStatus {
-        bySource: Record<string, number>;
-        eligibleMusicbrainz: number;
-        eligibleGenius: number;
-        alreadyMusicbrainz: number;
-        alreadyGenius: number;
-    }
-    const [creditsStatus, setCreditsStatus] = useState<CreditsStatus | null>(null);
-
-    const refreshCreditsStatus = useCallback(async () => {
-        try {
-            const res = await fetch('/api/library/credits/status', { headers: getAuthHeader() });
-            if (!res.ok) return;
-            const data = await res.json();
-            setCreditsStatus(data);
-        } catch { /* ignore — the panel just won't show counts */ }
-    }, [getAuthHeader]);
-
-    useEffect(() => {
-        void refreshCreditsStatus();
-    }, [refreshCreditsStatus]);
-
-    const mbJob = useCreditsJob('musicbrainz', 'MusicBrainz', 'Connect MusicBrainz first', getAuthHeader, addToast, refreshCreditsStatus);
-    const geniusJob = useCreditsJob('genius', 'Genius', 'Add a Genius API key first', getAuthHeader, addToast, refreshCreditsStatus);
+    // ─── Track-credit imports (MusicBrainz / Genius) ──────────────────
+    // Aurora fills track_artist_credits from on-disk tags during every scan.
+    // The server layers rows from connected providers on top, by itself; these
+    // only read its progress.
+    const mbCredits = useCreditsImport('musicbrainz', musicBrainzConnected, getAuthHeader);
+    const geniusCredits = useCreditsImport('genius', !!geniusApiKey, getAuthHeader);
 
     const showToast = useCallback((msg: string, type: 'success' | 'error' | 'info') => addToast(msg, type), [addToast]);
 
@@ -586,44 +543,9 @@ export const MetadataTab: React.FC = () => {
                         </div>
                     </div>
 
-                    {/* Genius credit-import action */}
+                    {/* Genius credit import: automatic on the server; progress only. */}
                     {!!geniusApiKey && (
-                        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 mb-4 shadow-sm">
-                            <div className="flex items-center justify-between gap-4">
-                                <div className="min-w-0">
-                                    <div className="text-sm font-semibold text-[var(--color-text-primary)]">Import producer / writer credits</div>
-                                    <div className="text-xs text-[var(--color-text-muted)] mt-1">
-                                        {geniusJob.running && geniusJob.progress
-                                            ? `Importing… ${geniusJob.progress.processed} of ${geniusJob.progress.total} tracks · ${geniusJob.progress.creditsWritten} credit rows added`
-                                            : creditsStatus
-                                                ? `${creditsStatus.alreadyGenius} tracks already enriched · ${(creditsStatus.bySource['genius'] || 0)} credit rows on file`
-                                                : 'Matches tracks on Genius by title + artist'}
-                                    </div>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={() => void geniusJob.start()}
-                                    disabled={geniusJob.running}
-                                    className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50"
-                                >
-                                    {geniusJob.running ? 'Importing…' : 'Import credits'}
-                                </button>
-                            </div>
-                            {geniusJob.running && geniusJob.progress && geniusJob.progress.total > 0 && (
-                                <div className="mt-3" aria-label="Genius credit import progress">
-                                    <div className="h-1.5 w-full rounded-full bg-[var(--glass-border)] overflow-hidden">
-                                        <div
-                                            className="h-full rounded-full bg-[var(--color-primary)] transition-[width] duration-500 ease-out"
-                                            style={{ width: `${Math.min(100, Math.round((geniusJob.progress.processed / geniusJob.progress.total) * 100))}%` }}
-                                        />
-                                    </div>
-                                    <div className="text-[10px] text-[var(--color-text-muted)] mt-1 tabular-nums">
-                                        {Math.min(100, Math.round((geniusJob.progress.processed / geniusJob.progress.total) * 100))}%
-                                        {geniusJob.progress.skipped > 0 && ` · ${geniusJob.progress.skipped} not found`}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
+                        <CreditsImportPanel title="Producer and writer credits" providerName="Genius" status={geniusCredits} />
                     )}
 
                     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 flex flex-col gap-3 shadow-sm">
@@ -689,44 +611,9 @@ export const MetadataTab: React.FC = () => {
                         </div>
                     </div>
 
-                    {/* MusicBrainz credit-import action */}
+                    {/* MusicBrainz credit import: automatic on the server; progress only. */}
                     {musicBrainzConnected && (
-                        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 mb-4 shadow-sm">
-                            <div className="flex items-center justify-between gap-4">
-                                <div className="min-w-0">
-                                    <div className="text-sm font-semibold text-[var(--color-text-primary)]">Import role credits</div>
-                                    <div className="text-xs text-[var(--color-text-muted)] mt-1">
-                                        {mbJob.running && mbJob.progress
-                                            ? `Importing… ${mbJob.progress.processed} of ${mbJob.progress.total} tracks · ${mbJob.progress.creditsWritten} credit rows added`
-                                            : creditsStatus
-                                                ? `${creditsStatus.alreadyMusicbrainz} of ${creditsStatus.eligibleMusicbrainz} eligible tracks enriched · ${(creditsStatus.bySource['musicbrainz'] || 0)} credit rows on file`
-                                                : 'Requires tracks with MusicBrainz recording IDs · throttled to ~1/sec'}
-                                    </div>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={() => void mbJob.start()}
-                                    disabled={mbJob.running}
-                                    className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50"
-                                >
-                                    {mbJob.running ? 'Importing…' : 'Import credits'}
-                                </button>
-                            </div>
-                            {mbJob.running && mbJob.progress && mbJob.progress.total > 0 && (
-                                <div className="mt-3" aria-label="MusicBrainz credit import progress">
-                                    <div className="h-1.5 w-full rounded-full bg-[var(--glass-border)] overflow-hidden">
-                                        <div
-                                            className="h-full rounded-full bg-[var(--color-primary)] transition-[width] duration-500 ease-out"
-                                            style={{ width: `${Math.min(100, Math.round((mbJob.progress.processed / mbJob.progress.total) * 100))}%` }}
-                                        />
-                                    </div>
-                                    <div className="text-[10px] text-[var(--color-text-muted)] mt-1 tabular-nums">
-                                        {Math.min(100, Math.round((mbJob.progress.processed / mbJob.progress.total) * 100))}%
-                                        {mbJob.progress.skipped > 0 && ` · ${mbJob.progress.skipped} with no credits`}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
+                        <CreditsImportPanel title="Role credits" providerName="MusicBrainz" status={mbCredits} />
                     )}
 
                     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 flex flex-col shadow-sm">

@@ -55,6 +55,11 @@ export async function initDatabaseConnection(retries = 15, initialDelay = 1000) 
       import('./services/genreTaxonomy')
         .then(m => m.initializeGenreTaxonomy())
         .catch((e: any) => console.error('[GenreTaxonomy] Initialisation failed (non-fatal):', e?.message || e));
+      // Credit imports from MusicBrainz and Genius: automatic, slow, only when
+      // a provider is set up.
+      import('./services/creditsEnrichment.service')
+        .then(m => m.startCreditsImports())
+        .catch((e: any) => console.error('[Credits] Import scheduler failed to start (non-fatal):', e?.message || e));
       isInitializing = false;
       return;
     } catch (e: any) {

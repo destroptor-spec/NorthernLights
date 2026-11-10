@@ -750,6 +750,30 @@ export async function initDB(): Promise<Pool> {
           ON track_artist_credits(artist_id, role);
         CREATE INDEX IF NOT EXISTS track_artist_credits_track_idx
           ON track_artist_credits(track_id);
+        -- Credit imports (services/creditsEnrichment.service.ts): one lookup
+        -- per track and provider, with the key it used and what it found, so
+        -- the automatic import never asks a free API the same thing twice.
+        CREATE TABLE IF NOT EXISTS track_credit_lookups (
+          track_id     TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+          source       TEXT NOT NULL CHECK (source IN ('musicbrainz', 'genius')),
+          lookup_key   TEXT NOT NULL,
+          outcome      TEXT NOT NULL CHECK (outcome IN ('found', 'none', 'failed')),
+          credits      INTEGER NOT NULL DEFAULT 0,
+          looked_up_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (track_id, source)
+        );
+        -- Tracks imported by hand before the log existed count as looked up.
+        INSERT INTO track_credit_lookups (track_id, source, lookup_key, outcome, credits)
+        SELECT tac.track_id, tac.source,
+               CASE tac.source WHEN 'musicbrainz' THEN t.mb_recording_id
+                    ELSE lower(btrim(t.title)) || '|' || lower(btrim(COALESCE(t.artist, t.album_artist))) END,
+               'found', COUNT(*)
+        FROM track_artist_credits tac JOIN tracks t ON t.id = tac.track_id
+        WHERE tac.source IN ('musicbrainz', 'genius')
+          AND (tac.source <> 'musicbrainz' OR t.mb_recording_id IS NOT NULL)
+          AND (tac.source <> 'genius' OR (t.title IS NOT NULL AND COALESCE(t.artist, t.album_artist) IS NOT NULL))
+        GROUP BY tac.track_id, tac.source, t.mb_recording_id, t.title, t.artist, t.album_artist
+        ON CONFLICT (track_id, source) DO NOTHING;
 
         -- ==========================================
         -- MULTI-USER TABLES
@@ -3549,84 +3573,6 @@ export async function setEnrichedTrackCredits(
 export async function setTrackGeniusSongId(trackId: string, geniusSongId: string | null): Promise<void> {
   const db = await initDB();
   await db.query(`UPDATE tracks SET genius_song_id = $2 WHERE id = $1`, [trackId, geniusSongId]);
-}
-
-// Counts of credit rows by source so the settings UI can show "73 rows
-// from tags, 18 from MusicBrainz, 5 from Genius" — a passive progress
-// indicator since the import job is admin-triggered, not scheduled.
-export async function getCreditsStatus(): Promise<{ total: number; bySource: Record<string, number>; tracksWithCredits: number; eligibleMusicbrainz: number; eligibleGenius: number; alreadyMusicbrainz: number; alreadyGenius: number }> {
-  const db = await initDB();
-  const [byRole, eligibleMb, eligibleGenius, distinctTracks, alreadyMb, alreadyGenius] = await Promise.all([
-    db.query(`SELECT source, COUNT(*)::int AS c FROM track_artist_credits GROUP BY source`),
-    db.query(`SELECT COUNT(*)::int AS c FROM tracks WHERE mb_recording_id IS NOT NULL`),
-    db.query(`SELECT COUNT(*)::int AS c FROM tracks WHERE COALESCE(title, '') <> '' AND COALESCE(artist, album_artist, '') <> ''`),
-    db.query(`SELECT COUNT(DISTINCT track_id)::int AS c FROM track_artist_credits`),
-    db.query(`SELECT COUNT(DISTINCT track_id)::int AS c FROM track_artist_credits WHERE source = 'musicbrainz'`),
-    db.query(`SELECT COUNT(DISTINCT track_id)::int AS c FROM track_artist_credits WHERE source = 'genius'`),
-  ]);
-  const bySource: Record<string, number> = {};
-  let total = 0;
-  for (const row of byRole.rows as any[]) {
-    bySource[row.source] = row.c;
-    total += row.c;
-  }
-  return {
-    total,
-    bySource,
-    tracksWithCredits: distinctTracks.rows[0]?.c || 0,
-    eligibleMusicbrainz: eligibleMb.rows[0]?.c || 0,
-    eligibleGenius: eligibleGenius.rows[0]?.c || 0,
-    alreadyMusicbrainz: alreadyMb.rows[0]?.c || 0,
-    alreadyGenius: alreadyGenius.rows[0]?.c || 0,
-  };
-}
-
-// Full work-list for the MB credit-enrichment job: every track with an
-// mb_recording_id but no MusicBrainz credits yet, capped to keep the in-memory
-// list bounded on very large libraries. The job iterates this list once, so a
-// recording MB has no credits for is attempted exactly once per run — progress
-// is measured by tracks *attempted*, not credited, so the bar can reach 100%.
-export async function listTracksNeedingMbCredits(max = 100000): Promise<Array<{ id: string; mb_recording_id: string; title: string; artist: string }>> {
-  const db = await initDB();
-  const res = await db.query(
-    `SELECT t.id, t.mb_recording_id, t.title, COALESCE(t.artist, t.album_artist) AS artist
-     FROM tracks t
-     WHERE t.mb_recording_id IS NOT NULL
-       AND NOT EXISTS (
-         SELECT 1 FROM track_artist_credits tac
-         WHERE tac.track_id = t.id AND tac.source = 'musicbrainz'
-       )
-     LIMIT $1`,
-    [Math.max(1, Math.min(500000, max))]
-  );
-  return res.rows as any[];
-}
-
-
-// Returns up to `limit` tracks that don't yet have Genius credits.
-// Prefers tracks with a cached genius_song_id so they skip the search
-// round-trip; falls back to (title, artist) for new tracks.
-// Full work-list for the Genius credit-enrichment job (every track with a
-// title + artist and no Genius credits yet), capped to keep the list bounded.
-// Tracks whose Genius song id is already resolved come first so the second
-// pass skips the search step. See listTracksNeedingMbCredits for why the job
-// iterates a single snapshot rather than re-querying per batch.
-export async function listTracksNeedingGeniusCredits(max = 100000): Promise<Array<{ id: string; title: string; artist: string; genius_song_id: string | null }>> {
-  const db = await initDB();
-  const res = await db.query(
-    `SELECT t.id, t.title, COALESCE(t.artist, t.album_artist) AS artist, t.genius_song_id
-     FROM tracks t
-     WHERE COALESCE(t.title, '') <> ''
-       AND COALESCE(t.artist, t.album_artist, '') <> ''
-       AND NOT EXISTS (
-         SELECT 1 FROM track_artist_credits tac
-         WHERE tac.track_id = t.id AND tac.source = 'genius'
-       )
-     ORDER BY (t.genius_song_id IS NOT NULL) DESC
-     LIMIT $1`,
-    [Math.max(1, Math.min(500000, max))]
-  );
-  return res.rows as any[];
 }
 
 // Aggregated role list for an artist: roles ordered by frequency, plus

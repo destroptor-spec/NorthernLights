@@ -191,6 +191,27 @@ Fusion version 2 runs once over the whole library at startup, because the versio
 
 Drop `style_centroids`; nothing else reads it. Style pages and rays simply hide the section. Fusion version 2 adds no table: rolling back the code reruns version 1 at the next start, and Keep and Remove answers stay as ordinary hand corrections (`track_style_overrides`). `track_origin` and the new columns can stay or be dropped; the old code ignores them.
 
+## Credit imports (automatic)
+
+Not part of the genre engine, but on this branch. The MusicBrainz and Genius "Import credits" buttons are gone: the server imports producer, writer and role credits by itself whenever a provider is set up (MusicBrainz connected and enabled; a Genius API key), and Settings → Metadata → Genius / MusicBrainz only show progress.
+
+### 1. Deploy (schema change)
+
+New table `track_credit_lookups` (one row per track and provider: the key looked up and the outcome). At startup it is seeded with every track that already has MusicBrainz or Genius credits, so nothing imported by hand before is asked again.
+
+### 2. Automatic (nothing to run)
+
+Two minutes after the server starts, each configured provider begins; it checks for new tracks every 10 minutes. Pace: MusicBrainz one track per 1.5 s, Genius one per 2 s (dev measured about 2.6 s with the calls themselves, so 30,000 tracks take about a day). A rate limit (429, or 503 from MusicBrainz) or 20 failures in a row pause it for 30 minutes. A track is asked again only when retagged (new recording id, or new title and artist), after 7 days for a failure, or after 180 days for "no credits". Log lines: `[Credits] genius: looked up N tracks, M with credits, in … min`, `[Credits] musicbrainz: paused for 30 minutes (rate limited)`.
+
+### 3. Verify
+
+- [ ] Settings → Metadata → Genius shows "Importing in the background. N of M tracks looked up · K with credits" with a bar; no Import button. The same under MusicBrainz when it's connected.
+- [ ] `SELECT source, outcome, COUNT(*) FROM track_credit_lookups GROUP BY 1, 2` grows over the first minutes.
+
+### Rollback
+
+The old code ignores `track_credit_lookups`; drop it or leave it. Credits already imported stay.
+
 ## Phase 4: engine switch and retirements
 
 Steps are added here when phase 4 is built. Known so far: the MBDB import (4 GB download) and the Genre Matrix are retired, and `tracks.genre_id` / `track_genres` are rebuilt from the new genres.
