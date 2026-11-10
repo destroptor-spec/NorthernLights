@@ -162,3 +162,24 @@ export const targetKey = (target: Pick<GenreTarget, 'genre' | 'styleId'>) => `${
 
 export const listJoin = (items: string[]) => items.length <= 1 ? items.join('')
   : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+
+/**
+ * A track with disputed tags (phase 3): tagged styles the sound contradicts,
+ * listed for an admin to Keep or Remove (GET /api/library/track-styles/disputed).
+ */
+export interface DisputedTrack {
+  trackId: string;
+  title: string;
+  artist: string;
+  album: string | null;
+  artworkId: string | null;
+  styles: Array<{
+    genre: string;
+    styleId: number;
+    style: string;
+    /** The audio model's raw score for the style (0–1). */
+    score: number | null;
+    /** The file tags that map to the style. */
+    fromTags: string[];
+  }>;
+}

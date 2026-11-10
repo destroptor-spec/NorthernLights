@@ -2170,6 +2170,10 @@
                     "type": "string"
                   },
                   "description": "With source tag: the file tags that map here."
+                },
+                "disputed": {
+                  "type": "boolean",
+                  "description": "A tagged style the sound contradicts (a near-zero score, and far from the style's other tracks): kept, but waiting for an admin to Keep or Remove it."
                 }
               },
               "required": [
@@ -2178,7 +2182,8 @@
                 "style",
                 "source",
                 "strength",
-                "fromTags"
+                "fromTags",
+                "disputed"
               ]
             },
             "description": "The track's genres and styles, genre rows first, strongest first."

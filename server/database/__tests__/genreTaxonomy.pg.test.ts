@@ -533,4 +533,67 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     expect(probe.trackIds).not.toContain(idOf('c-grunge-0'));
     expect(await nearTrack(pool, idOf('c-grunge-sim'))).toBeNull();
   });
+  test('fusion v2: the sound adds clear styles to tagged tracks and disputes tags it contradicts, for review', async () => {
+    const fusion = await import('../../services/genreTaxonomy/fusion');
+    const { listDisputedStyles } = await import('../../services/genreTaxonomy/disputed');
+    const styleOf = async (genre: string, name: string) => (await pool.query(
+      'SELECT id, model_index FROM style WHERE genre = $1 AND name = $2', [genre, name])).rows[0] as { id: number; model_index: number };
+    const [grunge, punk, hardRock, techno] = await Promise.all([
+      styleOf('Rock', 'Grunge'), styleOf('Rock', 'Punk'), styleOf('Rock', 'Hard Rock'), styleOf('Electronic', 'Techno')]);
+    const vec = (from: number, jitter: number | null) => {
+      const v = Array(1280).fill(0);
+      for (let i = from; i < from + 10; i++) v[i] = 1;
+      if (jitter !== null) v[1000 + jitter] = 0.2;
+      return `[${v.join(',')}]`;
+    };
+    const artists = await Promise.all(['V2 One', 'V2 Two', 'V2 Three'].map(async n =>
+      (await pool.query('INSERT INTO artists (name) VALUES ($1) RETURNING id', [n])).rows[0].id as string));
+    let n = 0;
+    const add = async (name: string, tag: string, scores: Record<number, number>, base = 0, exact = false) => {
+      await db.addTrack(track(name, [tag]));
+      const id = idOf(name);
+      const all = Array(400).fill(0.01);
+      for (const [index, score] of Object.entries(scores)) all[Number(index)] = score;
+      await pool.query('UPDATE tracks SET artist_id = $2 WHERE id = $1', [id, artists[n % 3]]);
+      await pool.query('INSERT INTO track_features (track_id, embedding_vector) VALUES ($1, $2)', [id, vec(base, exact ? (n++, null) : n++ % 200)]);
+      await pool.query(`INSERT INTO track_style_scores (track_id, scores, model, windows, genre_version) VALUES ($1, $2, 'test', '20,50,80', 1)`, [id, all]);
+      return id;
+    };
+    // Enough Grunge-tagged tracks that sound like Grunge for the sound to be trusted on Rock.
+    for (let i = 0; i < 60; i++) await add(`v2-grunge-${i}`, 'Grunge', { [grunge.model_index]: 0.6 });
+    // In the tagged genre: Punk at 0.35 joins, Hard Rock at 0.2 does not.
+    const inGenre = await add('v2-in-genre', 'Grunge', { [grunge.model_index]: 0.6, [punk.model_index]: 0.35, [hardRock.model_index]: 0.2 });
+    // Another genre the sound isn't trusted on (Electronic, too few tracks here): nothing joins.
+    const untrusted = await add('v2-untrusted', 'Grunge', { [grunge.model_index]: 0.6, [techno.model_index]: 0.9 });
+    // A Techno tag, but the sound is clearly Grunge, and Rock is trusted: Grunge and Rock join.
+    const otherGenre = await add('v2-other-genre', 'Techno', { [grunge.model_index]: 0.7 });
+    // Tagged Grunge, scores nothing for it and sounds far away: disputed. Near the centroid: not.
+    const far = await add('v2-far', 'Grunge', { [grunge.model_index]: 0.001 }, 300);
+    const near = await add('v2-near', 'Grunge', { [grunge.model_index]: 0.001 }, 0, true);
+    await taxonomy.runTagMapping(pool);
+    const status = await fusion.runFusion(pool);
+    expect(status.audioGenres).toContain('Rock');
+    expect(status.audioGenres).not.toContain('Electronic');
+
+    const rows = async (id: string) => (await pool.query(`
+      SELECT ts.genre, s.name AS style, ts.source, ts.disputed FROM track_styles ts LEFT JOIN style s ON s.id = ts.style_id
+      WHERE ts.track_id = $1 ORDER BY ts.genre, s.name NULLS FIRST`, [id])).rows;
+    expect((await rows(inGenre)).map(r => `${r.style}:${r.source}`)).toEqual(['null:tag', 'Grunge:tag', 'Punk:audio']);
+    expect((await rows(untrusted)).map(r => r.genre)).not.toContain('Electronic');
+    expect((await rows(otherGenre)).map(r => `${r.genre}/${r.style}:${r.source}`)).toEqual([
+      'Electronic/null:tag', 'Electronic/Techno:tag', 'Rock/null:audio', 'Rock/Grunge:audio']);
+
+    expect((await rows(far)).find(r => r.style === 'Grunge')?.disputed).toBe(true);
+    expect((await rows(near)).find(r => r.style === 'Grunge')?.disputed).toBe(false);
+    const listed = await listDisputedStyles(pool);
+    expect(listed.items.map(i => i.trackId)).toEqual([far]);
+    expect(listed.items[0].styles).toEqual([expect.objectContaining({ genre: 'Rock', style: 'Grunge', fromTags: ['Grunge'] })]);
+    expect(listed).toMatchObject({ total: 1, styles: 1 });
+    expect(status.disputed).toBe(1);
+
+    // Keep: an add override; the tag is never disputed again.
+    await fusion.setTrackStyleOverride(pool, { trackId: far, genre: 'Rock', styleId: grunge.id, action: 'add' });
+    expect((await rows(far)).find(r => r.style === 'Grunge')).toMatchObject({ source: 'override', disputed: false });
+    expect((await listDisputedStyles(pool)).total).toBe(0);
+  });
 });

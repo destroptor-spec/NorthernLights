@@ -16,6 +16,7 @@ import { rebuildCentroids } from './centroids';
 export { getMappingCoverage } from './coverage';
 export { runTagMapping } from './mapping';
 export { getFusionStatus, runFusion, setTrackStyleOverride, TrackStyleOverrideError } from './fusion';
+export { listDisputedStyles } from './disputed';
 export { getArtistTagBackfillStatus, stopArtistTagBackfill, countRemaining as countArtistTagsRemaining } from './artistTagBackfill';
 
 const log = (message: string) => console.log(`[GenreTaxonomy] ${message}`);
@@ -66,7 +67,7 @@ export function startArtistTagBackfill() {
 async function fuseNow() {
   const status = await runFusion(await initDB());
   const g = status.byGenreSource;
-  log(`Fused ${status.tracks} tracks in ${status.durationMs} ms: genre from tags ${g.tag}, artist tags ${g.artist}, sound ${g.audio}, by hand ${g.override}, unsorted ${g.unsorted}; ${status.withStyle} with a style`);
+  log(`Fused ${status.tracks} tracks in ${status.durationMs} ms: genre from tags ${g.tag}, artist tags ${g.artist}, sound ${g.audio}, by hand ${g.override}, unsorted ${g.unsorted}; ${status.withStyle} with a style, ${status.addedFromSound} styles added from the sound, ${status.disputed} disputed`);
 }
 
 // Fusion is a full rebuild (about 10 s per 30,000 tracks), so requests are

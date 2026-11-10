@@ -15,6 +15,9 @@
  *   has them, else from the sound, but only in genres where the sound agrees
  *   with tags on at least 70 % of tagged tracks (measured on this library).
  *   Styles come from the sound within that genre. Neither: Unsorted.
+ * - Tagged tracks also take styles the sound hears clearly (version 2; see
+ *   AUDIO_ADD_IN_GENRE), and a tagged style the sound contradicts on two
+ *   counts is marked disputed for review (DISPUTE_MAX_SCORE).
  * - Hand corrections (track_style_overrides) apply last.
  * - Style centroids (centroids.ts) are rebuilt from the tag and hand-set
  *   memberships at the end of every run.
@@ -27,7 +30,7 @@ import { parseSetting } from './seed';
 import { rebuildCentroids } from './centroids';
 
 /** Bump when the rules or thresholds change; a stale version triggers a full run at startup. */
-export const FUSION_VERSION = 1;
+export const FUSION_VERSION = 2;
 export const MEMBER_RELIABILITY = 0.8;
 /** Artist tags below this weight say little about an artist's genre. */
 export const ARTIST_TAG_MIN_WEIGHT = 0.3;
@@ -39,6 +42,28 @@ const AUDIO_GENRE_MIN_AGREEMENT = 0.7;
 const AUDIO_AGREEMENT_MIN_TRACKS = 50;
 /** An inferred genre (no tag) ranks below tagged members on Browse pages. */
 const INFERRED_GENRE_STRENGTH = 0.6;
+/**
+ * Tagged tracks (version 2, "trust, then verify"): the sound adds a style it
+ * hears clearly, at most 3 per track. Inside a genre the track is tagged with
+ * (one that already has a tagged style) a raw score of 0.3 is enough; a style
+ * in another genre needs 0.5, and only in genres where the sound agrees with
+ * tags (the same trusted genres as for untagged tracks). On dev these read
+ * right: Pop Rock → Alternative Rock, pop remixes → House, a disco classic
+ * mistagged Progressive Metal → Disco.
+ */
+export const AUDIO_ADD_IN_GENRE = 0.3;
+export const AUDIO_ADD_OTHER_GENRE = 0.5;
+const AUDIO_ADDS_PER_TRACK = 3;
+/**
+ * A tagged style is disputed (flagged for review, never removed) when the
+ * sound gives it a raw score under 0.01 and the track sits outside the
+ * style's 90th-percentile distance from its centroid, in a trusted genre. On
+ * dev: 476 of 12,634 tagged styles, mostly intros, interludes, acoustic
+ * tracks on metal albums and pop under a rock tag. Artist tags don't veto a
+ * dispute: they describe a career, and a dispute is about one track (they
+ * would have hidden 398 of the 476, interludes included).
+ */
+export const DISPUTE_MAX_SCORE = 0.01;
 const STATUS_SETTING = 'genreFusion';
 const AGREEMENT_SETTING = 'genreFusionAudioAgreement';
 
@@ -52,6 +77,10 @@ export interface FusionStatus {
   byGenreSource: { tag: number; artist: number; audio: number; override: number; unsorted: number };
   /** Tracks with at least one style. */
   withStyle: number;
+  /** Styles the sound added to tagged tracks (version 2). */
+  addedFromSound: number;
+  /** Tagged styles the sound disputes, waiting for review. */
+  disputed: number;
   audioGenres: string[];
 }
 
@@ -161,6 +190,39 @@ export async function runFusion(db: Pool, { trackIds }: { trackIds?: string[] } 
       SELECT track_id, genre, style_id, 'audio', LEAST(1, $1 * score), LEAST(1, score)
       FROM (${AUDIO_STYLES_SQL('fz_genre_only')}) a`, [AUDIO_WEIGHT]);
 
+    // Tagged tracks: styles the sound hears clearly join (trust, then verify:
+    // they show as "from the sound" and can be removed by hand).
+    await client.query(`
+      INSERT INTO fz_rows
+      SELECT track_id, genre, style_id, 'audio', LEAST(1, $1 * score), LEAST(1, score)
+      FROM (
+        SELECT c.*, row_number() OVER (PARTITION BY c.track_id ORDER BY c.score DESC, c.style_id) AS n
+        FROM (
+          SELECT tr.track_id, st.genre, st.id AS style_id, u.score
+          FROM (SELECT DISTINCT track_id FROM fz_tag) tr
+          JOIN track_features tf ON tf.track_id = tr.track_id AND tf.is_simulated IS NOT TRUE
+          JOIN track_style_scores ss ON ss.track_id = tr.track_id
+          CROSS JOIN LATERAL unnest(ss.scores) WITH ORDINALITY u(score, idx)
+          JOIN style st ON st.model_index = u.idx - 1
+          WHERE u.score >= $2
+            AND NOT EXISTS (SELECT 1 FROM fz_rows r WHERE r.track_id = tr.track_id AND r.style_id = st.id)
+            AND (
+              EXISTS (SELECT 1 FROM fz_tag g WHERE g.track_id = tr.track_id AND g.genre = st.genre AND g.style_id IS NOT NULL)
+              OR (u.score >= $3 AND st.genre = ANY($4::text[])
+                  AND NOT EXISTS (SELECT 1 FROM fz_tag g WHERE g.track_id = tr.track_id AND g.genre = st.genre))
+            )
+        ) c
+      ) ranked WHERE n <= $5`,
+    [AUDIO_WEIGHT, AUDIO_ADD_IN_GENRE, AUDIO_ADD_OTHER_GENRE, trusted.map(t => t.genre), AUDIO_ADDS_PER_TRACK]);
+    // A style from another genre brings that genre, as strong as its style.
+    await client.query(`
+      INSERT INTO fz_rows
+      SELECT r.track_id, r.genre, NULL, 'audio', MAX(r.strength), MAX(r.confidence)
+      FROM fz_rows r
+      WHERE r.source = 'audio' AND r.style_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM fz_rows g WHERE g.track_id = r.track_id AND g.genre = r.genre AND g.style_id IS NULL)
+      GROUP BY r.track_id, r.genre`);
+
     // No usable tag: the genre from artist tags, else from a trusted sound.
     await client.query(`
       CREATE TEMP TABLE fz_untagged ON COMMIT DROP AS
@@ -239,6 +301,7 @@ export async function runFusion(db: Pool, { trackIds }: { trackIds?: string[] } 
     await rebuildProfiles(client, full);
     // Centroids follow the tag and hand-set memberships, which any run can change.
     await rebuildCentroids(client, FUSION_VERSION);
+    await markDisputed(client, trusted.map(t => t.genre));
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
@@ -250,6 +313,24 @@ export async function runFusion(db: Pool, { trackIds }: { trackIds?: string[] } 
   const status = await summarise(db, Date.now() - started, trusted.map(t => t.genre));
   if (full) await setSystemSetting(STATUS_SETTING, status);
   return status;
+}
+
+/**
+ * Flags tagged styles the sound contradicts on two independent counts (a raw
+ * score under DISPUTE_MAX_SCORE, and further from the style's centroid than
+ * 90 % of its tagged members), in genres where the sound is trusted. Needs
+ * centroids, so it runs after them; only the tracks of this run.
+ */
+async function markDisputed(client: PoolClient, trustedGenres: string[]) {
+  await client.query(`
+    UPDATE track_styles ts SET disputed = true
+    FROM fz_t, style st, style_centroids c, track_features tf, track_style_scores ss
+    WHERE fz_t.track_id = ts.track_id AND ts.source = 'tag' AND ts.genre = ANY($1::text[])
+      AND st.id = ts.style_id AND c.style_id = ts.style_id
+      AND tf.track_id = ts.track_id AND tf.is_simulated IS NOT TRUE AND tf.embedding_vector IS NOT NULL
+      AND ss.track_id = ts.track_id AND ss.scores[st.model_index + 1] < $2
+      AND c.p90_distance IS NOT NULL AND (tf.embedding_vector <=> c.centroid) > c.p90_distance`,
+  [trustedGenres, DISPUTE_MAX_SCORE]);
 }
 
 /**
@@ -305,7 +386,10 @@ async function summarise(db: Pool, durationMs: number, audioGenres: string[]): P
     SELECT (SELECT COUNT(*) FROM tracks)::int AS tracks,
            COUNT(*) FILTER (WHERE s = 1)::int AS tag, COUNT(*) FILTER (WHERE s = 2)::int AS override,
            COUNT(*) FILTER (WHERE s = 3)::int AS artist, COUNT(*) FILTER (WHERE s = 4)::int AS audio,
-           (SELECT COUNT(DISTINCT track_id) FROM track_styles WHERE style_id IS NOT NULL)::int AS with_style
+           (SELECT COUNT(DISTINCT track_id) FROM track_styles WHERE style_id IS NOT NULL)::int AS with_style,
+           (SELECT COUNT(*) FROM track_styles a WHERE a.source = 'audio' AND a.style_id IS NOT NULL
+              AND EXISTS (SELECT 1 FROM track_styles g WHERE g.track_id = a.track_id AND g.source = 'tag'))::int AS added,
+           (SELECT COUNT(*) FROM track_styles WHERE disputed)::int AS disputed
     FROM genre_source`)).rows[0];
   const inGenre = row.tag + row.override + row.artist + row.audio;
   return {
@@ -315,6 +399,8 @@ async function summarise(db: Pool, durationMs: number, audioGenres: string[]): P
     tracks: row.tracks,
     byGenreSource: { tag: row.tag, artist: row.artist, audio: row.audio, override: row.override, unsorted: row.tracks - inGenre },
     withStyle: row.with_style,
+    addedFromSound: row.added,
+    disputed: row.disputed,
     audioGenres,
   };
 }

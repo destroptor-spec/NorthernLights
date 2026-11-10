@@ -31,8 +31,9 @@ const rays = (): Rays => ({
   ],
   tags: ['Electric Hip Hop Soul'],
   styles: [
-    { genre: 'Electronic', styleId: null, style: null, source: 'tag', strength: 1, fromTags: ['Electric Hip Hop Soul'] },
-    { genre: 'Electronic', styleId: 78, style: 'Glitch', source: 'audio', strength: 0.4, fromTags: [] },
+    { genre: 'Electronic', styleId: null, style: null, source: 'tag', strength: 1, fromTags: ['Electric Hip Hop Soul'], disputed: false },
+    { genre: 'Electronic', styleId: 78, style: 'Glitch', source: 'audio', strength: 0.4, fromTags: [], disputed: false },
+    { genre: 'Electronic', styleId: 92, style: 'House', source: 'tag', strength: 0.3, fromTags: ['House'], disputed: true },
   ],
   sound: { energy: 0.8, danceability: 0.9, acousticness: 0.1, instrumentalness: 0.7, brightness: 0.4, percussiveness: 0.6, bpm: 74,
     closestStyles: [{ genre: 'Electronic', styleId: 78, style: 'Glitch', score: 0.5 }, { genre: 'Electronic', styleId: 56, style: 'Downtempo', score: 0.31 }],
@@ -127,6 +128,8 @@ test('says where each genre and style came from, groups credits by person, and s
   expect(headings[headings.length - 1]).toBe('Genres and styles');
   expect(screen.getByText('From the file tag “Electric Hip Hop Soul”')).toBeTruthy();
   expect(screen.getByText('From the sound')).toBeTruthy();
+  // A tag the sound disputes says so.
+  expect(screen.getByText('From the file tag “House”. The sound disagrees')).toBeTruthy();
   expect(screen.getByText('Electronic › Glitch').closest('a')!.getAttribute('href')).toBe('/library/browse/style/78');
   expect(within(screen.getByRole('group', { name: 'Sound' })).getByRole('meter', { name: 'Energy' })).toBeTruthy();
   // Listeners can't change genres: no Remove, and the bars open the style.

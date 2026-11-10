@@ -161,7 +161,7 @@ Settings → Appearance → **Genre and style browse (preview)**. Library → Ge
 
 ## Phase 3: audio and artist-tag evidence
 
-Built so far: style centroids and "Sounds close to". The rest of phase 3 (audio and artist-tag evidence for tagged tracks, disputed tags, descriptors) waits for the reviewed sample; its steps are added here when it is built.
+Built so far: style centroids, "Sounds close to", and fusion version 2 ("trust, then verify": the sound adds styles to tagged tracks and flags tags it contradicts, for review). Descriptors (moods, places, eras from artist tags) follow; their steps are added here when they are built.
 
 ### 1. Deploy (schema change)
 
@@ -171,15 +171,19 @@ New table `style_centroids` (one row per style: the mean audio embedding of its 
 
 When fusion is already current (phase 2 ran), the server builds the centroids once at startup without a full fusion run. The log says `[GenreTaxonomy] Built N style centroids` (dev: 57 of the 297 styles in use; a style needs at least 8 tagged tracks by 3 artists). From then on every fusion run rebuilds them (about 0.2 s on dev). Needs phase 0's embeddings: tracks without a real embedding (simulated) never count.
 
+Fusion version 2 runs once over the whole library at startup, because the version changed (dev: 11.4 s, about 1.5 s more than version 1). The log line now ends `…; N styles added from the sound, M disputed` (dev: 27,021 audio styles on tagged tracks, 476 disputed styles on 469 tracks).
+
 ### 3. Verify
 
+- [ ] `GET /api/admin/genre-taxonomy/fusion` returns `version` 2 with `addedFromSound` and `disputed`.
+- [ ] As an admin, Library → Genres → Unsorted ends with **Disputed tags**: one row per track with Play, Keep and Remove. Try Keep and Remove on one track each, and Undo from the toast; **Aurora rays** for a disputed track says "The sound disagrees" after the tag.
 - [ ] `SELECT COUNT(*), MIN(p90_distance), MAX(p90_distance) FROM style_centroids` is not zero (dev: 57, 0.09 to 0.52).
 - [ ] A style page with a centroid (Grunge, Trance, House) ends with **Sounds close to**: six style cards, each naming its genre (dev: Grunge → Hard Rock, Alternative Rock, Heavy Metal, Punk, Thrash, Progressive Metal).
 - [ ] **Aurora rays** for an analysed track shows **Sounds close to** between Sound and style and Also on: six compact style cards and up to 12 tracks, one version per song, at most two per artist, none from the track's own album.
 
 ### Rollback
 
-Drop `style_centroids`; nothing else reads it. Style pages and rays simply hide the section.
+Drop `style_centroids`; nothing else reads it. Style pages and rays simply hide the section. Fusion version 2 adds no table: rolling back the code reruns version 1 at the next start, and Keep and Remove answers stay as ordinary hand corrections (`track_style_overrides`).
 
 ## Phase 4: engine switch and retirements
 

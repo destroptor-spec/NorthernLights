@@ -5,12 +5,14 @@ import { usePlayerStore } from '../../store/index';
 import { fetchBrowseUnsorted } from '../../api/browse';
 import { BackButton } from '../library/BackButton';
 import { BrowseError, useBrowsePlayer } from './browseParts';
+import { DisputedTags } from './DisputedTags';
 import type { BrowseUnsorted as Unsorted } from '../../../shared/api/v1';
 
 /**
  * Tracks without a genre: their genre tags match no genre or style, and
  * neither their sound nor their artist's tags were clear enough. They stay
  * playable; an admin can map a tag in Settings → Library Entities → Genres.
+ * Admins also review disputed tags here (DisputedTags).
  */
 export const BrowseUnsorted: React.FC = () => {
   const navigate = useNavigate();
@@ -87,6 +89,8 @@ export const BrowseUnsorted: React.FC = () => {
             )}
           </ul>
         ))}
+
+      {isAdmin && <DisputedTags />}
     </div>
   );
 };

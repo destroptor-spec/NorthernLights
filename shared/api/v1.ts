@@ -737,6 +737,7 @@ export const trackRaysSchema = z.object({
       .describe('tag: a genre tag in the file; audio: the sound; artist: the artist\'s tags on Last.fm or MusicBrainz; override: set by hand.'),
     strength: z.number().min(0).max(1),
     fromTags: z.array(z.string()).describe('With source tag: the file tags that map here.'),
+    disputed: z.boolean().describe('A tagged style the sound contradicts (a near-zero score, and far from the style\'s other tracks): kept, but waiting for an admin to Keep or Remove it.'),
   })).describe('The track\'s genres and styles, genre rows first, strongest first.'),
   sound: z.object({
     energy: z.number().min(0).max(1),

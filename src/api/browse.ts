@@ -12,6 +12,8 @@ import type {
   TrackRays,
 } from '../../shared/api/v1';
 
+import type { DisputedTrack } from '../../shared/genreReview';
+
 type Auth = Record<string, string>;
 
 /** What a track, album or artist list is filtered to (mirrors the server). */
@@ -85,6 +87,13 @@ export async function setTrackStyle(auth: Auth, trackId: string, change: { genre
     const payload = await response.json().catch(() => null);
     throw new Error(payload?.error || 'Could not save the change.');
   }
+}
+
+/** Admin: tracks with tagged styles the sound disputes, one page of tracks at a time (legacy API). */
+export async function fetchDisputedStyles(auth: Auth, offset = 0, limit = 50) {
+  const response = await fetch(`/api/library/track-styles/disputed?offset=${offset}&limit=${limit}`, { headers: auth });
+  if (!response.ok) throw new Error('Could not load disputed tags.');
+  return response.json() as Promise<{ total: number; styles: number; items: DisputedTrack[] }>;
 }
 
 /** Admin: Aurora's genres and styles, for the picker. */

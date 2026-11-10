@@ -2386,6 +2386,105 @@ button.rays-bar:focus-visible {
   gap: 0.75rem;
 }
 
+/* Disputed tags (Unsorted, admins): one row per track with tagged styles
+   the sound disputes: Play, cover, track, then the tags with Keep and Remove. */
+.disputed {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 60rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.disputed__count {
+  margin: 0 0 0.75rem;
+  color: var(--color-text-secondary);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.disputed__row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 56px;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--glass-bg);
+}
+
+.disputed__what {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.disputed__title {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.disputed__title:hover,
+.disputed__title:focus-visible {
+  color: var(--color-primary);
+}
+
+.disputed__meta {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.disputed__answer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.disputed__style {
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.85rem;
+  text-align: right;
+}
+
+.disputed__style strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.disputed__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.disputed__more {
+  margin-top: 1rem;
+}
+
+/* On a phone the tags and the answers get their own line under the track. */
+@media (max-width: 639px) {
+  .disputed__row {
+    grid-template-columns: auto auto minmax(0, 1fr);
+    row-gap: 0.5rem;
+  }
+  .disputed__answer {
+    grid-column: 1 / -1;
+    justify-content: space-between;
+  }
+  .disputed__style { text-align: left; }
+}
+
 /* Sounds close to: the tracks under the style cards, two columns at most so
    each row has room for its title and artist. */
 .rays-near-tracks {

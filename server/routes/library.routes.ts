@@ -275,6 +275,21 @@ const afterGenreDecision = async () => {
   await publishApiV1LibraryRevision({ source: 'genreReview' });
 };
 
+// Disputed tags (phase 3): tagged styles the sound contradicts, for an admin
+// to Keep or Remove through the hand corrections below.
+router.get('/track-styles/disputed', requireAdmin, async (req, res) => {
+  const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
+  const offset = Math.max(0, Number(req.query.offset) || 0);
+  try {
+    const { listDisputedStyles } = await import('../services/genreTaxonomy');
+    const { initDB } = await import('../database');
+    res.json(await listDisputedStyles(await initDB(), { limit, offset }));
+  } catch (error) {
+    console.error('[TrackStyles] Disputed list failed:', error);
+    res.status(500).json({ error: 'Could not load disputed tags.' });
+  }
+});
+
 // A hand correction of one track's genres and styles ("Aurora rays from
 // {title}"): add or remove a genre or style. Admin: it changes the library
 // for everyone. The track is fused again before the answer.

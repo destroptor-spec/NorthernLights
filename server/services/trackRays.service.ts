@@ -45,7 +45,7 @@ export async function getTrackRays(db: Pool, trackId: string): Promise<TrackRays
       WHERE tac.track_id = $1 ORDER BY tac.position`, [trackId]),
     db.query(`SELECT tag FROM track_tags WHERE track_id = $1 ORDER BY position`, [trackId]),
     db.query(`
-      SELECT ts.genre, ts.style_id, s.name AS style, ts.source, ts.strength,
+      SELECT ts.genre, ts.style_id, s.name AS style, ts.source, ts.strength, ts.disputed,
              COALESCE((SELECT array_agg(DISTINCT tt.tag ORDER BY tt.tag)
                        FROM track_tags tt JOIN tag_map m ON m.tag = tt.tag_key
                        WHERE tt.track_id = ts.track_id AND m.genre = ts.genre
@@ -134,6 +134,7 @@ export async function getTrackRays(db: Pool, trackId: string): Promise<TrackRays
       source: r.source,
       strength: Math.min(1, Number(r.strength)),
       fromTags: r.source === 'tag' ? (r.from_tags as string[]) : [],
+      disputed: r.disputed === true,
     })),
     sound,
     album: albumRow && albumProfile ? {

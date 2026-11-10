@@ -3,6 +3,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { BrowseHome } from './BrowseHome';
 import { BrowseGenrePage } from './BrowseGenrePage';
 import { BrowseStylePage } from './BrowseStylePage';
+import { BrowseUnsorted } from './BrowseUnsorted';
 import { COVER_GRADIENTS, coverGradientFor } from './AuroraCard';
 import { usePlayerStore } from '../../store';
 import type { BrowseGenreDetail, BrowseGenres, BrowseStyleDetail } from '../../../shared/api/v1';
@@ -38,13 +39,23 @@ const grunge = (soundsCloseTo: BrowseStyleDetail['soundsCloseTo']): BrowseStyleD
   style: style(51, 'Grunge', 151, 'Rock'), albums: [], artists: [], decades: [], soundsCloseTo,
 });
 let grungeDetail = grunge([]);
+const nuMetal = { genre: 'Rock', styleId: 61, style: 'Nu Metal', score: 0.002, fromTags: ['Nu Metal'] };
+const altRock = { genre: 'Rock', styleId: 30, style: 'Alternative Rock', score: 0.004, fromTags: ['Alternative Rock'] };
+const disputedRow = (trackId: string, title: string, styles = [nuMetal]) => ({
+  trackId, title, artist: 'Linkin Park', album: 'Minutes to Midnight', artworkId: null, styles,
+});
+const disputedPage = () => ({ total: 2, styles: 3, items: [disputedRow('d1', 'Wake'), disputedRow('d2', 'Jornada Del Muerto', [nuMetal, altRock])] });
+let disputed = disputedPage();
 
 const track = (id: string) => ({ id, title: id, artists: [], album: null, durationMs: 1000, artworkUrl: null });
-const fetchMock = jest.fn(async (url: RequestInfo | URL) => {
+const fetchMock = jest.fn(async (url: RequestInfo | URL, _init?: RequestInit) => {
   const path = String(url);
   if (path.startsWith('/api/v1/browse/genres?') || path === '/api/v1/browse/genres') return ok(genres);
   if (path === '/api/v1/browse/genres/Electronic') return ok(electronic);
   if (path === '/api/v1/browse/styles/51') return ok(grungeDetail);
+  if (path === '/api/v1/browse/unsorted') return ok({ tags: [], untaggedTrackCount: 0 });
+  if (path.startsWith('/api/library/track-styles/disputed')) return { ok: true, json: async () => disputed } as Response;
+  if (path.startsWith('/api/library/track-styles/')) return { ok: true, json: async () => ({ status: 'saved' }) } as Response;
   if (path.startsWith('/api/v1/browse/mix')) return ok([track('t1'), track('t2'), track('t3')]);
   return ok({});
 });
@@ -65,6 +76,7 @@ const renderAt = (path: string) => render(
       <Route path="/library/genres" element={<><BrowseHome /><Where /></>} />
       <Route path="/library/browse/genre/:genre" element={<><BrowseGenrePage /><Where /></>} />
       <Route path="/library/browse/style/:styleId" element={<><BrowseStylePage /><Where /></>} />
+      <Route path="/library/browse/unsorted" element={<BrowseUnsorted />} />
       <Route path="*" element={<Where />} />
     </Routes>
   </MemoryRouter>,
@@ -138,4 +150,33 @@ test('a style page shows what sounds close to it, with the genre on each card, o
   renderAt('/library/browse/style/51');
   expect(await screen.findByRole('heading', { level: 1, name: 'Grunge' })).toBeTruthy();
   expect(screen.queryByRole('region', { name: 'Sounds close to' })).toBeNull();
+});
+
+test('admins review disputed tags on Unsorted: Remove writes the correction, drops the row and offers Undo; listeners see none', async () => {
+  const addToast = jest.fn();
+  usePlayerStore.setState({ currentUser: { role: 'admin' }, addToast } as never);
+  disputed = disputedPage();
+  const { unmount } = renderAt('/library/browse/unsorted');
+  const section = await screen.findByRole('region', { name: 'Disputed tags' });
+  expect(await within(section).findByText('2 tracks to review')).toBeTruthy();
+  expect(within(section).getByText('Jornada Del Muerto').closest('a')!.getAttribute('href')).toBe('/library/rays/d2');
+
+  // One row per track: both of its disputed styles, answered together.
+  fireEvent.click(within(section).getByRole('button', { name: 'Remove Nu Metal and Alternative Rock from Jornada Del Muerto' }));
+  await waitFor(() => expect(within(section).queryByText('Jornada Del Muerto')).toBeNull());
+  const posts = fetchMock.mock.calls.filter(([u]) => String(u) === '/api/library/track-styles/d2').map(([, init]) => JSON.parse(String(init!.body)));
+  expect(posts).toEqual([{ genre: 'Rock', styleId: 61, action: 'remove' }, { genre: 'Rock', styleId: 30, action: 'remove' }]);
+  expect(addToast.mock.calls[0][0]).toBe('Removed Nu Metal and Alternative Rock from Jornada Del Muerto');
+  expect(addToast.mock.calls[0][2].actionLabel).toBe('Undo');
+  expect(within(section).getByText('1 track to review')).toBeTruthy();
+
+  fireEvent.click(within(section).getByRole('button', { name: 'Keep Nu Metal on Wake' }));
+  await waitFor(() => expect(fetchMock.mock.calls.some(([u, init]) => String(u) === '/api/library/track-styles/d1'
+    && JSON.parse(String(init!.body)).action === 'add')).toBe(true));
+  unmount();
+
+  usePlayerStore.setState({ currentUser: { role: 'listener' } } as never);
+  renderAt('/library/browse/unsorted');
+  expect(await screen.findByRole('heading', { level: 1, name: 'Unsorted' })).toBeTruthy();
+  expect(screen.queryByRole('region', { name: 'Disputed tags' })).toBeNull();
 });

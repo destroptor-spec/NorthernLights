@@ -15,7 +15,7 @@ import { BackButton } from '../library/BackButton';
 import { ArtistInitial } from '../library/ArtistInitial';
 import { FadedHeroImage } from '../library/FadedHeroImage';
 import { StylePicker, type GenreTaxonomy } from '../settings/StylePicker';
-import { BrowseError, NearStyleCards, coverUrlFor, useBrowsePlayer } from './browseParts';
+import { BrowseError, CoverThumb, NearStyleCards, coverUrlFor, useBrowsePlayer } from './browseParts';
 import type { StyleProfileEntry, TrackRays as Rays } from '../../../shared/api/v1';
 import type { GenreTarget } from '../../../shared/genreReview';
 
@@ -30,9 +30,9 @@ const linkFor = (row: { genre: string; styleId: number | null }) => row.styleId 
 /** Where a genre or style came from, in words. */
 function sourceText(row: StyleRow): string {
   switch (row.source) {
-    case 'tag': return row.fromTags.length
+    case 'tag': return (row.fromTags.length
       ? `From the file tag ${row.fromTags.map(t => `“${t}”`).join(', ')}`
-      : 'From the file tags';
+      : 'From the file tags') + (row.disputed ? '. The sound disagrees' : '');
     case 'audio': return 'From the sound';
     case 'artist': return "From the artist's tags on Last.fm and MusicBrainz";
     case 'override': return 'Set by hand';
@@ -125,13 +125,6 @@ const PersonAvatar: React.FC<{ name: string; imageUrl?: string | null; size?: 's
     </span>
   );
 };
-
-/** A small album cover, as everywhere else: rounded and clipped. */
-const CoverThumb: React.FC<{ artworkId: string | null; title: string; artist?: string }> = ({ artworkId, title, artist }) => (
-  <span className="rays-cover" aria-hidden="true">
-    <AlbumArt artUrl={coverUrlFor(artworkId)} album={title} artist={artist} size={96} className="w-full h-full object-cover" />
-  </span>
-);
 
 /** A person's square cover: their image, or the radio cover gradient with a person icon (as on the Hub). */
 const PersonCover: React.FC<{ name: string; imageUrl?: string | null }> = ({ name, imageUrl }) => {

@@ -12,6 +12,7 @@ import {
 } from '../../api/browse';
 import { toPlayableTracks } from '../../utils/playableTracks';
 import { AlbumCard, AlbumCardSkeleton } from '../library/AlbumCard';
+import { AlbumArt } from '../AlbumArt';
 import { ArtistInitial } from '../library/ArtistInitial';
 import { AuroraCard } from './AuroraCard';
 import type { BrowseAlbum, BrowseArtist, BrowseDecade, BrowseStyleRef } from '../../../shared/api/v1';
@@ -228,4 +229,11 @@ export const NearStyleCards: React.FC<{
       />
     ))}
   </div>
+);
+
+/** A small album cover, as everywhere else: rounded and clipped. */
+export const CoverThumb: React.FC<{ artworkId: string | null; title: string; artist?: string }> = ({ artworkId, title, artist }) => (
+  <span className="rays-cover" aria-hidden="true">
+    <AlbumArt artUrl={coverUrlFor(artworkId)} album={title} artist={artist} size={96} className="w-full h-full object-cover" />
+  </span>
 );
