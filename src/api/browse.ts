@@ -24,6 +24,8 @@ export interface BrowseFilter {
   decade?: number;
   /** ISO 3166-1 alpha-2. */
   country?: string;
+  vocals?: string;
+  mood?: string;
   unsorted?: boolean;
   tag?: string;
 }
@@ -35,6 +37,8 @@ function filterQuery(filter: BrowseFilter, extra: Record<string, string | number
   if (filter.noStyle) params.set('noStyle', 'true');
   if (filter.decade !== undefined) params.set('decade', String(filter.decade));
   if (filter.country) params.set('country', filter.country);
+  if (filter.vocals) params.set('vocals', filter.vocals);
+  if (filter.mood) params.set('mood', filter.mood);
   if (filter.unsorted) params.set('unsorted', 'true');
   if (filter.tag) params.set('tag', filter.tag);
   for (const [key, value] of Object.entries(extra)) if (value !== undefined) params.set(key, String(value));

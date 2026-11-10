@@ -979,6 +979,11 @@ export async function initDB(): Promise<Pool> {
         ALTER TABLE tracks ADD COLUMN IF NOT EXISTS release_country TEXT;
         ALTER TABLE tracks ADD COLUMN IF NOT EXISTS lyrics_language TEXT;
         ALTER TABLE tracks ADD COLUMN IF NOT EXISTS origin_read_at TIMESTAMPTZ;
+        -- The original release year (Picard's ORIGINALDATE): a 2021 remaster of
+        -- a 1991 song is 1991. origin_read_version: which extra tags were read
+        -- (1: country and language; 2: also the original year).
+        ALTER TABLE tracks ADD COLUMN IF NOT EXISTS original_year INTEGER;
+        ALTER TABLE tracks ADD COLUMN IF NOT EXISTS origin_read_version SMALLINT;
         -- Derived (services/trackOrigin.service.ts): country from the artist's
         -- MusicBrainz country, else the artist's place tags, else the release
         -- country; language from the file.
@@ -989,6 +994,17 @@ export async function initDB(): Promise<Pool> {
           language         TEXT,
           language_source  TEXT CHECK (language_source IN ('file'))
         );
+        -- When, and how it sounds by its artist's tags: the effective year and
+        -- decade (original year, else the file's year, else the artist's era
+        -- tag), and the artist's vocals and moods.
+        ALTER TABLE track_origin ADD COLUMN IF NOT EXISTS year INTEGER;
+        ALTER TABLE track_origin ADD COLUMN IF NOT EXISTS decade INTEGER;
+        ALTER TABLE track_origin ADD COLUMN IF NOT EXISTS year_source TEXT CHECK (year_source IN ('original', 'file', 'artist-tags'));
+        ALTER TABLE track_origin ADD COLUMN IF NOT EXISTS vocals TEXT[];
+        ALTER TABLE track_origin ADD COLUMN IF NOT EXISTS moods TEXT[];
+        CREATE INDEX IF NOT EXISTS track_origin_decade_idx ON track_origin (decade) WHERE decade IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS track_origin_vocals_idx ON track_origin USING gin (vocals);
+        CREATE INDEX IF NOT EXISTS track_origin_moods_idx ON track_origin USING gin (moods);
         CREATE INDEX IF NOT EXISTS track_origin_country_idx ON track_origin (country) WHERE country IS NOT NULL;
         CREATE INDEX IF NOT EXISTS track_origin_language_idx ON track_origin (language) WHERE language IS NOT NULL;
         CREATE TABLE IF NOT EXISTS style_centroids (
@@ -1596,8 +1612,11 @@ const SNAKE_DUP_COLUMNS = [
   'mb_recording_id', 'mb_track_id', 'mb_album_id', 'mb_artist_id', 'mb_album_artist_id',
   'mb_release_group_id', 'mb_work_id', 'art_hash', 'artwork_version', 'playlist_added_at', 'is_loved', 'raw_urls', 'canonical_genre',
   // Read by trackOrigin.service only; no track payload needs them.
-  'release_country', 'lyrics_language', 'origin_read_at',
+  'release_country', 'lyrics_language', 'origin_read_at', 'original_year', 'origin_read_version',
 ];
+
+/** Which extra tags a scan reads (trackOrigin.service re-reads older files): 2 adds the original year. */
+export const ORIGIN_READ_VERSION = 2;
 
 function mapTrackRow(row: any) {
   const mapped: any = {
@@ -2206,8 +2225,8 @@ export async function addTrack(track: any) {
   const sanitizeArray = (arr: any) => Array.isArray(arr) ? arr.map(sanitizeString) : arr;
 
   await db.query(`
-    INSERT INTO tracks (id, title, artist, album_artist, artists, album, genre, duration, track_number, disc_number, year, release_type, is_compilation, path, bitrate, format, artist_id, album_id, genre_id, genres, isrc, mb_recording_id, mb_track_id, mb_album_id, mb_artist_id, mb_album_artist_id, mb_release_group_id, mb_work_id, raw_urls, art_hash, artwork_version, file_mtime, file_size, decoded_path, lossless, release_country, lyrics_language, origin_read_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, decode($14, 'base64'), $34, $35, $36, CASE WHEN $37::boolean THEN NOW() END)
+    INSERT INTO tracks (id, title, artist, album_artist, artists, album, genre, duration, track_number, disc_number, year, release_type, is_compilation, path, bitrate, format, artist_id, album_id, genre_id, genres, isrc, mb_recording_id, mb_track_id, mb_album_id, mb_artist_id, mb_album_artist_id, mb_release_group_id, mb_work_id, raw_urls, art_hash, artwork_version, file_mtime, file_size, decoded_path, lossless, release_country, lyrics_language, origin_read_at, original_year, origin_read_version)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, decode($14, 'base64'), $34, $35, $36, CASE WHEN $37::boolean THEN NOW() END, $38, CASE WHEN $37::boolean THEN $39::smallint END)
     ON CONFLICT (id) DO UPDATE SET
       title = EXCLUDED.title,
       artist = EXCLUDED.artist,
@@ -2250,7 +2269,9 @@ export async function addTrack(track: any) {
       -- one that didn't (a parse failure) leaves them.
       release_country = CASE WHEN EXCLUDED.origin_read_at IS NOT NULL THEN EXCLUDED.release_country ELSE tracks.release_country END,
       lyrics_language = CASE WHEN EXCLUDED.origin_read_at IS NOT NULL THEN EXCLUDED.lyrics_language ELSE tracks.lyrics_language END,
-      origin_read_at = COALESCE(EXCLUDED.origin_read_at, tracks.origin_read_at)
+      origin_read_at = COALESCE(EXCLUDED.origin_read_at, tracks.origin_read_at),
+      original_year = CASE WHEN EXCLUDED.origin_read_at IS NOT NULL THEN EXCLUDED.original_year ELSE tracks.original_year END,
+      origin_read_version = COALESCE(EXCLUDED.origin_read_version, tracks.origin_read_version)
     WHERE
       tracks.title IS DISTINCT FROM EXCLUDED.title OR
       tracks.artist IS DISTINCT FROM EXCLUDED.artist OR
@@ -2290,7 +2311,9 @@ export async function addTrack(track: any) {
       (EXCLUDED.lossless IS NOT NULL AND tracks.lossless IS DISTINCT FROM EXCLUDED.lossless) OR
       (EXCLUDED.origin_read_at IS NOT NULL AND (tracks.origin_read_at IS NULL
         OR tracks.release_country IS DISTINCT FROM EXCLUDED.release_country
-        OR tracks.lyrics_language IS DISTINCT FROM EXCLUDED.lyrics_language))
+        OR tracks.lyrics_language IS DISTINCT FROM EXCLUDED.lyrics_language
+        OR tracks.original_year IS DISTINCT FROM EXCLUDED.original_year
+        OR tracks.origin_read_version IS DISTINCT FROM EXCLUDED.origin_read_version))
   `, [
     id,
     sanitizeString(track.title) || path.basename(track.path),
@@ -2330,6 +2353,8 @@ export async function addTrack(track: any) {
     track.originRead ? sanitizeString(track.releaseCountry) || null : null,
     track.originRead ? sanitizeString(track.lyricsLanguage) || null : null,
     track.originRead === true,
+    track.originRead && Number(track.originalYear) > 0 ? Math.round(Number(track.originalYear)) : null,
+    ORIGIN_READ_VERSION,
   ]);
 
   const associationNames = Array.isArray(track.genres) && track.genres.length > 0

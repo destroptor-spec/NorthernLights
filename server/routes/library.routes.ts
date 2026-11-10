@@ -652,6 +652,7 @@ async function processMetadataBatch(input: Array<Buffer | ScanItem>, concurrency
               mbWorkId: metadata.mbWorkId || null,
               originRead: metadata.originRead === true,
               releaseCountry: metadata.releaseCountry || null,
+              originalYear: metadata.originalYear || null,
               lyricsLanguage: metadata.lyricsLanguage || null,
               rawUrls: metadata.rawUrls || null,
               artHash: metadata.artHash,

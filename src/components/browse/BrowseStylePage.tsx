@@ -68,6 +68,8 @@ export const BrowseStylePage: React.FC = () => {
                 name={style.name}
                 decades={detail.decades}
                 countries={detail.countries}
+                vocals={detail.vocals}
+                moods={detail.moods}
                 busy={busy === 'style'}
                 onShuffle={narrow => playFilter('style', { ...filter, ...narrow })}
               />

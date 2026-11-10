@@ -1629,9 +1629,28 @@ a:focus-visible > .genre-card .genre-card__label {
   opacity: 0.85;
 }
 
-/* On a phone each row's label sits above its toggles. */
+/* A row: its label in a column of its own, so wrapped toggles line up. On a
+   phone the label sits above its toggles. */
+.browse-filter {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.375rem;
+}
+
+.browse-filter .browse-decades__label {
+  min-width: 0;
+  margin: 0;
+}
+
+.browse-filter__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+
 @media (max-width: 639px) {
-  .browse-filters .browse-decades__label { flex-basis: 100%; }
+  .browse-filter { grid-template-columns: minmax(0, 1fr); }
 }
 
 .browse-section {

@@ -5,6 +5,7 @@ import { compileConceptToLibrary } from './llmConceptCompiler.service';
 import { queryWithRetry } from '../utils/db';
 import { christmasExclusionSql, isChristmasSeason, isChristmasRow } from '../utils/seasonalFilter';
 import { countryCode, languageCode, placeFromTag } from '../../shared/places';
+import { moodOf, vocalsOf, type Mood } from '../../shared/descriptors';
 
 // 1. Z-Score normalization is handled by scaling 0-1 mapped values in JS, but 
 // for simplicity we assume vectors are already [0,1] normalized.
@@ -342,13 +343,18 @@ function acousticDistance(a: number[] | null, b: number[] | null): number | null
   return Math.sqrt(sum / a.length);
 }
 
-/** A custom playlist's hard filters, normalised (see originFilterOf). */
+/** A custom playlist's filters, normalised (see originFilterOf). Moods only lean. */
 export interface OriginFilter {
   countries: string[];
   languages: string[];
   yearFrom: number | null;
   yearTo: number | null;
+  vocals: string | null;
+  moods: string[];
 }
+
+/** How much closer a track by an artist tagged with a requested mood ranks (distances run about 0.3–1.5). */
+const MOOD_BOOST = 0.1;
 
 const asYear = (value: unknown): number | null => {
   const year = Math.round(Number(value));
@@ -360,21 +366,25 @@ const asYear = (value: unknown): number | null => {
  * it asks for none. Unknown spellings are dropped, so a model that writes
  * "Denmark" or "dansk" still filters on DK and da.
  */
-export function originFilterOf(concept: { countries?: unknown; languages?: unknown; year_from?: unknown; year_to?: unknown }): OriginFilter | null {
+export function originFilterOf(concept: { countries?: unknown; languages?: unknown; year_from?: unknown; year_to?: unknown; vocals?: unknown; moods?: unknown }): OriginFilter | null {
   const list = (value: unknown) => (Array.isArray(value) ? value : value == null ? [] : [value]).map(String);
   const countries = [...new Set(list(concept.countries).map(c => countryCode(c) ?? placeFromTag(c)).filter((c): c is string => !!c))];
   const languages = [...new Set(list(concept.languages).map(l => languageCode(l)).filter((l): l is string => !!l))];
   let yearFrom = asYear(concept.year_from);
   let yearTo = asYear(concept.year_to);
   if (yearFrom != null && yearTo != null && yearFrom > yearTo) [yearFrom, yearTo] = [yearTo, yearFrom];
-  if (!countries.length && !languages.length && yearFrom == null && yearTo == null) return null;
-  return { countries, languages, yearFrom, yearTo };
+  const vocals = vocalsOf(Array.isArray(concept.vocals) ? concept.vocals[0] : concept.vocals);
+  const moods = [...new Set(list(concept.moods).map(m => moodOf(m)).filter((m): m is Mood => !!m))];
+  if (!countries.length && !languages.length && yearFrom == null && yearTo == null && !vocals && !moods.length) return null;
+  return { countries, languages, yearFrom, yearTo, vocals, moods };
 }
 
 export function describeOriginFilter(filter: OriginFilter): string {
   const parts: string[] = [];
   if (filter.countries.length || filter.languages.length) parts.push(`from ${[...filter.countries, ...filter.languages.map(l => `language ${l}`)].join(' or ')}`);
   if (filter.yearFrom != null || filter.yearTo != null) parts.push(`years ${filter.yearFrom ?? '…'}–${filter.yearTo ?? '…'}`);
+  if (filter.vocals) parts.push(`${filter.vocals} vocals`);
+  if (filter.moods.length) parts.push(`leaning ${filter.moods.join(', ')}`);
   return parts.join(', ');
 }
 
@@ -383,6 +393,8 @@ export async function getHubCollections(
     section: string, title?: string, description: string, target_vector: number[], target_genres?: string[], banned_genres?: string[],
     /** Hard filters (custom playlists): where the music is from, what it's sung in, and when it came out. */
     countries?: string[], languages?: string[], year_from?: number, year_to?: number,
+    /** By the artists' tags: vocals a hard filter, moods a preference. */
+    vocals?: string, moods?: string[],
   }[],
   userId: string | null = null,
   settings: {
@@ -783,23 +795,41 @@ export async function getHubCollections(
       nextParam++;
     }
 
-    // "Dansk rap fra 90'erne": a track matches a country or a language asked
-    // for (track_origin), and the years. Hard filters, through every
-    // relaxation step: a Danish playlist never backfills with other music.
+    // "Dansk rap fra 90'erne med kvindelig vokal" (track_origin): a country or
+    // a language asked for, the years (the original release year; a track
+    // known only by its artist's era tag counts when that decade overlaps),
+    // and the vocals. Hard filters, through every relaxation step: a Danish
+    // playlist never backfills with other music.
+    const narrow: string[] = [];
     if (origin && (origin.countries.length > 0 || origin.languages.length > 0)) {
       params.push(origin.countries, origin.languages);
-      whereClauses.push(`EXISTS (SELECT 1 FROM track_origin o WHERE o.track_id = t.id
-        AND (o.country = ANY($${nextParam}::text[]) OR o.language = ANY($${nextParam + 1}::text[])))`);
+      narrow.push(`(o.country = ANY($${nextParam}::text[]) OR o.language = ANY($${nextParam + 1}::text[]))`);
       nextParam += 2;
     }
     if (origin?.yearFrom != null) {
       params.push(origin.yearFrom);
-      whereClauses.push(`t.year >= $${nextParam}`);
+      narrow.push(`COALESCE(o.year, o.decade + 9) >= $${nextParam}`);
       nextParam++;
     }
     if (origin?.yearTo != null) {
       params.push(origin.yearTo);
-      whereClauses.push(`t.year <= $${nextParam}`);
+      narrow.push(`COALESCE(o.year, o.decade) <= $${nextParam}`);
+      nextParam++;
+    }
+    if (origin?.vocals) {
+      params.push(origin.vocals);
+      narrow.push(`$${nextParam} = ANY(o.vocals)`);
+      nextParam++;
+    }
+    if (narrow.length > 0) {
+      whereClauses.push(`EXISTS (SELECT 1 FROM track_origin o WHERE o.track_id = t.id AND ${narrow.join(' AND ')})`);
+    }
+    // Moods only lean: an artist tagged with one ranks a little closer; the
+    // target sound still decides.
+    let moodBoostSql = '0';
+    if (origin && origin.moods.length > 0) {
+      params.push(origin.moods);
+      moodBoostSql = `(CASE WHEN EXISTS (SELECT 1 FROM track_origin om WHERE om.track_id = t.id AND om.moods && $${nextParam}::text[]) THEN ${MOOD_BOOST} ELSE 0 END)`;
       nextParam++;
     }
 
@@ -822,7 +852,7 @@ export async function getHubCollections(
           COALESCE(canonical_genre.name, t.genre) AS genre,
           COALESCE(sm.path, gm.path) AS genre_path,
           tf.acoustic_vector_8d::text AS acoustic_vector_text,
-          ${distanceSql} AS distance,
+          (${distanceSql}) - ${moodBoostSql} AS distance,
           ${noveltySql} AS novelty_boost,
           '${poolName}'::text AS pool_source,
           ${poolBiasByName[poolName]}::float8 AS pool_bias
@@ -1049,7 +1079,7 @@ export async function getHubCollections(
 
       const originFilter = originFilterOf(concept);
       if (originFilter) {
-        console.log(`[LLM Hub] "${concept.title}" → only ${describeOriginFilter(originFilter)}`);
+        console.log(`[LLM Hub] "${concept.title}" → ${describeOriginFilter(originFilter)}`);
       }
       const vectorStr = `[${compiled.adaptedTargetVector.join(',')}]`;
       const bridgeVectorStr = `[${compiled.bridgeVector.join(',')}]`;

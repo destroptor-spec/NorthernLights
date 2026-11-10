@@ -42,6 +42,13 @@ const EXTRA_COUNTRY_NAMES: Record<string, string> = {
  */
 const NOT_PLACES = new Set(['indie', 'latin', 'soul', 'world', 'country', 'oriental', 'tropical', 'urban', 'christian', 'georgia', 'jersey']);
 
+/** One-word tags that join a place to a genre or a language. */
+const JOINED_PLACES: Record<string, string> = {
+  deutschrap: 'DE', deutschpop: 'DE', deutschrock: 'DE', nederhop: 'NL', nederpop: 'NL', nederlandstalig: 'NL',
+  danskpop: 'DK', danskrap: 'DK', danskrock: 'DK', svenskpop: 'SE', norskpop: 'NO', britpop: 'GB', kpop: 'KR', 'k-pop': 'KR',
+  jpop: 'JP', 'j-pop': 'JP', 'j-rock': 'JP', cpop: 'CN', 'c-pop': 'CN', schlager: 'DE', chanson: 'FR',
+};
+
 /** Language names that mean "sung in" more than "from": their main country. */
 const LANGUAGE_COUNTRY_OVERRIDES: Record<string, string> = { en: 'GB', pt: 'PT', es: 'ES', fr: 'FR', ar: 'EG', ga: 'IE', cy: 'GB' };
 
@@ -150,6 +157,13 @@ export function placeFromTag(tag: string | null | undefined): string | null {
   if (!key || NOT_PLACES.has(key)) return null;
   const country = countryCode(key);
   if (country) return country;
+  if (JOINED_PLACES[key]) return JOINED_PLACES[key];
+  // A place and a genre in one tag: "dansk rap", "danish rap", "german pop", "UK hip-hop".
+  const words = key.split(' ');
+  if (words.length > 1 && words[0].length >= 2) {
+    const first = placeFromTag(words[0]);
+    if (first && !NOT_PLACES.has(words[0])) return first;
+  }
   if (key.length < 4) return null;
   languageNames ??= buildLanguageNames();
   const language = languageNames.get(key);

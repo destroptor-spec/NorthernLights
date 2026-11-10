@@ -34,10 +34,12 @@ const electronic: BrowseGenreDetail = {
   artists: [],
   decades: [{ decade: 1990, trackCount: 372 }, { decade: 2000, trackCount: 3330 }],
   countries: [{ country: 'US', trackCount: 4100 }, { country: 'DK', trackCount: 640 }],
+  vocals: [{ value: 'female', trackCount: 2300 }, { value: 'male', trackCount: 900 }],
+  moods: [{ value: 'chill', trackCount: 800 }],
 };
 
 const grunge = (soundsCloseTo: BrowseStyleDetail['soundsCloseTo']): BrowseStyleDetail => ({
-  style: style(51, 'Grunge', 151, 'Rock'), albums: [], artists: [], decades: [], countries: [], soundsCloseTo,
+  style: style(51, 'Grunge', 151, 'Rock'), albums: [], artists: [], decades: [], countries: [], vocals: [], moods: [], soundsCloseTo,
 });
 let grungeDetail = grunge([]);
 const nuMetal = { genre: 'Rock', styleId: 61, style: 'Nu Metal', score: 0.002, fromTags: ['Nu Metal'] };
@@ -123,6 +125,12 @@ test('a genre page shows its biggest styles as tiles, every other style in an in
   expect(fetchMock.mock.calls.some(([u]) => String(u) === '/api/v1/browse/mix?genre=Electronic&decade=1990&country=DK')).toBe(true);
   fireEvent.click(screen.getByRole('button', { name: '1990s' }));
   expect(screen.getByRole('button', { name: 'Shuffle Electronic · Denmark' })).toBeTruthy();
+  // Vocals and mood narrow too, by the artists' tags.
+  fireEvent.click(screen.getByRole('button', { name: 'Female' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Chill' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Shuffle Electronic · Chill · Denmark · Female vocals' }));
+  await waitFor(() => expect(setPlaylist).toHaveBeenCalledTimes(3));
+  expect(fetchMock.mock.calls.some(([u]) => String(u) === '/api/v1/browse/mix?genre=Electronic&country=DK&vocals=female&mood=chill')).toBe(true);
 });
 
 test('a card takes one of the Hub cover gradients, the same one for a name every time', () => {

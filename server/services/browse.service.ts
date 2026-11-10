@@ -10,6 +10,7 @@ import type {
   ArtistStyleProfile,
   BrowseCountry,
   BrowseDecade,
+  BrowseDescriptorCount,
   BrowseGenreDetail,
   BrowseGenres,
   BrowseSearchResult,
@@ -36,6 +37,9 @@ export interface BrowseFilter {
   decade?: number;
   /** ISO 3166-1 alpha-2: only tracks from this country (track_origin). */
   country?: string;
+  /** By the artists' tags: female or male vocals, and a mood (shared/descriptors.ts). */
+  vocals?: string;
+  mood?: string;
   /** Tracks without a genre; with tag, only those carrying that genre tag. */
   unsorted?: boolean;
   tag?: string;
@@ -99,7 +103,7 @@ export async function getBrowseGenre(
            (SELECT COUNT(*) FROM track_styles ts WHERE ts.genre = g.name AND ts.style_id IS NULL)::int AS tracks
     FROM taxonomy_genre g WHERE g.name = $1`, [genre])).rows[0];
   if (!head) return null;
-  const [styles, noStyle, albums, artists, decades, countries] = await Promise.all([
+  const [styles, noStyle, albums, artists, decades, countries, vocals, moods] = await Promise.all([
     db.query(`
       SELECT ts.genre, ts.style_id, s.name, COUNT(*)::int AS tracks
       FROM track_styles ts JOIN style s ON s.id = ts.style_id
@@ -112,6 +116,8 @@ export async function getBrowseGenre(
     load.artists({ genre }),
     browseDecades(db, { genre }),
     browseCountries(db, { genre }),
+    browseDescriptors(db, { genre }, 'vocals'),
+    browseDescriptors(db, { genre }, 'moods'),
   ]);
   return {
     genre: { name: head.name, hidden: head.hidden, trackCount: head.tracks },
@@ -121,6 +127,8 @@ export async function getBrowseGenre(
     artists,
     decades,
     countries,
+    vocals,
+    moods,
   };
 }
 
@@ -133,10 +141,11 @@ export async function getBrowseStyle(
            (SELECT COUNT(*) FROM track_styles ts WHERE ts.style_id = s.id)::int AS tracks
     FROM style s WHERE s.id = $1`, [styleId])).rows[0];
   if (!style) return null;
-  const [albums, artists, decades, countries, soundsCloseTo] = await Promise.all([
-    load.albums({ styleId }), load.artists({ styleId }), browseDecades(db, { styleId }), browseCountries(db, { styleId }), stylesNearStyle(db, styleId),
+  const [albums, artists, decades, countries, vocals, moods, soundsCloseTo] = await Promise.all([
+    load.albums({ styleId }), load.artists({ styleId }), browseDecades(db, { styleId }), browseCountries(db, { styleId }),
+    browseDescriptors(db, { styleId }, 'vocals'), browseDescriptors(db, { styleId }, 'moods'), stylesNearStyle(db, styleId),
   ]);
-  return { style: styleRef(style), albums, artists, decades, countries, soundsCloseTo };
+  return { style: styleRef(style), albums, artists, decades, countries, vocals, moods, soundsCloseTo };
 }
 
 // ── Lists ────────────────────────────────────────────────────────────────
@@ -147,10 +156,15 @@ export async function getBrowseStyle(
  */
 function trackSelection(filter: BrowseFilter, params: unknown[]): string {
   const p = (value: unknown) => { params.push(value); return `$${params.length}`; };
-  const decade = (filter.decade !== undefined
-    ? ` AND t.year >= ${p(filter.decade)} AND t.year < ${p(filter.decade + 10)}` : '')
-    + (filter.country !== undefined
-      ? ` AND EXISTS (SELECT 1 FROM track_origin o WHERE o.track_id = t.id AND o.country = ${p(filter.country)})` : '');
+  // Narrowing by when, where and how (track_origin): the decade is the
+  // effective one (original year, else year, else the artist's era tag).
+  const narrow: string[] = [];
+  if (filter.decade !== undefined) narrow.push(`o.decade = ${p(filter.decade)}`);
+  if (filter.country !== undefined) narrow.push(`o.country = ${p(filter.country)}`);
+  if (filter.vocals !== undefined) narrow.push(`${p(filter.vocals)} = ANY(o.vocals)`);
+  if (filter.mood !== undefined) narrow.push(`${p(filter.mood)} = ANY(o.moods)`);
+  const decade = narrow.length
+    ? ` AND EXISTS (SELECT 1 FROM track_origin o WHERE o.track_id = t.id AND ${narrow.join(' AND ')})` : '';
   if (filter.unsorted) {
     const tag = filter.tag !== undefined
       ? ` AND EXISTS (SELECT 1 FROM track_tags tt WHERE tt.track_id = t.id AND tt.tag_key = ${p(tagKey(filter.tag))})` : '';
@@ -263,9 +277,9 @@ async function browseDecades(db: Pool, filter: BrowseFilter): Promise<BrowseDeca
   const params: unknown[] = [];
   const sql = trackSelection(filter, params);
   const rows = (await db.query(`
-    SELECT (t.year / 10) * 10 AS decade, COUNT(*)::int AS tracks
-    FROM (${sql}) sel JOIN tracks t ON t.id = sel.track_id
-    WHERE t.year BETWEEN 1000 AND 2999 GROUP BY 1 ORDER BY 1`, params)).rows;
+    SELECT o.decade, COUNT(*)::int AS tracks
+    FROM (${sql}) sel JOIN track_origin o ON o.track_id = sel.track_id
+    WHERE o.decade IS NOT NULL GROUP BY 1 ORDER BY 1`, params)).rows;
   return rows.map((r: any) => ({ decade: Number(r.decade), trackCount: r.tracks }));
 }
 
@@ -278,6 +292,18 @@ async function browseCountries(db: Pool, filter: BrowseFilter): Promise<BrowseCo
     FROM (${sql}) sel JOIN track_origin o ON o.track_id = sel.track_id
     WHERE o.country IS NOT NULL GROUP BY 1 HAVING COUNT(*) >= 3 ORDER BY 2 DESC, 1 LIMIT 12`, params)).rows;
   return rows.map((r: any) => ({ country: String(r.country), trackCount: r.tracks }));
+}
+
+/** Vocals and moods by the artists' tags: values with at least 3 tracks, most first. */
+async function browseDescriptors(db: Pool, filter: BrowseFilter, column: 'vocals' | 'moods'): Promise<BrowseDescriptorCount[]> {
+  const params: unknown[] = [];
+  const sql = trackSelection(filter, params);
+  const rows = (await db.query(`
+    SELECT d.value, COUNT(*)::int AS tracks
+    FROM (${sql}) sel JOIN track_origin o ON o.track_id = sel.track_id
+    CROSS JOIN LATERAL unnest(o.${column}) AS d(value)
+    GROUP BY 1 HAVING COUNT(*) >= 3 ORDER BY 2 DESC, 1`, params)).rows;
+  return rows.map((r: any) => ({ value: String(r.value), trackCount: r.tracks }));
 }
 
 /** Albums most in a genre or style: by strength (share × how sure), then size. */

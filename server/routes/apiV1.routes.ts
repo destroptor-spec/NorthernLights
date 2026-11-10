@@ -191,6 +191,7 @@ import { generateAuroraApiDocument } from '../api/v1/openapi';
 import { signedArtworkLinks } from '../middleware/signedArtwork';
 import { artworkUrlFor } from '../services/artworkLink.service';
 import { artCachePath, DEFAULT_ART_SIZE, isValidArtSize } from '../services/artCache';
+import { MOOD_NAMES, VOCALS, type Mood } from '../../shared/descriptors';
 
 const router = Router();
 const startedAt = new Date().toISOString();
@@ -667,6 +668,8 @@ const browseFilterQuery = z.object({
   noStyle: z.enum(['true', 'false']).optional(),
   decade: z.coerce.number().int().min(1000).max(2990).optional(),
   country: z.string().regex(/^[A-Za-z]{2}$/).transform(c => c.toUpperCase()).optional(),
+  vocals: z.enum(VOCALS).optional(),
+  mood: z.enum(MOOD_NAMES as [Mood, ...Mood[]]).optional(),
   unsorted: z.enum(['true', 'false']).optional(),
   tag: z.string().min(1).max(200).optional(),
   cursor: z.string().optional(),
@@ -683,7 +686,7 @@ function browseFilter(req: Request, res: Response, { tracks }: { tracks: boolean
   }
   const q = parsed.data;
   const filter: BrowseFilter = {
-    genre: q.genre, styleId: q.style, noStyle: q.noStyle === 'true', decade: q.decade, country: q.country,
+    genre: q.genre, styleId: q.style, noStyle: q.noStyle === 'true', decade: q.decade, country: q.country, vocals: q.vocals, mood: q.mood,
     unsorted: q.unsorted === 'true', tag: q.tag,
   };
   const scoped = filter.styleId !== undefined || filter.genre !== undefined || (tracks && filter.unsorted);

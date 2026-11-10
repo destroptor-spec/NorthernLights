@@ -434,6 +434,7 @@ process.stdin.on('data', async (chunk: string) => {
             // country Picard writes, and the lyrics language (TLAN / LANGUAGE).
             originRead: true,
             releaseCountry: metadata.common.releasecountry || null,
+            originalYear: metadata.common.originalyear || null,
             lyricsLanguage: firstTagValue(metadata.common.language) || null,
             rawUrls: rawUrls.length > 0 ? rawUrls : null,
             credits: extractCredits(metadata, (artistPeople || []).map(person => person.name)),

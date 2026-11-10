@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { getSystemSetting } from '../database';
 import { getGenreVocabulary } from './genreMatrix.service';
+import { MOOD_NAMES } from '../../shared/descriptors';
 
 export async function getLlmConfig() {
   const apiKey = (await getSystemSetting('llmApiKey')) || process.env.LLM_API_KEY || 'dummy-key';
@@ -50,6 +51,10 @@ export interface HubCollection {
   /** Release years, inclusive. */
   year_from?: number;
   year_to?: number;
+  /** "female" or "male": by the artists' tags. */
+  vocals?: string;
+  /** Moods from MOOD_NAMES (shared/descriptors.ts): a preference, not a filter. */
+  moods?: string[];
 }
 
 export async function generateHubConcepts(
@@ -231,8 +236,10 @@ Only when the user asks for where the music is from, the language it is sung in,
 - "countries": ISO 3166-1 alpha-2 codes of the countries the artists come from. "Dansk rap", "Danish rap" → ["DK"]; "Nordic pop" → ["DK", "SE", "NO", "FI", "IS"].
 - "languages": ISO 639-1 codes of the languages the songs are sung in. "på dansk", "sung in Danish" → ["da"]. For a nationality ("Dansk rap") give both the country and its language: a track matches either.
 - "year_from" and "year_to": release years, inclusive. "fra 90'erne", "from the 90s" → 1990 and 1999; "after 2010" → year_from 2010 only.
+- "vocals": "female" or "male", only when the user asks for the singer's voice ("med kvindelig vokal", "female singers").
+Also include "moods" when the description has a mood: 1-3 of ${MOOD_NAMES.join(', ')}. They gently favour artists known for that mood; the target_vector still sets the sound.
 
-Only output valid JSON matching this schema exactly (the last four fields only when asked for):
+Only output valid JSON matching this schema exactly (countries, languages, year_from, year_to and vocals only when asked for):
 {
   "section": "Custom",
   "title": "A short, catchy title for the playlist",
@@ -243,7 +250,9 @@ Only output valid JSON matching this schema exactly (the last four fields only w
   "countries": ["DK"],
   "languages": ["da"],
   "year_from": 1990,
-  "year_to": 1999
+  "year_to": 1999,
+  "vocals": "female",
+  "moods": ["chill"]
 }
 `;
 

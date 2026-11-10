@@ -1780,6 +1780,20 @@
               "$ref": "#/components/schemas/BrowseCountry"
             },
             "description": "The countries with at least 3 tracks here, most tracks first, at most 12."
+          },
+          "vocals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowseDescriptorCount"
+            },
+            "description": "Female and male vocals by the artists' tags, with at least 3 tracks."
+          },
+          "moods": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowseDescriptorCount"
+            },
+            "description": "Moods by the artists' tags with at least 3 tracks here, most tracks first."
           }
         },
         "required": [
@@ -1789,7 +1803,9 @@
           "albums",
           "artists",
           "decades",
-          "countries"
+          "countries",
+          "vocals",
+          "moods"
         ]
       },
       "BrowseAlbum": {
@@ -1844,7 +1860,7 @@
         "properties": {
           "decade": {
             "type": "integer",
-            "description": "1990 for the 1990s."
+            "description": "1990 for the 1990s: by the original release year, else the year, else the artist's era tag."
           },
           "trackCount": {
             "type": "integer",
@@ -1872,6 +1888,23 @@
         },
         "required": [
           "country",
+          "trackCount"
+        ]
+      },
+      "BrowseDescriptorCount": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string",
+            "description": "vocals: female or male; mood: chill, party, uplifting, melancholic, dark, atmospheric, romantic, energetic or funky."
+          },
+          "trackCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "value",
           "trackCount"
         ]
       },
@@ -1906,6 +1939,20 @@
             },
             "description": "The countries with at least 3 tracks here, most tracks first, at most 12."
           },
+          "vocals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowseDescriptorCount"
+            },
+            "description": "Female and male vocals by the artists' tags, with at least 3 tracks."
+          },
+          "moods": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowseDescriptorCount"
+            },
+            "description": "Moods by the artists' tags with at least 3 tracks here, most tracks first."
+          },
           "soundsCloseTo": {
             "type": "array",
             "items": {
@@ -1920,6 +1967,8 @@
           "artists",
           "decades",
           "countries",
+          "vocals",
+          "moods",
           "soundsCloseTo"
         ]
       },

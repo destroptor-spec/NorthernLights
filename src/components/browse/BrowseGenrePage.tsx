@@ -78,6 +78,8 @@ export const BrowseGenrePage: React.FC = () => {
                 name={detail.genre.name}
                 decades={detail.decades}
                 countries={detail.countries}
+                vocals={detail.vocals}
+                moods={detail.moods}
                 busy={busy === 'genre'}
                 onShuffle={narrow => playFilter('genre', { ...filter, ...narrow })}
               />

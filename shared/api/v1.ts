@@ -655,7 +655,7 @@ export const browseArtistSchema = z.object({
 }).meta({ id: 'BrowseArtist' });
 
 export const browseDecadeSchema = z.object({
-  decade: z.number().int().describe('1990 for the 1990s.'),
+  decade: z.number().int().describe('1990 for the 1990s: by the original release year, else the year, else the artist\'s era tag.'),
   trackCount: z.number().int().nonnegative(),
 }).meta({ id: 'BrowseDecade' });
 
@@ -663,6 +663,11 @@ export const browseCountrySchema = z.object({
   country: z.string().length(2).describe('ISO 3166-1 alpha-2: where the artists are from (MusicBrainz, artist tags, or the release country).'),
   trackCount: z.number().int().nonnegative(),
 }).meta({ id: 'BrowseCountry' });
+
+export const browseDescriptorCountSchema = z.object({
+  value: z.string().describe('vocals: female or male; mood: chill, party, uplifting, melancholic, dark, atmospheric, romantic, energetic or funky.'),
+  trackCount: z.number().int().nonnegative(),
+}).meta({ id: 'BrowseDescriptorCount' });
 
 export const browseGenreDetailSchema = z.object({
   genre: z.object({ name: z.string(), hidden: z.boolean(), trackCount: z.number().int().nonnegative() }),
@@ -672,6 +677,8 @@ export const browseGenreDetailSchema = z.object({
   artists: z.array(browseArtistSchema),
   decades: z.array(browseDecadeSchema),
   countries: z.array(browseCountrySchema).describe('The countries with at least 3 tracks here, most tracks first, at most 12.'),
+  vocals: z.array(browseDescriptorCountSchema).describe('Female and male vocals by the artists\' tags, with at least 3 tracks.'),
+  moods: z.array(browseDescriptorCountSchema).describe('Moods by the artists\' tags with at least 3 tracks here, most tracks first.'),
 }).meta({ id: 'BrowseGenreDetail' });
 
 export const browseStyleDetailSchema = z.object({
@@ -680,6 +687,8 @@ export const browseStyleDetailSchema = z.object({
   artists: z.array(browseArtistSchema),
   decades: z.array(browseDecadeSchema),
   countries: z.array(browseCountrySchema).describe('The countries with at least 3 tracks here, most tracks first, at most 12.'),
+  vocals: z.array(browseDescriptorCountSchema).describe('Female and male vocals by the artists\' tags, with at least 3 tracks.'),
+  moods: z.array(browseDescriptorCountSchema).describe('Moods by the artists\' tags with at least 3 tracks here, most tracks first.'),
   soundsCloseTo: z.array(browseStyleRefSchema)
     .describe('The styles that sound nearest, from any genre, nearest first (by the centroids of their tagged tracks\' audio embeddings). Empty until the style has a centroid: at least 8 tagged tracks by 3 artists.'),
 }).meta({ id: 'BrowseStyleDetail' });
@@ -790,6 +799,7 @@ export type BrowseAlbum = z.infer<typeof browseAlbumSchema>;
 export type BrowseArtist = z.infer<typeof browseArtistSchema>;
 export type BrowseDecade = z.infer<typeof browseDecadeSchema>;
 export type BrowseCountry = z.infer<typeof browseCountrySchema>;
+export type BrowseDescriptorCount = z.infer<typeof browseDescriptorCountSchema>;
 export type BrowseGenreDetail = z.infer<typeof browseGenreDetailSchema>;
 export type BrowseStyleDetail = z.infer<typeof browseStyleDetailSchema>;
 export type BrowseSearchResult = z.infer<typeof browseSearchResultSchema>;

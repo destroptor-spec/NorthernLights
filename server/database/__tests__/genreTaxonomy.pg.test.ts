@@ -648,4 +648,41 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     expect((await pool.query('SELECT release_country, lyrics_language FROM tracks WHERE id = $1', [a])).rows[0])
       .toEqual({ release_country: 'US', lyrics_language: 'dan' });
   });
+  test('track origin: the year, decade, vocals and moods, from the file first and then the artist\'s tags', async () => {
+    const { rebuildTrackOrigin } = await import('../../services/trackOrigin.service');
+    const singer = (await pool.query(`INSERT INTO artists (name) VALUES ('D Singer') RETURNING id`)).rows[0].id as string;
+    const band = (await pool.query(`INSERT INTO artists (name) VALUES ('D Band') RETURNING id`)).rows[0].id as string;
+    await pool.query(`INSERT INTO artist_tags (artist_id, provider, tag, tag_key, raw_count, weight) VALUES
+      ($1, 'lastfm', 'female vocalists', 'female vocalists', 80, 0.8), ($1, 'lastfm', 'chillout', 'chillout', 40, 0.4),
+      ($1, 'lastfm', 'sad', 'sad', 20, 0.2), ($1, 'lastfm', '80s', '80s', 50, 0.5), ($1, 'lastfm', 'dansk rap', 'dansk rap', 30, 0.3),
+      ($2, 'lastfm', 'male vocalists', 'male vocalists', 7, 0.07), ($2, 'lastfm', 'party', 'party', 3, 0.03)`, [singer, band]);
+    const add = async (name: string, artistId: string, file: Record<string, unknown>) => {
+      await db.addTrack({ ...track(name, null), originRead: true, ...file } as never);
+      await pool.query('UPDATE tracks SET artist_id = $2 WHERE id = $1', [idOf(name), artistId]);
+      return idOf(name);
+    };
+    // A 2021 remaster of a 1991 song is 1991; a track with no year takes the artist's era.
+    const remaster = await add('d-remaster', singer, { year: 2021, originalYear: 1991 });
+    const undated = await add('d-undated', singer, { year: null });
+    const plain = await add('d-plain', band, { year: 2004 });
+    await rebuildTrackOrigin(pool);
+    const row = async (id: string) => (await pool.query(
+      'SELECT country, country_source, year, decade, year_source, vocals, moods FROM track_origin WHERE track_id = $1', [id])).rows[0];
+    expect(await row(remaster)).toEqual({
+      country: 'DK', country_source: 'artist-tags', year: 1991, decade: 1990, year_source: 'original',
+      vocals: ['female'], moods: ['chill', 'melancholic'] });
+    expect(await row(undated)).toMatchObject({ year: null, decade: 1980, year_source: 'artist-tags' });
+    // Last.fm weighs "male vocalists" low but it counts; a mood that faint does not.
+    expect(await row(plain)).toMatchObject({ year: 2004, decade: 2000, year_source: 'file', vocals: ['male'], moods: null });
+
+    // Browse narrows by decade (the effective one), vocals and mood.
+    const browse = await import('../../services/browse.service');
+    await pool.query(`INSERT INTO track_styles (track_id, genre, style_id, source, strength, confidence, fusion_version)
+      SELECT id, 'Pop', NULL, 'tag', 1, 1, 2 FROM tracks WHERE id = ANY($1)`, [[remaster, undated, plain]]);
+    const ids = async (filter: object) => (await browse.listBrowseTrackIds(pool, { genre: 'Pop', ...filter }, 0, 50)).ids.sort();
+    expect(await ids({ decade: 1990 })).toEqual([remaster]);
+    expect(await ids({ decade: 1980 })).toEqual([undated]);
+    expect(await ids({ vocals: 'female' })).toEqual([remaster, undated].sort());
+    expect(await ids({ mood: 'chill', vocals: 'female', decade: 1990 })).toEqual([remaster]);
+  });
 });

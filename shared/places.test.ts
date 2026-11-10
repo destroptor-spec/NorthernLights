@@ -10,6 +10,13 @@ test('one country however a tag names it, in any of the common languages', () =>
   expect(placeFromTag('norsk')).toBe('NO');
   expect(placeFromTag('irish')).toBe('IE');
   expect(placeFromTag('japanese')).toBe('JP');
+  // A place and a genre in one tag.
+  for (const tag of ['dansk rap', 'danish rap', 'danskpop']) expect(placeFromTag(tag)).toBe('DK');
+  for (const tag of ['Deutschrap', 'german pop']) expect(placeFromTag(tag)).toBe('DE');
+  for (const tag of ['nederhop', 'Nederlandstalig', 'dutch trance']) expect(placeFromTag(tag)).toBe('NL');
+  expect(placeFromTag('UK hip-hop')).toBe('GB');
+  expect(placeFromTag('latin urban')).toBeNull();
+  expect(placeFromTag('west coast')).toBeNull();
 });
 
 test('music words and non-places are not places', () => {
