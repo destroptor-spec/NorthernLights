@@ -97,7 +97,15 @@ test('says where each genre and style came from, groups credits by person, and s
   expect(screen.getByText('Glitch, where Downtempo leads Taking Up Your Precious Time (60 %).')).toBeTruthy();
   expect(screen.getByRole('meter', { name: 'Character' }).getAttribute('aria-valuenow')).toBe('90');
   expect(screen.getByText('Best Of').closest('a')!.getAttribute('href')).toBe('/library/album/al9');
-  expect(screen.getByText('Taking Up Your Precious Time', { selector: '.rays-profile__name' }).closest('a')!.getAttribute('href')).toBe('/library/album/al1');
+  // In context: a card per album and artist, the context line in the album's card.
+  const albumCard = screen.getByText('Taking Up Your Precious Time', { selector: '.rays-context-card__title' }).closest('article')!;
+  expect(within(albumCard).getByText('Taking Up Your Precious Time', { selector: 'a' }).getAttribute('href')).toBe('/library/album/al1');
+  expect(within(albumCard).getByText('Glitch, where Downtempo leads Taking Up Your Precious Time (60 %).')).toBeTruthy();
+  // Sound and style: a Sound card and a Styles card, genres and styles last in Styles.
+  const styles = screen.getByRole('group', { name: 'Styles' });
+  const headings = [...styles.querySelectorAll('h3, h4, figcaption .rays-chart__title')].map(el => el.textContent);
+  expect(headings[headings.length - 1]).toBe('Genres and styles');
+  expect(within(screen.getByRole('group', { name: 'Sound' })).getByRole('meter', { name: 'Energy' })).toBeTruthy();
   // Listeners can't change genres; there's no Remove.
   expect(screen.queryByRole('button', { name: /^Remove / })).toBeNull();
 });

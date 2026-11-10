@@ -123,10 +123,51 @@ const PersonAvatar: React.FC<{ name: string; imageUrl?: string | null; size?: 's
 };
 
 /** A small album cover, as everywhere else: rounded and clipped. */
-const CoverThumb: React.FC<{ artworkId: string | null; title: string; artist?: string; size?: 'sm' | 'md' }> = ({ artworkId, title, artist, size = 'sm' }) => (
-  <span className={`rays-cover rays-cover--${size}`} aria-hidden="true">
-    <AlbumArt artUrl={coverUrlFor(artworkId)} album={title} artist={artist} size={size === 'md' ? 128 : 96} className="w-full h-full object-cover" />
+const CoverThumb: React.FC<{ artworkId: string | null; title: string; artist?: string }> = ({ artworkId, title, artist }) => (
+  <span className="rays-cover" aria-hidden="true">
+    <AlbumArt artUrl={coverUrlFor(artworkId)} album={title} artist={artist} size={96} className="w-full h-full object-cover" />
   </span>
+);
+
+/** A person's square cover: their image, or the radio cover gradient with a person icon (as on the Hub). */
+const PersonCover: React.FC<{ name: string; imageUrl?: string | null }> = ({ name, imageUrl }) => {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [imageUrl]);
+  return imageUrl && !failed
+    ? <img src={imageUrl} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} className="absolute inset-0 w-full h-full object-cover" />
+    : (
+      <>
+        <span className="absolute inset-0" style={{ background: 'var(--gradient-cover-artist-radio)' }} />
+        <User2 className="absolute right-4 bottom-4 w-12 h-12 text-white/70 drop-shadow" strokeWidth={1.5} aria-label={name} />
+      </>
+    );
+};
+
+/**
+ * A double-width card in the In context rail: the album's or artist's
+ * artwork on the left; on the right its name, what it is, how the track sits
+ * in it, its first genres and styles, and for an artist what listeners tag
+ * them with. The card is as tall as its square artwork; text that doesn't
+ * fit is cut at whole lines, never the cover.
+ */
+const ContextCard: React.FC<{
+  to: string; art: React.ReactNode; title: string; info: string; line?: string | null;
+  entries: StyleProfileEntry[]; tags?: string[];
+}> = ({ to, art, title, info, line, entries, tags = [] }) => (
+  <article className="rays-context-card">
+    <Link to={to} className="rays-context-card__art" tabIndex={-1} aria-hidden="true">{art}</Link>
+    <div className="rays-context-card__body">
+      <Link to={to} className="rays-context-card__title">{title}</Link>
+      <span className="rays-context-card__info">{info}</span>
+      {line && <p className="rays-context-card__line">{line}</p>}
+      {entries.length > 0 && <ProfileChips entries={entries.slice(0, 4)} />}
+      {tags.length > 0 && (
+        <p className="rays-context-card__tags" title={tags.join(', ')}>
+          <span className="rays-context-card__info">Listeners say </span>{tags.join(', ')}
+        </p>
+      )}
+    </div>
+  </article>
 );
 
 const ProfileChips: React.FC<{ entries: StyleProfileEntry[] }> = ({ entries }) => (
@@ -206,8 +247,9 @@ const StyleScoreChart: React.FC<{ scores: NonNullable<Rays['sound']>['closestSty
 
 /** How the model's scores split across genres: ranked bars, one hue, the tail folded into Other. */
 const GenreMixChart: React.FC<{ mix: NonNullable<Rays['sound']>['genreMix'] }> = ({ mix }) => {
-  const shown = mix.slice(0, 6);
-  const rest = mix.slice(6).reduce((sum, g) => sum + g.share, 0);
+  // Up to 6 genres of at least 1 %; the rest fold into Other.
+  const shown = mix.filter(g => g.share >= 0.01).slice(0, 6);
+  const rest = mix.filter(g => !shown.includes(g)).reduce((sum, g) => sum + g.share, 0);
   const rows = rest >= 0.005 ? [...shown, { genre: 'Other genres', share: rest }] : shown;
   const max = niceMax(rows.map(r => r.share));
   return (
@@ -357,113 +399,108 @@ export const TrackRays: React.FC = () => {
           {(rays.album || rays.artist) && (
             <section className="browse-section" aria-label="In context">
               <h2 className="browse-section__title">In context</h2>
-              {context && <p className="rays-context">{context}</p>}
-              <div className="rays-context-grid">
-                {rays.album && rays.album.entries.length > 0 && (
-                  <div className="rays-profile">
-                    <Link to={`/library/album/${rays.album.id}`} className="rays-profile__head">
-                      <CoverThumb artworkId={rays.album.artworkId} title={rays.album.title} artist={track.artist} size="md" />
-                      <span>
-                        <span className="rays-profile__name">{rays.album.title}</span>
-                        <span className="rays-muted">The album</span>
-                      </span>
-                    </Link>
-                    <ProfileChips entries={rays.album.entries} />
-                  </div>
+              <HorizontalScrollRail
+                ariaLabel="in context"
+                viewportClassName="flex overflow-x-auto snap-x snap-mandatory gap-3 hub-scroll-mobile pb-1 sm:gap-5 sm:pb-2"
+              >
+                {rays.album && (
+                  <ContextCard
+                    to={`/library/album/${rays.album.id}`}
+                    art={<AlbumArt artUrl={coverUrlFor(rays.album.artworkId)} album={rays.album.title} artist={track.artist} size={256} className="w-full h-full object-cover" />}
+                    title={rays.album.title}
+                    info="The album"
+                    line={context}
+                    entries={rays.album.entries}
+                  />
                 )}
-                {rays.artist && (rays.artist.entries.length > 0 || rays.artist.listenerTags.length > 0) && (
-                  <div className="rays-profile">
-                    <Link to={`/library/artist/${rays.artist.id}`} className="rays-profile__head">
-                      <PersonAvatar name={rays.artist.name} imageUrl={portrait} size="lg" />
-                      <span>
-                        <span className="rays-profile__name">{rays.artist.name}</span>
-                        <span className="rays-muted">Each album counted once</span>
-                      </span>
-                    </Link>
-                    {rays.artist.entries.length > 0 && <ProfileChips entries={rays.artist.entries} />}
-                    {rays.artist.listenerTags.length > 0 && (
-                      <>
-                        <span className="rays-muted">Listeners tag them on Last.fm and MusicBrainz</span>
-                        <ul className="rays-chips">
-                          {rays.artist.listenerTags.map(t => <li key={t}><span className="rays-chip rays-chip--plain">{t}</span></li>)}
-                        </ul>
-                      </>
-                    )}
-                  </div>
+                {rays.artist && (
+                  <ContextCard
+                    to={`/library/artist/${rays.artist.id}`}
+                    art={<PersonCover name={rays.artist.name} imageUrl={portrait} />}
+                    title={rays.artist.name}
+                    info="The artist, each album counted once"
+                    entries={rays.artist.entries}
+                    tags={rays.artist.listenerTags}
+                  />
                 )}
-              </div>
+              </HorizontalScrollRail>
             </section>
           )}
 
           <section className="browse-section" aria-label="Sound and style">
             <h2 className="browse-section__title">Sound and style</h2>
-
-            <h3 className="rays-subtitle">Genres and styles</h3>
-            {rays.styles.length === 0
-              ? <p className="browse-empty">Aurora hasn't placed this track in a genre yet{rays.tags.length ? ` (its tags: ${rays.tags.join(', ')})` : ''}.</p>
-              : (
-                <ul className="browse-index browse-index--single">
-                  {rays.styles.map(row => {
-                    const key = `${row.genre}|${row.styleId}`;
-                    return (
-                      <li key={key} className="rays-style">
-                        <Link to={linkFor(row)} className="browse-index__row rays-style__row">
-                          <span className="rays-style__name">
-                            <span>{styleLabel(row)}</span>
-                            <span className="rays-muted">{sourceText(row)}</span>
-                          </span>
-                        </Link>
-                        {isAdmin && (
-                          <button
-                            type="button"
-                            className="btn btn-ghost btn-sm btn-icon rays-style__remove"
-                            onClick={() => void change(row, 'remove')}
-                            disabled={saving !== null}
-                            aria-label={`Remove ${styleLabel(row)} from this track`}
-                          >
-                            {saving === `remove:${key}` ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <X size={14} aria-hidden="true" />}
-                          </button>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            {isAdmin && (
-              <div className="rays-add">
-                <StylePicker taxonomy={taxonomy} value={adding} onChange={setAdding} disabled={saving !== null} label="Add a genre or style to this track" />
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  disabled={adding.length === 0 || saving !== null}
-                  onClick={async () => { for (const t of adding) await change(t, 'add'); setAdding([]); }}
-                >
-                  Add
-                </button>
-              </div>
-            )}
-
-            {rays.sound && (
-              <>
-                <h3 className="rays-subtitle">Sound</h3>
-                <p className="browse-section__lede">From Aurora's analysis of the audio file.</p>
-                <div className="rays-sound">
-                  <SoundMeter label="Energy" low="Calm" high="Energetic" value={rays.sound.energy} />
-                  <SoundMeter label="Danceability" low="Still" high="Danceable" value={rays.sound.danceability} />
-                  <SoundMeter label="Character" low="Acoustic" high="Electronic" value={1 - rays.sound.acousticness} />
-                  <SoundMeter label="Voice" low="Vocal" high="Instrumental" value={rays.sound.instrumentalness} />
-                  <SoundMeter label="Brightness" low="Dark" high="Bright" value={rays.sound.brightness} />
-                  <SoundMeter label="Percussion" low="Smooth" high="Percussive" value={rays.sound.percussiveness} />
+            <div className="rays-cards">
+              {rays.sound && (
+                <div className="rays-card" role="group" aria-labelledby="rays-sound-title">
+                  <h3 className="rays-card__title" id="rays-sound-title">Sound</h3>
+                  <p className="rays-card__lede">From Aurora's analysis of the audio file.</p>
+                  <div className="rays-sound">
+                    <SoundMeter label="Energy" low="Calm" high="Energetic" value={rays.sound.energy} />
+                    <SoundMeter label="Danceability" low="Still" high="Danceable" value={rays.sound.danceability} />
+                    <SoundMeter label="Character" low="Acoustic" high="Electronic" value={1 - rays.sound.acousticness} />
+                    <SoundMeter label="Voice" low="Vocal" high="Instrumental" value={rays.sound.instrumentalness} />
+                    <SoundMeter label="Brightness" low="Dark" high="Bright" value={rays.sound.brightness} />
+                    <SoundMeter label="Percussion" low="Smooth" high="Percussive" value={rays.sound.percussiveness} />
+                  </div>
+                  {rays.sound.bpm && <p className="rays-fact">Tempo <strong>{rays.sound.bpm} BPM</strong></p>}
                 </div>
-                {rays.sound.bpm && <p className="rays-fact">Tempo <strong>{rays.sound.bpm} BPM</strong></p>}
-                {(rays.sound.closestStyles.length > 0 || rays.sound.genreMix.length > 0) && (
+              )}
+
+              <div className="rays-card" role="group" aria-labelledby="rays-styles-title">
+                <h3 className="rays-card__title" id="rays-styles-title">Styles</h3>
+                {rays.sound && (rays.sound.closestStyles.length > 0 || rays.sound.genreMix.length > 0) && (
                   <div className="rays-charts">
                     {rays.sound.closestStyles.length > 0 && <StyleScoreChart scores={rays.sound.closestStyles} memberIds={memberStyleIds} />}
                     {rays.sound.genreMix.length > 0 && <GenreMixChart mix={rays.sound.genreMix} />}
                   </div>
                 )}
-              </>
-            )}
+
+                <h4 className="rays-card__subtitle">Genres and styles</h4>
+                {rays.styles.length === 0
+                  ? <p className="browse-empty">Aurora hasn't placed this track in a genre yet{rays.tags.length ? ` (its tags: ${rays.tags.join(', ')})` : ''}.</p>
+                  : (
+                    <ul className="browse-index browse-index--single">
+                      {rays.styles.map(row => {
+                        const key = `${row.genre}|${row.styleId}`;
+                        return (
+                          <li key={key} className="rays-style">
+                            <Link to={linkFor(row)} className="browse-index__row rays-style__row">
+                              <span className="rays-style__name">
+                                <span>{styleLabel(row)}</span>
+                                <span className="rays-muted">{sourceText(row)}</span>
+                              </span>
+                            </Link>
+                            {isAdmin && (
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-sm btn-icon rays-style__remove"
+                                onClick={() => void change(row, 'remove')}
+                                disabled={saving !== null}
+                                aria-label={`Remove ${styleLabel(row)} from this track`}
+                              >
+                                {saving === `remove:${key}` ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <X size={14} aria-hidden="true" />}
+                              </button>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                {isAdmin && (
+                  <div className="rays-add">
+                    <StylePicker taxonomy={taxonomy} value={adding} onChange={setAdding} disabled={saving !== null} label="Add a genre or style to this track" />
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      disabled={adding.length === 0 || saving !== null}
+                      onClick={async () => { for (const t of adding) await change(t, 'add'); setAdding([]); }}
+                    >
+                      Add
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
           </section>
 
           {rays.otherAlbums.length > 0 && (
