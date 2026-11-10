@@ -4,10 +4,8 @@ jest.mock('../database', () => ({
   setSystemSetting: jest.fn(),
   getUserSetting: jest.fn(),
   setUserSetting: jest.fn(),
-  getSubGenreMappings: jest.fn(),
 }));
 jest.mock('../middleware/auth', () => ({ requireAdmin: jest.fn() }));
-jest.mock('../services/genreMatrix.service', () => ({ genreMatrixService: {} }));
 jest.mock('../services/downloadModels', () => ({}));
 import type { Request, Response } from 'express';
 import router from './settings.routes';

@@ -5,7 +5,7 @@
 // It has to be this first import, not a dotenv.config() call: every import
 // in this file is evaluated before any statement in it runs, so a call here
 // came after the other modules had loaded. That left TRUSTED_PROXY_MODE,
-// LOG_HLS, LOG_FFMPEG, MBDB_WORK_DIR and ART_CACHE_DIR from .env unread
+// LOG_HLS, LOG_FFMPEG and ART_CACHE_DIR from .env unread
 // (prod 2026-11-02: every auth.log line showed the proxy's IP).
 import 'dotenv/config';
 

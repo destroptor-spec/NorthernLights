@@ -111,7 +111,6 @@ Copy `.env.example` to `.env` and review at least:
 - `ALLOWED_ORIGINS`: comma-separated browser origins allowed by CORS. The example permits both the Vite dev server on `http://localhost:3000` and the built app on `http://localhost:3001`.
 - `DB_*`: PostgreSQL connection settings.
 - `DB_CONTAINER_NAME` and `DB_DATA_DIR`: managed database container settings.
-- `MBDB_WORK_DIR`: temporary MusicBrainz import workspace.
 - `SERVER_URL`: public base URL for OAuth callbacks when behind a reverse proxy.
 - `CAST_RECEIVER_APP_ID` and `CAST_RECEIVER_ORIGIN`: optional Chromecast custom receiver settings.
 

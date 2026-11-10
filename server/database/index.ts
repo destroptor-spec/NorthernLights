@@ -441,11 +441,6 @@ export async function initDB(): Promise<Pool> {
           WHEN OTHERS THEN null;
         END $$;
 
-        CREATE TABLE IF NOT EXISTS subgenre_mappings (
-          sub_genre TEXT PRIMARY KEY,
-          path TEXT NOT NULL
-        );
-
         DROP TABLE IF EXISTS macro_matrix_cache CASCADE;
 
         CREATE TABLE IF NOT EXISTS genre (
@@ -491,76 +486,13 @@ export async function initDB(): Promise<Pool> {
           entity1_credit TEXT
         );
 
-        -- Indexes for l_genre_genre to speed up materialized view refresh
+        -- MusicBrainz genre data, loaded from the shipped snapshot for tag mapping
+        -- (mb_alias, mb_parent). The old genre_tree_paths view and the MBDB
+        -- import were retired in phase 4 of the genre redesign.
         CREATE INDEX IF NOT EXISTS l_genre_genre_entity0_idx ON l_genre_genre (entity0);
         CREATE INDEX IF NOT EXISTS l_genre_genre_entity1_idx ON l_genre_genre (entity1);
         CREATE INDEX IF NOT EXISTS l_genre_genre_link_idx ON l_genre_genre (link);
         CREATE INDEX IF NOT EXISTS l_genre_genre_link_subgenre_idx ON l_genre_genre (entity0, entity1) WHERE link = 944810;
-
-        -- Note: We can only create the materialized view after l_genre_genre and genre are created.
-        -- We will recreate it inside a DO block to catch if tables are empty.
-        -- Auto-migrate the materialized view if the old schema exists
-        DO $$ 
-        BEGIN
-            IF EXISTS (
-                SELECT 1 FROM pg_class c 
-                JOIN pg_namespace n ON n.oid = c.relnamespace 
-                WHERE c.relname = 'genre_tree_paths' AND c.relkind = 'm'
-            ) AND NOT EXISTS (
-                SELECT 1 FROM pg_attribute a 
-                JOIN pg_class c ON a.attrelid = c.oid 
-                WHERE c.relname = 'genre_tree_paths' AND a.attname = 'genre_name'
-            ) THEN
-                DROP MATERIALIZED VIEW genre_tree_paths CASCADE;
-            END IF;
-        END $$;
-
-        DO $$ 
-        BEGIN 
-            CREATE MATERIALIZED VIEW IF NOT EXISTS genre_tree_paths AS
-            WITH RECURSIVE genre_tree AS (
-                -- Base cases: top-level genres (genres that have no parents)
-                -- In the MBDB link data, entity0 is the broader genre and entity1 is the specific subgenre
-                SELECT 
-                    g.id AS genre_id, 
-                    g.name::TEXT AS genre_name,
-                    g.name::TEXT AS path,
-                    1 AS level,
-                    ARRAY[g.id] AS visited
-                FROM genre g
-                WHERE EXISTS (SELECT 1 FROM l_genre_genre lgg WHERE lgg.link = 944810 AND lgg.entity0 = g.id)
-                AND NOT EXISTS (SELECT 1 FROM l_genre_genre lgg WHERE lgg.link = 944810 AND lgg.entity1 = g.id)
-                
-                UNION ALL
-                
-                -- Recursive step: traverse entity0 (broad) → entity1 (specific)
-                SELECT 
-                    child.entity1, -- The specific subgenre
-                    g.name::TEXT AS genre_name,
-                    (parent.path || '.' || g.name)::TEXT,
-                    parent.level + 1,
-                    parent.visited || child.entity1
-                FROM l_genre_genre child
-                JOIN genre_tree parent ON child.entity0 = parent.genre_id
-                JOIN genre g ON child.entity1 = g.id
-                WHERE child.link = 944810
-                AND child.entity1 != ALL(parent.visited)  -- cycle protection
-                AND parent.level < 20                     -- max depth guard
-            )
-            SELECT genre_id, genre_name, path, level FROM genre_tree;
-        EXCEPTION 
-            WHEN OTHERS THEN 
-                RAISE NOTICE 'Materialized view creation failed (tables might be empty): %', SQLERRM;
-        END $$;
-
-        -- Enhance lookups on the materialized view
-        CREATE INDEX IF NOT EXISTS genre_tree_paths_name_idx ON genre_tree_paths (LOWER(genre_name));
-        CREATE INDEX IF NOT EXISTS genre_tree_paths_name_trgm_idx ON genre_tree_paths USING gin (LOWER(genre_name) gin_trgm_ops);
-        DO $$ 
-        BEGIN 
-            CREATE UNIQUE INDEX IF NOT EXISTS genre_tree_paths_genre_path_idx ON genre_tree_paths (genre_id, path);
-        EXCEPTION WHEN OTHERS THEN null; 
-        END $$;
 
         -- Entity tables for UUID-based navigation
         CREATE EXTENSION IF NOT EXISTS "pgcrypto";
@@ -4111,58 +4043,38 @@ export async function getGenresPage(options: EntityListPageOptions) {
 }
 
 /**
- * Resolve every distinct library genre to its MusicBrainz hierarchy path
- * (e.g. "alternative rock" → "Rock.Alternative Rock"), so the client can group
- * subgenres under their parent. The path source is the `genre_tree_paths`
- * materialized view, which is empty until an MBDB taxonomy import has run —
- * that emptiness is how we report `available: false` and let the UI fall back
- * to a flat genre grid.
- *
- * Match priority per genre: exact MBDB genre name → MBDB alias → a path the
- * genre-matrix categorizer previously stored in `subgenre_mappings`.
+ * The genre and style hierarchy of the library's genres, so the old genre
+ * view and the genre filter can group styles under their genre: a genre is
+ * its own path ("Rock"), a style "Genre.Style" ("Rock.Grunge"; a dot in a
+ * name becomes a space). A style name in two genres goes under the one with
+ * more of its tracks. Unavailable until the taxonomy is seeded.
  */
 export async function getGenreTaxonomyPaths(): Promise<{ available: boolean; paths: Record<string, string> }> {
   const db = await initDB();
-
-  // genre_tree_paths exists from init (IF NOT EXISTS) but holds zero rows until
-  // an import populates the MBDB base tables. A missing view (older DBs) throws
-  // and is likewise treated as "no taxonomy available".
-  try {
-    const countRes = await db.query('SELECT COUNT(*)::int AS n FROM genre_tree_paths');
-    if (!countRes.rows[0] || countRes.rows[0].n === 0) {
-      return { available: false, paths: {} };
-    }
-  } catch {
-    return { available: false, paths: {} };
-  }
-
+  const seeded = (await db.query('SELECT 1 FROM style LIMIT 1')).rowCount;
+  if (!seeded) return { available: false, paths: {} };
   const res = await db.query(`
     WITH lib AS (
-      SELECT DISTINCT lower(trim(g.name)) AS g
+      SELECT DISTINCT g.name
       FROM track_genres tg
       JOIN genres g ON g.id = tg.genre_id
       WHERE g.merged_into IS NULL AND trim(g.name) <> ''
     )
-    SELECT lib.g AS name,
-           COALESCE(direct.path, alias.path, sm.path) AS path
+    SELECT lower(lib.name) AS name,
+           COALESCE(replace(tgn.name, '.', ' '), sp.path) AS path
     FROM lib
+    LEFT JOIN taxonomy_genre tgn ON tgn.name = lib.name
     LEFT JOIN LATERAL (
-      SELECT path FROM genre_tree_paths WHERE lower(genre_name) = lib.g LIMIT 1
-    ) direct ON true
-    LEFT JOIN LATERAL (
-      SELECT gtp.path FROM genre_tree_paths gtp
-      JOIN genre_alias ga ON gtp.genre_id = ga.genre
-      WHERE lower(ga.name) = lib.g LIMIT 1
-    ) alias ON true
-    LEFT JOIN subgenre_mappings sm
-      ON sm.sub_genre = regexp_replace(lib.g, '[^\\w\\s-]', '', 'g')
-    WHERE COALESCE(direct.path, alias.path, sm.path) IS NOT NULL
+      SELECT replace(s.genre, '.', ' ') || '.' || replace(s.name, '.', ' ') AS path
+      FROM style s
+      WHERE s.name = lib.name
+      ORDER BY (SELECT COUNT(*) FROM track_styles ts WHERE ts.style_id = s.id) DESC, s.genre
+      LIMIT 1
+    ) sp ON true
+    WHERE COALESCE(tgn.name, sp.path) IS NOT NULL
   `);
-
   const paths: Record<string, string> = {};
-  for (const row of res.rows) {
-    paths[row.name] = row.path;
-  }
+  for (const row of res.rows) paths[row.name] = row.path;
   return { available: true, paths };
 }
 
@@ -6029,12 +5941,9 @@ export async function updateGenreMatrixCache(matrix: any) {
 const systemSettingCache = new Map<string, { value: any; expires: number }>();
 const SYSTEM_SETTING_TTL_MS = 30_000;
 
-// Keys written out-of-band (raw SQL in genreMatrix.service, etc.) and polled
-// for live progress — caching them would serve stale values to progress UIs.
-const UNCACHED_SYSTEM_SETTINGS = new Set([
-  'genreMatrixProgress',
-  'genreMatrixCheckpoint',
-]);
+// Keys written out-of-band and polled for live progress — caching them would
+// serve stale values to progress UIs.
+const UNCACHED_SYSTEM_SETTINGS = new Set<string>([]);
 
 export async function getSystemSetting(key: string) {
   const cacheable = !UNCACHED_SYSTEM_SETTINGS.has(key);
@@ -6053,91 +5962,6 @@ export async function getSystemSetting(key: string) {
   if (cacheable) systemSettingCache.set(key, { value, expires: now + SYSTEM_SETTING_TTL_MS });
   return value;
 }
-export async function upsertSubGenreMapping(subGenre: string, path: string) {
-  const db = await initDB();
-  const sanitized = subGenre.toLowerCase().trim().replace(/[^\w\s-]/g, '');
-  if (!sanitized) return;
-  await db.query(`
-    INSERT INTO subgenre_mappings (sub_genre, path)
-    VALUES ($1, $2)
-    ON CONFLICT (sub_genre) DO UPDATE SET path = EXCLUDED.path
-  `, [sanitized, path]);
-}
-
-export async function clearSubGenreMappings() {
-  const db = await initDB();
-  await db.query('DELETE FROM subgenre_mappings');
-}
-
-export async function getSubGenreMappings(): Promise<Record<string, string>> {
-  const db = await initDB();
-  const res = await db.query('SELECT * FROM subgenre_mappings');
-  const mappings: Record<string, string> = {};
-  res.rows.forEach((row: any) => {
-    mappings[row.sub_genre] = row.path;
-  });
-  return mappings;
-}
-
-export async function getGenrePathFromKNN(acoustic8D: number[], embedding?: number[]): Promise<string | null> {
-  if (acoustic8D.some(v => !isFinite(v))) return null;
-  if (embedding && (embedding.length !== 1280 || embedding.some(v => !isFinite(v)))) embedding = undefined;
-
-  const db = await initDB();
-  const acousticStr = `[${acoustic8D.join(',')}]`;
-  const embeddingStr = embedding ? `[${embedding.join(',')}]` : null;
-  
-  // Tier 3: KNN audio fallback.
-  // Finds the most common hierarchical path among the 10 mathematically 
-  // closest matches using MusiCNN 8D + EffNet 1280D, or 8D distance fallback.
-  const query = embeddingStr
-    ? `
-    WITH neighbors AS (
-      SELECT sm.path
-      FROM tracks t
-      JOIN track_features tf ON t.id = tf.track_id
-      JOIN genres g ON g.id = t.genre_id
-      JOIN subgenre_mappings sm
-        ON regexp_replace(lower(trim(g.name)), '[^[:alnum:]_[:space:]-]', '', 'g') = sm.sub_genre
-      WHERE tf.acoustic_vector_8d IS NOT NULL 
-        AND tf.embedding_vector IS NOT NULL
-      ORDER BY (tf.acoustic_vector_8d <-> $1::vector) + (tf.embedding_vector <=> $2::vector) ASC
-      LIMIT 10
-    )
-    SELECT path, COUNT(*) as frequency
-    FROM neighbors
-    GROUP BY path
-    ORDER BY frequency DESC
-    LIMIT 1
-  `
-    : `
-    WITH neighbors AS (
-      SELECT sm.path
-      FROM tracks t
-      JOIN track_features tf ON t.id = tf.track_id
-      JOIN genres g ON g.id = t.genre_id
-      JOIN subgenre_mappings sm
-        ON regexp_replace(lower(trim(g.name)), '[^[:alnum:]_[:space:]-]', '', 'g') = sm.sub_genre
-      WHERE tf.acoustic_vector_8d IS NOT NULL 
-      ORDER BY tf.acoustic_vector_8d <-> $1::vector ASC
-      LIMIT 10
-    )
-    SELECT path, COUNT(*) as frequency
-    FROM neighbors
-    GROUP BY path
-    ORDER BY frequency DESC
-    LIMIT 1
-  `;
-
-  const params = embeddingStr ? [acousticStr, embeddingStr] : [acousticStr];
-  const res = await db.query(query, params);
-
-  if (res.rows.length > 0) {
-    return (res.rows[0] as any).path;
-  }
-  return null;
-}
-
 export async function setSystemSetting(key: string, value: any) {
   const db = await initDB();
   // JSON.stringify(undefined) returns undefined (not a string), which pg then

@@ -695,46 +695,8 @@ Control the PostgreSQL container.
   { "status": "started" }
   ```
 
-### MusicBrainz Taxonomy
-
-### [GET] `/api/admin/mbdb/status` (SSE)
-Receive real-time import progress.
-- **How to use**: Connect via `new EventSource('/api/admin/mbdb/status?token=<jwt>')`.
-- **Example Message**:
-  ```json
-  {
-    "isImporting": true,
-    "phase": "downloading",
-    "message": "Downloading and extracting MusicBrainz dump...",
-    "progress": 45
-  }
-  ```
-
-### [POST] `/api/admin/mbdb/import`
-Trigger the MusicBrainz hierarchical taxonomy import.
-- **How to use**: Downloads the latest MusicBrainz dump, extracts (~5GB needed), and populates the genre hierarchy tables.
-- **Example Response**:
-  ```json
-  { "message": "MBDB Import started" }
-  ```
-
-### [POST] `/api/admin/mbdb/cancel`
-Cancel an in-progress import.
-
-### [GET] `/api/admin/mbdb/check-update`
-Check if a newer MusicBrainz dump is available.
-- **Example Response**:
-  ```json
-  {
-    "latestTag": "2024-04-01",
-    "lastImportTag": "2024-03-01",
-    "updateAvailable": true,
-    "lastImport": { "tag": "2024-03-01", "timestamp": 1711968000000 }
-  }
-  ```
-
 ### [GET] `/api/admin/health`
-Unified admin health check (SSE, DB, container, scanner, MBDB status).
+Unified admin health check (SSE, DB, container, scanner). The MusicBrainz import and its `/api/admin/mbdb/*` endpoints were removed in phase 4 of the genre redesign; MusicBrainz genre data ships as a snapshot.
 
 ---
 
@@ -1126,17 +1088,6 @@ Test connection to the configured LLM API (Admin only).
   ```json
   { "status": "ok", "models": ["gpt-4", "gpt-3.5-turbo"] }
   ```
-
-### Genre Matrix & Taxonomy
-
-### [GET] `/api/genre-matrix/mappings`
-Get all genre-to-subgenre mappings.
-
-### [POST] `/api/genre-matrix/remap-all`
-Trigger a full remapping of all genres based on the taxonomy hierarchy (Admin only).
-
-### [POST] `/api/genre-matrix/regenerate`
-Manually trigger genre matrix matrix weight diff and generation (Admin only).
 
 ### ML Model Management
 

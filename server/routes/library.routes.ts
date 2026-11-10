@@ -11,7 +11,6 @@ import * as mm from 'music-metadata';
 import { addDirectory, addTrack, addTrackFeatures, getTracksWithoutFeatures, getTracksWithSimulatedFeatures, getSimulatedFeatureTracks, getTrackCountWithFeatures, getAllTracks, getDirectories, removeDirectory, removeTracksByDirectory, getOrCreateArtist, getOrCreateAlbum, getOrCreateGenre, getAllArtists, getAllAlbums, getAllGenres, getPathsWithMeta, countTracksByArtHash, deleteTracksByPaths, purgeOrphanedEntities, recordUnparsedTrack, purgeOrphanedTracks, getSystemSetting, getPrimaryArtistName, setTrackCredits, alignArtistMbidsWithTracks, runArtistCreditSplitInBackground, setTrackLoudness, getTracksWithoutLoudness, getTracksWithFailedLoudness } from '../database';
 import { measureLoudness } from '../services/loudness.service';
 import { cleanupOrphanArt } from '../services/artCache';
-import { genreMatrixService } from '../services/genreMatrix.service';
 import { scanStatus, scanClients, broadcastScanStatus } from '../state';
 import { requireAdmin } from '../middleware/auth';
 import { enrichArtistImages, enrichArtistImagesInBackground } from '../services/artistImageEnrichment.service';
@@ -1201,14 +1200,6 @@ export async function runSyncWalk(
     }
   }
 
-  // Trigger Genre Matrix regeneration after any change
-  if (itemsToProcess.length > 0 || removedCount > 0) {
-    setImmediate(() => {
-      genreMatrixService.runDiffAndGenerate()
-        .catch(e => console.error('[Genre Matrix] Post-scan categorization failed:', e));
-    });
-  }
-
   // Fill in pictures for any newly-added artists (and backfill the rest), bounded
   // and throttled. No-ops when no metadata provider is configured — library is
   // canon, and no provider simply means initials in the Artists grid.
@@ -1323,11 +1314,6 @@ router.post('/refresh-metadata', async (req, res) => {
       resetScanStatus(true);
       await publishApiV1LibraryRevision({ source: 'metadataRefresh' });
 
-      const { genreMatrixService } = await import('../services/genreMatrix.service');
-      setImmediate(() => {
-        genreMatrixService.runDiffAndGenerate().catch(e => console.error('[Genre Matrix]', e));
-      });
-
       // Backfill artist pictures for the whole library (no-op without a provider),
       // after the split so joined credits it removes aren't looked up.
       void runArtistCreditSplitInBackground().then(enrichArtistImagesInBackground);
@@ -1414,12 +1400,6 @@ router.post('/analyze', async (req, res) => {
     const concurrency = await getAnalysisConcurrency();
     await processAnalysisBatch(tracksToAnalyze, concurrency);
     logAnalyzer(`[Analysis] Standalone analysis complete: ${tracksToAnalyze.length} tracks`);
-
-    // Trigger Genre Matrix regeneration after analysis
-    setImmediate(() => {
-      genreMatrixService.runDiffAndGenerate()
-        .catch(e => console.error('[Genre Matrix] Post-analysis categorization failed:', e));
-    });
 
     res.json({ status: 'completed', message: `Analyzed ${tracksToAnalyze.length} tracks`, count: tracksToAnalyze.length });
   } catch (error) {

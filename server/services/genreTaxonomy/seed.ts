@@ -102,12 +102,6 @@ async function writeSnapshot(db: Pool, snapshot: MbGenreSnapshot) {
        SELECT * FROM unnest($1::int[], $2::int[], $3::int[], $4::int[])`,
       [l.map(r => r[0]), l.map(r => r[1]), l.map(r => r[2]), l.map(r => r[3])]);
   });
-  // The old engine reads genre paths from this view until phase 4.
-  try {
-    await db.query('REFRESH MATERIALIZED VIEW genre_tree_paths');
-  } catch (error: any) {
-    console.warn('[GenreTaxonomy] genre_tree_paths refresh failed (non-fatal):', error?.message || error);
-  }
 }
 
 export async function loadMbSnapshotIfNeeded(db: Pool): Promise<{ loaded: boolean; version: string; reason?: string }> {

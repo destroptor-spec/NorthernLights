@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { usePlayerStore } from '../store';
 
 export interface GenreTaxonomyState {
-  /** Whether an MBDB taxonomy import exists on the server. */
+  /** Whether the server's genre and style taxonomy is seeded. */
   available: boolean;
-  /** Lowercased genre name → dot-path hierarchy, e.g. "Rock.Alternative Rock". */
+  /** Lowercased genre name → "Genre.Style" path, e.g. "Rock.Alternative Rock". */
   paths: Record<string, string>;
   loading: boolean;
 }
@@ -26,7 +26,7 @@ function load(): Promise<TaxonomyResult> {
 }
 
 /**
- * Loads the MBDB-derived genre hierarchy once per session. Pass `enabled: false`
+ * Loads the genre › style hierarchy (from the genre taxonomy) once per session. Pass `enabled: false`
  * to skip the request entirely (e.g. when the genres view is not visible).
  */
 export function useGenreTaxonomy(enabled = true): GenreTaxonomyState {

@@ -32,7 +32,7 @@ Top-level layout — explore subdirectories with `ls` for current file inventori
 - `src/App.tsx` / `main.tsx` — Layout orchestration / entry point.
 - `server/` — Express backend.
   - `routes/` — Route modules per resource (auth, library, playback, hub, playlists, etc.).
-  - `services/` — Business logic (recommendation, llm, audio extraction, genre matrix, mbdb, modular `metadata/`).
+  - `services/` — Business logic (recommendation, llm, audio extraction, `genreTaxonomy/` genres and styles, modular `metadata/`).
   - `workers/` — `audioAnalysis.worker.ts` spawns persistent `tsx` child processes (`analyzeTrack.ts`) for CPU-intensive Essentia analysis. Concurrency controlled by `audioAnalysisCpu` (Background=1, Balanced=4, Maximum=6). Handles non-ASCII filenames via temp symlinks in `/tmp/am-*/`.
   - `middleware/` — JWT `requireAuth` / `requireAdmin`.
   - `state.ts` — Shared mutable state (DB status, scan status, session history).
@@ -95,10 +95,7 @@ Library scanning operates in three distinct phases:
    - **Safe Essentia**: Individual algorithm error handling with graceful fallbacks
    - **Results**: 21-dimensional feature vectors (**8D acoustic semantic** + 13D MFCC) stored in `track_features` table. Supports slicing for legacy 7D compatibility. Uses native SQL aggregation (`AVG`/`STDDEV`) for ultra-fast library-wide vector normalization.
 
-4. **Taxonomic Categorization Phase**: After analysis, the system runs a 3-step pipeline to map local tags to the MusicBrainz hierarchical taxonomy:
-   - **Step 1: Direct SQL Match** — 6 UNION ALL branches against `genre_tree_paths`: tree path, alias, standalone genre with parent fallback, standalone alias, fuzzy tree (GIN indexed via `%` operator, threshold 0.7), fuzzy alias.
-   - **Step 2: Vocabulary-Guided LLM Batch** — Unmapped tags batched with a 300-genre vocabulary constraint. Library-scoped: if library < 300 genres, returns actual library genres; if ≥ 300, returns top 300 from MBDB hierarchy.
-   - **Step 3: KNN Fallback** — Full 21D KNN (8D + 13D MFCC) when vectors available; 8D-only fallback when MFCC missing. NaN guards on all vector operations.
+4. **Genres and styles** (`server/services/genreTaxonomy/`, see `docs/Aurora genre and style redesign.md`): tags map to the 400-style Discogs taxonomy through `tag_map` (exact → aliases → spelling groups → MusicBrainz aliases and parents from the shipped snapshot); fusion combines tags, the sound (style scores) and corrections into `track_styles`, album and artist profiles, style centroids, and the derived `track_genres` / `tracks.genre_id` that Subsonic, the API and filters show. The old Genre Matrix (MBDB import, `genre_tree_paths`, `subgenre_mappings`, LLM/KNN categorizer, hop cost) was retired in phase 4.
 
 **API Endpoints:**
 - `POST /api/library/scan` — Full three-phase scan
@@ -138,8 +135,7 @@ The scanner indicator in `App.tsx` must use reactive Zustand subscriptions for `
 - `audioExtraction.service.ts` — persistent Python worker (`server/workers/extractor.py`, Essentia TensorFlow) for feature version 3: three 15 s windows at 20/50/80 %, EffNet + classifiers, style scores. Legacy notes: non-ASCII filename symlink workaround, safe Essentia with individual algorithm error handling. Feature extraction optimized with **Hanning Window pre-computation** and **WASM buffer reuse**.
 - `recommendation.service.ts` — Infinity Mode and Hub playlist generation using **21-dimensional** pgvector HNSW similarity search (8D acoustic + 13D MFCC) and style overlap from the fused genres and styles (`styleOverlap.service.ts`: d − β·cos of style vectors, β from "Style match"; no genre penalty). Genre paths (`electronic.house`) for AI pools, artist radio and the veto come from `genreTaxonomy/paths.ts`. Timbre-weighted MFCC (3× for electronic/synthetic). SQL-level acousticness dealbreaker. Hard vector clamping (energy/danceability bounds). `banned_genres` veto on fused genre/style paths (a family word like "metal" bans every style ending in it). MFCC imputation safeguard (threshold < 0.25, min 5 seeds). All `<->` parameters use explicit `::vector` casts. Hardened with `NaN` guards and cross-dimension compatibility (7D/8D).
 - `llm.service.ts` — LLM integration for natural language playlist generation. Supports local providers (LM Studio, Ollama) and cloud (OpenAI). Vocabulary = the library's own genres and styles (`getStyleVocabulary`, up to 300) and `banned_genres` in prompt schemas. 120-second timeout for local LLMs.
-- `genreMatrix.service.ts` — MusicBrainz hierarchical taxonomy classification using tree-path LCA (Lowest Common Ancestor) hop-cost math. 3-step pipeline: direct SQL (6 UNION ALL branches), vocabulary-guided LLM batch, KNN fallback (21D/8D). Standalone `getGenreVocabulary()` export for library-scoped vocabulary.
-- `mbdb.service.ts` — High-performance streaming importer for MusicBrainz database dumps. Handles downloading, TSV extraction, and bulk PostgreSQL insertion.
+- `genreTaxonomy/` — genres and styles: tag mapping, fusion, profiles, centroids, Browse data, genre paths for recommendations (`paths.ts`) and the derived track genres (`trackGenres.ts`).
 - `metadata/` — Modularized external metadata service:
   - `errors.ts` — `RateLimitError`, `ProviderError` classes for typed error handling
   - `cache.ts` — Database caching with conditional `updateLastUpdated` flag

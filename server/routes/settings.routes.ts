@@ -1,9 +1,8 @@
 import { SERVER_LOGGING_SETTINGS } from '../../shared/logging';
 import { applyLoggingSettings, getLoggingSettings } from '../services/loggingConfig';
 import { Router } from 'express';
-import { getSystemSetting, setSystemSetting, getUserSetting, setUserSetting, getSubGenreMappings } from '../database';
+import { getSystemSetting, setSystemSetting, getUserSetting, setUserSetting } from '../database';
 import { requireAdmin } from '../middleware/auth';
-import { genreMatrixService } from '../services/genreMatrix.service';
 import OpenAI from 'openai';
 import { publishPlaybackSyncChanged } from '../services/playbackSync.service';
 import { PLAYBACK_SYNC_MODES } from '../../shared/playbackSync';
@@ -24,7 +23,7 @@ router.get('/settings', async (req, res) => {
     const isAdmin = req.user?.role === 'admin';
 
     // System-level (server-wide) settings
-    const serverKeys = ['audioAnalysisCpu', 'scannerConcurrency', 'loudnessComputeMode', 'hubGenerationSchedule', 'systemPlaylistConfig', 'llmBaseUrl', 'llmApiKey', 'llmModelName', 'genreMatrixLastRun', 'genreMatrixLastResult', 'genreMatrixProgress', 'geniusApiKey', 'lastFmApiKey', 'lastFmSharedSecret', 'musicBrainzEnabled', 'musicBrainzClientId', 'musicBrainzClientSecret', 'musicBrainzConnected', 'musicBrainzRedirectUri', 'providerArtistImage', 'providerArtistArtwork', 'providerArtistBio', 'providerAlbumArt', 'autoFolderWalk', 'mbdbLastImport', 'jambaseEnabled', 'jambaseMaxSubscriptionsPerUser', 'jambaseCacheTtlDays', 'jambaseMonthlyCap', 'jambaseHardStop', 'youtubeEnabled', 'youtubeApiKey', 'youtubeCacheTtlDays', 'youtubeDailyQuotaCap', 'youtubeHardStop', ...Object.keys(SERVER_LOGGING_SETTINGS), 'openSubsonicEnabled', 'turnstileEnabled', 'turnstileSiteKey', 'turnstileSecretKey', 'playbackSyncMode'];
+    const serverKeys = ['audioAnalysisCpu', 'scannerConcurrency', 'loudnessComputeMode', 'hubGenerationSchedule', 'systemPlaylistConfig', 'llmBaseUrl', 'llmApiKey', 'llmModelName', 'geniusApiKey', 'lastFmApiKey', 'lastFmSharedSecret', 'musicBrainzEnabled', 'musicBrainzClientId', 'musicBrainzClientSecret', 'musicBrainzConnected', 'musicBrainzRedirectUri', 'providerArtistImage', 'providerArtistArtwork', 'providerArtistBio', 'providerAlbumArt', 'autoFolderWalk', 'jambaseEnabled', 'jambaseMaxSubscriptionsPerUser', 'jambaseCacheTtlDays', 'jambaseMonthlyCap', 'jambaseHardStop', 'youtubeEnabled', 'youtubeApiKey', 'youtubeCacheTtlDays', 'youtubeDailyQuotaCap', 'youtubeHardStop', ...Object.keys(SERVER_LOGGING_SETTINGS), 'openSubsonicEnabled', 'turnstileEnabled', 'turnstileSiteKey', 'turnstileSecretKey', 'playbackSyncMode'];
     const settings: Record<string, any> = {};
     const loggingSettings: Record<string, boolean> = getLoggingSettings();
     for (const k of serverKeys) {
@@ -163,39 +162,6 @@ router.post('/health/llm', requireAdmin, async (req, res) => {
     res.json({ status: 'ok', models });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
-  }
-});
-
-// Genre Matrix mappings
-router.get('/genre-matrix/mappings', async (req, res) => {
-  try {
-    const mappings = await getSubGenreMappings();
-    res.json(mappings);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch mappings' });
-  }
-});
-
-// Full re-mapping of all genres
-router.post('/genre-matrix/remap-all', requireAdmin, async (req, res) => {
-  try {
-    genreMatrixService.remapAll();
-    res.json({ status: 'started' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to start full remap' });
-  }
-});
-
-// Manually trigger genre matrix regeneration
-router.post('/genre-matrix/regenerate', requireAdmin, async (req, res) => {
-  try {
-    await genreMatrixService.runDiffAndGenerate();
-    const lastRun = await getSystemSetting('genreMatrixLastRun');
-    const lastResult = await getSystemSetting('genreMatrixLastResult');
-    res.json({ status: 'ok', lastRun, lastResult });
-  } catch (error) {
-    console.error('Genre matrix regeneration error:', error);
-    res.status(500).json({ error: 'Failed to regenerate genre matrix' });
   }
 });
 

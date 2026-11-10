@@ -233,4 +233,19 @@ Nothing to run by hand, but it rewrites data on first start: `track_genres` and 
 
 Rollback: restore the backup, or with the old code delete `system_settings` key `trackGenreAssociationBackfillV1` and restart; the old startup rebuilds `track_genres` and `genre_id` from the file tags.
 
-Steps for the rest of step 2 (retiring the Genre Matrix, the categorizer, `subgenre_mappings`, the MBDB import and `genre_tree_paths`) are added here when they are built.
+### Step 2c: the Genre Matrix retired (no schema change; optional clean-up)
+
+Nothing to run. The code no longer creates, refreshes or reads `subgenre_mappings` and the `genre_tree_paths` view, the MBDB import and its endpoints are gone (Settings → Database → MBDB, `/api/admin/mbdb/*`), Settings → Genre Matrix and `/api/genre-matrix/*` are gone, and scans no longer start the LLM categorizer. `GET /api/genres/taxonomy` (the old genre view and filter grouping) now answers from the new taxonomy ("Rock.Grunge"). The MusicBrainz tables `genre`, `genre_alias` and `l_genre_genre` stay: they hold the shipped snapshot the tag mapping reads. `MBDB_WORK_DIR` can go from `.env`.
+
+- [ ] Settings shows no Genre Matrix tab and Database has Stats, Maintenance and Backups only.
+- [ ] A library rescan finishes without `[Genre Matrix]` lines in the log.
+- [ ] Optional, once happy (frees the old data; rollback then needs a restore):
+  ```sql
+  DROP MATERIALIZED VIEW IF EXISTS genre_tree_paths;
+  DROP TABLE IF EXISTS subgenre_mappings;
+  DELETE FROM system_settings WHERE key IN ('genreMatrixLastRun', 'genreMatrixLastResult', 'genreMatrixProgress', 'genreMatrixCheckpoint', 'recommendationEngine', 'genrePenaltyCurve');
+  DELETE FROM user_settings WHERE key IN ('recommendationEngine', 'genrePenaltyCurve');
+  ```
+  Delete the MBDB work directory (`MBDB_WORK_DIR`, default `./mbdb-data`) if it exists.
+
+Rollback: the old code recreates `subgenre_mappings` (empty) and the view (`REFRESH MATERIALIZED VIEW genre_tree_paths` fills it from the kept MusicBrainz tables) on start.

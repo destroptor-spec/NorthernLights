@@ -1,9 +1,11 @@
 /**
  * Maintainer tool: writes server/data/genre-taxonomy/musicbrainz-genres.json
- * from the MusicBrainz genre tables of a database that ran the MBDB import
- * (Settings → Database). Aurora ships that snapshot, so installs no longer
- * need the 4 GB dump just for 2,000 genres (see docs/Aurora genre and style
- * redesign.md, "MusicBrainz genre data").
+ * from the MusicBrainz genre tables of a database that ran the MBDB import.
+ * Aurora ships that snapshot, so installs no longer need the 4 GB dump just
+ * for 2,000 genres (see docs/Aurora genre and style redesign.md, "MusicBrainz
+ * genre data"). The import itself was removed in phase 4 of the genre
+ * redesign; to refresh the snapshot, run it from commit 41741a7 or earlier
+ * (Settings → Database → MBDB) against a scratch database, then this script.
  *
  * Usage: npx tsx scripts/build-mb-genre-snapshot.ts
  * The genre, alias and genre-genre link tables come from MusicBrainz's core

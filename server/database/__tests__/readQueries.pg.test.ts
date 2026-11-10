@@ -830,9 +830,6 @@ describeDb('database read queries', () => {
         getPathsForDirectory: ['/test'],
         getPrimaryArtistName: ['Test Artist', 'Test Artist'],
         searchLibraryArtists: [USER_ID, 'test'],
-        // 8-dimensional acoustic vector; the function bails on non-finite input
-        // before touching SQL, so the values must be real numbers.
-        getGenrePathFromKNN: [[0, 0, 0, 0, 0, 0, 0, 0]],
         getAlbumCoOwners: [pool, ['Test Artist & Test Artist Two']],
         getCreditedArtistNames: [pool],
         getJoinedCreditDecisions: [pool],

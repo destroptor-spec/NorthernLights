@@ -311,33 +311,6 @@ const normalizeSystemPlaylistConfig = (value: unknown): Record<string, boolean> 
   );
 };
 
-const normalizeMbdbLastImport = (value: unknown): PlayerState['mbdbLastImported'] => {
-  if (!value) return null;
-
-  let parsed = value;
-  if (typeof value === 'string') {
-    try {
-      parsed = JSON.parse(value);
-    } catch {
-      return null;
-    }
-  }
-
-  if (!parsed || typeof parsed !== 'object') return null;
-  const info = parsed as Partial<NonNullable<PlayerState['mbdbLastImported']>>;
-  const counts = (info.counts || {}) as Partial<NonNullable<PlayerState['mbdbLastImported']>['counts']>;
-
-  return {
-    timestamp: Number(info.timestamp || 0),
-    duration: Number(info.duration || 0),
-    counts: {
-      genres: Number(counts.genres || 0),
-      aliases: Number(counts.aliases || 0),
-      links: Number(counts.links || 0),
-    },
-  };
-};
-
 const hydratePlaylistTracks = (
   trackIds: string[],
   library: TrackInfo[],
@@ -827,10 +800,6 @@ export interface PlayerState {
   llmApiKey: string;
   llmModelName: string;
   llmConnected: boolean; // Live connection status
-  mbdbLastImported: { timestamp: number; duration: number; counts: { genres: number; aliases: number; links: number } } | null;
-  genreMatrixLastRun: number | null;
-  genreMatrixLastResult: string | null;
-  genreMatrixProgress: string | null;
   autoFolderWalk: boolean;
 
   // Sign-in captcha (Cloudflare Turnstile, system-level, admin)
@@ -1619,13 +1588,9 @@ export const usePlayerStore = create<PlayerState>()(
         llmApiKey: '',
         llmModelName: '',
         llmConnected: false,
-        mbdbLastImported: null,
-        genreMatrixLastRun: null as number | null,
-        genreMatrixLastResult: null as string | null,
         turnstileEnabled: false as boolean,
         turnstileSiteKey: '',
         turnstileSecretKey: '',
-        genreMatrixProgress: null as string | null,
         autoFolderWalk: false as boolean,
 
         isSidebarCollapsed: false as boolean,
@@ -2057,10 +2022,6 @@ export const usePlayerStore = create<PlayerState>()(
                 llmBaseUrl: data.llmBaseUrl || '',
                 llmApiKey: data.llmApiKey || '',
                 llmModelName: data.llmModelName || '',
-                mbdbLastImported: normalizeMbdbLastImport(data.mbdbLastImport),
-                genreMatrixLastRun: data.genreMatrixLastRun || null,
-                genreMatrixLastResult: data.genreMatrixLastResult || null,
-                genreMatrixProgress: data.genreMatrixProgress || null,
                 lastFmApiKey: data.lastFmApiKey || '',
                 lastFmSharedSecret: data.lastFmSharedSecret || '',
                 lastFmScrobbleEnabled: data.lastFmScrobbleEnabled ?? false,

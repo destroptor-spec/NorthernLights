@@ -55,9 +55,8 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     await taxonomy.initializeGenreTaxonomy();
     expect((await pool.query('SELECT COUNT(*)::int AS n FROM style')).rows[0].n).toBe(400);
     expect((await pool.query('SELECT hidden FROM taxonomy_genre WHERE name = \'Non-Music\'')).rows[0].hidden).toBe(true);
-    // Empty MusicBrainz tables get the shipped snapshot, and the old engine's view is rebuilt.
+    // Empty MusicBrainz tables get the shipped snapshot (tag mapping's aliases and parents).
     expect((await pool.query('SELECT COUNT(*)::int AS n FROM genre')).rows[0].n).toBeGreaterThan(2000);
-    expect((await pool.query('SELECT COUNT(*)::int AS n FROM genre_tree_paths')).rows[0].n).toBeGreaterThan(1000);
     expect(await db.getSystemSetting('mbGenreSource')).toMatchObject({ kind: 'snapshot' });
 
     const map = async (key: string) => (await pool.query(
@@ -803,5 +802,9 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     expect((await db.getGenresPage({ limit: 200 })).map((g: any) => g.name)).not.toContain('Skate Punk');
     await db.purgeOrphanedEntities();
     expect((await pool.query(`SELECT 1 FROM genres WHERE name = 'Skate Punk'`)).rowCount).toBe(1);
+    // The old genre view and filter group styles under their genre.
+    const taxonomyPaths = await db.getGenreTaxonomyPaths();
+    expect(taxonomyPaths.available).toBe(true);
+    expect(taxonomyPaths.paths).toMatchObject({ punk: 'Rock.Punk', pop: 'Pop' });
   });
 });
