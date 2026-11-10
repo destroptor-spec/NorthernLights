@@ -2090,13 +2090,21 @@
                     "null"
                   ],
                   "description": "An instrument for performers, when known."
+                },
+                "imageUrl": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "A stored artist image, when the library has one (no provider lookup)."
                 }
               },
               "required": [
                 "role",
                 "artistId",
                 "name",
-                "detail"
+                "detail",
+                "imageUrl"
               ]
             },
             "description": "Every stored credit, in role order (performer, composer, conductor, lyricist, producer, …)."
@@ -2245,6 +2253,13 @@
               "title": {
                 "type": "string"
               },
+              "artworkId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Cover art of the album, as for AlbumSummary."
+              },
               "entries": {
                 "type": "array",
                 "items": {
@@ -2255,6 +2270,7 @@
             "required": [
               "id",
               "title",
+              "artworkId",
               "entries"
             ]
           },
@@ -2269,6 +2285,24 @@
               },
               "name": {
                 "type": "string"
+              },
+              "imageUrl": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "artworkUrl": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "musicBrainzId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "entries": {
                 "type": "array",
@@ -2324,6 +2358,9 @@
             "required": [
               "id",
               "name",
+              "imageUrl",
+              "artworkUrl",
+              "musicBrainzId",
               "entries",
               "listenerTags"
             ]
@@ -2353,6 +2390,12 @@
                     "integer",
                     "null"
                   ]
+                },
+                "artworkId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               },
               "required": [
@@ -2360,7 +2403,8 @@
                 "albumId",
                 "albumTitle",
                 "artistName",
-                "year"
+                "year",
+                "artworkId"
               ]
             },
             "description": "Other albums in the library with this recording (by MusicBrainz recording id, else artist and title)."

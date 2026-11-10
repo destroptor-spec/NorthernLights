@@ -5,15 +5,21 @@ import { StyleProfileChips } from './StyleProfileChips';
 import { usePlayerStore } from '../../store';
 import type { TrackRays as Rays } from '../../../shared/api/v1';
 
+// The artist's portrait and banner come from the provider cache; here, none.
+jest.mock('../../hooks/useArtistData', () => ({ useArtistData: () => ({ imageUrl: undefined, artworkUrl: undefined }) }));
+jest.mock('../../hooks/useInView', () => ({ useInView: () => [() => {}, false] }));
+// The v1 → playable conversion has its own tests; the fixture track is partial.
+jest.mock('../../utils/playableTracks', () => ({ toPlayableTracks: (tracks: unknown[]) => tracks }));
+
 const ok = (data: unknown) => ({ ok: true, status: 200, json: async () => ({ data, meta: {} }) }) as Response;
 const originalFetch = global.fetch;
 
 const rays = (): Rays => ({
   track: { id: 't1', title: 'Finally Moving', artist: 'Pretty Lights', year: 2006 } as Rays['track'],
   credits: [
-    { role: 'producer', artistId: 'a1', name: 'Derek Vincent Smith', detail: null },
-    { role: 'performer', artistId: 'a2', name: 'John Shanks', detail: 'guitar' },
-    { role: 'performer', artistId: 'a2', name: 'John Shanks', detail: 'bass guitar' },
+    { role: 'producer', artistId: 'a1', name: 'Derek Vincent Smith', detail: null, imageUrl: '/img/derek.jpg' },
+    { role: 'performer', artistId: 'a2', name: 'John Shanks', detail: 'guitar', imageUrl: null },
+    { role: 'performer', artistId: 'a2', name: 'John Shanks', detail: 'bass guitar', imageUrl: null },
   ],
   tags: ['Electric Hip Hop Soul'],
   styles: [
@@ -22,12 +28,12 @@ const rays = (): Rays => ({
   ],
   sound: { energy: 0.8, danceability: 0.9, acousticness: 0.1, instrumentalness: 0.7, bpm: 74,
     closestStyles: [{ genre: 'Electronic', styleId: 78, style: 'Glitch', score: 0.5 }] },
-  album: { id: 'al1', title: 'Taking Up Your Precious Time', entries: [
+  album: { id: 'al1', title: 'Taking Up Your Precious Time', artworkId: 'hash1', entries: [
     { genre: 'Electronic', styleId: null, style: null, share: 1, trackCount: 15 },
     { genre: 'Electronic', styleId: 56, style: 'Downtempo', share: 0.6, trackCount: 9 },
   ] },
-  artist: { id: 'ar1', name: 'Pretty Lights', entries: [], listenerTags: ['electronic', 'downtempo'] },
-  otherAlbums: [{ trackId: 't9', albumId: 'al9', albumTitle: 'Best Of', artistName: 'Pretty Lights', year: 2015 }],
+  artist: { id: 'ar1', name: 'Pretty Lights', imageUrl: null, artworkUrl: null, musicBrainzId: null, entries: [], listenerTags: ['electronic', 'downtempo'] },
+  otherAlbums: [{ trackId: 't9', albumId: 'al9', albumTitle: 'Best Of', artistName: 'Pretty Lights', year: 2015, artworkId: 'hash9' }],
 });
 
 let fetchMock: jest.Mock;
@@ -54,15 +60,19 @@ const renderRays = () => render(
 test('says where each genre and style came from, groups credits by person, and sets the track in its album', async () => {
   renderRays();
   const heading = await screen.findByRole('heading', { level: 1 });
-  expect(heading.textContent).toBe('Aurora rays fromFinally Moving');
+  expect(heading.textContent).toBe('Aurora rays from Finally Moving');
   expect(screen.getByText('From the file tag “Electric Hip Hop Soul”')).toBeTruthy();
   expect(screen.getByText('From the sound')).toBeTruthy();
   expect(screen.getByText('Electronic › Glitch').closest('a')!.getAttribute('href')).toBe('/library/browse/style/78');
-  // One row per person in a role, with each instrument.
-  expect(screen.getByText('(guitar, bass guitar)')).toBeTruthy();
+  // One pill per person in a role, with each instrument, and the stored image when there is one.
+  expect(screen.getByText('guitar, bass guitar')).toBeTruthy();
+  const derek = screen.getByText('Derek Vincent Smith').closest('a')!;
+  expect(derek.getAttribute('href')).toBe('/library/artist/a1');
+  expect(derek.querySelector('img')!.getAttribute('src')).toBe('/img/derek.jpg');
   expect(screen.getByText('Glitch, where Downtempo leads Taking Up Your Precious Time (60 %).')).toBeTruthy();
   expect(screen.getByRole('meter', { name: 'Character' }).getAttribute('aria-valuenow')).toBe('90');
   expect(screen.getByText('Best Of').closest('a')!.getAttribute('href')).toBe('/library/album/al9');
+  expect(screen.getByText('Taking Up Your Precious Time', { selector: '.rays-profile__name' }).closest('a')!.getAttribute('href')).toBe('/library/album/al1');
   // Listeners can't change genres; there's no Remove.
   expect(screen.queryByRole('button', { name: /^Remove / })).toBeNull();
 });

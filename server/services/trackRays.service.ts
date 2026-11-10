@@ -30,7 +30,7 @@ export async function getTrackRays(db: Pool, trackId: string): Promise<Omit<Trac
 
   const [credits, tags, styles, features, scores, others] = await Promise.all([
     db.query(`
-      SELECT tac.role, tac.artist_id, a.name, NULLIF(tac.detail, '') AS detail, tac.position
+      SELECT tac.role, tac.artist_id, a.name, NULLIF(tac.detail, '') AS detail, tac.position, a.image_url
       FROM track_artist_credits tac JOIN artists a ON a.id = tac.artist_id
       WHERE tac.track_id = $1 ORDER BY tac.position`, [trackId]),
     db.query(`SELECT tag FROM track_tags WHERE track_id = $1 ORDER BY position`, [trackId]),
@@ -54,7 +54,8 @@ export async function getTrackRays(db: Pool, trackId: string): Promise<Omit<Trac
     // the same artist and title (case and surrounding spaces ignored).
     db.query(`
       SELECT t.id, t.album_id, COALESCE(al.title, t.album, 'Unknown Album') AS album_title,
-             COALESCE(t.album_artist, t.artist, '') AS artist_name, NULLIF(t.year, 0) AS year
+             COALESCE(t.album_artist, t.artist, '') AS artist_name, NULLIF(t.year, 0) AS year,
+             NULLIF(t.art_hash, '') AS art_hash
       FROM tracks t LEFT JOIN albums al ON al.id = t.album_id
       WHERE t.id <> $1 AND (
         ($2::text IS NOT NULL AND t.mb_recording_id = $2)
@@ -76,9 +77,15 @@ export async function getTrackRays(db: Pool, trackId: string): Promise<Omit<Trac
   } : null;
 
   const albumRow = head.album_id
-    ? (await db.query(`SELECT id, title FROM albums WHERE id = $1`, [head.album_id])).rows[0] : null;
+    ? (await db.query(`
+        SELECT al.id, al.title,
+               (SELECT t.art_hash FROM tracks t WHERE t.album_id = al.id AND COALESCE(t.art_hash, '') <> ''
+                ORDER BY t.track_number NULLS LAST LIMIT 1) AS art_hash
+        FROM albums al WHERE al.id = $1`, [head.album_id])).rows[0] : null;
   const artistRow = head.artist_id
-    ? (await db.query(`SELECT id, name FROM artists WHERE id = $1 AND COALESCE(is_va_pseudo, FALSE) = FALSE`, [head.artist_id])).rows[0] : null;
+    ? (await db.query(`
+        SELECT id, name, image_url, artwork_url, mbid FROM artists
+        WHERE id = $1 AND COALESCE(is_va_pseudo, FALSE) = FALSE`, [head.artist_id])).rows[0] : null;
   const [albumProfile, artistProfile] = await Promise.all([
     albumRow ? getAlbumStyleProfile(db, String(albumRow.id)) : null,
     artistRow ? getArtistStyleProfile(db, String(artistRow.id)) : null,
@@ -88,7 +95,9 @@ export async function getTrackRays(db: Pool, trackId: string): Promise<Omit<Trac
     credits: credits.rows
       .map((r: any, index: number) => ({ r, index }))
       .sort((a, b) => creditRoleRank(a.r.role) - creditRoleRank(b.r.role) || a.index - b.index)
-      .map(({ r }) => ({ role: String(r.role), artistId: String(r.artist_id), name: String(r.name), detail: r.detail ?? null })),
+      .map(({ r }) => ({
+        role: String(r.role), artistId: String(r.artist_id), name: String(r.name), detail: r.detail ?? null, imageUrl: r.image_url ?? null,
+      })),
     tags: tags.rows.map((r: any) => String(r.tag)),
     styles: styles.rows.map((r: any) => ({
       genre: r.genre,
@@ -99,16 +108,21 @@ export async function getTrackRays(db: Pool, trackId: string): Promise<Omit<Trac
       fromTags: r.source === 'tag' ? (r.from_tags as string[]) : [],
     })),
     sound,
-    album: albumRow && albumProfile ? { id: String(albumRow.id), title: String(albumRow.title), entries: albumProfile.entries } : null,
-    artist: artistRow && artistProfile
-      ? { id: String(artistRow.id), name: String(artistRow.name), entries: artistProfile.entries, listenerTags: artistProfile.listenerTags }
-      : null,
+    album: albumRow && albumProfile ? {
+      id: String(albumRow.id), title: String(albumRow.title), artworkId: albumRow.art_hash ?? null, entries: albumProfile.entries,
+    } : null,
+    artist: artistRow && artistProfile ? {
+      id: String(artistRow.id), name: String(artistRow.name),
+      imageUrl: artistRow.image_url ?? null, artworkUrl: artistRow.artwork_url ?? null, musicBrainzId: artistRow.mbid ?? null,
+      entries: artistProfile.entries, listenerTags: artistProfile.listenerTags,
+    } : null,
     otherAlbums: others.rows.map((r: any) => ({
       trackId: String(r.id),
       albumId: r.album_id ? String(r.album_id) : null,
       albumTitle: String(r.album_title),
       artistName: String(r.artist_name),
       year: r.year === null ? null : Number(r.year),
+      artworkId: r.art_hash ?? null,
     })),
   };
 }

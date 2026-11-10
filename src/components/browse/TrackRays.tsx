@@ -4,9 +4,13 @@ import { Loader2, Play, X } from 'lucide-react';
 import { usePlayerStore } from '../../store/index';
 import { fetchTaxonomy, fetchTrackRays, genrePath, setTrackStyle, stylePath } from '../../api/browse';
 import { toPlayableTracks } from '../../utils/playableTracks';
+import { useArtistData } from '../../hooks/useArtistData';
+import { AlbumArt } from '../AlbumArt';
 import { BackButton } from '../library/BackButton';
+import { ArtistInitial } from '../library/ArtistInitial';
+import { FadedHeroImage } from '../library/FadedHeroImage';
 import { StylePicker, type GenreTaxonomy } from '../settings/StylePicker';
-import { BrowseError } from './browseParts';
+import { BrowseError, coverUrlFor } from './browseParts';
 import type { StyleProfileEntry, TrackRays as Rays } from '../../../shared/api/v1';
 import type { GenreTarget } from '../../../shared/genreReview';
 
@@ -32,10 +36,10 @@ function sourceText(row: StyleRow): string {
 
 /** One person per row in a role, with every instrument or detail they're credited for. */
 function groupCredits(credits: Rays['credits']) {
-  const roles = new Map<string, Map<string, { artistId: string; name: string; details: string[] }>>();
+  const roles = new Map<string, Map<string, { artistId: string; name: string; imageUrl: string | null; details: string[] }>>();
   for (const c of credits) {
     const people = roles.get(c.role) || new Map();
-    const person = people.get(c.artistId) || { artistId: c.artistId, name: c.name, details: [] };
+    const person = people.get(c.artistId) || { artistId: c.artistId, name: c.name, imageUrl: c.imageUrl, details: [] };
     if (c.detail && !person.details.includes(c.detail)) person.details.push(c.detail);
     people.set(c.artistId, person);
     roles.set(c.role, people);
@@ -56,6 +60,26 @@ function contextLine(rays: Rays): string | null {
   if (own.styleId === albumTop.styleId) return `${own.style}, like ${share} of ${rays.album.title}.`;
   return `${own.style}, where ${albumTop.style} leads ${rays.album.title} (${share}).`;
 }
+
+/** A round artist image, or the initial when there is none or it fails to load. */
+const PersonAvatar: React.FC<{ name: string; imageUrl?: string | null; size?: 'sm' | 'md' | 'lg' }> = ({ name, imageUrl, size = 'sm' }) => {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [imageUrl]);
+  return (
+    <span className={`rays-avatar rays-avatar--${size}`} aria-hidden="true">
+      {imageUrl && !failed
+        ? <img src={imageUrl} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} />
+        : <ArtistInitial name={name} className="rays-avatar__initial" />}
+    </span>
+  );
+};
+
+/** A small album cover, as everywhere else: rounded and clipped. */
+const CoverThumb: React.FC<{ artworkId: string | null; title: string; artist?: string; size?: 'sm' | 'md' }> = ({ artworkId, title, artist, size = 'sm' }) => (
+  <span className={`rays-cover rays-cover--${size}`} aria-hidden="true">
+    <AlbumArt artUrl={coverUrlFor(artworkId)} album={title} artist={artist} size={size === 'md' ? 128 : 96} className="w-full h-full object-cover" />
+  </span>
+);
 
 const ProfileChips: React.FC<{ entries: StyleProfileEntry[] }> = ({ entries }) => (
   <ul className="rays-chips">
@@ -136,36 +160,57 @@ export const TrackRays: React.FC = () => {
     await usePlayerStore.getState().setPlaylist(toPlayableTracks([rays.track]), 0, null);
   };
 
+  // The artist's portrait and wide banner come through the same cached
+  // provider lookup as the artist page; stored ones are the fallback.
+  const artistData = useArtistData(rays?.artist?.name || '', rays?.artist?.musicBrainzId, { enabled: !!rays?.artist });
+  const portrait = artistData.imageUrl || rays?.artist?.imageUrl || null;
+  const banner = artistData.artworkUrl || rays?.artist?.artworkUrl || null;
+  const cover = useMemo(() => (rays ? toPlayableTracks([rays.track])[0]?.artUrl : undefined), [rays]);
+
   const credits = useMemo(() => (rays ? groupCredits(rays.credits) : []), [rays]);
   const context = rays ? contextLine(rays) : null;
   const track = rays?.track;
   const artistName = track?.artist;
 
   return (
-    <div className="genre-detail page-container browse rays">
+    <div className="genre-detail page-container browse rays relative">
+      {rays && (banner || cover) && <FadedHeroImage src={(banner || cover)!} variant={banner ? 'wide' : 'standard'} />}
+      <div className="relative z-10">
       <BackButton onClick={() => navigate(-1)} />
 
       {error && (error.missing ? <p className="browse-empty">{error.message}</p> : <BrowseError message={error.message} onRetry={load} />)}
       {!rays && !error && (
-        <div className="h-24 w-2/3 max-w-xl rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" aria-hidden="true" />
+        <div className="rays-hero" aria-hidden="true">
+          <div className="rays-hero__cover bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
+          <div className="h-16 w-2/3 max-w-xl rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
+        </div>
       )}
 
       {rays && track && (
         <>
-          <header className="browse-hero">
-            <h1 className="rays-title">
-              <span className="rays-title__lead">Aurora rays from</span>
-              <span className="browse-hero__title">{track.title}</span>
-            </h1>
-            <p className="browse-hero__meta">
-              {rays.artist ? <Link to={`/library/artist/${rays.artist.id}`} className="rays-link">{artistName}</Link> : artistName}
-              {rays.album && <> · <Link to={`/library/album/${rays.album.id}`} className="rays-link">{rays.album.title}</Link></>}
-              {track.year ? ` · ${track.year}` : ''}
-            </p>
-            <div className="browse-hero__actions">
-              <button type="button" className="btn btn-primary" onClick={() => void play()}>
-                <Play size={16} fill="currentColor" aria-hidden="true" /> Play
-              </button>
+          <header className="rays-hero">
+            <div className="rays-hero__cover">
+              <AlbumArt artUrl={cover} album={rays.album?.title || track.album} artist={track.artist} size={400} className="w-full h-full object-cover" />
+            </div>
+            <div className="rays-hero__text">
+              <h1 className="rays-title">
+                <span className="rays-title__lead">Aurora rays from </span>{track.title}
+              </h1>
+              <p className="rays-hero__meta">
+                {rays.artist ? (
+                  <Link to={`/library/artist/${rays.artist.id}`} className="rays-hero__artist rays-link">
+                    <PersonAvatar name={rays.artist.name} imageUrl={portrait} />
+                    {artistName}
+                  </Link>
+                ) : <span>{artistName}</span>}
+                {rays.album && <><span aria-hidden="true">·</span><Link to={`/library/album/${rays.album.id}`} className="rays-link">{rays.album.title}</Link></>}
+                {track.year ? <><span aria-hidden="true">·</span><span>{track.year}</span></> : null}
+              </p>
+              <div className="browse-hero__actions">
+                <button type="button" className="btn btn-primary" onClick={() => void play()}>
+                  <Play size={16} fill="currentColor" aria-hidden="true" /> Play
+                </button>
+              </div>
             </div>
           </header>
 
@@ -177,13 +222,19 @@ export const TrackRays: React.FC = () => {
                   <div key={role} className="rays-credits__row">
                     <dt>{roleLabel(role)}</dt>
                     <dd>
-                      {people.map((p, i) => (
-                        <React.Fragment key={p.artistId}>
-                          {i > 0 && ', '}
-                          <Link to={`/library/artist/${p.artistId}`} className="rays-link">{p.name}</Link>
-                          {p.details.length > 0 && <span className="rays-muted"> ({p.details.join(', ')})</span>}
-                        </React.Fragment>
-                      ))}
+                      <ul className="rays-people">
+                        {people.map(p => (
+                          <li key={p.artistId}>
+                            <Link to={`/library/artist/${p.artistId}`} className="rays-person">
+                              <PersonAvatar name={p.name} imageUrl={p.imageUrl} />
+                              <span className="rays-person__name">
+                                {p.name}
+                                {p.details.length > 0 && <span className="rays-person__detail">{p.details.join(', ')}</span>}
+                              </span>
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
                     </dd>
                   </div>
                 ))}
@@ -268,26 +319,40 @@ export const TrackRays: React.FC = () => {
             <section className="browse-section" aria-label="In context">
               <h2 className="browse-section__title">In context</h2>
               {context && <p className="rays-context">{context}</p>}
-              {rays.album && rays.album.entries.length > 0 && (
-                <div className="rays-profile">
-                  <span className="rays-muted">The album, {rays.album.title}</span>
-                  <ProfileChips entries={rays.album.entries} />
-                </div>
-              )}
-              {rays.artist && rays.artist.entries.length > 0 && (
-                <div className="rays-profile">
-                  <span className="rays-muted">{rays.artist.name}, each album counted once</span>
-                  <ProfileChips entries={rays.artist.entries} />
-                </div>
-              )}
-              {rays.artist && rays.artist.listenerTags.length > 0 && (
-                <div className="rays-profile">
-                  <span className="rays-muted">What listeners tag {rays.artist.name} with on Last.fm and MusicBrainz</span>
-                  <ul className="rays-chips">
-                    {rays.artist.listenerTags.map(t => <li key={t}><span className="rays-chip rays-chip--plain">{t}</span></li>)}
-                  </ul>
-                </div>
-              )}
+              <div className="rays-context-grid">
+                {rays.album && rays.album.entries.length > 0 && (
+                  <div className="rays-profile">
+                    <Link to={`/library/album/${rays.album.id}`} className="rays-profile__head">
+                      <CoverThumb artworkId={rays.album.artworkId} title={rays.album.title} artist={track.artist} size="md" />
+                      <span>
+                        <span className="rays-profile__name">{rays.album.title}</span>
+                        <span className="rays-muted">The album</span>
+                      </span>
+                    </Link>
+                    <ProfileChips entries={rays.album.entries} />
+                  </div>
+                )}
+                {rays.artist && (rays.artist.entries.length > 0 || rays.artist.listenerTags.length > 0) && (
+                  <div className="rays-profile">
+                    <Link to={`/library/artist/${rays.artist.id}`} className="rays-profile__head">
+                      <PersonAvatar name={rays.artist.name} imageUrl={portrait} size="lg" />
+                      <span>
+                        <span className="rays-profile__name">{rays.artist.name}</span>
+                        <span className="rays-muted">Each album counted once</span>
+                      </span>
+                    </Link>
+                    {rays.artist.entries.length > 0 && <ProfileChips entries={rays.artist.entries} />}
+                    {rays.artist.listenerTags.length > 0 && (
+                      <>
+                        <span className="rays-muted">Listeners tag them on Last.fm and MusicBrainz</span>
+                        <ul className="rays-chips">
+                          {rays.artist.listenerTags.map(t => <li key={t}><span className="rays-chip rays-chip--plain">{t}</span></li>)}
+                        </ul>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
             </section>
           )}
 
@@ -297,17 +362,20 @@ export const TrackRays: React.FC = () => {
               <ul className="browse-index browse-index--single">
                 {rays.otherAlbums.map(o => (
                   <li key={o.trackId}>
-                    {o.albumId ? (
-                      <Link to={`/library/album/${o.albumId}`} className="browse-index__row">
-                        <span className="browse-index__name">{o.albumTitle}</span>
-                        <span className="browse-index__count">{[o.artistName, o.year].filter(Boolean).join(' · ')}</span>
-                      </Link>
-                    ) : (
-                      <span className="browse-index__row">
-                        <span className="browse-index__name">{o.albumTitle}</span>
-                        <span className="browse-index__count">{[o.artistName, o.year].filter(Boolean).join(' · ')}</span>
-                      </span>
-                    )}
+                    {(() => {
+                      const content = (
+                        <>
+                          <span className="browse-index__name">
+                            <CoverThumb artworkId={o.artworkId} title={o.albumTitle} artist={o.artistName} />
+                            {o.albumTitle}
+                          </span>
+                          <span className="browse-index__count">{[o.artistName, o.year].filter(Boolean).join(' · ')}</span>
+                        </>
+                      );
+                      return o.albumId
+                        ? <Link to={`/library/album/${o.albumId}`} className="browse-index__row rays-album-row">{content}</Link>
+                        : <span className="browse-index__row rays-album-row">{content}</span>;
+                    })()}
                   </li>
                 ))}
               </ul>
@@ -315,6 +383,7 @@ export const TrackRays: React.FC = () => {
           )}
         </>
       )}
+      </div>
     </div>
   );
 };

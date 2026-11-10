@@ -716,6 +716,7 @@ export const trackRaysSchema = z.object({
     artistId: z.string(),
     name: z.string(),
     detail: z.string().nullable().describe('An instrument for performers, when known.'),
+    imageUrl: z.string().nullable().describe('A stored artist image, when the library has one (no provider lookup).'),
   })).describe('Every stored credit, in role order (performer, composer, conductor, lyricist, producer, …).'),
   tags: z.array(z.string()).describe('The genre tags in the file, as written.'),
   styles: z.array(z.object({
@@ -736,9 +737,15 @@ export const trackRaysSchema = z.object({
     closestStyles: z.array(z.object({ genre: z.string(), styleId: z.number().int(), style: z.string(), score: z.number() }))
       .describe('The 5 styles the sound is closest to, by the audio model.'),
   }).nullable().describe('null before analysis, or for a track analysed without real audio.'),
-  album: z.object({ id: z.string(), title: z.string(), entries: z.array(styleProfileEntrySchema) }).nullable(),
+  album: z.object({
+    id: z.string(), title: z.string(),
+    artworkId: z.string().nullable().describe('Cover art of the album, as for AlbumSummary.'),
+    entries: z.array(styleProfileEntrySchema),
+  }).nullable(),
   artist: z.object({
     id: z.string(), name: z.string(),
+    imageUrl: z.string().nullable(), artworkUrl: z.string().nullable(),
+    musicBrainzId: z.string().nullable(),
     entries: z.array(styleProfileEntrySchema.extend({ albumCount: z.number().int().nonnegative() })),
     listenerTags: z.array(z.string()),
   }).nullable(),
@@ -748,6 +755,7 @@ export const trackRaysSchema = z.object({
     albumTitle: z.string(),
     artistName: z.string(),
     year: z.number().int().nullable(),
+    artworkId: z.string().nullable(),
   })).describe('Other albums in the library with this recording (by MusicBrainz recording id, else artist and title).'),
 }).meta({ id: 'TrackRays' });
 

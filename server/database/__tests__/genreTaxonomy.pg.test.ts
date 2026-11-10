@@ -414,6 +414,7 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     expect(rays.styles.map(r => `${r.style}:${r.source}`)).toEqual(['null:tag', 'Pop Rock:audio']);
     expect(rays.sound!.closestStyles.map(s => s.style).slice(0, 3)).toEqual(['House', 'Hard Rock', 'Pop Rock']);
     expect(rays.album?.title).toBe('Fusion A');
+    expect(rays.otherAlbums).toEqual([]);
     expect(rays.artist).toMatchObject({ name: 'Fusion Artist', listenerTags: ['electronic'] });
     expect(await getTrackRays(pool, 'no-such-track')).toBeNull();
 

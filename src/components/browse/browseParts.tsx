@@ -84,13 +84,14 @@ export const DecadeButtons: React.FC<{
   );
 };
 
-const albumArtUrl = (album: BrowseAlbum['album']) => {
-  if (album.artworkId) {
-    const token = usePlayerStore.getState().mediaAccessToken || '';
-    return `/api/art?hash=${encodeURIComponent(album.artworkId)}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
-  }
-  return album.imageUrl || undefined;
+/** A stored cover (by its art hash), with the media token the art route needs. */
+export const coverUrlFor = (artworkId: string | null | undefined): string | undefined => {
+  if (!artworkId) return undefined;
+  const token = usePlayerStore.getState().mediaAccessToken || '';
+  return `/api/art?hash=${encodeURIComponent(artworkId)}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
 };
+
+const albumArtUrl = (album: BrowseAlbum['album']) => coverUrlFor(album.artworkId) || album.imageUrl || undefined;
 
 /** "12 of 29 tracks" when only part of the album is in the genre or style. */
 const albumSubtitle = (item: BrowseAlbum) => {
