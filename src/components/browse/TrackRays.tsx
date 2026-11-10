@@ -270,8 +270,8 @@ const SoundMeter: React.FC<{ label: string; low: string; high: string; value: nu
   </div>
 );
 
-/** A nice upper bound for a 0–1 axis: the next tenth above the largest value. */
-const niceMax = (values: number[]) => Math.min(1, Math.max(0.1, Math.ceil(Math.max(0, ...values) * 10) / 10));
+/** A bar's fill on the full 0–1 scale, as the Sound meters: a full track is 1 (100 %). */
+const fillWidth = (value: number) => `${Math.max(0, Math.min(1, value)) * 100}%`;
 
 /**
  * The audio model's style scores (0–1 each, independent: a track can
@@ -291,7 +291,6 @@ const StyleScoreChart: React.FC<{
   onToggle?: (score: StyleScore) => void;
   saving?: string | null;
 }> = ({ scores, memberIds, onToggle, saving = null }) => {
-  const max = niceMax(scores.map(s => s.score));
   // Name a style's genre only where it differs from most of the list, so a
   // list of Electronic styles doesn't say Electronic twelve times.
   const genreCount = new Map<string, number>();
@@ -323,7 +322,7 @@ const StyleScoreChart: React.FC<{
                 {s.genre !== leadGenre && <span className="rays-bar__genre">{s.genre}</span>}
               </span>
               <span className="rays-bar__track" aria-hidden="true">
-                <span className="rays-bar__fill" style={{ width: `${(s.score / max) * 100}%` }} />
+                <span className="rays-bar__fill" style={{ width: fillWidth(s.score) }} />
               </span>
               <span className="rays-bar__value">{scoreWord(s.score)}</span>
             </>
@@ -368,7 +367,6 @@ const GenreMixChart: React.FC<{ mix: NonNullable<Rays['sound']>['genreMix'] }> =
   const shown = mix.filter(g => g.share >= 0.01).slice(0, 6);
   const rest = mix.filter(g => !shown.includes(g)).reduce((sum, g) => sum + g.share, 0);
   const rows = rest >= 0.005 ? [...shown, { genre: 'Other genres', share: rest }] : shown;
-  const max = niceMax(rows.map(r => r.share));
   return (
     <figure className="rays-chart">
       <figcaption className="rays-chart__head">
@@ -381,7 +379,7 @@ const GenreMixChart: React.FC<{ mix: NonNullable<Rays['sound']>['genreMix'] }> =
             <span className="rays-bar rays-bar--static" title={`${r.genre}: ${Math.round(r.share * 100)} % of the scores`}>
               <span className="rays-bar__label"><span className="rays-bar__name">{r.genre}</span></span>
               <span className="rays-bar__track" aria-hidden="true">
-                <span className="rays-bar__fill rays-bar__fill--single" style={{ width: `${(r.share / max) * 100}%` }} />
+                <span className="rays-bar__fill rays-bar__fill--single" style={{ width: fillWidth(r.share) }} />
               </span>
               <span className="rays-bar__value">{Math.round(r.share * 100)} %</span>
             </span>

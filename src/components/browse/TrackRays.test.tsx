@@ -95,7 +95,9 @@ test('says where each genre and style came from, groups credits by person, and s
   expect(glitchBar.getAttribute('data-member')).toBe('true');
   expect(within(glitchBar).getByLabelText("One of this track's styles")).toBeTruthy();
   expect(screen.getByTitle('Downtempo (Electronic): clear, model score 0.31').getAttribute('data-member')).toBeNull();
-  expect(screen.getByTitle('Hip Hop: 20 % of the scores')).toBeTruthy();
+  // Both charts fill on the full scale, like the Sound meters: 20 % fills a fifth, 0.50 half.
+  expect((screen.getByTitle('Hip Hop: 20 % of the scores').querySelector('.rays-bar__fill') as HTMLElement).style.width).toBe('20%');
+  expect((glitchBar.querySelector('.rays-bar__fill') as HTMLElement).style.width).toBe('50%');
   expect(screen.getByRole('meter', { name: 'Brightness' }).getAttribute('aria-valuenow')).toBe('40');
   expect(screen.getByText('Glitch, where Downtempo leads Taking Up Your Precious Time (60 %).')).toBeTruthy();
   expect(screen.getByRole('meter', { name: 'Character' }).getAttribute('aria-valuenow')).toBe('90');

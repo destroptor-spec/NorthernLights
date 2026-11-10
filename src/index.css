@@ -1958,7 +1958,7 @@ a:focus-visible > .genre-card .genre-card__label {
   margin-top: 0.25rem;
 }
 
-/* Charts of the raw analysis: ranked horizontal bars on a 0-to-max axis,
+/* Charts of the raw analysis: ranked horizontal bars on the full 0-to-1 scale,
    every bar labelled (name, value). The bars are the Sound card's meters:
    a glass pill track, filled with the play gradient for the track's own
    styles (plus a check) and the genre mix, --chart-context for the rest. */
