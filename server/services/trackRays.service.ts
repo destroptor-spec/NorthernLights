@@ -9,11 +9,11 @@ import type { TrackRays } from '../../shared/api/v1';
 import { creditRoleRank } from '../../shared/trackCredits';
 import { getAlbumStyleProfile, getArtistStyleProfile } from './browse.service';
 
-const CLOSEST_STYLES = 5;
+const CLOSEST_STYLES = 12;
 const OTHER_ALBUMS = 20;
 
 /** Positions in track_features.acoustic_vector_8d (extractor.py). */
-const VECTOR = { energy: 0, instrumentalness: 4, acousticness: 5, danceability: 6 } as const;
+const VECTOR = { energy: 0, brightness: 1, percussiveness: 2, instrumentalness: 4, acousticness: 5, danceability: 6 } as const;
 
 const parseVector = (value: unknown): number[] | null => {
   if (Array.isArray(value)) return value.map(Number);
@@ -28,7 +28,7 @@ export async function getTrackRays(db: Pool, trackId: string): Promise<Omit<Trac
     `SELECT id, title, artist, album_id, artist_id, mb_recording_id FROM tracks WHERE id = $1`, [trackId])).rows[0];
   if (!head) return null;
 
-  const [credits, tags, styles, features, scores, others] = await Promise.all([
+  const [credits, tags, styles, features, scores, others, mix] = await Promise.all([
     db.query(`
       SELECT tac.role, tac.artist_id, a.name, NULLIF(tac.detail, '') AS detail, tac.position, a.image_url
       FROM track_artist_credits tac JOIN artists a ON a.id = tac.artist_id
@@ -63,6 +63,13 @@ export async function getTrackRays(db: Pool, trackId: string): Promise<Omit<Trac
       )
       ORDER BY t.year NULLS LAST, album_title LIMIT $5`,
     [trackId, head.mb_recording_id || null, head.artist || '', head.title || '', OTHER_ALBUMS]),
+    // Where the model's scores fall: each genre's share of the summed scores.
+    db.query(`
+      SELECT st.genre, SUM(u.score) / NULLIF(SUM(SUM(u.score)) OVER (), 0) AS share
+      FROM track_style_scores ss
+      CROSS JOIN LATERAL unnest(ss.scores) WITH ORDINALITY u(score, idx)
+      JOIN style st ON st.model_index = u.idx - 1
+      WHERE ss.track_id = $1 GROUP BY st.genre ORDER BY share DESC`, [trackId]),
   ]);
 
   const feature = features.rows[0];
@@ -72,8 +79,11 @@ export async function getTrackRays(db: Pool, trackId: string): Promise<Omit<Trac
     danceability: unit(vector[VECTOR.danceability]),
     acousticness: unit(vector[VECTOR.acousticness]),
     instrumentalness: unit(vector[VECTOR.instrumentalness]),
+    brightness: unit(vector[VECTOR.brightness]),
+    percussiveness: unit(vector[VECTOR.percussiveness]),
     bpm: Number(feature.bpm) > 0 ? Math.round(Number(feature.bpm)) : null,
     closestStyles: scores.rows.map((r: any) => ({ genre: r.genre, styleId: Number(r.id), style: r.name, score: Number(r.score) })),
+    genreMix: mix.rows.filter((r: any) => r.share !== null).map((r: any) => ({ genre: r.genre, share: unit(Number(r.share)) })),
   } : null;
 
   const albumRow = head.album_id

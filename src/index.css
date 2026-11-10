@@ -25,6 +25,12 @@
   --color-text-primary: #1C1C1E; /* Almost black */
   --color-text-secondary: #3a3a48;
   --color-text-muted: #3a3a48;
+  /* Charts (emphasis form): the highlighted series, and the context around it.
+     Validated with the dataviz palette script against this theme's background:
+     distinct under colour-blind simulation (ΔE 13) and normal vision (ΔE 19);
+     the context grey is under 3:1, so every bar carries a visible label. */
+  --chart-emphasis: var(--color-primary);
+  --chart-context: #a3abb6;
   --color-border: rgba(0, 0, 0, 0.05); /* Soft glass borders */
   --color-accent: #E11D48; /* Rose 600 */
   --color-error: #FF3B30;
@@ -176,6 +182,7 @@
   --color-text-primary: #d8d8e8;
   --color-text-secondary: #c6c6da;
   --color-text-muted: #c6c6da;
+  --chart-context: #6c7182; /* ΔE 21 colour-blind, 26 normal vs emerald; 3:1 on the void */
   --color-border: rgba(34, 201, 131, 0.08);
   --color-accent: #f43f5e; /* Rose 500 */
   --color-error: #f87171;
@@ -1908,51 +1915,247 @@ a:focus-visible > .genre-card .genre-card__label {
   font-size: 0.82rem;
 }
 
-/* Credits: one row per role, each person a small pill with their portrait. */
-.rays-people {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.375rem;
+/* Credits: one card per person, every role they hold on the track, then
+   their instruments. Cards take the Jump back in tile surface (Hub). */
+.rays-credit-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 0.625rem;
+  max-width: 72rem;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.rays-person {
-  display: inline-flex;
+.rays-credit-card {
+  display: flex;
   align-items: center;
-  gap: 0.5rem;
-  min-height: 2.25rem;
-  padding: 0.25rem 0.75rem 0.25rem 0.25rem;
+  gap: 0.75rem;
+  height: 100%;
+  min-height: 4.25rem;
+  padding: 0.75rem 0.875rem;
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
   color: var(--color-text-primary);
   text-decoration: none;
-  transition: border-color 140ms ease-out, color 140ms ease-out;
+  transition: background-color 140ms ease-out;
 }
 
-.rays-person:hover,
-.rays-person:focus-visible {
-  border-color: var(--glass-border-hover);
-  color: var(--color-primary);
+.rays-credit-card:hover,
+.rays-credit-card:focus-visible {
+  background: var(--glass-bg-hover);
   outline: none;
 }
 
-.rays-person:focus-visible {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 55%, transparent);
+.rays-credit-card:focus-visible {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-primary) 60%, transparent);
 }
 
-.rays-person__name {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 0.375rem;
-  font-size: 0.875rem;
+.rays-credit-card__text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 
-.rays-person__detail {
+.rays-credit-card__name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.rays-credit-card:hover .rays-credit-card__name,
+.rays-credit-card:focus-visible .rays-credit-card__name {
+  color: var(--color-primary);
+}
+
+.rays-credit-card__roles {
+  color: var(--color-text-secondary);
+  font-size: 0.82rem;
+}
+
+.rays-credit-card__detail {
   color: var(--color-text-muted);
   font-size: 0.78rem;
+}
+
+.rays-subtitle {
+  margin: 2rem 0 0.875rem;
+  font-size: 1rem;
+  color: var(--color-text-secondary);
+}
+
+.browse-section__title + .rays-subtitle {
+  margin-top: 0.25rem;
+}
+
+/* Charts of the raw analysis: ranked horizontal bars on a 0-to-max axis,
+   thin marks with rounded ends, every bar labelled (name, value). Emphasis:
+   --chart-emphasis for the track's own styles (plus a check), --chart-context
+   for the rest. */
+.rays-charts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2rem 3rem;
+  max-width: 72rem;
+  margin-top: 2rem;
+}
+
+@media (min-width: 1024px) {
+  .rays-charts { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+}
+
+.rays-chart {
+  display: grid;
+  align-content: start;
+  gap: 0.75rem;
+  min-width: 0;
+  margin: 0;
+}
+
+.rays-chart__head {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.rays-chart__title {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.rays-chart__note {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+.rays-chart__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin-top: 0.25rem;
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+}
+
+.rays-chart__legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.rays-swatch {
+  width: 0.75rem;
+  height: 0.5rem;
+  border-radius: 2px;
+}
+
+.rays-swatch--emphasis { background: var(--chart-emphasis); }
+.rays-swatch--context { background: var(--chart-context); }
+
+.rays-bars {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rays-bar {
+  display: grid;
+  grid-template-columns: minmax(7rem, 11rem) minmax(0, 1fr) 2.75rem;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 2rem;
+  padding: 0 0.5rem;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  text-decoration: none;
+  font-size: 0.85rem;
+}
+
+a.rays-bar:hover,
+a.rays-bar:focus-visible {
+  background: var(--glass-bg-hover);
+  outline: none;
+}
+
+a.rays-bar:focus-visible {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-primary) 60%, transparent);
+}
+
+.rays-bar__label {
+  display: flex;
+  align-items: baseline;
+  gap: 0.375rem;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.rays-bar__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rays-bar__genre {
+  flex: none;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+}
+
+.rays-bar__check {
+  flex: none;
+  align-self: center;
+  color: var(--chart-emphasis);
+}
+
+.rays-bar__track {
+  height: 0.5rem;
+}
+
+.rays-bar__fill {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: 0 4px 4px 0;
+  background: var(--chart-context);
+}
+
+.rays-bar[data-member='true'] .rays-bar__fill,
+.rays-bar__fill--single {
+  background: var(--chart-emphasis);
+}
+
+.rays-bar__value {
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.rays-chart__axis {
+  display: grid;
+  grid-template-columns: minmax(7rem, 11rem) minmax(0, 1fr) 2.75rem;
+  gap: 0.75rem;
+  padding: 0 0.5rem;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.rays-chart__scale {
+  grid-column: 2;
+  display: flex;
+  justify-content: space-between;
+}
+
+@media (max-width: 520px) {
+  .rays-bar,
+  .rays-chart__axis { grid-template-columns: minmax(6rem, 8.5rem) minmax(0, 1fr) 2.5rem; gap: 0.5rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rays-credit-card { transition: none; }
 }
 
 /* In context: the album and the artist side by side, each headed by its image. */
@@ -1990,43 +2193,6 @@ a:focus-visible > .genre-card .genre-card__label {
 
 .rays-album-row .browse-index__name {
   gap: 0.75rem;
-}
-
-.rays-credits {
-  display: grid;
-  gap: 0.75rem;
-  max-width: 64rem;
-  margin: 0;
-}
-
-.rays-credits__row {
-  display: grid;
-  grid-template-columns: minmax(7rem, 10rem) minmax(0, 1fr);
-  gap: 1rem;
-}
-
-.rays-credits__row dt {
-  padding-top: 0.5rem;
-  color: var(--color-text-muted);
-  font-size: 0.85rem;
-}
-
-.rays-credits__row dd {
-  margin: 0;
-  color: var(--color-text-primary);
-  line-height: 1.5;
-}
-
-@media (max-width: 520px) {
-  .rays-credits__row {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0.375rem;
-  }
-  .rays-credits__row dt { padding-top: 0; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .rays-person { transition: none; }
 }
 
 /* A genre or style row: the link fills the tile; Remove (admins) sits beside it. */
@@ -2110,7 +2276,6 @@ a:focus-visible > .genre-card .genre-card__label {
   font-variant-numeric: tabular-nums;
 }
 
-.rays-closest,
 .rays-profile {
   display: grid;
   align-content: start;

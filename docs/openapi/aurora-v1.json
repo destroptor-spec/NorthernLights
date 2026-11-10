@@ -2197,6 +2197,17 @@
                 "minimum": 0,
                 "maximum": 1
               },
+              "brightness": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "Spectral centroid, scaled 0 (dark) to 1 (bright)."
+              },
+              "percussiveness": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
               "bpm": {
                 "type": [
                   "integer",
@@ -2228,7 +2239,28 @@
                     "score"
                   ]
                 },
-                "description": "The 5 styles the sound is closest to, by the audio model."
+                "description": "The 12 styles the audio model scores highest (raw scores, 0-1; a track can score high on several)."
+              },
+              "genreMix": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "genre": {
+                      "type": "string"
+                    },
+                    "share": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  },
+                  "required": [
+                    "genre",
+                    "share"
+                  ]
+                },
+                "description": "Each genre's share of the summed scores over all 400 styles, largest first."
               }
             },
             "required": [
@@ -2236,8 +2268,11 @@
               "danceability",
               "acousticness",
               "instrumentalness",
+              "brightness",
+              "percussiveness",
               "bpm",
-              "closestStyles"
+              "closestStyles",
+              "genreMix"
             ],
             "description": "null before analysis, or for a track analysed without real audio."
           },

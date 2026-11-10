@@ -733,9 +733,13 @@ export const trackRaysSchema = z.object({
     danceability: z.number().min(0).max(1),
     acousticness: z.number().min(0).max(1),
     instrumentalness: z.number().min(0).max(1),
+    brightness: z.number().min(0).max(1).describe('Spectral centroid, scaled 0 (dark) to 1 (bright).'),
+    percussiveness: z.number().min(0).max(1),
     bpm: z.number().int().nullable(),
     closestStyles: z.array(z.object({ genre: z.string(), styleId: z.number().int(), style: z.string(), score: z.number() }))
-      .describe('The 5 styles the sound is closest to, by the audio model.'),
+      .describe('The 12 styles the audio model scores highest (raw scores, 0-1; a track can score high on several).'),
+    genreMix: z.array(z.object({ genre: z.string(), share: z.number().min(0).max(1) }))
+      .describe('Each genre\'s share of the summed scores over all 400 styles, largest first.'),
   }).nullable().describe('null before analysis, or for a track analysed without real audio.'),
   album: z.object({
     id: z.string(), title: z.string(),

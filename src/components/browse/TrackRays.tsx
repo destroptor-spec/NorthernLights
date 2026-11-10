@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Loader2, Play, X } from 'lucide-react';
+import { Check, Loader2, Play, X } from 'lucide-react';
 import { usePlayerStore } from '../../store/index';
 import { fetchTaxonomy, fetchTrackRays, genrePath, setTrackStyle, stylePath } from '../../api/browse';
 import { toPlayableTracks } from '../../utils/playableTracks';
@@ -34,17 +34,20 @@ function sourceText(row: StyleRow): string {
   }
 }
 
-/** One person per row in a role, with every instrument or detail they're credited for. */
-function groupCredits(credits: Rays['credits']) {
-  const roles = new Map<string, Map<string, { artistId: string; name: string; imageUrl: string | null; details: string[] }>>();
+/**
+ * One card per person (or group), with every role they're credited for on
+ * the track in role order, and every instrument or detail. A producer who
+ * also wrote, mixed and played is one card, not five rows.
+ */
+function creditsByPerson(credits: Rays['credits']) {
+  const people = new Map<string, { artistId: string; name: string; imageUrl: string | null; roles: string[]; details: string[] }>();
   for (const c of credits) {
-    const people = roles.get(c.role) || new Map();
-    const person = people.get(c.artistId) || { artistId: c.artistId, name: c.name, imageUrl: c.imageUrl, details: [] };
+    const person = people.get(c.artistId) || { artistId: c.artistId, name: c.name, imageUrl: c.imageUrl, roles: [], details: [] };
+    if (!person.roles.includes(c.role)) person.roles.push(c.role);
     if (c.detail && !person.details.includes(c.detail)) person.details.push(c.detail);
     people.set(c.artistId, person);
-    roles.set(c.role, people);
   }
-  return [...roles.entries()].map(([role, people]) => ({ role, people: [...people.values()] }));
+  return [...people.values()];
 }
 
 /**
@@ -105,6 +108,85 @@ const SoundMeter: React.FC<{ label: string; low: string; high: string; value: nu
     <span className="rays-meter__ends"><span>{low}</span><span>{high}</span></span>
   </div>
 );
+
+/** A nice upper bound for a 0–1 axis: the next tenth above the largest value. */
+const niceMax = (values: number[]) => Math.min(1, Math.max(0.1, Math.ceil(Math.max(0, ...values) * 10) / 10));
+
+/**
+ * The audio model's raw style scores (0–1 each, independent: a track can
+ * score high on several), ranked. Emphasis form: the styles the track is in
+ * are emerald and carry a check, the rest grey; every bar is labelled.
+ */
+const StyleScoreChart: React.FC<{ scores: NonNullable<Rays['sound']>['closestStyles']; memberIds: Set<number> }> = ({ scores, memberIds }) => {
+  const max = niceMax(scores.map(s => s.score));
+  return (
+    <figure className="rays-chart">
+      <figcaption className="rays-chart__head">
+        <span className="rays-chart__title">Styles the audio model hears</span>
+        <span className="rays-chart__note">Each style scored 0 to 1 on its own; a track can score high on several.</span>
+        <span className="rays-chart__legend">
+          <span><span className="rays-swatch rays-swatch--emphasis" aria-hidden="true" />This track's styles</span>
+          <span><span className="rays-swatch rays-swatch--context" aria-hidden="true" />Other styles it is close to</span>
+        </span>
+      </figcaption>
+      <ul className="rays-bars">
+        {scores.map(s => {
+          const member = memberIds.has(s.styleId);
+          return (
+            <li key={s.styleId}>
+              <Link
+                to={stylePath(s.styleId)}
+                className="rays-bar"
+                data-member={member ? 'true' : undefined}
+                title={`${s.style} (${s.genre}): ${s.score.toFixed(2)}${member ? ', one of this track\'s styles' : ''}`}
+              >
+                <span className="rays-bar__label">
+                  {member && <Check size={13} className="rays-bar__check" aria-label="One of this track's styles" />}
+                  <span className="rays-bar__name">{s.style}</span>
+                  <span className="rays-bar__genre">{s.genre}</span>
+                </span>
+                <span className="rays-bar__track" aria-hidden="true">
+                  <span className="rays-bar__fill" style={{ width: `${(s.score / max) * 100}%` }} />
+                </span>
+                <span className="rays-bar__value">{s.score.toFixed(2)}</span>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+      <span className="rays-chart__axis" aria-hidden="true"><span className="rays-chart__scale"><span>0</span><span>{max.toFixed(1)}</span></span></span>
+    </figure>
+  );
+};
+
+/** How the model's scores split across genres: ranked bars, one hue, the tail folded into Other. */
+const GenreMixChart: React.FC<{ mix: NonNullable<Rays['sound']>['genreMix'] }> = ({ mix }) => {
+  const shown = mix.slice(0, 6);
+  const rest = mix.slice(6).reduce((sum, g) => sum + g.share, 0);
+  const rows = rest >= 0.005 ? [...shown, { genre: 'Other genres', share: rest }] : shown;
+  const max = niceMax(rows.map(r => r.share));
+  return (
+    <figure className="rays-chart">
+      <figcaption className="rays-chart__head">
+        <span className="rays-chart__title">Where those scores fall, by genre</span>
+        <span className="rays-chart__note">Each genre's share of the scores over all 400 styles.</span>
+      </figcaption>
+      <ul className="rays-bars">
+        {rows.map(r => (
+          <li key={r.genre}>
+            <span className="rays-bar rays-bar--static" title={`${r.genre}: ${Math.round(r.share * 100)} % of the scores`}>
+              <span className="rays-bar__label"><span className="rays-bar__name">{r.genre}</span></span>
+              <span className="rays-bar__track" aria-hidden="true">
+                <span className="rays-bar__fill rays-bar__fill--single" style={{ width: `${(r.share / max) * 100}%` }} />
+              </span>
+              <span className="rays-bar__value">{Math.round(r.share * 100)} %</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </figure>
+  );
+};
 
 /**
  * "Aurora rays from {title}": everything Aurora knows about one track:
@@ -167,7 +249,8 @@ export const TrackRays: React.FC = () => {
   const banner = artistData.artworkUrl || rays?.artist?.artworkUrl || null;
   const cover = useMemo(() => (rays ? toPlayableTracks([rays.track])[0]?.artUrl : undefined), [rays]);
 
-  const credits = useMemo(() => (rays ? groupCredits(rays.credits) : []), [rays]);
+  const credits = useMemo(() => (rays ? creditsByPerson(rays.credits) : []), [rays]);
+  const memberStyleIds = useMemo(() => new Set((rays?.styles || []).filter(r => r.styleId !== null).map(r => r.styleId as number)), [rays]);
   const context = rays ? contextLine(rays) : null;
   const track = rays?.track;
   const artistName = track?.artist;
@@ -217,101 +300,20 @@ export const TrackRays: React.FC = () => {
           {credits.length > 0 && (
             <section className="browse-section" aria-label="Credits">
               <h2 className="browse-section__title">Credits</h2>
-              <dl className="rays-credits">
-                {credits.map(({ role, people }) => (
-                  <div key={role} className="rays-credits__row">
-                    <dt>{roleLabel(role)}</dt>
-                    <dd>
-                      <ul className="rays-people">
-                        {people.map(p => (
-                          <li key={p.artistId}>
-                            <Link to={`/library/artist/${p.artistId}`} className="rays-person">
-                              <PersonAvatar name={p.name} imageUrl={p.imageUrl} />
-                              <span className="rays-person__name">
-                                {p.name}
-                                {p.details.length > 0 && <span className="rays-person__detail">{p.details.join(', ')}</span>}
-                              </span>
-                            </Link>
-                          </li>
-                        ))}
-                      </ul>
-                    </dd>
-                  </div>
+              <ul className="rays-credit-cards">
+                {credits.map(p => (
+                  <li key={p.artistId}>
+                    <Link to={`/library/artist/${p.artistId}`} className="rays-credit-card">
+                      <PersonAvatar name={p.name} imageUrl={p.imageUrl} size="md" />
+                      <span className="rays-credit-card__text">
+                        <span className="rays-credit-card__name">{p.name}</span>
+                        <span className="rays-credit-card__roles">{p.roles.map(roleLabel).join(' · ')}</span>
+                        {p.details.length > 0 && <span className="rays-credit-card__detail">{p.details.join(', ')}</span>}
+                      </span>
+                    </Link>
+                  </li>
                 ))}
-              </dl>
-            </section>
-          )}
-
-          <section className="browse-section" aria-label="Genres and styles">
-            <h2 className="browse-section__title">Genres and styles</h2>
-            {rays.styles.length === 0
-              ? <p className="browse-empty">Aurora hasn't placed this track in a genre yet{rays.tags.length ? ` (its tags: ${rays.tags.join(', ')})` : ''}.</p>
-              : (
-                <ul className="browse-index browse-index--single">
-                  {rays.styles.map(row => {
-                    const key = `${row.genre}|${row.styleId}`;
-                    return (
-                      <li key={key} className="rays-style">
-                        <Link to={linkFor(row)} className="browse-index__row rays-style__row">
-                          <span className="rays-style__name">
-                            <span>{styleLabel(row)}</span>
-                            <span className="rays-muted">{sourceText(row)}</span>
-                          </span>
-                        </Link>
-                        {isAdmin && (
-                          <button
-                            type="button"
-                            className="btn btn-ghost btn-sm btn-icon rays-style__remove"
-                            onClick={() => void change(row, 'remove')}
-                            disabled={saving !== null}
-                            aria-label={`Remove ${styleLabel(row)} from this track`}
-                          >
-                            {saving === `remove:${key}` ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <X size={14} aria-hidden="true" />}
-                          </button>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            {isAdmin && (
-              <div className="rays-add">
-                <StylePicker taxonomy={taxonomy} value={adding} onChange={setAdding} disabled={saving !== null} label="Add a genre or style to this track" />
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  disabled={adding.length === 0 || saving !== null}
-                  onClick={async () => { for (const t of adding) await change(t, 'add'); setAdding([]); }}
-                >
-                  Add
-                </button>
-              </div>
-            )}
-          </section>
-
-          {rays.sound && (
-            <section className="browse-section" aria-label="Sound">
-              <h2 className="browse-section__title">Sound</h2>
-              <p className="browse-section__lede">From Aurora's analysis of the audio file.</p>
-              <div className="rays-sound">
-                <SoundMeter label="Energy" low="Calm" high="Energetic" value={rays.sound.energy} />
-                <SoundMeter label="Danceability" low="Still" high="Danceable" value={rays.sound.danceability} />
-                <SoundMeter label="Character" low="Acoustic" high="Electronic" value={1 - rays.sound.acousticness} />
-                <SoundMeter label="Voice" low="Vocal" high="Instrumental" value={rays.sound.instrumentalness} />
-              </div>
-              {rays.sound.bpm && <p className="rays-fact">Tempo <strong>{rays.sound.bpm} BPM</strong></p>}
-              {rays.sound.closestStyles.length > 0 && (
-                <div className="rays-closest">
-                  <span className="rays-muted">Closest styles by sound</span>
-                  <ul className="rays-chips">
-                    {rays.sound.closestStyles.map(s => (
-                      <li key={s.styleId}>
-                        <Link to={stylePath(s.styleId)} className="rays-chip">{s.style}<span className="rays-chip__share">{s.genre}</span></Link>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+              </ul>
             </section>
           )}
 
@@ -355,6 +357,77 @@ export const TrackRays: React.FC = () => {
               </div>
             </section>
           )}
+
+          <section className="browse-section" aria-label="Sound and style">
+            <h2 className="browse-section__title">Sound and style</h2>
+
+            <h3 className="rays-subtitle">Genres and styles</h3>
+            {rays.styles.length === 0
+              ? <p className="browse-empty">Aurora hasn't placed this track in a genre yet{rays.tags.length ? ` (its tags: ${rays.tags.join(', ')})` : ''}.</p>
+              : (
+                <ul className="browse-index browse-index--single">
+                  {rays.styles.map(row => {
+                    const key = `${row.genre}|${row.styleId}`;
+                    return (
+                      <li key={key} className="rays-style">
+                        <Link to={linkFor(row)} className="browse-index__row rays-style__row">
+                          <span className="rays-style__name">
+                            <span>{styleLabel(row)}</span>
+                            <span className="rays-muted">{sourceText(row)}</span>
+                          </span>
+                        </Link>
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm btn-icon rays-style__remove"
+                            onClick={() => void change(row, 'remove')}
+                            disabled={saving !== null}
+                            aria-label={`Remove ${styleLabel(row)} from this track`}
+                          >
+                            {saving === `remove:${key}` ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <X size={14} aria-hidden="true" />}
+                          </button>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            {isAdmin && (
+              <div className="rays-add">
+                <StylePicker taxonomy={taxonomy} value={adding} onChange={setAdding} disabled={saving !== null} label="Add a genre or style to this track" />
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  disabled={adding.length === 0 || saving !== null}
+                  onClick={async () => { for (const t of adding) await change(t, 'add'); setAdding([]); }}
+                >
+                  Add
+                </button>
+              </div>
+            )}
+
+            {rays.sound && (
+              <>
+                <h3 className="rays-subtitle">Sound</h3>
+                <p className="browse-section__lede">From Aurora's analysis of the audio file.</p>
+                <div className="rays-sound">
+                  <SoundMeter label="Energy" low="Calm" high="Energetic" value={rays.sound.energy} />
+                  <SoundMeter label="Danceability" low="Still" high="Danceable" value={rays.sound.danceability} />
+                  <SoundMeter label="Character" low="Acoustic" high="Electronic" value={1 - rays.sound.acousticness} />
+                  <SoundMeter label="Voice" low="Vocal" high="Instrumental" value={rays.sound.instrumentalness} />
+                  <SoundMeter label="Brightness" low="Dark" high="Bright" value={rays.sound.brightness} />
+                  <SoundMeter label="Percussion" low="Smooth" high="Percussive" value={rays.sound.percussiveness} />
+                </div>
+                {rays.sound.bpm && <p className="rays-fact">Tempo <strong>{rays.sound.bpm} BPM</strong></p>}
+                {(rays.sound.closestStyles.length > 0 || rays.sound.genreMix.length > 0) && (
+                  <div className="rays-charts">
+                    {rays.sound.closestStyles.length > 0 && <StyleScoreChart scores={rays.sound.closestStyles} memberIds={memberStyleIds} />}
+                    {rays.sound.genreMix.length > 0 && <GenreMixChart mix={rays.sound.genreMix} />}
+                  </div>
+                )}
+              </>
+            )}
+          </section>
 
           {rays.otherAlbums.length > 0 && (
             <section className="browse-section" aria-label="Also on">

@@ -407,7 +407,11 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     // energy, brightness, percussiveness, pitch, instrumentalness, acousticness, danceability, tempo (extractor.py)
     await pool.query(`UPDATE track_features SET acoustic_vector_8d = '[0.8,0.5,0.4,0.5,0.1,0.2,0.6,0.6]', bpm = 120 WHERE track_id = $1`, [rock]);
     let rays = (await getTrackRays(pool, rock))!;
-    expect(rays.sound).toMatchObject({ energy: 0.8, instrumentalness: 0.1, acousticness: 0.2, danceability: 0.6, bpm: 120 });
+    expect(rays.sound).toMatchObject({ energy: 0.8, brightness: 0.5, percussiveness: 0.4, instrumentalness: 0.1, acousticness: 0.2, danceability: 0.6, bpm: 120 });
+    // The genre mix splits the summed scores: it adds up to the whole, largest first.
+    const mix = rays.sound!.genreMix;
+    expect(mix.reduce((n, g) => n + g.share, 0)).toBeCloseTo(1, 5);
+    expect(mix[0].share).toBeGreaterThanOrEqual(mix[mix.length - 1].share);
     expect(rays.tags).toEqual(['Rock']);
     expect(rays.styles[0]).toMatchObject({ genre: 'Rock', styleId: null, source: 'tag', fromTags: ['Rock'] });
     // Hard Rock was excluded by hand in the fusion test; Pop Rock comes from the sound.
