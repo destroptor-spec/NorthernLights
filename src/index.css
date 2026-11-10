@@ -1957,9 +1957,9 @@ a:focus-visible > .genre-card .genre-card__label {
 }
 
 /* Charts of the raw analysis: ranked horizontal bars on a 0-to-max axis,
-   thin marks with rounded ends, every bar labelled (name, value). Emphasis:
-   --chart-emphasis for the track's own styles (plus a check), --chart-context
-   for the rest. */
+   every bar labelled (name, value). The bars are the Sound card's meters:
+   a glass pill track, filled with the play gradient for the track's own
+   styles (plus a check) and the genre mix, --chart-context for the rest. */
 .rays-chart {
   display: grid;
   align-content: start;
@@ -1998,10 +1998,10 @@ a:focus-visible > .genre-card .genre-card__label {
 .rays-swatch {
   width: 0.75rem;
   height: 0.5rem;
-  border-radius: 2px;
+  border-radius: var(--radius-pill);
 }
 
-.rays-swatch--emphasis { background: var(--chart-emphasis); }
+.rays-swatch--emphasis { background: var(--aurora-play-gradient); }
 .rays-swatch--context { background: var(--chart-context); }
 
 .rays-bars {
@@ -2078,19 +2078,22 @@ button.rays-bar:focus-visible {
 
 .rays-bar__track {
   height: 0.5rem;
+  border-radius: var(--radius-pill);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  overflow: hidden;
 }
 
 .rays-bar__fill {
   display: block;
   height: 100%;
-  min-width: 2px;
-  border-radius: 0 4px 4px 0;
+  border-radius: inherit;
   background: var(--chart-context);
 }
 
 .rays-bar[data-member='true'] .rays-bar__fill,
 .rays-bar__fill--single {
-  background: var(--chart-emphasis);
+  background: var(--aurora-play-gradient);
 }
 
 .rays-bar__value {
