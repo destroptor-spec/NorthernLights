@@ -418,7 +418,7 @@ export const TrackRays: React.FC = () => {
                     to={`/library/artist/${rays.artist.id}`}
                     art={<PersonCover name={rays.artist.name} imageUrl={portrait} />}
                     title={rays.artist.name}
-                    info="The artist, each album counted once"
+                    info="The artist"
                     entries={rays.artist.entries}
                     tags={rays.artist.listenerTags}
                   />
