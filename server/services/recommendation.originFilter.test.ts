@@ -1,4 +1,4 @@
-import { describeOriginFilter, originFilterOf } from './recommendation.service';
+import { describeOriginFilter, originFilterOf, withinCoverage } from './recommendation.service';
 
 /**
  * A custom playlist's hard filters ("Dansk rap fra 90'erne") come from the
@@ -37,5 +37,27 @@ describe('originFilterOf', () => {
   it('describes itself for the log', () => {
     expect(describeOriginFilter({ countries: ['DK'], languages: ['da'], yearFrom: 1990, yearTo: 1999, vocals: null, moods: [] }))
       .toBe('from DK or language da, years 1990–1999');
+  });
+});
+
+/**
+ * Without Last.fm or MusicBrainz there are no artist tags, so no track has
+ * vocals or moods; a request for them must not filter everything away.
+ */
+describe('withinCoverage', () => {
+  const asked = { countries: ['DK'], languages: ['da'], yearFrom: 1990, yearTo: 1999, vocals: 'female', moods: ['chill'] };
+
+  it('keeps every part the library has data for', () => {
+    expect(withinCoverage(asked, { places: true, years: true, vocals: true, moods: true })).toEqual({ filter: asked, dropped: [] });
+  });
+
+  it('drops vocals and moods in a library without artist tags, and keeps places and years from the files', () => {
+    expect(withinCoverage(asked, { places: true, years: true, vocals: false, moods: false })).toEqual({
+      filter: { ...asked, vocals: null, moods: [] }, dropped: ['vocals', 'moods'] });
+  });
+
+  it('is null when nothing the request asked for can be honoured', () => {
+    expect(withinCoverage({ ...asked, countries: [], languages: [], yearFrom: null, yearTo: null }, { places: true, years: true, vocals: false, moods: false }))
+      .toEqual({ filter: null, dropped: ['vocals', 'moods'] });
   });
 });

@@ -379,6 +379,41 @@ export function originFilterOf(concept: { countries?: unknown; languages?: unkno
   return { countries, languages, yearFrom, yearTo, vocals, moods };
 }
 
+/** Which kinds of track_origin data the library has at all. */
+export interface OriginCoverage { places: boolean; years: boolean; vocals: boolean; moods: boolean }
+
+/**
+ * Drops the parts of a filter the library has no data for, so a request
+ * never filters everything away: vocals and moods come from artist tags
+ * (Last.fm, MusicBrainz), which an install without providers doesn't have;
+ * places need MusicBrainz, artist tags or release-country file tags. With
+ * some data, the filter stands, even if few tracks match. Returns the filter
+ * (or null when nothing is left) and what was dropped, for the log.
+ */
+export function withinCoverage(filter: OriginFilter, coverage: OriginCoverage): { filter: OriginFilter | null; dropped: string[] } {
+  const dropped: string[] = [];
+  const next: OriginFilter = { ...filter };
+  if (!coverage.places && (next.countries.length || next.languages.length)) {
+    dropped.push('countries and languages'); next.countries = []; next.languages = [];
+  }
+  if (!coverage.years && (next.yearFrom != null || next.yearTo != null)) {
+    dropped.push('years'); next.yearFrom = null; next.yearTo = null;
+  }
+  if (!coverage.vocals && next.vocals) { dropped.push('vocals'); next.vocals = null; }
+  if (!coverage.moods && next.moods.length) { dropped.push('moods'); next.moods = []; }
+  const empty = !next.countries.length && !next.languages.length && next.yearFrom == null && next.yearTo == null && !next.vocals && !next.moods.length;
+  return { filter: empty ? null : next, dropped };
+}
+
+async function originCoverage(): Promise<OriginCoverage> {
+  const row = (await queryWithRetry(`
+    SELECT EXISTS (SELECT 1 FROM track_origin WHERE country IS NOT NULL OR language IS NOT NULL) AS places,
+           EXISTS (SELECT 1 FROM track_origin WHERE decade IS NOT NULL) AS years,
+           EXISTS (SELECT 1 FROM track_origin WHERE vocals IS NOT NULL) AS vocals,
+           EXISTS (SELECT 1 FROM track_origin WHERE moods IS NOT NULL) AS moods`, [])).rows[0];
+  return { places: !!row?.places, years: !!row?.years, vocals: !!row?.vocals, moods: !!row?.moods };
+}
+
 export function describeOriginFilter(filter: OriginFilter): string {
   const parts: string[] = [];
   if (filter.countries.length || filter.languages.length) parts.push(`from ${[...filter.countries, ...filter.languages.map(l => `language ${l}`)].join(' or ')}`);
@@ -1052,6 +1087,8 @@ export async function getHubCollections(
   };
 
   // Generate tracks for each LLM concept and persist them as Playlists
+  // What filters the library can honour; read once, when a concept asks for one.
+  let coverage: OriginCoverage | null = null;
   for (const concept of llmConcepts) {
     // Case B: LLM High-Concept generated concept (e.g. "Evening Acoustic Drift")
     if (concept.target_vector) {
@@ -1077,9 +1114,16 @@ export async function getHubCollections(
         }
       );
 
-      const originFilter = originFilterOf(concept);
-      if (originFilter) {
-        console.log(`[LLM Hub] "${concept.title}" → ${describeOriginFilter(originFilter)}`);
+      const asked = originFilterOf(concept);
+      let originFilter: OriginFilter | null = null;
+      if (asked) {
+        coverage ??= await originCoverage();
+        const within = withinCoverage(asked, coverage);
+        originFilter = within.filter;
+        if (within.dropped.length) {
+          console.log(`[LLM Hub] "${concept.title}" → ignoring ${within.dropped.join(', ')}: this library has no such data (artist tags come from Last.fm or MusicBrainz)`);
+        }
+        if (originFilter) console.log(`[LLM Hub] "${concept.title}" → ${describeOriginFilter(originFilter)}`);
       }
       const vectorStr = `[${compiled.adaptedTargetVector.join(',')}]`;
       const bridgeVectorStr = `[${compiled.bridgeVector.join(',')}]`;

@@ -113,7 +113,8 @@ export async function getTrackRays(db: Pool, trackId: string): Promise<TrackRays
       ...billed,
       ...credits.rows.filter((r: any) => r.role === 'remixer').map((r: any) => ({ role: 'remixer', artistId: String(r.artist_id) })),
     ], artistRow ? String(artistRow.id) : null),
-    vector ? nearTrack(db, trackId) : null,
+    // Needs only the audio embedding (nearTrack checks), not the sound vector.
+    nearTrack(db, trackId),
   ]);
 
   return {
