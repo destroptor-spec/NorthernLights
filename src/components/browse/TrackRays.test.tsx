@@ -11,12 +11,17 @@ jest.mock('../../hooks/useInView', () => ({ useInView: () => [() => {}, false] }
 // The v1 → playable conversion has its own tests; the fixture track is partial.
 jest.mock('../../utils/playableTracks', () => ({ toPlayableTracks: (tracks: unknown[]) => tracks }));
 
+// The credits rail measures itself; the test DOM has no ResizeObserver.
+globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
+
 const ok = (data: unknown) => ({ ok: true, status: 200, json: async () => ({ data, meta: {} }) }) as Response;
 const originalFetch = global.fetch;
 
 const rays = (): Rays => ({
   track: { id: 't1', title: 'Finally Moving', artist: 'Pretty Lights', year: 2006 } as Rays['track'],
   credits: [
+    { role: 'artist', artistId: 'a3', name: 'Pretty Lights', detail: null, imageUrl: null },
+    { role: 'featured', artistId: null, name: 'Guest Unknown', detail: null, imageUrl: null },
     { role: 'performer', artistId: 'a2', name: 'John Shanks', detail: 'guitar', imageUrl: null },
     { role: 'performer', artistId: 'a2', name: 'John Shanks', detail: 'bass guitar', imageUrl: null },
     { role: 'composer', artistId: 'a2', name: 'John Shanks', detail: null, imageUrl: null },
@@ -68,12 +73,15 @@ test('says where each genre and style came from, groups credits by person, and s
   expect(screen.getByText('From the file tag “Electric Hip Hop Soul”')).toBeTruthy();
   expect(screen.getByText('From the sound')).toBeTruthy();
   expect(screen.getByText('Electronic › Glitch').closest('a')!.getAttribute('href')).toBe('/library/browse/style/78');
-  // One card per person: every role in order, then the instruments; the stored image when there is one.
+  // One card per person in the credits rail: every role in order, then the
+  // instruments; the first role is the badge; the stored image when there is one.
   expect(screen.getAllByText('John Shanks')).toHaveLength(1);
-  const shanks = screen.getByText('John Shanks').closest('a')!;
-  expect(within(shanks).getByText('Performer · Composer · Producer · Engineer')).toBeTruthy();
-  expect(within(shanks).getByText('guitar, bass guitar')).toBeTruthy();
-  const derek = screen.getByText('Derek Vincent Smith').closest('a')!;
+  const shanks = screen.getByRole('link', { name: 'John Shanks: Performer · Composer · Producer · Engineer, guitar, bass guitar' });
+  expect(within(shanks).getByText('performer')).toBeTruthy();
+  // The billed artists come first; a featured name without a library artist is a card, not a link.
+  expect(screen.getByRole('link', { name: 'Pretty Lights: Artist' }).getAttribute('href')).toBe('/library/artist/a3');
+  expect(screen.getByRole('group', { name: 'Guest Unknown: Featured' }).closest('a')).toBeNull();
+  const derek = screen.getByRole('link', { name: 'Derek Vincent Smith: Producer' });
   expect(derek.getAttribute('href')).toBe('/library/artist/a1');
   expect(derek.querySelector('img')!.getAttribute('src')).toBe('/img/derek.jpg');
   // Sections in order: Credits, In context, Sound and style, Also on.

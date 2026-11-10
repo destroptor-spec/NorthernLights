@@ -2076,10 +2076,14 @@
               "properties": {
                 "role": {
                   "type": "string",
-                  "description": "composer, producer, lyricist, performer, …"
+                  "description": "artist and featured (the billed artists, from the artist tag), then composer, producer, lyricist, performer, …"
                 },
                 "artistId": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "null for a billed name the library has no artist for."
                 },
                 "name": {
                   "type": "string"

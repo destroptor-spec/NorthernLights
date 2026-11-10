@@ -442,4 +442,22 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     await expect(fusion.setTrackStyleOverride(pool, { trackId: rock, genre: 'Rock', styleId: 92, action: 'add' }))
       .rejects.toThrow('No such genre or style.');
   });
+
+  test('rays bill the track\'s artists first: the main act as artist, a "feat." name as featured', async () => {
+    const { getTrackRays } = await import('../../services/trackRays.service');
+    await db.addTrack({ ...track('t-feat', ['Pop']), artist: 'Fusion Artist feat. Guest Singer', artists: ['Fusion Artist', 'Guest Singer'] } as never);
+    const id = idOf('t-feat');
+    const guest = (await pool.query(`INSERT INTO artists (name) VALUES ('Guest Singer') RETURNING id`)).rows[0].id;
+    const credits = (await getTrackRays(pool, id))!.credits.filter(c => c.role === 'artist' || c.role === 'featured');
+    const fusion = (await pool.query(`SELECT id FROM artists WHERE name = 'Fusion Artist'`)).rows[0].id;
+    expect(credits).toEqual([
+      { role: 'artist', artistId: fusion, name: 'Fusion Artist', detail: null, imageUrl: null },
+      { role: 'featured', artistId: guest, name: 'Guest Singer', detail: null, imageUrl: null },
+    ]);
+
+    // Without a library artist of that name the credit stays, unlinked.
+    await db.addTrack({ ...track('t-feat-2', ['Pop']), artist: 'Fusion Artist feat. Nobody Known', artists: ['Fusion Artist', 'Nobody Known'] } as never);
+    const unknown = (await getTrackRays(pool, idOf('t-feat-2')))!.credits.find(c => c.name === 'Nobody Known');
+    expect(unknown).toMatchObject({ role: 'featured', artistId: null });
+  });
 });

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Check, Loader2, Play, X } from 'lucide-react';
+import { Check, Loader2, Play, User2, X } from 'lucide-react';
+import { HorizontalScrollRail } from '../HorizontalScrollRail';
 import { usePlayerStore } from '../../store/index';
 import { fetchTaxonomy, fetchTrackRays, genrePath, setTrackStyle, stylePath } from '../../api/browse';
 import { toPlayableTracks } from '../../utils/playableTracks';
@@ -40,12 +41,15 @@ function sourceText(row: StyleRow): string {
  * also wrote, mixed and played is one card, not five rows.
  */
 function creditsByPerson(credits: Rays['credits']) {
-  const people = new Map<string, { artistId: string; name: string; imageUrl: string | null; roles: string[]; details: string[] }>();
+  const people = new Map<string, { key: string; artistId: string | null; name: string; imageUrl: string | null; roles: string[]; details: string[] }>();
   for (const c of credits) {
-    const person = people.get(c.artistId) || { artistId: c.artistId, name: c.name, imageUrl: c.imageUrl, roles: [], details: [] };
+    // A billed name without a library artist groups by its name.
+    const key = c.artistId ?? `name:${c.name.toLowerCase()}`;
+    const person = people.get(key) || { key, artistId: c.artistId, name: c.name, imageUrl: c.imageUrl, roles: [], details: [] };
     if (!person.roles.includes(c.role)) person.roles.push(c.role);
     if (c.detail && !person.details.includes(c.detail)) person.details.push(c.detail);
-    people.set(c.artistId, person);
+    if (!person.imageUrl && c.imageUrl) person.imageUrl = c.imageUrl;
+    people.set(key, person);
   }
   return [...people.values()];
 }
@@ -63,6 +67,47 @@ function contextLine(rays: Rays): string | null {
   if (own.styleId === albumTop.styleId) return `${own.style}, like ${share} of ${rays.album.title}.`;
   return `${own.style}, where ${albumTop.style} leads ${rays.album.title} (${share}).`;
 }
+
+/**
+ * A credited person as a card in a rail, like the radio cards in the Hub's
+ * "uniquely yours" rail: a square cover (their image, or the radio cover
+ * gradient with a person icon), their first role as the badge, the name and
+ * every role and instrument below.
+ */
+const CreditCard: React.FC<{ person: ReturnType<typeof creditsByPerson>[number] }> = ({ person }) => {
+  const [failed, setFailed] = useState(false);
+  const roles = person.roles.map(roleLabel).join(' · ');
+  const label = `${person.name}: ${roles}${person.details.length ? `, ${person.details.join(', ')}` : ''}`;
+  const className = 'group relative flex w-[min(52vw,200px)] shrink-0 snap-start flex-col gap-2.5 no-underline transition-ui duration-200 hover:-translate-y-0.5 motion-reduce:hover:translate-y-0 sm:w-[190px] sm:gap-3';
+  const body = (
+    <>
+      <div className="relative w-full aspect-square rounded-[var(--radius)] overflow-hidden shadow-md ring-1 ring-black/10" aria-hidden="true">
+        {person.imageUrl && !failed ? (
+          <img src={person.imageUrl} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} className="absolute inset-0 w-full h-full object-cover" />
+        ) : (
+          <>
+            <div className="absolute inset-0" style={{ background: 'var(--gradient-cover-artist-radio)' }} />
+            <User2 className="absolute right-4 bottom-4 w-12 h-12 text-white/70 drop-shadow" strokeWidth={1.5} />
+          </>
+        )}
+        <span className="absolute top-2.5 left-2.5 text-[10px] font-bold uppercase tracking-[0.15em] text-white/95 bg-black/35 backdrop-blur-sm px-2 py-0.5 rounded-full">
+          {roleLabel(person.roles[0]).toLowerCase()}
+        </span>
+      </div>
+      <div className="px-0.5">
+        <p className="font-semibold text-sm text-[var(--color-text-primary)] line-clamp-2 leading-tight group-hover:text-[var(--color-primary)] transition-colors">
+          {person.name}
+        </p>
+        <p className="mt-1 line-clamp-3 text-xs leading-snug text-[var(--color-text-muted)]" title={roles}>
+          {roles}{person.details.length > 0 && <span className="block">{person.details.join(', ')}</span>}
+        </p>
+      </div>
+    </>
+  );
+  return person.artistId
+    ? <Link to={`/library/artist/${person.artistId}`} className={className} aria-label={label}>{body}</Link>
+    : <div className={className} role="group" aria-label={label}>{body}</div>;
+};
 
 /** A round artist image, or the initial when there is none or it fails to load. */
 const PersonAvatar: React.FC<{ name: string; imageUrl?: string | null; size?: 'sm' | 'md' | 'lg' }> = ({ name, imageUrl, size = 'sm' }) => {
@@ -300,20 +345,12 @@ export const TrackRays: React.FC = () => {
           {credits.length > 0 && (
             <section className="browse-section" aria-label="Credits">
               <h2 className="browse-section__title">Credits</h2>
-              <ul className="rays-credit-cards">
-                {credits.map(p => (
-                  <li key={p.artistId}>
-                    <Link to={`/library/artist/${p.artistId}`} className="rays-credit-card">
-                      <PersonAvatar name={p.name} imageUrl={p.imageUrl} size="md" />
-                      <span className="rays-credit-card__text">
-                        <span className="rays-credit-card__name">{p.name}</span>
-                        <span className="rays-credit-card__roles">{p.roles.map(roleLabel).join(' · ')}</span>
-                        {p.details.length > 0 && <span className="rays-credit-card__detail">{p.details.join(', ')}</span>}
-                      </span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
+              <HorizontalScrollRail
+                ariaLabel="credits"
+                viewportClassName="flex overflow-x-auto snap-x snap-mandatory gap-3 hub-scroll-mobile hub-scroll-unique pb-1 sm:gap-5 sm:pb-2"
+              >
+                {credits.map(p => <CreditCard key={p.key} person={p} />)}
+              </HorizontalScrollRail>
             </section>
           )}
 

@@ -2,6 +2,8 @@
 // menu's credits panel, "Aurora rays from {title}"). Roles not listed follow
 // in the order they come.
 export const CREDIT_ROLE_ORDER = [
+  // The billed artists of the track ("A feat. B"), from its artist tags.
+  'artist', 'featured',
   'performer', 'composer', 'conductor', 'lyricist', 'producer', 'remixer',
   'arranger', 'engineer', 'mixer', 'dj-mixer', 'writer', 'original-artist',
 ] as const;

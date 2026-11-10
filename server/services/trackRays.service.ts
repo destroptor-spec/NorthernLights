@@ -7,6 +7,7 @@
 import type { Pool } from 'pg';
 import type { TrackRays } from '../../shared/api/v1';
 import { creditRoleRank } from '../../shared/trackCredits';
+import { splitArtistNames, splitAtFeaturing } from '../../shared/artistCredit';
 import { getAlbumStyleProfile, getArtistStyleProfile } from './browse.service';
 
 const CLOSEST_STYLES = 12;
@@ -25,8 +26,9 @@ const unit = (n: number | undefined) => (Number.isFinite(n) ? Math.max(0, Math.m
 /** Everything but the v1 track itself (the route adds it); null for an unknown track. */
 export async function getTrackRays(db: Pool, trackId: string): Promise<Omit<TrackRays, 'track'> | null> {
   const head = (await db.query(
-    `SELECT id, title, artist, album_id, artist_id, mb_recording_id FROM tracks WHERE id = $1`, [trackId])).rows[0];
+    `SELECT id, title, artist, artists, album_id, artist_id, mb_recording_id FROM tracks WHERE id = $1`, [trackId])).rows[0];
   if (!head) return null;
+  const billed = await billedArtists(db, head);
 
   const [credits, tags, styles, features, scores, others, mix] = await Promise.all([
     db.query(`
@@ -102,12 +104,15 @@ export async function getTrackRays(db: Pool, trackId: string): Promise<Omit<Trac
   ]);
 
   return {
-    credits: credits.rows
-      .map((r: any, index: number) => ({ r, index }))
-      .sort((a, b) => creditRoleRank(a.r.role) - creditRoleRank(b.r.role) || a.index - b.index)
-      .map(({ r }) => ({
-        role: String(r.role), artistId: String(r.artist_id), name: String(r.name), detail: r.detail ?? null, imageUrl: r.image_url ?? null,
-      })),
+    credits: [
+      ...billed,
+      ...credits.rows
+        .map((r: any, index: number) => ({ r, index }))
+        .sort((a, b) => creditRoleRank(a.r.role) - creditRoleRank(b.r.role) || a.index - b.index)
+        .map(({ r }) => ({
+          role: String(r.role), artistId: String(r.artist_id), name: String(r.name), detail: r.detail ?? null, imageUrl: r.image_url ?? null,
+        })),
+    ],
     tags: tags.rows.map((r: any) => String(r.tag)),
     styles: styles.rows.map((r: any) => ({
       genre: r.genre,
@@ -135,4 +140,37 @@ export async function getTrackRays(db: Pool, trackId: string): Promise<Omit<Trac
       artworkId: r.art_hash ?? null,
     })),
   };
+}
+
+/**
+ * The track's billed artists, as credits: "Calvin Harris feat. Example" is
+ * Calvin Harris (artist) and Example (featured). Names come from the stored
+ * artist list (the file's artists tags), split like everywhere else when the
+ * list is missing; each is matched to the library's artist of that name
+ * (following merges), or left unlinked.
+ */
+async function billedArtists(db: Pool, head: { artist: string | null; artists: unknown }): Promise<TrackRays['credits']> {
+  const stored = Array.isArray(head.artists) ? head.artists
+    : typeof head.artists === 'string' ? (() => { try { return JSON.parse(head.artists as string); } catch { return null; } })() : null;
+  const names: string[] = (Array.isArray(stored) && stored.length ? stored : splitArtistNames(head.artist))
+    .map((n: unknown) => String(n).trim()).filter(Boolean);
+  if (!names.length) return [];
+  const featured = new Set((splitAtFeaturing(head.artist)?.slice(1) || []).map(n => n.toLowerCase()));
+  const rows = (await db.query(`
+    SELECT DISTINCT ON (lower(a.name)) lower(a.name) AS key, COALESCE(m.id, a.id) AS id, COALESCE(m.name, a.name) AS name,
+           COALESCE(m.image_url, a.image_url) AS image_url
+    FROM artists a LEFT JOIN artists m ON m.id = a.merged_into
+    WHERE lower(a.name) = ANY($1::text[])
+    ORDER BY lower(a.name), (a.merged_into IS NULL) DESC`, [names.map(n => n.toLowerCase())])).rows;
+  const byName = new Map(rows.map((r: any) => [String(r.key), r]));
+  return names.map((name, index) => {
+    const row: any = byName.get(name.toLowerCase());
+    return {
+      role: index > 0 && featured.has(name.toLowerCase()) ? 'featured' : 'artist',
+      artistId: row ? String(row.id) : null,
+      name: row ? String(row.name) : name,
+      detail: null,
+      imageUrl: row?.image_url ?? null,
+    };
+  });
 }

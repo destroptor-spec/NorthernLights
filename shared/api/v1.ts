@@ -712,8 +712,8 @@ export const artistStyleProfileSchema = z.object({
 export const trackRaysSchema = z.object({
   track: trackSchema,
   credits: z.array(z.object({
-    role: z.string().describe('composer, producer, lyricist, performer, …'),
-    artistId: z.string(),
+    role: z.string().describe('artist and featured (the billed artists, from the artist tag), then composer, producer, lyricist, performer, …'),
+    artistId: z.string().nullable().describe('null for a billed name the library has no artist for.'),
     name: z.string(),
     detail: z.string().nullable().describe('An instrument for performers, when known.'),
     imageUrl: z.string().nullable().describe('A stored artist image, when the library has one (no provider lookup).'),

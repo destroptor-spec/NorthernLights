@@ -1915,71 +1915,6 @@ a:focus-visible > .genre-card .genre-card__label {
   font-size: 0.82rem;
 }
 
-/* Credits: one card per person, every role they hold on the track, then
-   their instruments. Cards take the Jump back in tile surface (Hub). */
-.rays-credit-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
-  gap: 0.625rem;
-  max-width: 72rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.rays-credit-card {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  height: 100%;
-  min-height: 4.25rem;
-  padding: 0.75rem 0.875rem;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(4px);
-  backdrop-filter: blur(4px);
-  color: var(--color-text-primary);
-  text-decoration: none;
-  transition: background-color 140ms ease-out;
-}
-
-.rays-credit-card:hover,
-.rays-credit-card:focus-visible {
-  background: var(--glass-bg-hover);
-  outline: none;
-}
-
-.rays-credit-card:focus-visible {
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-primary) 60%, transparent);
-}
-
-.rays-credit-card__text {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.rays-credit-card__name {
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-
-.rays-credit-card:hover .rays-credit-card__name,
-.rays-credit-card:focus-visible .rays-credit-card__name {
-  color: var(--color-primary);
-}
-
-.rays-credit-card__roles {
-  color: var(--color-text-secondary);
-  font-size: 0.82rem;
-}
-
-.rays-credit-card__detail {
-  color: var(--color-text-muted);
-  font-size: 0.78rem;
-}
-
 .rays-subtitle {
   margin: 2rem 0 0.875rem;
   font-size: 1rem;
@@ -2152,10 +2087,6 @@ a.rays-bar:focus-visible {
 @media (max-width: 520px) {
   .rays-bar,
   .rays-chart__axis { grid-template-columns: minmax(6rem, 8.5rem) minmax(0, 1fr) 2.5rem; gap: 0.5rem; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .rays-credit-card { transition: none; }
 }
 
 /* In context: the album and the artist side by side, each headed by its image. */
