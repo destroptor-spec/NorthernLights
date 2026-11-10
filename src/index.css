@@ -1904,6 +1904,7 @@ a:focus-visible > .genre-card .genre-card__label {
 }
 
 .rays-avatar--sm { width: 1.75rem; height: 1.75rem; }
+.rays-avatar--lg { width: 3.5rem; height: 3.5rem; }
 
 
 .rays-avatar__initial {
@@ -1913,6 +1914,7 @@ a:focus-visible > .genre-card .genre-card__label {
 }
 
 .rays-avatar--sm .rays-avatar__initial { font-size: 0.8rem; }
+.rays-avatar--lg .rays-avatar__initial { font-size: 1.35rem; }
 
 
 .rays-cover {
@@ -2118,11 +2120,13 @@ button.rays-bar:focus-visible {
    the left (the size of a credit card's cover), the name, what it is, and
    its genres and styles on the right. */
 .rays-context-card {
+  /* The lead cards' width; on a phone the rail sizes them (.hub-scroll-mobile). */
+  --rays-lead-w: 25rem;
   display: grid;
   grid-template-columns: 47.5% minmax(0, 1fr);
   align-self: flex-start;
   flex: 0 0 auto;
-  width: 25rem;
+  width: var(--rays-lead-w);
   overflow: hidden;
   scroll-snap-align: start;
   border: 1px solid var(--glass-border);
@@ -2203,8 +2207,48 @@ button.rays-bar:focus-visible {
   line-height: 1.4;
 }
 
+/* The other people on the track (billed, featured, remixers) support the
+   album and the artist: narrower cards, as tall as theirs so the rail stays
+   one even line, led by a round portrait instead of a cover square. */
+.rays-context-card--person {
+  grid-template-columns: minmax(0, 1fr);
+  width: 16rem;
+  /* The lead cards' height: their square artwork, 47.5 % of their width inside the border. */
+  height: calc((var(--rays-lead-w) - 2px) * 0.475 + 2px);
+}
+
+.rays-context-card--person .rays-context-card__body {
+  gap: 0.5rem;
+  padding: 1rem;
+}
+
+.rays-context-card__person {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.rays-context-card__portrait {
+  flex: none;
+  border-radius: 50%;
+}
+
+.rays-context-card__who {
+  display: grid;
+  gap: 0.125rem;
+  min-width: 0;
+}
+
+.rays-context-card--person .rays-context-card__tags {
+  -webkit-line-clamp: 1;
+}
+
 /* On a phone the cover is about 157 px: one chip row, and no listener-tags line. */
 @media (max-width: 639px) {
+  .rays-context-card { --rays-lead-w: min(85vw, 320px); }
+  .hub-scroll-mobile > .rays-context-card--person { flex: 0 0 min(62vw, 15rem); max-width: 15rem; }
+  .rays-context-card--person .rays-context-card__body { padding: 0.75rem 0.875rem; }
   .rays-context-card .rays-chips { max-height: 1.75rem; }
   .rays-context-card__tags { display: none; }
   .rays-context-card__body { padding: 0.75rem 0.875rem; }

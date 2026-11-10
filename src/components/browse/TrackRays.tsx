@@ -171,16 +171,48 @@ const ContextCard: React.FC<{
       <Link to={to} className="rays-context-card__title">{title}</Link>
       <span className="rays-context-card__info">{info}</span>
       {line && <p className="rays-context-card__line">{line}</p>}
-      {entries.length > 0
-        ? <ProfileChips entries={entries.slice(0, 4)} />
-        : !line && tags.length === 0 && <p className="rays-context-card__line">No genres or styles of their own in your library yet.</p>}
-      {tags.length > 0 && (
-        <p className="rays-context-card__tags" title={tags.join(', ')}>
-          <span className="rays-context-card__info">Listeners say </span>{tags.join(', ')}
-        </p>
-      )}
+      <ContextProfile entries={entries} tags={tags} quiet={!!line} />
     </div>
   </article>
+);
+
+/**
+ * A person in the In context rail besides the track's own artist (another
+ * billed artist, a featured artist, a remixer): a supporting card, narrower
+ * than the album's and the artist's and as tall, led by a round portrait
+ * instead of a cover square.
+ */
+const PersonContextCard: React.FC<{
+  to: string; name: string; imageUrl: string | null; info: string; entries: StyleProfileEntry[]; tags: string[];
+}> = ({ to, name, imageUrl, info, entries, tags }) => (
+  <article className="rays-context-card rays-context-card--person">
+    <div className="rays-context-card__body">
+      <div className="rays-context-card__person">
+        <Link to={to} tabIndex={-1} aria-hidden="true" className="rays-context-card__portrait">
+          <PersonAvatar name={name} imageUrl={imageUrl} size="lg" />
+        </Link>
+        <div className="rays-context-card__who">
+          <Link to={to} className="rays-context-card__title">{name}</Link>
+          <span className="rays-context-card__info">{info}</span>
+        </div>
+      </div>
+      <ContextProfile entries={entries} tags={tags} />
+    </div>
+  </article>
+);
+
+/** A card's genres and styles, then what listeners say; a note when there are neither. */
+const ContextProfile: React.FC<{ entries: StyleProfileEntry[]; tags: string[]; quiet?: boolean }> = ({ entries, tags, quiet = false }) => (
+  <>
+    {entries.length > 0
+      ? <ProfileChips entries={entries.slice(0, 4)} />
+      : !quiet && tags.length === 0 && <p className="rays-context-card__line">No genres or styles of their own in your library yet.</p>}
+    {tags.length > 0 && (
+      <p className="rays-context-card__tags" title={tags.join(', ')}>
+        <span className="rays-context-card__info">Listeners say </span>{tags.join(', ')}
+      </p>
+    )}
+  </>
 );
 
 const ProfileChips: React.FC<{ entries: StyleProfileEntry[] }> = ({ entries }) => (
@@ -530,11 +562,11 @@ export const TrackRays: React.FC = () => {
                   />
                 )}
                 {rays.otherArtists.map(other => (
-                  <ContextCard
+                  <PersonContextCard
                     key={other.id}
                     to={`/library/artist/${other.id}`}
-                    art={<PersonCover name={other.name} imageUrl={other.imageUrl} />}
-                    title={other.name}
+                    name={other.name}
+                    imageUrl={other.imageUrl}
                     info={OTHER_ARTIST_ROLE[other.role]}
                     entries={other.entries}
                     tags={other.listenerTags}
