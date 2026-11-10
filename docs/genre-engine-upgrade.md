@@ -214,4 +214,11 @@ The old code ignores `track_credit_lookups`; drop it or leave it. Credits alread
 
 ## Phase 4: engine switch and retirements
 
-Steps are added here when phase 4 is built. Known so far: the MBDB import (4 GB download) and the Genre Matrix are retired, and `tracks.genre_id` / `track_genres` are rebuilt from the new genres.
+### Step 1: the styles engine, selectable (no schema change)
+
+Nothing to run. Each user picks the engine in Settings → Playback → Infinity → Recommendation engine (Styles or Classic; Classic until the comparison is decided). It applies to Infinity and to Hub and AI playlists. With Styles, the Infinity log reads `[Engine] (styles) Found tracks … AvgStyleOverlap: … Beta: 0.100`.
+
+- [ ] Switch to Styles, play a song with Infinity on, and check the server log line above.
+- [ ] Regenerate the Hub with Styles on; Up Next and The Vault still fill.
+
+Steps for step 2 (retirements) are added here when it is built. Known so far: the MBDB import (4 GB download) and the Genre Matrix are retired, and `tracks.genre_id` / `track_genres` are rebuilt from the new genres.

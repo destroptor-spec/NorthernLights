@@ -34,6 +34,7 @@ const formatRecoveryPath = (path: string): string => {
 export const PlaybackTab: React.FC = () => {
     const discoveryLevel = usePlayerStore(state => state.discoveryLevel);
     const genreStrictness = usePlayerStore(state => state.genreStrictness);
+    const recommendationEngine = usePlayerStore(state => state.recommendationEngine);
     const artistAmnesiaLimit = usePlayerStore(state => state.artistAmnesiaLimit);
     const playedThresholdPercent = usePlayerStore(state => state.playedThresholdPercent);
     const llmPlaylistDiversity = usePlayerStore(state => state.llmPlaylistDiversity);
@@ -607,13 +608,31 @@ export const PlaybackTab: React.FC = () => {
                         <p className="text-xs text-[var(--color-text-muted)] mt-1.5"><strong>Step 2:</strong> How many similar-sounding tracks to consider. Low values pick from a small pool of near-identical matches; high values cast a wider net for more variety.</p>
                     </div>
 
+                    <div className="mb-6" role="group" aria-labelledby="engine-label">
+                        <div id="engine-label" className="text-sm font-medium text-[var(--color-text-primary)] mb-2">Recommendation engine</div>
+                        <div className="flex flex-wrap gap-2">
+                            <button type="button" className={`btn btn-tab btn-sm${recommendationEngine === 'styles' ? ' active' : ''}`} aria-pressed={recommendationEngine === 'styles'} onClick={() => setSettings({ recommendationEngine: 'styles' })}>Styles</button>
+                            <button type="button" className={`btn btn-tab btn-sm${recommendationEngine === 'classic' ? ' active' : ''}`} aria-pressed={recommendationEngine === 'classic'} onClick={() => setSettings({ recommendationEngine: 'classic' })}>Classic</button>
+                        </div>
+                        <p className="text-xs text-[var(--color-text-muted)] mt-1.5">
+                            {recommendationEngine === 'styles'
+                                ? 'Tracks that share styles with the end of your queue rank a little higher; changing genre never counts against a track. Applies to Infinity and to Hub and AI playlists.'
+                                : 'Tracks are ranked down by how far their genre is from the end of your queue, in the old genre tree. Applies to Infinity and to Hub and AI playlists.'}
+                        </p>
+                    </div>
+
                     <div className="mb-6">
                         <label className="flex justify-between text-sm font-medium text-[var(--color-text-primary)] mb-2">
-                            <span>Genre Strictness</span>
+                            <span>{recommendationEngine === 'styles' ? 'Style match' : 'Genre Strictness'}</span>
                             <span>{genreStrictness}%</span>
                         </label>
-                        <input type="range" min="0" max="100" value={genreStrictness} onChange={e => setSettings({ genreStrictness: Number(e.target.value) })} className="w-full accent-[var(--color-primary)]" />
-                        <p className="text-xs text-[var(--color-text-muted)] mt-1.5"><strong>Step 3:</strong> Re-ranks the closest-sounding tracks by genre distance from the end of your queue. 0% ignores genre; 100% favors the same genre family. Has no effect when that track has no genre tag.</p>
+                        <input type="range" min="0" max="100" value={genreStrictness} onChange={e => setSettings({ genreStrictness: Number(e.target.value) })} className="w-full accent-[var(--color-primary)]" aria-label={recommendationEngine === 'styles' ? 'Style match' : 'Genre strictness'} />
+                        <p className="text-xs text-[var(--color-text-muted)] mt-1.5">
+                            <strong>Step 3:</strong>{' '}
+                            {recommendationEngine === 'styles'
+                                ? 'How much shared styles lift a close-sounding track. 0% ranks by sound alone; 100% lets a track that shares the queue\u2019s styles move up past several closer-sounding ones.'
+                                : 'Re-ranks the closest-sounding tracks by genre distance from the end of your queue. 0% ignores genre; 100% favors the same genre family. Has no effect when that track has no genre tag.'}
+                        </p>
                     </div>
                 </div>
             )}

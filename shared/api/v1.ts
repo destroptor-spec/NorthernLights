@@ -540,8 +540,11 @@ export const playbackReportSchema = z.object({
 
 export const infinitySettingsSchema = z.object({
   discoveryLevel: z.number().min(0).max(100).optional(),
-  genreStrictness: z.number().min(0).max(100).optional(),
+  genreStrictness: z.number().min(0).max(100).optional()
+    .describe('classic engine: how strongly a genre change is penalised; styles engine: the style-overlap weight β (0 to 0.2).'),
   artistAmnesiaLimit: z.number().int().min(0).max(200).optional(),
+  recommendationEngine: z.enum(['classic', 'styles']).optional()
+    .describe('classic: genre hop cost; styles: shared styles pull candidates closer, no genre penalty (phase 4 of the genre redesign).'),
 }).passthrough().meta({
   id: 'InfinitySettings',
   description: 'Per-request overrides for saved user tuning. Omitted values use saved settings or engine defaults.',

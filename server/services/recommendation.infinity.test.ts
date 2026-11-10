@@ -1,6 +1,12 @@
 /** @jest-environment node */
 jest.mock('../utils/db', () => ({ queryWithRetry: jest.fn() }));
 jest.mock('./genreMatrix.service', () => ({ genreMatrixService: { getHopCost: jest.fn() } }));
+jest.mock('../database', () => ({ ...jest.requireActual('../database'), initDB: jest.fn(async () => ({})) }));
+jest.mock('./styleOverlap.service', () => ({
+  ...jest.requireActual('./styleOverlap.service'),
+  seedStyleVector: jest.fn(async () => new Map([['s1', 1]])),
+  styleVectors: jest.fn(async () => new Map([['styled', new Map([['s1', 1]])]])),
+}));
 import { queryWithRetry } from '../utils/db';
 import { genreMatrixService } from './genreMatrix.service';
 import { calculateNextInfinityTrack } from './recommendation.service';
@@ -134,4 +140,20 @@ test('repeat protection keeps its full limit through every relaxation attempt', 
   const attempts = jest.mocked(queryWithRetry).mock.calls.filter(([sql]) => sql.includes('AS distance'));
   expect(attempts).toHaveLength(3);
   for (const [, values] of attempts) expect(values).toEqual(expect.arrayContaining(history));
+});
+
+test('the styles engine lets a track that shares the seed\'s styles move past a closer-sounding one; classic does not', async () => {
+  candidates = [
+    { id: 'near', title: 'Near', artist: 'A', distance: 0.10 },
+    { id: 'styled', title: 'Styled', artist: 'B', distance: 0.15 },
+  ];
+  jest.spyOn(Math, 'random').mockReturnValue(0);
+  const styles = await calculateNextInfinityTrack(['old', 'new'], { genreStrictness: 100, recommendationEngine: 'styles' });
+  expect(styles?.id).toBe('styled');
+  expect(styles?.styleOverlap).toBeCloseTo(1);
+  // No genre penalty in the styles engine: hop cost is never asked.
+  expect(genreMatrixService.getHopCost).not.toHaveBeenCalled();
+
+  const classic = await calculateNextInfinityTrack(['old', 'new'], { genreStrictness: 100 });
+  expect(classic?.id).toBe('near');
 });

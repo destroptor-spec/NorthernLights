@@ -791,6 +791,8 @@ export interface PlayerState {
   // Global Engine Settings
   discoveryLevel: number;
   genreStrictness: number;
+  /** classic: genre hop cost; styles: style overlap (phase 4). Saved per user on the server. */
+  recommendationEngine: 'classic' | 'styles';
   artistAmnesiaLimit: number;
   // Fraction of a track (percent, 1-100) that must be listened to before it is
   // marked as played — gates both the server play-count and scrobbling.
@@ -1587,6 +1589,7 @@ export const usePlayerStore = create<PlayerState>()(
 
         discoveryLevel: 50,
         genreStrictness: 50,
+        recommendationEngine: 'classic',
         artistAmnesiaLimit: 50,
         // Standard scrobble threshold (Last.fm/ListenBrainz): ~half a track (or
         // 4 min). 95% was effectively "finish the song", so casual listening
@@ -2028,6 +2031,7 @@ export const usePlayerStore = create<PlayerState>()(
               set({
                 discoveryLevel: data.discoveryLevel !== undefined ? data.discoveryLevel : 50,
                 genreStrictness: data.genreStrictness !== undefined ? data.genreStrictness : 50,
+                recommendationEngine: data.recommendationEngine === 'styles' ? 'styles' : 'classic',
                 artistAmnesiaLimit: data.artistAmnesiaLimit !== undefined ? data.artistAmnesiaLimit : 50,
                 playedThresholdPercent: data.playedThresholdPercent !== undefined ? Number(data.playedThresholdPercent) : 50,
                 llmPlaylistDiversity: data.llmPlaylistDiversity !== undefined ? data.llmPlaylistDiversity : 50,
@@ -2149,6 +2153,7 @@ export const usePlayerStore = create<PlayerState>()(
               const payload = {
                 discoveryLevel: state.discoveryLevel,
                 genreStrictness: state.genreStrictness,
+                recommendationEngine: state.recommendationEngine,
                 artistAmnesiaLimit: state.artistAmnesiaLimit,
                 playedThresholdPercent: state.playedThresholdPercent,
                 llmPlaylistDiversity: state.llmPlaylistDiversity,
@@ -2284,6 +2289,7 @@ export const usePlayerStore = create<PlayerState>()(
               settings: {
                 discoveryLevel: state.discoveryLevel,
                 genreStrictness: state.genreStrictness,
+                recommendationEngine: state.recommendationEngine,
                 artistAmnesiaLimit: state.artistAmnesiaLimit,
               }
             };

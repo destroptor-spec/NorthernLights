@@ -685,4 +685,24 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     expect(await ids({ vocals: 'female' })).toEqual([remaster, undated].sort());
     expect(await ids({ mood: 'chill', vocals: 'female', decade: 1990 })).toEqual([remaster]);
   });
+
+  test('style vectors (the phase 4 engine): from fused memberships, and from genre names through the tag mapping', async () => {
+    const { styleVectors, styleVectorForNames, styleCosine, seedStyleVector } = await import('../../services/styleOverlap.service');
+    const grungeId = (await pool.query(`SELECT id FROM style WHERE genre = 'Rock' AND name = 'Grunge'`)).rows[0].id;
+    const vectors = await styleVectors(pool, [idOf('v2-grunge-0'), idOf('v2-other-genre'), 'no-such-track']);
+    const grunge = vectors.get(idOf('v2-grunge-0'))!;
+    // Its style counts in full, its genre at half; normalised.
+    expect([...grunge.keys()].sort()).toEqual(['gRock', `s${grungeId}`]);
+    expect(grunge.get(`s${grungeId}`)! / grunge.get('gRock')!).toBeCloseTo(2);
+    expect(vectors.has('no-such-track')).toBe(false);
+    // A Techno-tagged track that sounds like Grunge shares some of it.
+    const overlap = styleCosine(grunge, vectors.get(idOf('v2-other-genre')));
+    expect(overlap).toBeGreaterThan(0.3);
+    expect(overlap).toBeLessThan(1);
+    // Names as the old engine and AI prompts write them map through tag_map.
+    expect(styleCosine(grunge, await styleVectorForNames(pool, ['rock.alternative rock.grunge']))).toBeCloseTo(1);
+    expect(styleCosine(grunge, await styleVectorForNames(pool, ['Rock']))).toBeGreaterThan(0.4);
+    expect(await styleVectorForNames(pool, ['no such genre'])).toBeNull();
+    expect(styleCosine(grunge, await seedStyleVector(pool, [idOf('v2-other-genre'), idOf('v2-grunge-1')]))).toBeGreaterThan(overlap);
+  });
 });
