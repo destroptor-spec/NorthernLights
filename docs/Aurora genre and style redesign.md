@@ -547,6 +547,18 @@ The Hub's system playlists (Settings → System → Hub) mostly use neither pool
 | Recovery Strength | How far a short general list widens (the set doubling and floor lowering) |
 | Banned Genre Handling | Unchanged |
 
+### Step 1 as built (2026-11-11)
+
+`getHubCollections` takes `aiPlaylistEngine` (`pools` | `score`, or the system setting of that name; `pools` until the comparison), and `server/services/aiPlaylistScore.service.ts` holds the score. Calibrated on dev against the 10 saved concepts (`scripts/ai-playlist-eval/`), which changed four things from the design above:
+
+- **Sound target from the styles.** The AI's 8 numbers, and the embedding imputed from them, sat far from the styles it named: for a trance concept the nearest 300 by sound were R&B, hip hop and soundtracks, and only 2 of 20 picks were trance. The embedding target is now the weighted centroid of the target styles (the AI's 8 numbers still set energy and mood); with it, 11 of 20 were trance before any other change.
+- **match, not a cosine.** A cosine against a concept of several styles gave a pure jazz track about 0.4. match is the track's best membership against the concept's weights (weight × strength): tagged with a target 1, genre-only 0.5, a 0.15 sound guess near 0.
+- **β = Genre Cohesion × 4** in spreads of sound distance (p10 to p90 of the candidates), times support; at the default 50 % a full match outweighs two spreads. Target weights 1, 0.9, 0.8, then 0.7. The novelty bonus is scaled to 0–1 and worth at most half a spread (× Discovery Bias).
+- **The final pick uses the score.** The selector's fit was a track's rank as a fraction of the list, so a concept match could not outweigh the 1.1 penalty for a repeated artist (Danish 90s rap filled with Johnny Madsen and Thomas Helmig after 8 rap artists); it now takes the score in spreads, the sound-variety terms are weighted by Playlist Diversity × 0.5, and the artist cap counts only artists with a match of 0.5 or more.
+- **The AI's vocabulary counts strong members only** (`getStyleVocabulary`): it offered Trip Hop, Hardcore Hip-Hop and Boom Bap, which dev has only as weak sound guesses (0, 0 and 1 strong members), and the AI aimed playlists at them.
+
+Result on the 10 concepts (dev, 20 tracks, Andreas's tuning): 14 to 19 of 20 picks are strong members of the target styles for 8 of them (90s Eurodance 3: dev has 13 tagged Eurodance tracks), mean match 0.7 to 0.9; 0.2 s per playlist against about 1.5 s for the pools. The pools' six parallel full scans also ran Postgres out of shared memory (`/dev/shm`, 64 MB in the container) on dev; the score's queries are bounded.
+
 ### Evaluation and build order
 
 1. One score and the bounded candidate set for general lists, built beside the pools.

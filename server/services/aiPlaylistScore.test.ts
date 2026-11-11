@@ -1,0 +1,59 @@
+import { artistCap, conceptMatch, distanceSpread, rankByScore, scoreBeta, targetWeight } from './aiPlaylistScore.service';
+
+test('targets weigh 1, 0.9, 0.8, then 0.7', () => {
+  expect([0, 1, 2, 3, 6].map(targetWeight)).toEqual([1, 0.9, 0.8, 0.7, 0.7]);
+});
+
+test('a track matches by its best membership, weight times strength', () => {
+  const concept = new Map([['s1', 1], ['s2', 0.9], ['gElectronic', 0.5]]);
+  expect(conceptMatch(concept, new Map([['s1', 1], ['gElectronic', 1]]))).toBe(1);
+  // Tagged only "Dance": the genre, not the style.
+  expect(conceptMatch(concept, new Map([['gElectronic', 1]]))).toBe(0.5);
+  // A weak sound guess counts for little.
+  expect(conceptMatch(concept, new Map([['s2', 0.15]]))).toBeCloseTo(0.135);
+  expect(conceptMatch(concept, new Map([['s9', 1]]))).toBe(0);
+  expect(conceptMatch(concept, undefined)).toBe(0);
+});
+
+test('β follows Genre Cohesion and how much of the concept the library has', () => {
+  expect(scoreBeta(0.5, 200, 20)).toBeCloseTo(2);
+  expect(scoreBeta(0.5, 40, 20)).toBeCloseTo(1);
+  expect(scoreBeta(0, 200, 20)).toBe(0);
+  expect(scoreBeta(1, 0, 20)).toBe(0);
+});
+
+test('distances are measured in the spread from p10 to p90, never below 0.02', () => {
+  expect(distanceSpread([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])).toEqual({ low: 1, spread: 8 });
+  expect(distanceSpread([0.5, 0.5, 0.5]).spread).toBe(0.02);
+});
+
+test('a strong match overtakes closer-sounding tracks; without cohesion sound alone decides', () => {
+  const rows = [
+    { id: 'near', distance: 0.40, novelty_boost: 0 },
+    { id: 'mid', distance: 0.45, novelty_boost: 0 },
+    { id: 'styled', distance: 0.50, novelty_boost: 0 },
+    ...Array.from({ length: 8 }, (_, i) => ({ id: `far${i}`, distance: 0.6 + i * 0.01, novelty_boost: 0 })),
+  ];
+  const match = (r: { id: string }) => (r.id === 'styled' ? 1 : 0);
+  expect(rankByScore(rows, { match, beta: 2, nu: 0 })[0].id).toBe('styled');
+  expect(rankByScore(rows, { match, beta: 0, nu: 0 })[0].id).toBe('near');
+});
+
+test('the novelty bonus moves a track at most half a spread', () => {
+  const rows = [
+    { id: 'played', distance: 0.40, novelty_boost: 0 },
+    { id: 'fresh', distance: 0.42, novelty_boost: 0.24 },
+    ...Array.from({ length: 8 }, (_, i) => ({ id: `far${i}`, distance: 0.5 + i * 0.1, novelty_boost: 0 })),
+  ];
+  const ranked = rankByScore(rows, { match: () => 0, beta: 0, nu: 1 });
+  expect(ranked[0].id).toBe('fresh');
+  const played = ranked.find(r => r.id === 'played')!;
+  const fresh = ranked.find(r => r.id === 'fresh')!;
+  expect(played.score - fresh.score).toBeLessThanOrEqual(0.5);
+});
+
+test('few fitting artists may each bring more tracks', () => {
+  expect(artistCap(20, 30, 0.7)).toBe(2);
+  expect(artistCap(20, 8, 0.7)).toBe(3);
+  expect(artistCap(10, 30, 0.9)).toBe(1);
+});

@@ -30,6 +30,11 @@ export type StyleVector = Map<string, number>;
 
 const GENRE_WEIGHT = 0.5;
 
+/** L2-normalises a style vector in place; null when it is all zeros. */
+export function normaliseStyleVector(v: StyleVector): StyleVector | null {
+  return normalise(v);
+}
+
 function normalise(v: StyleVector): StyleVector | null {
   const n = Math.sqrt([...v.values()].reduce((s, x) => s + x * x, 0));
   if (!n) return null;

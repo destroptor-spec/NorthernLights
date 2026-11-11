@@ -182,22 +182,28 @@ export async function artistGenrePaths(db: Db, artistId: string): Promise<{ prim
 /**
  * The names the AI may use for target and banned genres: the genres and
  * styles the library actually has, most tracks first (genres, then styles;
- * a style name in two genres is listed once and resolves to both).
+ * a style name in two genres is listed once and resolves to both). Only
+ * strong members count: a style the sound model guesses weakly on a few
+ * hundred tracks (Trip Hop on dev: 63 guesses, no tags) would let the AI aim
+ * a playlist at music the library hardly has.
  */
+const VOCABULARY_MIN_STRENGTH = 0.5;
 export async function getStyleVocabulary(db: Db, limit = 300): Promise<string[]> {
   const rows = (await db.query(`
     SELECT name, MAX(tracks) AS tracks, bool_or(is_genre) AS is_genre FROM (
       SELECT ts.genre AS name, COUNT(DISTINCT ts.track_id) AS tracks, true AS is_genre
       FROM track_styles ts JOIN taxonomy_genre g ON g.name = ts.genre AND NOT g.hidden
+      WHERE ts.strength >= $2
       GROUP BY ts.genre
       UNION ALL
       SELECT s.name, COUNT(DISTINCT ts.track_id), false
       FROM track_styles ts JOIN style s ON s.id = ts.style_id
       JOIN taxonomy_genre g ON g.name = s.genre AND NOT g.hidden
+      WHERE ts.strength >= $2
       GROUP BY s.name
     ) x
     GROUP BY name
     ORDER BY bool_or(is_genre) DESC, MAX(tracks) DESC, name
-    LIMIT $1`, [limit])).rows as Array<{ name: string }>;
+    LIMIT $1`, [limit, VOCABULARY_MIN_STRENGTH])).rows as Array<{ name: string }>;
   return rows.map(r => r.name);
 }

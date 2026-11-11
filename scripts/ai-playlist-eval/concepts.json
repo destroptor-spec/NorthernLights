@@ -1,0 +1,347 @@
+[
+  {
+    "prompt": "Euphoric, melodic trance with progressive structures and soaring synthesizers",
+    "concept": {
+      "section": "Custom",
+      "title": "Euphoric Ascent",
+      "description": "Soaring synths and progressive melodies.",
+      "target_genres": [
+        "Progressive Trance",
+        "Trance",
+        "Tech Trance"
+      ],
+      "banned_genres": [
+        "Classical",
+        "Folk",
+        "Delta Blues",
+        "Heavy Metal",
+        "Country"
+      ],
+      "target_vector": [
+        0.8,
+        0.85,
+        0.6,
+        0.9,
+        0.8,
+        0.1,
+        0.8,
+        0.6
+      ],
+      "moods": [
+        "uplifting",
+        "energetic",
+        "atmospheric"
+      ]
+    }
+  },
+  {
+    "prompt": "Dansk rap fra 90'erne",
+    "concept": {
+      "section": "Custom",
+      "title": "90'er Dansk Rap Klassikere",
+      "description": "De største klassikere fra den danske hip hop scene i 90'erne.",
+      "target_genres": [
+        "Boom Bap",
+        "Gangsta",
+        "Hip Hop"
+      ],
+      "banned_genres": [
+        "Classical",
+        "Jazz",
+        "Folk",
+        "Country"
+      ],
+      "target_vector": [
+        0.7,
+        0.4,
+        0.8,
+        0.6,
+        0.2,
+        0.1,
+        0.7,
+        0.35
+      ],
+      "countries": [
+        "DK"
+      ],
+      "languages": [
+        "da"
+      ],
+      "year_from": 1990,
+      "year_to": 1999
+    }
+  },
+  {
+    "prompt": "Music for code: focused, steady, mostly instrumental",
+    "concept": {
+      "section": "Custom",
+      "title": "Deep Flow: Coding Focus",
+      "description": "Steady, instrumental beats designed to maintain your flow state.",
+      "target_genres": [
+        "Ambient",
+        "Downtempo",
+        "Minimal Techno"
+      ],
+      "banned_genres": [
+        "Pop",
+        "Hip Hop",
+        "Heavy Metal",
+        "Hardcore",
+        "Punk"
+      ],
+      "target_vector": [
+        0.3,
+        0.4,
+        0.3,
+        0.6,
+        0.8,
+        0.4,
+        0.2,
+        0.4
+      ],
+      "moods": [
+        "atmospheric",
+        "chill"
+      ]
+    }
+  },
+  {
+    "prompt": "Velvet Shadows: dark, sultry late-night grooves",
+    "concept": {
+      "section": "Custom",
+      "title": "Velvet Shadows",
+      "description": "Dark, sultry late-night grooves.",
+      "target_genres": [
+        "Smooth Jazz",
+        "Contemporary R&B",
+        "Downtempo"
+      ],
+      "banned_genres": [
+        "Hardcore",
+        "Hardstyle",
+        "Thrash",
+        "Techno",
+        "Heavy Metal"
+      ],
+      "target_vector": [
+        0.3,
+        0.2,
+        0.4,
+        0.8,
+        0.4,
+        0.6,
+        0.6,
+        0.2
+      ],
+      "moods": [
+        "dark",
+        "atmospheric",
+        "romantic"
+      ]
+    }
+  },
+  {
+    "prompt": "90s Eurodance party",
+    "concept": {
+      "section": "Custom",
+      "title": "90s Eurodance Party",
+      "description": "High-energy dancefloor anthems from the golden era of Eurodance.",
+      "target_genres": [
+        "Eurodance",
+        "Italodance",
+        "Hi NRG"
+      ],
+      "banned_genres": [
+        "Classical",
+        "Folk",
+        "Jazz",
+        "Blues",
+        "Country"
+      ],
+      "target_vector": [
+        0.9,
+        0.8,
+        0.9,
+        0.8,
+        0.2,
+        0,
+        1,
+        0.75
+      ],
+      "year_from": 1990,
+      "year_to": 1999,
+      "moods": [
+        "party",
+        "energetic"
+      ]
+    }
+  },
+  {
+    "prompt": "Acoustic Sunday morning with coffee",
+    "concept": {
+      "section": "Custom",
+      "title": "Sunday Sips & Strings",
+      "description": "A cozy acoustic selection for your slow morning coffee.",
+      "target_genres": [
+        "Folk",
+        "Indie Pop",
+        "Soft Rock"
+      ],
+      "banned_genres": [
+        "Heavy Metal",
+        "Techno",
+        "Hard Rock",
+        "Dubstep",
+        "Trance"
+      ],
+      "target_vector": [
+        0.2,
+        0.6,
+        0.2,
+        0.8,
+        0.4,
+        0.9,
+        0.15,
+        0.2
+      ],
+      "moods": [
+        "chill",
+        "atmospheric"
+      ]
+    }
+  },
+  {
+    "prompt": "Heavy metal for the gym",
+    "concept": {
+      "section": "Custom",
+      "title": "Iron Forge",
+      "description": "High-intensity heavy metal to crush your PRs.",
+      "target_genres": [
+        "Thrash",
+        "Nu Metal",
+        "Deathcore",
+        "Power Metal"
+      ],
+      "banned_genres": [
+        "Classical",
+        "Ambient",
+        "Easy Listening",
+        "Jazz"
+      ],
+      "target_vector": [
+        0.9,
+        0.2,
+        0.9,
+        0.5,
+        0.7,
+        0,
+        0.2,
+        0.8
+      ],
+      "moods": [
+        "energetic"
+      ]
+    }
+  },
+  {
+    "prompt": "Deep house for a warm summer evening",
+    "concept": {
+      "section": "Custom",
+      "title": "Sunset Deep House",
+      "description": "Smooth, melodic deep house for golden hour vibes.",
+      "target_genres": [
+        "Deep House",
+        "Progressive House",
+        "Tropical House"
+      ],
+      "banned_genres": [
+        "Hardcore",
+        "Heavy Metal",
+        "Thrash",
+        "Gabber"
+      ],
+      "target_vector": [
+        0.4,
+        0.5,
+        0.5,
+        0.8,
+        0.6,
+        0.2,
+        0.8,
+        0.5
+      ],
+      "moods": [
+        "chill",
+        "atmospheric",
+        "uplifting"
+      ]
+    }
+  },
+  {
+    "prompt": "Melancholic indie rock for a rainy day",
+    "concept": {
+      "section": "Custom",
+      "title": "Rainy Day Reflections",
+      "description": "A somber collection of indie and shoegaze for a grey, rainy afternoon.",
+      "target_genres": [
+        "Indie Rock",
+        "Shoegaze",
+        "Dream Pop"
+      ],
+      "banned_genres": [
+        "Heavy Metal",
+        "Trap",
+        "Techno",
+        "Hardcore"
+      ],
+      "target_vector": [
+        0.3,
+        0.3,
+        0.2,
+        0.8,
+        0.4,
+        0.7,
+        0.2,
+        0.2
+      ],
+      "moods": [
+        "melancholic",
+        "atmospheric"
+      ]
+    }
+  },
+  {
+    "prompt": "Jazz for a dinner party",
+    "concept": {
+      "section": "Custom",
+      "title": "Elegant Dinner Jazz",
+      "description": "Sophisticated melodies for a perfect evening.",
+      "target_genres": [
+        "Smooth Jazz",
+        "Swing",
+        "Jazz"
+      ],
+      "banned_genres": [
+        "Hardcore",
+        "Death Metal",
+        "Dubstep",
+        "Trap"
+      ],
+      "target_vector": [
+        0.35,
+        0.6,
+        0.2,
+        0.85,
+        0.8,
+        0.85,
+        0.3,
+        0.35
+      ],
+      "moods": [
+        "chill",
+        "romantic",
+        "atmospheric"
+      ]
+    }
+  }
+]

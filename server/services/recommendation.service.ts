@@ -6,6 +6,7 @@ import { christmasExclusionSql, isChristmasSeason, isChristmasRow } from '../uti
 import { countryCode, languageCode, placeFromTag } from '../../shared/places';
 import { seedStyleVector, styleBeta, styleCosine, styleVectorForNames, styleVectors, type StyleVector } from './styleOverlap.service';
 import { isRowBanned, pathsMatchSql, trackGenrePathsJoin } from './genreTaxonomy/paths';
+import { artistCap, conceptMatch, conceptStyles, rankByScore, scoreBeta, STRONG_MEMBER, trackMemberships } from './aiPlaylistScore.service';
 import { moodOf, vocalsOf, type Mood } from '../../shared/descriptors';
 
 // 1. Z-Score normalization is handled by scaling 0-1 mapped values in JS, but 
@@ -388,8 +389,14 @@ export async function getHubCollections(
     llmPlaylistDiversity?: number,
     llmVetoMode?: 'hard' | 'adaptive',
     llmGenerationSource?: 'hub' | 'custom',
+    /** pools: the six-pool mix; score: one score over a bounded candidate set (phase 5, being compared). */
+    aiPlaylistEngine?: 'pools' | 'score',
+    /** false: build and return the playlists without saving them (comparisons, previews). */
+    persist?: boolean,
   } = {}
 ) {
+  const aiEngine: 'pools' | 'score' = settings.aiPlaylistEngine
+    ?? ((await getSystemSetting('aiPlaylistEngine')) === 'score' ? 'score' : 'pools');
   // Style vectors for genre references ("electronic.house"), read once per name.
   const nameStyleCache = new Map<string, Promise<StyleVector | null>>();
   const styleRefFor = (reference: string) => {
@@ -462,7 +469,21 @@ export async function getHubCollections(
     wanderStrength: number,
     maxTracksPerArtist: number,
     poolTargets: Map<string, number> = new Map(),
-    options: { discoveryBias: number; artistSpread: number } = { discoveryBias: 0.45, artistSpread: 0.70 }
+    options: {
+      discoveryBias: number;
+      artistSpread: number;
+      /** How well a row fits, 0 = best; default its rank as a fraction of the list. The scored engine passes its score, in spreads. */
+      fitOf?: (row: any) => number;
+      /**
+       * Scales the sound-variety terms (genre root, sound cluster, similarity).
+       * The scored engine lowers it: its fit is in spreads, and at full weight
+       * ten tracks of one style in one sound cluster pushed the next one out
+       * for music outside the concept.
+       */
+      varietyWeight?: number;
+      /** The novelty bonus is already in fitOf. */
+      noveltyInFit?: boolean;
+    } = { discoveryBias: 0.45, artistSpread: 0.70 }
   ): { selected: any[]; diversityScore: number; diagnostics: { distinctArtists: number; distinctAlbums: number; distinctRoots: number; distinctPools: number; distinctClusters: number; meanPairwiseDistance: number; } } => {
     const selected: any[] = [];
     const selectedSongKeys = new Set<string>();
@@ -508,11 +529,12 @@ export async function getHubCollections(
         const clusterKey = getAcousticClusterKey(candidate);
         const candidateVector = parseAcousticVector(candidate);
         const rank = rankBySong.get(songKey) ?? scoredRows.length;
-        const fitScore = rank / Math.max(1, scoredRows.length - 1);
+        const fitScore = options.fitOf ? options.fitOf(candidate) : rank / Math.max(1, scoredRows.length - 1);
         const artistPenalty = (artistCounts.get(artistKey) ?? 0) * (0.65 + (options.artistSpread * 0.70));
         const albumPenalty = albumKey ? (albumCounts.get(albumKey) ?? 0) * (0.22 + (options.artistSpread * 0.18)) : 0;
-        const rootPenalty = (rootCounts.get(rootKey) ?? 0) * 0.06;
-        const clusterPenalty = (clusterCounts.get(clusterKey) ?? 0) * 0.38;
+        const variety = options.varietyWeight ?? 1;
+        const rootPenalty = (rootCounts.get(rootKey) ?? 0) * 0.06 * variety;
+        const clusterPenalty = (clusterCounts.get(clusterKey) ?? 0) * 0.38 * variety;
         const desiredPoolCount = poolTargets.get(poolKey) ?? 0;
         const currentPoolCount = poolCounts.get(poolKey) ?? 0;
         const poolPenalty = desiredPoolCount > 0
@@ -520,7 +542,7 @@ export async function getHubCollections(
           : currentPoolCount * 0.08;
         const poolBonus = desiredPoolCount > currentPoolCount ? 0.06 : 0;
         const poolBias = Number(candidate.pool_bias ?? 0);
-        const noveltyBonus = Math.min(0.18, Number(candidate.novelty_boost ?? 0) * (0.55 + (options.discoveryBias * 0.90)));
+        const noveltyBonus = options.noveltyInFit ? 0 : Math.min(0.18, Number(candidate.novelty_boost ?? 0) * (0.55 + (options.discoveryBias * 0.90)));
         const newArtistBonus = (artistCounts.get(artistKey) ?? 0) === 0 ? (0.04 + (options.artistSpread * 0.10)) : 0;
         const pairwiseDistances = selectedVectors
           .map((vector) => acousticDistance(candidateVector, vector))
@@ -529,9 +551,9 @@ export async function getHubCollections(
           ? pairwiseDistances.reduce((sum, value) => sum + value, 0) / pairwiseDistances.length
           : 0.30;
         const similarityPenalty = pairwiseDistances.length > 0
-          ? Math.max(0, 0.20 - meanDistance) * 2.2
+          ? Math.max(0, 0.20 - meanDistance) * 2.2 * variety
           : 0;
-        const diversityBonus = pairwiseDistances.length > 0 ? Math.min(0.14, meanDistance * 0.45) : 0.04;
+        const diversityBonus = (pairwiseDistances.length > 0 ? Math.min(0.14, meanDistance * 0.45) : 0.04) * variety;
         const randomBonus = Math.random() * wanderStrength * 0.18;
         const score =
           fitScore +
@@ -664,8 +686,12 @@ export async function getHubCollections(
     excludePrefixes = [],
     enableDiscoveryBoost = false,
     origin = null,
+    restrictIds,
+    includeNovelty = false,
+    withPaths = true,
+    members,
   }: {
-    poolName: 'core' | 'adjacent' | 'root' | 'acoustic' | 'discovery' | 'bridge';
+    poolName: 'core' | 'adjacent' | 'root' | 'acoustic' | 'discovery' | 'bridge' | 'score';
     vectorStr: string;
     embeddingCentroidStr: string | null;
     effnetWeight: number;
@@ -675,8 +701,17 @@ export async function getHubCollections(
     excludePrefixes?: string[];
     enableDiscoveryBoost?: boolean;
     origin?: OriginFilter | null;
+    /** Only these tracks (the scored engine's second pass). */
+    restrictIds?: string[];
+    /** Compute the novelty bonus without ordering by it. */
+    includeNovelty?: boolean;
+    /** Genre paths per row (a lateral per row: leave out on whole-library passes). */
+    withPaths?: boolean;
+    /** Only members of these styles or genres at this strength or more. */
+    members?: { styleIds: number[]; genres: string[]; minStrength: number };
   }): Promise<any[]> => {
     if (limit <= 0) return [];
+    if (restrictIds && restrictIds.length === 0) return [];
 
     const params: any[] = [vectorStr];
     let nextParam = 2;
@@ -691,10 +726,10 @@ export async function getHubCollections(
       nextParam++;
     }
 
-    let joinSql = genrePathJoinSql;
+    let joinSql = withPaths ? genrePathJoinSql : `LEFT JOIN genres canonical_genre ON canonical_genre.id = t.genre_id`;
     let noveltySql = '0.0';
 
-    if (enableDiscoveryBoost) {
+    if (enableDiscoveryBoost || includeNovelty) {
       if (userId) {
         params.push(userId);
         joinSql += ` LEFT JOIN user_playback_stats ups ON ups.track_id = t.id AND ups.user_id = $${nextParam}`;
@@ -760,6 +795,20 @@ export async function getHubCollections(
       nextParam++;
     }
 
+    if (restrictIds) {
+      params.push(restrictIds);
+      whereClauses.push(`t.id = ANY($${nextParam}::text[])`);
+      nextParam++;
+    }
+
+    if (members) {
+      params.push(members.styleIds, members.genres, members.minStrength);
+      whereClauses.push(`EXISTS (SELECT 1 FROM track_styles ms WHERE ms.track_id = t.id
+        AND (ms.style_id = ANY($${nextParam}::int[]) OR (ms.style_id IS NULL AND ms.genre = ANY($${nextParam + 1}::text[])))
+        AND ms.strength >= $${nextParam + 2})`);
+      nextParam += 3;
+    }
+
     // "Dansk rap fra 90'erne med kvindelig vokal" (track_origin): a country or
     // a language asked for, the years (the original release year; a track
     // known only by its artist's era tag counts when that decade overlaps),
@@ -808,6 +857,7 @@ export async function getHubCollections(
       acoustic: 0.03,
       bridge: 0.05,
       discovery: 0.06,
+      score: 0,
     };
 
     const res = await queryWithRetry(`
@@ -815,8 +865,8 @@ export async function getHubCollections(
         SELECT
           t.*,
           COALESCE(canonical_genre.name, t.genre) AS genre,
-          tgp.genre_path,
-          tgp.genre_paths,
+          ${withPaths ? 'tgp.genre_path' : 'NULL::text AS genre_path'},
+          ${withPaths ? 'tgp.genre_paths' : 'NULL::text[] AS genre_paths'},
           tf.acoustic_vector_8d::text AS acoustic_vector_text,
           (${distanceSql}) - ${moodBoostSql} AS distance,
           ${noveltySql} AS novelty_boost,
@@ -1079,6 +1129,96 @@ export async function getHubCollections(
         );
       }
 
+      let topTracks: any[] = [];
+      if (aiEngine === 'score') {
+        // One score over a bounded candidate set (docs/Aurora genre and style
+        // redesign.md, AI playlists): the nearest by sound, plus the target
+        // styles' strong members nearest in sound (and their weaker members
+        // when the library has few strong ones), then scored together.
+        const db = await initDB();
+        const L = tracksPerPlaylist;
+        const styles = await conceptStyles(db, compiled.corePaths, adjacentReach);
+        const hasTargets = styles.styleIds.length + styles.genres.length > 0;
+        // The sound to aim at: the AI's 8 numbers for mood and energy, and the
+        // target styles' own sound (centroids) instead of the imputed guess.
+        const base = { origin: originFilter, poolName: 'score' as const, vectorStr, embeddingCentroidStr: styles.centroid ?? embeddingCentroidStr, effnetWeight, excludeIds: assignedIds };
+        const small = libraryProfile.analyzedTracks < 2000;
+        let soundLimit = small ? libraryProfile.analyzedTracks + 1 : Math.max(10 * L, 300);
+        let memberLimit = Math.max(8 * L, 200);
+        const widenings = recoveryStrength > 0 ? 1 : 0;
+        let rows: any[] = [];
+        let strongIds = new Set<string>();
+        let counts = { sound: 0, strong: 0, weak: 0 };
+        for (let attempt = 0; attempt <= widenings; attempt++) {
+          const members = { styleIds: styles.styleIds, genres: styles.genres };
+          const [sound, strong] = await Promise.all([
+            fetchLlmPool({ ...base, limit: soundLimit, withPaths: false }),
+            hasTargets ? fetchLlmPool({ ...base, limit: memberLimit, withPaths: false, members: { ...members, minStrength: STRONG_MEMBER } }) : Promise.resolve([]),
+          ]);
+          // Relative floor: too few strong members, so the weaker ones count too.
+          const weak = hasTargets && new Set(strong.map(getSongDedupKey)).size < 2 * L
+            ? await fetchLlmPool({ ...base, limit: memberLimit, withPaths: false, members: { ...members, minStrength: 0 } })
+            : [];
+          // Support: the strong members, or (relative floor) the weaker ones too.
+          strongIds = new Set([...strong, ...weak].map((r: any) => String(r.id)));
+          counts = { sound: sound.length, strong: strong.length, weak: weak.length };
+          const ids = [...new Set([...sound, ...strong, ...weak].map((r: any) => String(r.id)))];
+          rows = (await fetchLlmPool({ ...base, limit: ids.length, restrictIds: ids, includeNovelty: true }))
+            .filter((r: any) => !assignedSongKeys.has(getSongDedupKey(r)));
+          const allowed = rows.filter((r: any) => !isRowBanned(r, compiled.bannedGenres));
+          const songs = new Set(allowed.map(getSongDedupKey)).size;
+          const artists = new Set(allowed.map((r: any) => normalizeArtistName(r.artist || ''))).size;
+          if (small || (songs >= 3 * L && artists >= Math.ceil(L / 2))) break;
+          // Short: widen once, as far as Recovery Strength allows.
+          soundLimit = Math.ceil(soundLimit * (1 + 2 * recoveryStrength));
+          memberLimit = Math.ceil(memberLimit * (1 + 2 * recoveryStrength));
+        }
+
+        let allowed = rows.filter((r: any) => !isRowBanned(r, compiled.bannedGenres));
+        let softVeto = false;
+        if (new Set(allowed.map(getSongDedupKey)).size < L && allowSoftVetoRecovery && compiled.bannedGenres.length) {
+          allowed = rows;
+          softVeto = true;
+        }
+        const support = new Set(allowed.filter((r: any) => strongIds.has(String(r.id))).map(getSongDedupKey)).size;
+        const beta = scoreBeta(genreBlend, support, L);
+        const memberships = await trackMemberships(db, allowed.map((r: any) => String(r.id)));
+        const ranked = rankByScore(allowed, {
+          match: (r: any) => conceptMatch(styles.weights, memberships.get(String(r.id))),
+          beta,
+          nu: discoveryBias,
+          penalty: softVeto ? (r: any) => (isRowBanned(r, compiled.bannedGenres) ? 1 : 0) : undefined,
+        }).map(r => ({ ...r, pool_source: 'score', pool_bias: 0 }));
+
+        // Artists who actually fit (match ≥ 0.5): with few of them, each may
+        // bring more tracks before the list reaches outside the concept.
+        const fitting = ranked.filter((r: any) => r.styleMatch >= 0.5);
+        const artistsAvailable = new Set((fitting.length ? fitting : ranked).map((r: any) => normalizeArtistName(r.artist || ''))).size;
+        const bestScore = ranked[0]?.score ?? 0;
+        const selection = selectDiverseTracks(ranked, L, diversity, artistCap(L, artistsAvailable, artistSpread), new Map([['score', L]]), {
+          discoveryBias,
+          artistSpread,
+          fitOf: (r: any) => r.score - bestScore,
+          // Playlist Diversity sets how much sound variety counts against fit.
+          varietyWeight: diversity * 0.5,
+          noveltyInFit: true,
+        });
+        topTracks = selection.selected;
+        if (topTracks.length === 0) {
+          console.warn(`[LLM Hub] Dropping playlist "${concept.title}" - no candidates passed the filters and the veto.`);
+          (concept as any).dropped = true;
+          continue;
+        }
+        const meanMatch = topTracks.reduce((sum, t) => sum + Number(t.styleMatch || 0), 0) / topTracks.length;
+        const strongInList = topTracks.filter(t => strongIds.has(String(t.id))).length;
+        console.log([
+          `[LLM Hub] Playlist Diagnostic (score): "${concept.title || concept.section}"`,
+          `  targets=${compiled.corePaths.join(', ') || 'none'} | concept=${styles.describe || 'none'}`,
+          `  candidates=sound ${counts.sound} + strong members ${counts.strong} + weaker ${counts.weak} → ${new Set(allowed.map(getSongDedupKey)).size} songs, ${artistsAvailable} artists${small ? ' (small library: every track)' : ''}`,
+          `  support=${support} | beta=${beta.toFixed(2)} | nu=${discoveryBias.toFixed(2)} | veto=${compiled.bannedGenres.length ? `${softVeto ? 'adaptive (relaxed)' : 'hard'} [${compiled.bannedNames.join(', ')}]` : 'none'}`,
+          `  selected=${topTracks.length} tracks / ${new Set(topTracks.map(t => normalizeArtistName(t.artist || ''))).size} artists | strong members ${strongInList}/${topTracks.length} | mean style match ${meanMatch.toFixed(2)}`,
+        ].join('\n'));
+      } else {
       const coreLimit = compiled.corePaths.length
         ? Math.max(10, Math.floor(dynamicFetchSize * Math.max(0.16, compiled.effectiveGenreBlend * (0.48 - (recoveryStrength * 0.10)))))
         : 0;
@@ -1472,7 +1612,7 @@ export async function getHubCollections(
         }
       }
 
-      const topTracks = selection.selected;
+      topTracks = selection.selected;
       if (topTracks.length === 0) {
         console.warn(`[LLM Hub] Dropping playlist "${concept.title}" - no selectable tracks remained after ranking.`);
         (concept as any).dropped = true;
@@ -1501,6 +1641,7 @@ export async function getHubCollections(
         diversityScore: selection.diversityScore,
         diagnostics: selection.diagnostics,
       }));
+      }
 
       // Register these track IDs to prevent overlap in subsequent playlists
       for (const t of topTracks) {
@@ -1509,19 +1650,19 @@ export async function getHubCollections(
       }
 
       // Create a formal Playlist record (user-scoped)
-      const playlistId = `llm_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-      await createPlaylist(
-        playlistId,
-        concept.title || concept.section,
-        concept.description,
-        true,
-        userId,
-        false,
-        settings.llmGenerationSource ?? 'hub'
-      );
-
-      const trackIds = topTracks.map((r: any) => r.id);
-      await addTracksToPlaylist(playlistId, trackIds);
+      const playlistId = `${settings.persist === false ? 'preview' : 'llm'}_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+      if (settings.persist !== false) {
+        await createPlaylist(
+          playlistId,
+          concept.title || concept.section,
+          concept.description,
+          true,
+          userId,
+          false,
+          settings.llmGenerationSource ?? 'hub'
+        );
+        await addTracksToPlaylist(playlistId, topTracks.map((r: any) => r.id));
+      }
 
       hubs.push({
         id: playlistId,
@@ -1538,6 +1679,9 @@ export async function getHubCollections(
       });
     }
   }
+
+  // A preview stops here: the rest saves system playlists.
+  if (settings.persist === false) return hubs;
 
   // Also append user's existing Playlists to the Hub
   const existingPlaylists = await getPlaylists(userId);
