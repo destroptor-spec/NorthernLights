@@ -91,6 +91,7 @@ Library scanning operates in three distinct phases:
    - **Three windows**: 15 s each at 20/50/80 % of the track, decoded by one ffmpeg call at 44.1 kHz (DSP) and 16 kHz (models); duration comes from the DB, no per-track ffprobe
    - **One network**: Discogs-EffNet once per track (three windows share one 64-patch batch), plus small classifiers on its embeddings for 400 style scores, danceability, acousticness and instrumentalness. Inference sits behind `EssentiaCpuBackend` in `extractor.py` so a CUDA/ROCm backend can replace it; see `docs/audio_management.md`
    - **Style scores**: stored in `track_style_scores` (400 values, own `genre_version`) in the same transaction as `track_features`
+   - **Moods**: five mood classifiers (happy, sad, relaxed, aggressive, party) and the 56-tag MTG-Jamendo mood/theme head on the same embeddings, stored in `track_moods` (`shared/audioMoods.ts`); tracks analysed earlier are scored from their stored embedding by `moodScores.service.ts`
    - **Symlink Workaround**: Non-ASCII filenames handled via temp symlinks in `/tmp/am-*/`
    - **Safe Essentia**: Individual algorithm error handling with graceful fallbacks
    - **Results**: 21-dimensional feature vectors (**8D acoustic semantic** + 13D MFCC) stored in `track_features` table. Supports slicing for legacy 7D compatibility. Uses native SQL aggregation (`AVG`/`STDDEV`) for ultra-fast library-wide vector normalization.

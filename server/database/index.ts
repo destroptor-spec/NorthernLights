@@ -1,4 +1,5 @@
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
+import { MOOD_SCORE_VERSION, type AudioMood } from '../../shared/audioMoods';
 import { databaseHost } from './dbHost';
 import path from 'path';
 import fs from 'fs';
@@ -302,6 +303,23 @@ export async function initDB(): Promise<Pool> {
         -- written with feature_version 3 analysis. Own version column so a
         -- scoring change can be backfilled without touching the embeddings.
         -- PostgreSQL ignores declared array sizes, hence the CHECK.
+        -- Moods from the sound (shared/audioMoods.ts): five yes/no mood
+        -- probabilities and the 56 MTG-Jamendo mood/theme scores. 'analysis'
+        -- rows come from per-patch scoring during analysis, 'embedding' rows
+        -- from the stored embedding (the backfill; within 0.04 of analysis).
+        CREATE TABLE IF NOT EXISTS track_moods (
+          track_id     TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+          happy        REAL NOT NULL CHECK (happy BETWEEN 0 AND 1),
+          sad          REAL NOT NULL CHECK (sad BETWEEN 0 AND 1),
+          relaxed      REAL NOT NULL CHECK (relaxed BETWEEN 0 AND 1),
+          aggressive   REAL NOT NULL CHECK (aggressive BETWEEN 0 AND 1),
+          party        REAL NOT NULL CHECK (party BETWEEN 0 AND 1),
+          themes       REAL[] CHECK (themes IS NULL OR (array_ndims(themes) = 1 AND cardinality(themes) = 56)),
+          method       TEXT NOT NULL CHECK (method IN ('analysis', 'embedding')),
+          mood_version INTEGER NOT NULL,
+          scored_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
         CREATE TABLE IF NOT EXISTS track_style_scores (
           track_id      TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
           scores        REAL[] NOT NULL
@@ -2369,6 +2387,8 @@ export async function addTrackFeatures(trackId: string, audioFeatures: {
   analysis_windows?: string;
   is_simulated?: boolean;
   feature_version?: number;
+  moods?: Record<AudioMood, number> | null;
+  mood_themes?: number[] | null;
 }) {
   const db = await initDB();
   const vector8dStr = `[${audioFeatures.acoustic_vector.slice(0, 8).join(',')}]`;
@@ -2410,6 +2430,11 @@ export async function addTrackFeatures(trackId: string, audioFeatures: {
     } else {
       await client.query('DELETE FROM track_style_scores WHERE track_id = $1', [trackId]);
     }
+    if (!simulated && audioFeatures.moods) {
+      await upsertTrackMoods(client, trackId, { moods: audioFeatures.moods, mood_themes: audioFeatures.mood_themes ?? null }, 'analysis');
+    } else if (simulated) {
+      await client.query('DELETE FROM track_moods WHERE track_id = $1', [trackId]);
+    }
     await client.query('COMMIT');
     // New style scores feed fusion (debounced; at most every 10 minutes during a run).
     void import('../services/genreTaxonomy').then(m => m.scheduleFusion()).catch(() => {});
@@ -2419,6 +2444,24 @@ export async function addTrackFeatures(trackId: string, audioFeatures: {
   } finally {
     client.release();
   }
+}
+
+/** Writes a track's moods (shared/audioMoods.ts). */
+export async function upsertTrackMoods(
+  db: Pool | PoolClient,
+  trackId: string,
+  scores: { moods: Record<AudioMood, number>; mood_themes: number[] | null },
+  method: 'analysis' | 'embedding',
+) {
+  const m = scores.moods;
+  await db.query(`
+    INSERT INTO track_moods (track_id, happy, sad, relaxed, aggressive, party, themes, method, mood_version, scored_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7::real[], $8, $9, NOW())
+    ON CONFLICT (track_id) DO UPDATE SET
+      happy = EXCLUDED.happy, sad = EXCLUDED.sad, relaxed = EXCLUDED.relaxed,
+      aggressive = EXCLUDED.aggressive, party = EXCLUDED.party, themes = EXCLUDED.themes,
+      method = EXCLUDED.method, mood_version = EXCLUDED.mood_version, scored_at = EXCLUDED.scored_at`,
+  [trackId, m.happy, m.sad, m.relaxed, m.aggressive, m.party, scores.mood_themes, method, MOOD_SCORE_VERSION]);
 }
 
 // ─── Loudness (EBU R128) ──────────────────────────────────────────────

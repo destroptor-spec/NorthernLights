@@ -44,6 +44,27 @@ DESCRIPTOR_MODELS = {
     "acousticness": ("mood_acoustic-discogs-effnet-1.pb", 0),
     "instrumentalness": ("voice_instrumental-discogs-effnet-1.pb", 0),
 }
+# Moods from the sound: mood -> (model file, index of the class we report).
+# Classes: mood_happy [happy, non_happy], mood_sad [non_sad, sad],
+# mood_relaxed [non_relaxed, relaxed], mood_aggressive [aggressive,
+# not_aggressive], mood_party [non_party, party]. Cross-validated accuracy
+# 0.87 / 0.90 / 0.91 / 0.98 / 0.93. Optional: analysis runs without them.
+MOOD_MODELS = {
+    "happy": ("mood_happy-discogs-effnet-1.pb", 0),
+    "sad": ("mood_sad-discogs-effnet-1.pb", 1),
+    "relaxed": ("mood_relaxed-discogs-effnet-1.pb", 1),
+    "aggressive": ("mood_aggressive-discogs-effnet-1.pb", 0),
+    "party": ("mood_party-discogs-effnet-1.pb", 1),
+}
+# MTG-Jamendo mood/theme: 56 sigmoid tags in model order (ROC-AUC 0.76: broad
+# and noisy, used as hints only).
+THEME_MODEL = "mtg_jamendo_moodtheme-discogs-effnet-1.pb"
+THEME_CLASSES = 56
+# The stored embedding is the per-patch mean, normalised to unit length; the
+# heads were trained on raw embeddings. Scaled by this factor, scoring the
+# stored embedding reproduced the full per-patch descriptors at r 0.98-0.99,
+# mean error 0.03-0.04 (400 dev tracks, 11 Nov 2026).
+STORED_EMBEDDING_SCALE = 2.75
 
 
 def normalized_energy(audio):
@@ -78,11 +99,13 @@ def prepare_model_audio(audio):
 class ModelOutput:
     """Per-patch model outputs for one track."""
 
-    def __init__(self, embeddings, styles, descriptors, timings):
+    def __init__(self, embeddings, styles, descriptors, timings, moods=None, themes=None):
         self.embeddings = embeddings    # [patches, 1280] Discogs-EffNet
         self.styles = styles            # [patches, 400] genre_discogs400 sigmoid scores
         self.descriptors = descriptors  # name -> [patches] probability of the reported class
         self.timings = timings
+        self.moods = moods              # mood -> [patches] probability, or None without the models
+        self.themes = themes            # [patches, 56] MTG-Jamendo mood/theme, or None
 
 
 class EssentiaCpuBackend:
@@ -118,6 +141,24 @@ class EssentiaCpuBackend:
                                        input="model/Placeholder", output="model/Softmax"), index)
             for name, (filename, index) in DESCRIPTOR_MODELS.items()
         }
+        self.mood_heads = None
+        self.theme_head = None
+        if all(os.path.exists(os.path.join(models_dir, f)) for f, _ in MOOD_MODELS.values()):
+            self.mood_heads = {
+                name: (TensorflowPredict2D(graphFilename=os.path.join(models_dir, filename),
+                                           input="model/Placeholder", output="model/Softmax"), index)
+                for name, (filename, index) in MOOD_MODELS.items()
+            }
+        if os.path.exists(os.path.join(models_dir, THEME_MODEL)):
+            self.theme_head = TensorflowPredict2D(graphFilename=os.path.join(models_dir, THEME_MODEL),
+                                                  input="model/Placeholder", output="model/Sigmoid")
+
+    def moods_of(self, embeddings):
+        """Per-row mood probabilities and theme scores for [n, 1280] embeddings."""
+        moods = ({name: np.asarray(head(embeddings))[:, index] for name, (head, index) in self.mood_heads.items()}
+                 if self.mood_heads else None)
+        themes = np.asarray(self.theme_head(embeddings)) if self.theme_head is not None else None
+        return moods, themes
 
     def infer(self, clips_16k):
         timings = {}
@@ -131,8 +172,9 @@ class EssentiaCpuBackend:
         styles = np.asarray(self.style_head(embeddings))
         descriptors = {name: np.asarray(head(embeddings))[:, index]
                        for name, (head, index) in self.descriptor_heads.items()}
+        moods, themes = self.moods_of(embeddings)
         timings["heads_ms"] = round((time.perf_counter() - started) * 1000, 2)
-        return ModelOutput(embeddings, styles, descriptors, timings)
+        return ModelOutput(embeddings, styles, descriptors, timings, moods, themes)
 
     def infer_many(self, tracks_clips_16k):
         return [self.infer(clips) for clips in tracks_clips_16k]
@@ -234,10 +276,19 @@ class PersistentExtractor:
             scale(bpm, 200)                # Tempo
         ]
 
+        moods = None
+        if output.moods is not None:
+            moods = {name: round(float(np.mean(values)), 4) for name, values in output.moods.items()}
+        themes = None
+        if output.themes is not None:
+            themes = [round(float(v), 4) for v in prediction_mean(output.themes, THEME_CLASSES, "Theme head")]
+
         timings["total_ms"] = round((time.perf_counter() - total_started) * 1000, 2)
 
         return {
             "audioFeatures": {
+                "moods": moods,
+                "mood_themes": themes,
                 "bpm": round(bpm),
                 "acoustic_vector": acoustic_vector,
                 "embedding_vector": effnet_vector,
@@ -357,6 +408,24 @@ def extract_features(file_path, models_dir):
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)
 
+def score_stored_embeddings(extractor, embeddings):
+    """Moods and themes for stored (unit-length, per-track mean) embeddings."""
+    backend = extractor.backend
+    if backend is None or not getattr(backend, "mood_heads", None):
+        raise ValueError("Mood models are not available")
+    values = np.asarray(embeddings, dtype=np.float32)
+    if values.ndim != 2 or values.shape[1] != 1280 or not np.all(np.isfinite(values)):
+        raise ValueError("Embeddings must be finite [n, 1280]")
+    moods, themes = backend.moods_of(values * STORED_EMBEDDING_SCALE)
+    return [
+        {
+            "moods": {name: round(float(moods[name][i]), 4) for name in MOOD_MODELS},
+            "mood_themes": [round(float(v), 4) for v in themes[i]] if themes is not None else None,
+        }
+        for i in range(values.shape[0])
+    ]
+
+
 def worker_mode(models_dir):
     extractor = PersistentExtractor(models_dir)
     for line in sys.stdin:
@@ -366,6 +435,10 @@ def worker_mode(models_dir):
         try:
             job = json.loads(line)
             job_id = job.get("id")
+            if job_id and "embeddings" in job:
+                print(json.dumps({"id": job_id, "moodScores": score_stored_embeddings(extractor, job["embeddings"])},
+                                 allow_nan=False), flush=True)
+                continue
             file_path = job.get("filePath")
             if not job_id or not file_path:
                 raise ValueError("Job requires id and filePath")

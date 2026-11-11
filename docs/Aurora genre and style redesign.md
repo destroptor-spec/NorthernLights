@@ -561,6 +561,10 @@ Result on the 10 concepts (dev, 20 tracks, Andreas's tuning): 14 to 19 of 20 pic
 
 **Verdict (blind A/B, 11 Nov 2026, dev playlists "AI test 01–10"): the score 6, the pools 3, 1 tie**, so the pools were removed (step 2, same day): `getHubCollections` has one engine. The score won trance, Velvet Shadows, 90s Eurodance, gym metal, summer deep house and dinner jazz; the pools won Danish 90s rap (two near-identical lists; the pools allowed four tracks by one artist), music for code and melancholic indie rock. Those two are the score's trade-off: it keeps to the target styles (Indie Rock in this library is mostly upbeat; Ambient and Downtempo include vocal tracks), where the pools reached into broader Rock and untagged electronic music for the mood. Genre Cohesion sets that balance; a mood-aware β is a later refinement if it matters. A was preferred in 8 of 9 decided pairs, so the order played a part.
 
+### Mood-led requests (2026-11-11, in progress)
+
+The two playlists the pools won were mood requests ("music for code", "melancholic indie rock for a rainy day"). Loosening the style rule alone made them broader, not moodier, and hurt Acoustic Sunday and Velvet Shadows: the sound side knows energy and acoustics (8 numbers) but not melancholic from cosy. So Aurora now hears moods: five Essentia mood classifiers (happy, sad, relaxed, aggressive, party; cross-validated accuracy 0.87–0.98) and the 56-tag MTG-Jamendo mood/theme model (ROC-AUC 0.76; hints only) on the Discogs-EffNet embeddings it already computes, stored in `track_moods`. Scoring the stored embedding (unit length, × 2.75) instead of re-analysing reproduced the full per-patch classifiers at r 0.98–0.99, mean error 0.03–0.04 (400 dev tracks); one re-analysed track agreed to the third decimal. Next: the AI gives each concept a `focus` (0 = mood or activity, 1 = genre or style) and its mood in these terms, and the score gets a mood term, β_style ∝ focus and β_mood ∝ 1 − focus.
+
 ### Evaluation and build order
 
 1. One score and the bounded candidate set for general lists, built beside the pools.

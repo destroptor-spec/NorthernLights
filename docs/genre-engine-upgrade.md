@@ -258,3 +258,14 @@ Nothing to run. AI playlists (Hub and custom) are built by one score over a boun
 
 - [ ] Generate the Hub (or a custom AI playlist); the log reads `[LLM Hub] Playlist Diagnostic (score): "…"` with `targets=`, `candidates=`, `support=`, `beta=` and `selected=… strong members N/20`.
 - [ ] Postgres shared memory: the old pool engine ran six parallel full-library sorts per playlist and ran out of the container's default 64 MB `/dev/shm` on dev (`could not resize shared memory segment … No space left on device`). The score's queries are bounded, but artist radio and the daylist still use pools (`candidatePool.service.ts`); if that error appears in the prod log, give the Postgres container `--shm-size=256m`.
+
+### Step 3: moods from the sound (new table, runs by itself)
+
+New table `track_moods` (created on start): per track five mood probabilities from the sound (happy, sad, relaxed, aggressive, party) and the 56 MTG-Jamendo mood/theme scores, with `method` ('analysis' or 'embedding') and `mood_version`. Six small classifier models (`mood_*-discogs-effnet-1.pb`, `mtg_jamendo_moodtheme-discogs-effnet-1.pb`) download into `server/models` on start like the others. New analysis writes moods itself; tracks analysed earlier get theirs from their stored embedding, two minutes after start, in the analysis worker (dev: 30,713 tracks in 146 s). Nothing reads the moods yet.
+
+- [ ] After start, `server/models` holds the six new `.pb` files, and the log reads `[Moods] Scored moods for N tracks in … s`.
+- [ ] `SELECT method, COUNT(*) FROM track_moods GROUP BY method` covers the analysed tracks (`SELECT COUNT(*) FROM track_features WHERE NOT is_simulated AND feature_version = 3`).
+- [ ] If the log reads `[Moods] Backfill paused: Mood models are not available`, the models had not finished downloading; it tries again in 30 minutes.
+- [ ] The analysis worker needs a working Python with Essentia: on dev the project's `.venv` pointed at a Python the system no longer had (`.venv/bin/python` → removed `python3.14`), so analysis fell back to a Python without Essentia and failed. Check `.venv/bin/python3 -c "import essentia"` on the server.
+
+Rollback: the old code ignores `track_moods`; drop it or leave it.

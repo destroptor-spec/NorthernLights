@@ -823,4 +823,33 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     expect(taxonomyPaths.available).toBe(true);
     expect(taxonomyPaths.paths).toMatchObject({ punk: 'Rock.Punk', pop: 'Pop' });
   });
+
+  test('moods from the sound: analysis writes them, the backfill scores stored embeddings once, simulated features drop them', async () => {
+    const { backfillMoods, countTracksWithoutMoods } = await import('../../services/moodScores.service');
+    const { AUDIO_FEATURE_VERSION } = await import('../../services/audioFeatureVersion');
+    const embedding = Array.from({ length: 1280 }, (_, i) => (i === 0 ? 1 : 0));
+    const base = { bpm: 120, acoustic_vector: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5], embedding_vector: embedding, is_simulated: false, feature_version: AUDIO_FEATURE_VERSION };
+    for (const name of ['m-analysed', 'm-old']) await db.addTrack(track(name, null));
+    const moods = { happy: 0.1, sad: 0.8, relaxed: 0.6, aggressive: 0.05, party: 0.02 };
+    await db.addTrackFeatures(idOf('m-analysed'), { ...base, moods, mood_themes: Array(56).fill(0.1) });
+    await db.addTrackFeatures(idOf('m-old'), base);
+    const row = async (name: string) => (await pool.query('SELECT sad, method, cardinality(themes) AS n FROM track_moods WHERE track_id = $1', [idOf(name)])).rows[0];
+    expect(await row('m-analysed')).toMatchObject({ method: 'analysis', n: 56 });
+    expect(await row('m-old')).toBeUndefined();
+
+    // The backfill scores every real embedding without moods, once.
+    const pending = await countTracksWithoutMoods(pool);
+    expect(pending).toBeGreaterThanOrEqual(1);
+    const scored: number[][] = [];
+    const fake = async (embeddings: number[][]) => { scored.push(...embeddings); return embeddings.map(() => ({ moods: { ...moods, sad: 0.3 }, mood_themes: null })); };
+    expect(await backfillMoods(pool, fake)).toBe(pending);
+    expect(await row('m-old')).toMatchObject({ method: 'embedding', n: null });
+    expect(Number((await row('m-old')).sad)).toBeCloseTo(0.3);
+    expect(Number((await row('m-analysed')).sad)).toBeCloseTo(0.8);
+    expect(await backfillMoods(pool, fake)).toBe(0);
+
+    // Simulated features carry no moods.
+    await db.addTrackFeatures(idOf('m-analysed'), { ...base, is_simulated: true });
+    expect(await row('m-analysed')).toBeUndefined();
+  });
 });

@@ -18,6 +18,11 @@ const MODELS = [
   { name: 'Danceability', filename: 'danceability-discogs-effnet-1.pb', url: `${HEADS_URL}/danceability/danceability-discogs-effnet-1.pb` },
   { name: 'Acoustic', filename: 'mood_acoustic-discogs-effnet-1.pb', url: `${HEADS_URL}/mood_acoustic/mood_acoustic-discogs-effnet-1.pb` },
   { name: 'Voice / instrumental', filename: 'voice_instrumental-discogs-effnet-1.pb', url: `${HEADS_URL}/voice_instrumental/voice_instrumental-discogs-effnet-1.pb` },
+  // Moods from the sound (track_moods): five yes/no moods and the 56 MTG-Jamendo mood/theme tags.
+  ...['happy', 'sad', 'relaxed', 'aggressive', 'party'].map(mood => ({
+    name: `Mood: ${mood}`, filename: `mood_${mood}-discogs-effnet-1.pb`, url: `${HEADS_URL}/mood_${mood}/mood_${mood}-discogs-effnet-1.pb`,
+  })),
+  { name: 'Mood / theme', filename: 'mtg_jamendo_moodtheme-discogs-effnet-1.pb', url: `${HEADS_URL}/mtg_jamendo_moodtheme/mtg_jamendo_moodtheme-discogs-effnet-1.pb` },
 ];
 const MIN_MODEL_BYTES = 1000;
 

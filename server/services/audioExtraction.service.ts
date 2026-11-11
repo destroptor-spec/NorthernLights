@@ -4,6 +4,7 @@ import path from 'path';
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import { MODELS_DIR } from './downloadModels';
 import { AUDIO_FEATURE_VERSION, STYLE_SCORE_COUNT } from './audioFeatureVersion';
+import { AUDIO_MOODS, MOOD_THEMES, type AudioMood } from '../../shared/audioMoods';
 
 export interface AudioFeatures {
   bpm: number;
@@ -13,6 +14,10 @@ export interface AudioFeatures {
   style_scores: number[] | null;
   /** Which audio the scores and vectors came from, e.g. '3x15s@20/50/80%'. */
   analysis_windows?: string;
+  /** Moods from the sound (0–1); null when the mood models aren't installed. */
+  moods?: Record<AudioMood, number> | null;
+  /** MTG-Jamendo mood/theme scores in MOOD_THEMES order; null without the model. */
+  mood_themes?: number[] | null;
   is_simulated: boolean;
   feature_version: number;
 }
@@ -25,9 +30,15 @@ export interface AudioExtractionContext {
   durationSeconds?: number | null;
 }
 
+export interface MoodScores {
+  moods: Record<AudioMood, number>;
+  mood_themes: number[] | null;
+}
+
 interface PythonWorkerResult {
   id: string;
   audioFeatures?: AudioFeatures;
+  moodScores?: MoodScores[];
   error?: string;
   timings?: Record<string, unknown>;
 }
@@ -108,6 +119,22 @@ class PersistentPythonAnalyzer {
     child.on('error', error => fail(`Python analyzer failed: ${error.message}`));
     child.on('exit', (code, signal) => fail(`Python analyzer exited (code=${code}, signal=${signal})${stderrTail ? `: ${stderrTail}` : ''}`));
 
+  }
+
+  /** Moods for stored embeddings (unit-length per-track means), in the same worker. */
+  scoreEmbeddings(embeddings: number[][]): Promise<PythonWorkerResult> {
+    this.ensureStarted();
+    const child = this.child;
+    if (!child) return Promise.reject(new Error('Python analyzer failed to start'));
+    const id = `moods:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      child.stdin.write(JSON.stringify({ id, embeddings }) + '\n', (error) => {
+        if (!error) return;
+        this.pending.delete(id);
+        reject(error);
+      });
+    });
   }
 
   run(filePath: string, context?: AudioExtractionContext): Promise<PythonWorkerResult> {
@@ -203,6 +230,11 @@ export async function extractAudioFeatures(filePath: string, context?: AudioExtr
       || features.style_scores.some(value => !Number.isFinite(value) || value < 0 || value > 1)) {
       throw new Error('Python analyzer returned invalid audio features');
     }
+    // Moods are optional: invalid ones are dropped, never the analysis.
+    if (!validMoodScores({ moods: features.moods as any, mood_themes: features.mood_themes ?? null })) {
+      features.moods = null;
+      features.mood_themes = null;
+    }
     return features;
   } catch (error: any) {
     const reason = error?.message || String(error);
@@ -210,6 +242,29 @@ export async function extractAudioFeatures(filePath: string, context?: AudioExtr
 
     return buildSimulatedFeatures();
   }
+}
+
+function validMoodScores(scores: Partial<MoodScores> | null | undefined): scores is MoodScores {
+  if (!scores?.moods) return false;
+  const inRange = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1;
+  if (!AUDIO_MOODS.every(mood => inRange(scores.moods![mood]))) return false;
+  return scores.mood_themes == null
+    || (Array.isArray(scores.mood_themes) && scores.mood_themes.length === MOOD_THEMES.length && scores.mood_themes.every(inRange));
+}
+
+/**
+ * Moods for stored embeddings (unit-length per-track means): the backfill
+ * for tracks analysed before mood scores. Rejects when the mood models are
+ * missing or the worker fails.
+ */
+export async function scoreMoodsFromEmbeddings(embeddings: number[][]): Promise<MoodScores[]> {
+  const result = await analyzer.scoreEmbeddings(embeddings);
+  if (result.error) throw new Error(result.error);
+  const scores = result.moodScores;
+  if (!Array.isArray(scores) || scores.length !== embeddings.length || !scores.every(validMoodScores)) {
+    throw new Error('Python analyzer returned invalid mood scores');
+  }
+  return scores;
 }
 
 process.once('exit', () => {

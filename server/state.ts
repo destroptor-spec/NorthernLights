@@ -60,6 +60,13 @@ export async function initDatabaseConnection(retries = 15, initialDelay = 1000) 
       import('./services/creditsEnrichment.service')
         .then(m => m.startCreditsImports())
         .catch((e: any) => console.error('[Credits] Import scheduler failed to start (non-fatal):', e?.message || e));
+      // Moods from the sound for tracks analysed before mood scores: from the
+      // stored embeddings, after the models have had time to download.
+      setTimeout(() => {
+        Promise.all([import('./services/moodScores.service'), import('./database')])
+          .then(([m, d]) => m.startMoodBackfill(d.initDB))
+          .catch((e: any) => console.error('[Moods] Backfill failed to start (non-fatal):', e?.message || e));
+      }, 2 * 60 * 1000).unref();
       isInitializing = false;
       return;
     } catch (e: any) {
