@@ -773,14 +773,30 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     // A spelling row named like a taxonomy genre, grouped under another spelling.
     const other = (await pool.query(`INSERT INTO genres (name) VALUES ('Pop Music') RETURNING id`)).rows[0].id;
     await pool.query(`INSERT INTO genres (name, merged_into) VALUES ('Pop', $1) ON CONFLICT (name) DO UPDATE SET merged_into = $1`, [other]);
-    const ids = [idOf('p-punk'), idOf('p-pop'), idOf('t-untagged')];
-    expect(await rebuildTrackGenres(pool, ids)).toBe(2);
+    // A "Dance"-tagged track the sound model guesses is Electro House, and a
+    // track with only weak memberships (untagged, genre from the sound).
+    const electroHouse = (await pool.query(`SELECT id FROM style WHERE genre = 'Electronic' AND name = 'Electro House'`)).rows[0].id;
+    const house = (await pool.query(`SELECT id FROM style WHERE genre = 'Electronic' AND name = 'House'`)).rows[0].id;
+    for (const name of ['p-dance', 'p-guess']) await db.addTrack(track(name, null));
+    const member = (id: string, genre: string, style: number | null, strength: number, source = 'audio') => pool.query(
+      `INSERT INTO track_styles (track_id, genre, style_id, source, strength, confidence, fusion_version) VALUES ($1, $2, $3, $4, $5, 1, 2)`,
+      [id, genre, style, source, strength]);
+    await member(idOf('p-dance'), 'Electronic', null, 1, 'tag');
+    await member(idOf('p-dance'), 'Electronic', electroHouse, 0.15);
+    await member(idOf('p-guess'), 'Electronic', null, 0.3);
+    await member(idOf('p-guess'), 'Electronic', house, 0.4);
+    const ids = [idOf('p-punk'), idOf('p-pop'), idOf('t-untagged'), idOf('p-dance'), idOf('p-guess')];
+    expect(await rebuildTrackGenres(pool, ids)).toBe(4);
     const genresOf = async (id: string) => (await pool.query(
       `SELECT g.name FROM track_genres tg JOIN genres g ON g.id = tg.genre_id WHERE tg.track_id = $1 ORDER BY tg.position`, [id])).rows.map(r => r.name);
     // Styles first, strongest first, then genres; position 0 is genre_id.
     expect(await genresOf(idOf('p-punk'))).toEqual(['Punk', 'Pop']);
     expect(await genresOf(idOf('p-pop'))).toEqual(['Pop']);
     expect(await genresOf(idOf('t-untagged'))).toEqual([]);
+    // A weak sound guess is not one of the track's genres; with nothing
+    // strong, the strongest genre stays.
+    expect(await genresOf(idOf('p-dance'))).toEqual(['Electronic']);
+    expect(await genresOf(idOf('p-guess'))).toEqual(['Electronic']);
     const primary = async (id: string) => (await pool.query(
       'SELECT g.name FROM tracks t LEFT JOIN genres g ON g.id = t.genre_id WHERE t.id = $1', [id])).rows[0].name;
     expect(await primary(idOf('p-punk'))).toBe('Punk');

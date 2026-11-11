@@ -6,9 +6,13 @@
  * file tags. The tags themselves stay in tracks.genre / tracks.genres and
  * track_tags, and raw spellings stay in `genres` for the spelling review.
  *
- * Per track: its styles first (strongest first), then its genres; position 0
- * is tracks.genre_id. A style name in two genres ("Trip Hop") is one genre
- * row. A track with no fused genre has no row and genre_id NULL.
+ * Per track: its memberships at strength TRACK_GENRE_MIN_STRENGTH or more,
+ * strongest first, a style before its genre on a tie; position 0 is
+ * tracks.genre_id. Weak sound guesses (a "Dance"-tagged track the model calls
+ * Electro House at 0.15) stay out: they only nudge recommendations, through
+ * track_styles. A track with only weak memberships keeps its strongest genre.
+ * A style name in two genres ("Trip Hop") is one genre row. A track with no
+ * fused genre has no row and genre_id NULL.
  */
 import type { Pool, PoolClient } from 'pg';
 import { normalizeGenreIdentity } from '../../utils/genreIdentity';
@@ -16,7 +20,9 @@ import { normalizeGenreIdentity } from '../../utils/genreIdentity';
 type Db = Pool | PoolClient;
 
 /** Bumped when the derivation changes; startup rebuilds every track once. */
-export const TRACK_GENRES_VERSION = 1;
+export const TRACK_GENRES_VERSION = 2;
+/** A membership weaker than this is a guess, not one of the track's genres. */
+export const TRACK_GENRE_MIN_STRENGTH = 0.5;
 export const TRACK_GENRES_SETTING = 'trackGenresVersion';
 
 /**
@@ -61,11 +67,18 @@ export async function rebuildTrackGenres(db: Db, trackIds?: string[]): Promise<n
       LEFT JOIN style s ON s.id = ts.style_id
       JOIN m ON m.name = COALESCE(s.name, ts.genre)
       WHERE $3::text[] IS NULL OR ts.track_id = ANY($3::text[])
-      ORDER BY ts.track_id, m.genre_id, (ts.style_id IS NULL), ts.strength DESC
+      ORDER BY ts.track_id, m.genre_id, ts.strength DESC, (ts.style_id IS NULL)
+    ),
+    k AS (
+      SELECT r.*,
+             bool_or(strength >= $4) OVER (PARTITION BY track_id) AS has_strong,
+             ROW_NUMBER() OVER (PARTITION BY track_id ORDER BY is_genre DESC, strength DESC, name) AS fallback_rank
+      FROM r
     )
     INSERT INTO track_genres (track_id, genre_id, position)
-    SELECT track_id, genre_id, (ROW_NUMBER() OVER (PARTITION BY track_id ORDER BY is_genre, strength DESC, name) - 1)::int
-    FROM r`, [[...ids.keys()], [...ids.values()], scope]);
+    SELECT track_id, genre_id, (ROW_NUMBER() OVER (PARTITION BY track_id ORDER BY strength DESC, is_genre, name) - 1)::int
+    FROM k
+    WHERE strength >= $4 OR (NOT has_strong AND fallback_rank = 1)`, [[...ids.keys()], [...ids.values()], scope, TRACK_GENRE_MIN_STRENGTH]);
   await db.query(`
     UPDATE tracks t SET genre_id = tg.genre_id
     FROM tracks src LEFT JOIN track_genres tg ON tg.track_id = src.id AND tg.position = 0
