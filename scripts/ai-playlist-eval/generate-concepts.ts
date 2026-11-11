@@ -1,8 +1,8 @@
 /**
  * Phase 5 evaluation set (docs/Aurora genre and style redesign.md, AI
  * playlists): asks the configured AI for one playlist concept per prompt and
- * saves the answers, so the pool engine and the scored engine are compared on
- * the same input. Run once; rerun only to replace the set.
+ * saves the answers, so every change to the engine is judged on the same
+ * input (run.ts). Run once; rerun only to replace the set.
  *
  *   npx tsx scripts/ai-playlist-eval/generate-concepts.ts
  */

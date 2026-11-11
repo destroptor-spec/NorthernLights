@@ -57,3 +57,12 @@ test('few fitting artists may each bring more tracks', () => {
   expect(artistCap(20, 8, 0.7)).toBe(3);
   expect(artistCap(10, 30, 0.9)).toBe(1);
 });
+
+test('the sound target blends the styles\' sound and the AI\'s, each normalised', () => {
+  const { blendEmbeddings } = jest.requireActual('./aiPlaylistScore.service') as typeof import('./aiPlaylistScore.service');
+  const mixed = JSON.parse(blendEmbeddings('[2,0]', '[0,5]')!) as number[];
+  expect(mixed[0]).toBeCloseTo(Math.SQRT1_2);
+  expect(mixed[1]).toBeCloseTo(Math.SQRT1_2);
+  expect(blendEmbeddings(null, '[0,1]')).toBe('[0,1]');
+  expect(blendEmbeddings('[1,0]', null)).toBe('[1,0]');
+});

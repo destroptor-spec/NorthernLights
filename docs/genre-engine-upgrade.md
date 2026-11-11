@@ -252,9 +252,9 @@ Rollback: the old code recreates `subgenre_mappings` (empty) and the view (`REFR
 
 ## Phase 5: AI playlists on one score
 
-### Step 1: the scored engine beside the pools (no schema change)
+### Steps 1–2: AI playlists on one score (no schema change)
 
-Nothing to run. The six-pool AI playlist engine stays the default; the scored engine is selected only by the system setting `aiPlaylistEngine` = `"score"` (no UI yet) or by the evaluation scripts in `scripts/ai-playlist-eval/`. The AI's genre vocabulary now counts only strong members (strength ≥ 0.5), for both engines.
+Nothing to run. AI playlists (Hub and custom) are built by one score over a bounded candidate set; the six-pool mix is gone (it won 3 of 10 in a blind comparison against the score's 6). The AI's genre vocabulary counts only strong members (strength ≥ 0.5). A system setting `aiPlaylistEngine`, if one was set while testing, is ignored.
 
-- [ ] Before the switch is decided: generate the Hub once; AI playlists still log `[LLM Hub] Playlist Diagnostic:` (pools).
-- [ ] Postgres shared memory: the pool engine runs six parallel full-library sorts per playlist and ran out of the container's default 64 MB `/dev/shm` on dev (`could not resize shared memory segment … No space left on device`). If the prod log shows that error, give the Postgres container `--shm-size=256m` (or set `max_parallel_workers_per_gather = 0` for the app's role) until the scored engine replaces the pools.
+- [ ] Generate the Hub (or a custom AI playlist); the log reads `[LLM Hub] Playlist Diagnostic (score): "…"` with `targets=`, `candidates=`, `support=`, `beta=` and `selected=… strong members N/20`.
+- [ ] Postgres shared memory: the old pool engine ran six parallel full-library sorts per playlist and ran out of the container's default 64 MB `/dev/shm` on dev (`could not resize shared memory segment … No space left on device`). The score's queries are bounded, but artist radio and the daylist still use pools (`candidatePool.service.ts`); if that error appears in the prod log, give the Postgres container `--shm-size=256m`.

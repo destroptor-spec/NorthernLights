@@ -155,6 +155,26 @@ export async function conceptStyles(db: Db, paths: string[], adjacentReach: numb
   return { vector: normaliseStyleVector(new Map(weights)), weights, styleIds, genres: [...targetGenres], centroid, describe };
 }
 
+/**
+ * Two embedding targets ("[…]" strings), each normalised, averaged with
+ * `styleShare` for the first and normalised again; either alone when the
+ * other is missing.
+ */
+export function blendEmbeddings(styleSound: string | null, aiSound: string | null, styleShare = 0.5): string | null {
+  const parse = (v: string | null) => {
+    if (!v) return null;
+    const x = JSON.parse(v) as number[];
+    const n = Math.sqrt(x.reduce((a, b) => a + b * b, 0));
+    return n > 0 ? x.map(e => e / n) : null;
+  };
+  const a = parse(styleSound);
+  const b = parse(aiSound);
+  if (!a || !b || a.length !== b.length) return styleSound ?? aiSound;
+  const mixed = a.map((e, i) => e * styleShare + b[i] * (1 - styleShare));
+  const n = Math.sqrt(mixed.reduce((s, e) => s + e * e, 0)) || 1;
+  return `[${mixed.map(e => e / n).join(',')}]`;
+}
+
 /** Tracks' memberships: "s<style id>" / "g<genre>" → strength. */
 export async function trackMemberships(db: Db, trackIds: string[]): Promise<Map<string, Map<string, number>>> {
   const out = new Map<string, Map<string, number>>();

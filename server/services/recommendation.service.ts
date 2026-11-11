@@ -1,12 +1,12 @@
 import { getUserSetting, initDB, createPlaylist, addTracksToPlaylist, getPlaylists, getPlaylistTracks, getUserRecentTracks, getUserTopTracks, deleteSystemPlaylistsForUser, getSystemSetting } from '../database';
-import { getLibraryProfile, GenreHealth } from './libraryProfile.service';
+import { getLibraryProfile } from './libraryProfile.service';
 import { compileConceptToLibrary } from './llmConceptCompiler.service';
 import { queryWithRetry } from '../utils/db';
 import { christmasExclusionSql, isChristmasSeason, isChristmasRow } from '../utils/seasonalFilter';
 import { countryCode, languageCode, placeFromTag } from '../../shared/places';
 import { seedStyleVector, styleBeta, styleCosine, styleVectorForNames, styleVectors, type StyleVector } from './styleOverlap.service';
 import { isRowBanned, pathsMatchSql, trackGenrePathsJoin } from './genreTaxonomy/paths';
-import { artistCap, conceptMatch, conceptStyles, rankByScore, scoreBeta, STRONG_MEMBER, trackMemberships } from './aiPlaylistScore.service';
+import { artistCap, blendEmbeddings, conceptMatch, conceptStyles, rankByScore, scoreBeta, STRONG_MEMBER, trackMemberships } from './aiPlaylistScore.service';
 import { moodOf, vocalsOf, type Mood } from '../../shared/descriptors';
 
 // 1. Z-Score normalization is handled by scaling 0-1 mapped values in JS, but 
@@ -389,14 +389,10 @@ export async function getHubCollections(
     llmPlaylistDiversity?: number,
     llmVetoMode?: 'hard' | 'adaptive',
     llmGenerationSource?: 'hub' | 'custom',
-    /** pools: the six-pool mix; score: one score over a bounded candidate set (phase 5, being compared). */
-    aiPlaylistEngine?: 'pools' | 'score',
     /** false: build and return the playlists without saving them (comparisons, previews). */
     persist?: boolean,
   } = {}
 ) {
-  const aiEngine: 'pools' | 'score' = settings.aiPlaylistEngine
-    ?? ((await getSystemSetting('aiPlaylistEngine')) === 'score' ? 'score' : 'pools');
   // Style vectors for genre references ("electronic.house"), read once per name.
   const nameStyleCache = new Map<string, Promise<StyleVector | null>>();
   const styleRefFor = (reference: string) => {
@@ -643,38 +639,6 @@ export async function getHubCollections(
   const assignedTrackIds = new Set<string>();
   const assignedSongKeys = new Set<string>();
 
-  const isGenrePoolWeak = (
-    rows: any[],
-    playlistTitle: string | undefined,
-    health: GenreHealth | null,
-    poolLabel: string
-  ): boolean => {
-    const uniqueArtists = new Set(rows.map((row) => normalizeArtistName(row.artist || 'unknown-artist')));
-    const uniqueSongs = new Set(rows.map(getSongDedupKey));
-    const minArtists = getTargetArtistFloor(tracksPerPlaylist, 0);
-
-    if (health && health.health < 0.30) {
-      console.log(
-        `[LLM Hub] Library profile marks "${playlistTitle}" genre weak (${health.trackCount} tracks, ${health.artistCount} artists, health=${health.health.toFixed(2)}). Leaning on musical similarity.`
-      );
-      return true;
-    }
-
-    if (rows.length < 5) {
-      console.log(`[LLM Hub] ${poolLabel} starved (${rows.length} tracks). Leaning on non-genre pools.`);
-      return true;
-    }
-
-    if (uniqueArtists.size < minArtists || uniqueSongs.size < tracksPerPlaylist) {
-      console.log(
-        `[LLM Hub] ${poolLabel} weak for "${playlistTitle}" (${rows.length} tracks, ${uniqueArtists.size} artists, ${uniqueSongs.size} songs). Leaning on musical similarity.`
-      );
-      return true;
-    }
-
-    return false;
-  };
-
   const fetchLlmPool = async ({
     poolName,
     vectorStr,
@@ -884,130 +848,6 @@ export async function getHubCollections(
     return res.rows;
   };
 
-  const dedupeCandidateRows = (rows: any[]): any[] => {
-    const mergedCandidateMap = new Map<string, any>();
-    for (const row of rows) {
-      const candidateKey = String(row.id || getSongDedupKey(row));
-      const existing = mergedCandidateMap.get(candidateKey);
-      const currentScore = Number(row.distance ?? Infinity) - Number(row.pool_bias ?? 0);
-      const existingScore = existing ? (Number(existing.distance ?? Infinity) - Number(existing.pool_bias ?? 0)) : Infinity;
-      if (!existing || currentScore < existingScore) {
-        mergedCandidateMap.set(candidateKey, row);
-      }
-    }
-    return Array.from(mergedCandidateMap.values());
-  };
-
-  const getTargetArtistFloor = (requestedCount: number, relaxationLevel: number): number => {
-    const ratio = relaxationLevel <= 1
-      ? 0.65
-      : relaxationLevel === 2
-        ? 0.55
-        : 0.45;
-    return Math.min(requestedCount, Math.max(4, Math.ceil(requestedCount * ratio)));
-  };
-
-  const getFilteredCandidateRows = (
-    rows: any[],
-    options: { excludedSongKeys?: Set<string>; bannedGenres?: string[]; softVeto?: boolean }
-  ) => rows.filter((row) => {
-    if (options.excludedSongKeys?.has(getSongDedupKey(row))) return false;
-    if (options.bannedGenres && options.bannedGenres.length > 0 && !options.softVeto) {
-      if (isRowBanned(row, options.bannedGenres)) return false;
-    }
-    return true;
-  });
-
-  const getCandidateViability = (
-    rows: any[],
-    options: { relaxationLevel: number; excludedSongKeys?: Set<string>; bannedGenres?: string[]; softVeto?: boolean }
-  ) => {
-    const availableRows = getFilteredCandidateRows(rows, options);
-    const uniqueSongs = new Set(availableRows.map(getSongDedupKey)).size;
-    const uniqueArtists = new Set(availableRows.map((row) => normalizeArtistName(row.artist || 'unknown-artist'))).size;
-    const minArtists = getTargetArtistFloor(tracksPerPlaylist, options.relaxationLevel);
-    return {
-      trackCount: availableRows.length,
-      uniqueSongs,
-      uniqueArtists,
-      viable: uniqueSongs >= tracksPerPlaylist && uniqueArtists >= minArtists,
-    };
-  };
-
-  const formatFilteredPoolStat = (
-    name: string,
-    rows: any[],
-    options: { excludedSongKeys?: Set<string>; bannedGenres?: string[]; softVeto?: boolean }
-  ) => {
-    const filteredRows = getFilteredCandidateRows(rows, options);
-    return formatPoolStat(name, filteredRows);
-  };
-
-  const formatPoolStat = (name: string, rows: any[]) => {
-    const uniqueSongs = new Set(rows.map(getSongDedupKey)).size;
-    const uniqueArtists = new Set(rows.map((row) => normalizeArtistName(row.artist || 'unknown-artist'))).size;
-    return `${name}=${rows.length}t/${uniqueSongs}s/${uniqueArtists}a`;
-  };
-
-  const formatDiagnosticBlock = ({
-    title,
-    compiled,
-    relaxationSnapshots,
-    relaxationLabelReached,
-    relaxationLevelReached,
-    poolStats,
-    vetoModeLabel,
-    referenceGenre,
-    llmGenreWeight,
-    selectedCount,
-    selectedArtistCount,
-    selectedPoolMix,
-    diversityScore,
-    diagnostics,
-  }: {
-    title: string;
-    compiled: Awaited<ReturnType<typeof compileConceptToLibrary>>;
-    relaxationSnapshots: string[];
-    relaxationLabelReached: string;
-    relaxationLevelReached: number;
-    poolStats: string;
-    vetoModeLabel: string;
-    referenceGenre: string;
-    llmGenreWeight: number;
-    selectedCount: number;
-    selectedArtistCount: number;
-    selectedPoolMix: Record<string, number>;
-    diversityScore: number;
-    diagnostics: {
-      distinctArtists: number;
-      distinctAlbums: number;
-      distinctRoots: number;
-      distinctPools: number;
-      distinctClusters: number;
-      meanPairwiseDistance: number;
-    };
-  }) => {
-    const healthSummary = compiled.primaryHealth
-      ? `${compiled.primaryHealth.health.toFixed(2)} (${compiled.primaryHealth.trackCount}t/${compiled.primaryHealth.artistCount}a/${compiled.primaryHealth.songCount}s)`
-      : 'n/a';
-    const targetPaths = compiled.corePaths.length > 0 ? compiled.corePaths.join(', ') : 'none';
-    const adjacentPaths = compiled.adjacentPaths.length > 0 ? compiled.adjacentPaths.join(', ') : 'none';
-    const poolMixSummary = Object.entries(selectedPoolMix).length > 0
-      ? Object.entries(selectedPoolMix).map(([key, value]) => `${key}:${value}`).join(', ')
-      : 'none';
-
-    return [
-      `[LLM Hub] Playlist Diagnostic: "${title}"`,
-      `  mode=${compiled.mode} | targets=${targetPaths} | adjacent=${adjacentPaths}`,
-      `  health=${healthSummary} | effectiveBlend=${compiled.effectiveGenreBlend.toFixed(2)} | veto=${vetoModeLabel}`,
-      `  pools=${poolStats}`,
-      `  relaxation=${relaxationSnapshots.join(' -> ')} | reached=${relaxationLabelReached} (L${relaxationLevelReached})`,
-      `  anchor=${referenceGenre || 'none'}${referenceGenre ? ` (weight=${llmGenreWeight.toFixed(2)})` : ''}`,
-      `  selected=${selectedCount} tracks / ${selectedArtistCount} artists | poolMix=${poolMixSummary}`,
-      `  diversity=${diversityScore.toFixed(2)} | artists=${diagnostics.distinctArtists} albums=${diagnostics.distinctAlbums} roots=${diagnostics.distinctRoots} pools=${diagnostics.distinctPools} clusters=${diagnostics.distinctClusters} meanPairDistance=${diagnostics.meanPairwiseDistance.toFixed(3)}`,
-    ].join('\n');
-  };
-
   // Helper: synthesize a 1280D EffNet embedding centroid from the 8D acoustic seed results.
   // The LLM generates an 8D target vector — we don't have a 1280D embedding from the LLM.
   // Instead, we find the 20 closest 8D tracks and average their 1280D embeddings.
@@ -1106,13 +946,10 @@ export async function getHubCollections(
         if (originFilter) console.log(`[LLM Hub] "${concept.title}" → ${describeOriginFilter(originFilter)}`);
       }
       const vectorStr = `[${compiled.adaptedTargetVector.join(',')}]`;
-      const bridgeVectorStr = `[${compiled.bridgeVector.join(',')}]`;
       const targetAcousticness = compiled.adaptedTargetVector[5];
       const effnetWeight = targetAcousticness < 0.3 ? 3.0 : 1.0;
       const embeddingCentroidStr = await imputeEffNetCentroid(vectorStr);
 
-      const ABSOLUTE_MAX_FETCH = 240;
-      const dynamicFetchSize = Math.min((tracksPerPlaylist * (4 + (recoveryStrength * 1.5))) + 60, ABSOLUTE_MAX_FETCH);
       const assignedIds = Array.from(assignedTrackIds);
 
       if (compiled.diagnostics.notes.length > 0) {
@@ -1123,14 +960,9 @@ export async function getHubCollections(
         (concept as any).dropped = true;
         continue;
       }
-      if (compiled.primaryPath && compiled.primaryHealth && compiled.effectiveGenreBlend < genreBlend) {
-        console.log(
-          `[LLM Hub] "${concept.title}" → adapting genre blend ${genreBlend.toFixed(2)} → ${compiled.effectiveGenreBlend.toFixed(2)} for local genre health ${compiled.primaryHealth.health.toFixed(2)} (${compiled.primaryHealth.trackCount} tracks, ${compiled.primaryHealth.artistCount} artists).`
-        );
-      }
 
       let topTracks: any[] = [];
-      if (aiEngine === 'score') {
+      {
         // One score over a bounded candidate set (docs/Aurora genre and style
         // redesign.md, AI playlists): the nearest by sound, plus the target
         // styles' strong members nearest in sound (and their weaker members
@@ -1139,9 +971,13 @@ export async function getHubCollections(
         const L = tracksPerPlaylist;
         const styles = await conceptStyles(db, compiled.corePaths, adjacentReach);
         const hasTargets = styles.styleIds.length + styles.genres.length > 0;
-        // The sound to aim at: the AI's 8 numbers for mood and energy, and the
-        // target styles' own sound (centroids) instead of the imputed guess.
-        const base = { origin: originFilter, poolName: 'score' as const, vectorStr, embeddingCentroidStr: styles.centroid ?? embeddingCentroidStr, effnetWeight, excludeIds: assignedIds };
+        // The sound to aim at: the AI's 8 numbers, and an embedding halfway
+        // between the target styles' own sound (centroids) and the one
+        // imputed from the AI's numbers. Styles alone lost the mood
+        // ("melancholic indie rock" came out upbeat, "music for code" with
+        // vocals); the imputed embedding alone pointed a trance concept at R&B.
+        const embeddingTarget = blendEmbeddings(styles.centroid, embeddingCentroidStr);
+        const base = { origin: originFilter, poolName: 'score' as const, vectorStr, embeddingCentroidStr: embeddingTarget, effnetWeight, excludeIds: assignedIds };
         const small = libraryProfile.analyzedTracks < 2000;
         let soundLimit = small ? libraryProfile.analyzedTracks + 1 : Math.max(10 * L, 300);
         let memberLimit = Math.max(8 * L, 200);
@@ -1218,429 +1054,6 @@ export async function getHubCollections(
           `  support=${support} | beta=${beta.toFixed(2)} | nu=${discoveryBias.toFixed(2)} | veto=${compiled.bannedGenres.length ? `${softVeto ? 'adaptive (relaxed)' : 'hard'} [${compiled.bannedNames.join(', ')}]` : 'none'}`,
           `  selected=${topTracks.length} tracks / ${new Set(topTracks.map(t => normalizeArtistName(t.artist || ''))).size} artists | strong members ${strongInList}/${topTracks.length} | mean style match ${meanMatch.toFixed(2)}`,
         ].join('\n'));
-      } else {
-      const coreLimit = compiled.corePaths.length
-        ? Math.max(10, Math.floor(dynamicFetchSize * Math.max(0.16, compiled.effectiveGenreBlend * (0.48 - (recoveryStrength * 0.10)))))
-        : 0;
-      const adjacentLimit = compiled.adjacentPaths.length
-        ? Math.max(10, Math.floor(dynamicFetchSize * (0.15 + (adjacentReach * 0.15))))
-        : 0;
-      const rootLimit = compiled.rootPaths.length
-        ? Math.max(12, Math.floor(dynamicFetchSize * (0.12 + (recoveryStrength * 0.10))))
-        : 0;
-      const acousticLimit = Math.max(18, Math.floor(dynamicFetchSize * (compiled.mode === 'acoustic-only' ? 0.55 + (recoveryStrength * 0.15) : 0.24 + (recoveryStrength * 0.16))));
-      const bridgeLimit = Math.max(10, Math.ceil(tracksPerPlaylist * (1.6 + (recoveryStrength * 1.0))));
-      const discoveryLimit = Math.max(10, Math.ceil(tracksPerPlaylist * (1.4 + (discoveryBias * 1.4))));
-
-      const [coreRows, adjacentRows, rootRows, acousticRows, discoveryRows, bridgeRows] = await Promise.all([
-        compiled.corePaths.length > 0
-          ? fetchLlmPool({
-              origin: originFilter,
-              poolName: 'core',
-              vectorStr,
-              embeddingCentroidStr,
-              effnetWeight,
-              limit: coreLimit,
-              pathPrefixes: compiled.corePaths,
-              excludeIds: assignedIds,
-            })
-          : Promise.resolve([]),
-        compiled.adjacentPaths.length > 0
-          ? fetchLlmPool({
-              origin: originFilter,
-              poolName: 'adjacent',
-              vectorStr,
-              embeddingCentroidStr,
-              effnetWeight,
-              limit: adjacentLimit,
-              pathPrefixes: compiled.adjacentPaths,
-              excludeIds: assignedIds,
-              excludePrefixes: compiled.corePaths,
-            })
-          : Promise.resolve([]),
-        compiled.rootPaths.length > 0
-          ? fetchLlmPool({
-              origin: originFilter,
-              poolName: 'root',
-              vectorStr,
-              embeddingCentroidStr,
-              effnetWeight,
-              limit: rootLimit,
-              pathPrefixes: compiled.rootPaths,
-              excludeIds: assignedIds,
-              excludePrefixes: [...compiled.corePaths, ...compiled.adjacentPaths],
-            })
-          : Promise.resolve([]),
-        fetchLlmPool({
-          origin: originFilter,
-          poolName: 'acoustic',
-          vectorStr,
-          embeddingCentroidStr,
-          effnetWeight,
-          limit: acousticLimit,
-          excludeIds: assignedIds,
-        }),
-        fetchLlmPool({
-          origin: originFilter,
-          poolName: 'discovery',
-          vectorStr,
-          embeddingCentroidStr,
-          effnetWeight,
-          limit: discoveryLimit,
-          excludeIds: assignedIds,
-          enableDiscoveryBoost: true,
-        }),
-        fetchLlmPool({
-          origin: originFilter,
-          poolName: 'bridge',
-          vectorStr: bridgeVectorStr,
-          embeddingCentroidStr,
-          effnetWeight,
-          limit: bridgeLimit,
-          excludeIds: assignedIds,
-        }),
-      ]);
-
-      const genrePoolWeak = compiled.primaryPath
-        ? isGenrePoolWeak(coreRows, concept.title, compiled.primaryHealth, 'Core pool')
-        : true;
-
-      const relaxationSteps: Array<{ level: number; key: string; label: string; rows: any[] }> = [
-        { level: 0, key: 'core', label: 'exact-path', rows: coreRows },
-        { level: 1, key: 'adjacent', label: 'adjacent-path', rows: adjacentRows },
-        { level: 2, key: 'root', label: 'same-root', rows: rootRows },
-        { level: 3, key: 'acoustic', label: 'acoustic-similarity', rows: acousticRows },
-        { level: 4, key: 'bridge', label: 'mood-bridge', rows: bridgeRows },
-        { level: 5, key: 'discovery', label: 'discovery-backfill', rows: discoveryRows },
-      ];
-
-      let candidateRows: any[] = [];
-      let relaxationLevelReached = 5;
-      let relaxationLabelReached = 'discovery-backfill';
-      const relaxationSnapshots: string[] = [];
-
-      for (const step of relaxationSteps) {
-        candidateRows = dedupeCandidateRows([
-          ...candidateRows,
-          ...step.rows,
-        ]);
-        const viability = getCandidateViability(candidateRows, {
-          relaxationLevel: step.level,
-          excludedSongKeys: assignedSongKeys,
-          bannedGenres: compiled.bannedGenres,
-          softVeto: allowSoftVetoRecovery && step.level >= 3,
-        });
-        relaxationSnapshots.push(`${step.label}=${viability.trackCount}t/${viability.uniqueSongs}s/${viability.uniqueArtists}a`);
-        relaxationLevelReached = step.level;
-        relaxationLabelReached = step.label;
-        if (viability.viable) {
-          break;
-        }
-      }
-
-      const poolStatsSummary = [
-        formatPoolStat('core', coreRows),
-        formatPoolStat('adjacent', adjacentRows),
-        formatPoolStat('root', rootRows),
-        formatPoolStat('acoustic', acousticRows),
-        formatPoolStat('discovery', discoveryRows),
-        formatPoolStat('bridge', bridgeRows),
-      ].join(' | ');
-      const hardFilteredPoolStatsSummary = [
-        formatFilteredPoolStat('core', coreRows, { excludedSongKeys: assignedSongKeys, bannedGenres: compiled.bannedGenres, softVeto: false }),
-        formatFilteredPoolStat('adjacent', adjacentRows, { excludedSongKeys: assignedSongKeys, bannedGenres: compiled.bannedGenres, softVeto: false }),
-        formatFilteredPoolStat('root', rootRows, { excludedSongKeys: assignedSongKeys, bannedGenres: compiled.bannedGenres, softVeto: false }),
-        formatFilteredPoolStat('acoustic', acousticRows, { excludedSongKeys: assignedSongKeys, bannedGenres: compiled.bannedGenres, softVeto: false }),
-        formatFilteredPoolStat('discovery', discoveryRows, { excludedSongKeys: assignedSongKeys, bannedGenres: compiled.bannedGenres, softVeto: false }),
-        formatFilteredPoolStat('bridge', bridgeRows, { excludedSongKeys: assignedSongKeys, bannedGenres: compiled.bannedGenres, softVeto: false }),
-      ].join(' | ');
-
-      if (candidateRows.length === 0) {
-        console.warn(`[LLM Hub] Dropping playlist "${concept.title}" - no candidates survived compiled pool generation. Filtered pools: ${hardFilteredPoolStatsSummary}`);
-        (concept as any).dropped = true;
-        continue;
-      }
-
-      const referenceGenre = compiled.primaryPath && relaxationLevelReached <= 2 ? compiled.primaryPath : '';
-      const llmGenreWeight = referenceGenre
-        ? Math.min(1.0, compiled.effectiveGenreBlend * 2)
-        : Math.min(0.35, compiled.effectiveGenreBlend);
-      const softVetoEnabled = allowSoftVetoRecovery && relaxationLevelReached >= 3;
-      const vetoModeLabel = compiled.bannedGenres.length > 0
-        ? `${allowSoftVetoRecovery ? 'hard veto with adaptive recovery' : 'hard veto'} [${compiled.bannedNames.join(', ')} → ${compiled.bannedGenres.join(', ')}]`
-        : 'none';
-      const admissibleRows = getFilteredCandidateRows(candidateRows, {
-        excludedSongKeys: assignedSongKeys,
-        bannedGenres: compiled.bannedGenres,
-        softVeto: softVetoEnabled,
-      });
-
-      let ranked = await reRankByStyle(
-        candidateRows,
-        referenceGenre,
-        Math.max(tracksPerPlaylist * 3, 30),
-        llmGenreWeight,
-        compiled.bannedGenres,
-        softVetoEnabled
-      );
-      if (allowSoftVetoRecovery && ranked.length === 0 && compiled.bannedGenres.length > 0) {
-        console.warn(`[LLM Hub] "${concept.title}" → hard veto removed every candidate; retrying with soft veto penalties.`);
-        ranked = await reRankByStyle(
-          candidateRows,
-          referenceGenre,
-          Math.max(tracksPerPlaylist * 3, 30),
-          llmGenreWeight,
-          compiled.bannedGenres,
-          true
-        );
-      }
-      if (ranked.length === 0 && admissibleRows.length > 0) {
-        console.warn(`[LLM Hub] "${concept.title}" → anchored rerank returned 0 despite ${admissibleRows.length} admissible candidates; retrying with relaxed rerank.`);
-        ranked = await reRankByStyle(
-          admissibleRows,
-          '',
-          Math.max(tracksPerPlaylist * 3, 30),
-          Math.min(0.25, llmGenreWeight),
-          [],
-          true
-        );
-      }
-      if (ranked.length === 0 && admissibleRows.length > 0) {
-        ranked = [...admissibleRows]
-          .filter((row) => Number.isFinite(Number(row.distance ?? NaN)))
-          .sort((left, right) => {
-            const leftScore = Number(left.distance ?? Infinity) - Number(left.pool_bias ?? 0);
-            const rightScore = Number(right.distance ?? Infinity) - Number(right.pool_bias ?? 0);
-            return leftScore - rightScore;
-          })
-          .slice(0, Math.max(tracksPerPlaylist * 3, 30));
-      }
-      const candidateSongKeys = new Set<string>();
-      let uniqueRanked = ranked.filter((row) => {
-        const songKey = getSongDedupKey(row);
-        if (assignedSongKeys.has(songKey) || candidateSongKeys.has(songKey)) return false;
-        candidateSongKeys.add(songKey);
-        return true;
-      });
-      if (uniqueRanked.length === 0 && admissibleRows.length > 0) {
-        console.warn(`[LLM Hub] "${concept.title}" → ranked candidate set collapsed after fallback despite ${admissibleRows.length} admissible rows; using direct admissible dedupe.`);
-        const admissibleSongKeys = new Set<string>();
-        uniqueRanked = [...admissibleRows]
-          .sort((left, right) => {
-            const leftScore = Number(left.distance ?? Infinity) - Number(left.pool_bias ?? 0);
-            const rightScore = Number(right.distance ?? Infinity) - Number(right.pool_bias ?? 0);
-            return leftScore - rightScore;
-          })
-          .filter((row) => {
-            const songKey = getSongDedupKey(row);
-            if (assignedSongKeys.has(songKey) || admissibleSongKeys.has(songKey)) return false;
-            admissibleSongKeys.add(songKey);
-            return true;
-          })
-          .slice(0, Math.max(tracksPerPlaylist * 3, 30));
-      }
-      if (uniqueRanked.length === 0) {
-        const postRankViability = getCandidateViability(candidateRows, {
-          relaxationLevel: relaxationLevelReached,
-          excludedSongKeys: assignedSongKeys,
-          bannedGenres: compiled.bannedGenres,
-          softVeto: softVetoEnabled,
-        });
-        console.warn(`[LLM Hub] Dropping playlist "${concept.title}" - all candidate tracks were vetoed or invalid. Filtered pools: ${hardFilteredPoolStatsSummary}. Post-filter viability=${postRankViability.trackCount}t/${postRankViability.uniqueSongs}s/${postRankViability.uniqueArtists}a`);
-        (concept as any).dropped = true;
-        continue;
-      }
-
-      const getPoolAvailability = (poolName: string) => {
-        const rows = uniqueRanked.filter((row) => String(row.pool_source || 'unknown') === poolName);
-        return {
-          trackCount: rows.length,
-          uniqueSongs: new Set(rows.map(getSongDedupKey)).size,
-          uniqueArtists: new Set(rows.map((row) => normalizeArtistName(row.artist || 'unknown-artist'))).size,
-        };
-      };
-
-      const coreAvailability = getPoolAvailability('core');
-      const adjacentAvailability = getPoolAvailability('adjacent');
-      const rootAvailability = getPoolAvailability('root');
-      const acousticAvailability = getPoolAvailability('acoustic');
-      const bridgeAvailability = getPoolAvailability('bridge');
-      const discoveryAvailability = getPoolAvailability('discovery');
-      const shouldForceBlend = tracksPerPlaylist >= 12 && (
-        relaxationLevelReached >= 1 ||
-        genrePoolWeak ||
-        coreAvailability.uniqueArtists < getTargetArtistFloor(tracksPerPlaylist, 0) ||
-        coreAvailability.uniqueSongs < Math.ceil(tracksPerPlaylist * 1.35)
-      );
-
-      const poolTargets = new Map<string, number>();
-      if (referenceGenre) {
-        const desiredCoreTarget = Math.max(1, Math.round(tracksPerPlaylist * Math.max(0.20, compiled.effectiveGenreBlend * (0.50 - (discoveryBias * 0.15)))));
-        const cappedCoreTarget = shouldForceBlend
-          ? Math.min(desiredCoreTarget, Math.max(2, Math.round(tracksPerPlaylist * 0.55)))
-          : desiredCoreTarget;
-        poolTargets.set('core', cappedCoreTarget);
-      }
-      if (compiled.adjacentPaths.length > 0 && adjacentAvailability.trackCount > 0) {
-        const adjacentTarget = Math.max(1, Math.round(tracksPerPlaylist * (0.12 + (adjacentReach * 0.12))));
-        poolTargets.set('adjacent', shouldForceBlend ? Math.max(adjacentTarget, Math.round(tracksPerPlaylist * 0.15)) : adjacentTarget);
-      }
-      if (compiled.rootPaths.length > 0 && (relaxationLevelReached >= 2 || (shouldForceBlend && rootAvailability.trackCount > 0))) {
-        poolTargets.set('root', Math.max(1, Math.round(tracksPerPlaylist * (shouldForceBlend ? 0.18 : (0.10 + (recoveryStrength * 0.08))))));
-      }
-      if (relaxationLevelReached >= 3 || (shouldForceBlend && acousticAvailability.trackCount > 0)) {
-        const acousticTarget = Math.max(2, Math.round(tracksPerPlaylist * (genrePoolWeak ? (0.35 + (recoveryStrength * 0.22)) : (0.18 + (recoveryStrength * 0.12)))));
-        poolTargets.set('acoustic', shouldForceBlend ? Math.max(acousticTarget, Math.round(tracksPerPlaylist * 0.20)) : acousticTarget);
-      }
-      if (relaxationLevelReached >= 4 || (shouldForceBlend && bridgeAvailability.trackCount > 0)) {
-        poolTargets.set('bridge', Math.max(1, Math.round(tracksPerPlaylist * (shouldForceBlend ? 0.12 : (0.10 + (discoveryBias * 0.10) + (recoveryStrength * 0.08))))));
-      }
-      if (relaxationLevelReached >= 5 || discoveryBias >= 0.55 || (shouldForceBlend && discoveryAvailability.trackCount > 0)) {
-        poolTargets.set('discovery', Math.max(1, Math.round(tracksPerPlaylist * (shouldForceBlend ? 0.12 : (0.10 + (discoveryBias * 0.16))))));
-      }
-
-      const maxTracksPerArtist = artistSpread >= 0.75
-        ? 1
-        : artistSpread >= 0.45
-          ? (tracksPerPlaylist <= 10 ? 1 : 2)
-          : (tracksPerPlaylist <= 5 ? 1 : tracksPerPlaylist <= 15 ? 2 : 3);
-      let selection = selectDiverseTracks(uniqueRanked, tracksPerPlaylist, diversity, maxTracksPerArtist, poolTargets, {
-        discoveryBias,
-        artistSpread,
-      });
-      const minimumSelectedArtists = Math.min(tracksPerPlaylist, getTargetArtistFloor(tracksPerPlaylist, Math.min(3, relaxationLevelReached + 1)));
-      const shouldRescueSelection =
-        selection.selected.length < tracksPerPlaylist ||
-        selection.diagnostics.distinctArtists < minimumSelectedArtists ||
-        (tracksPerPlaylist >= 10 && selection.diversityScore < 0.46);
-
-      if (shouldRescueSelection) {
-        const rescueTargets = new Map(poolTargets);
-        if (coreAvailability.trackCount > 0) {
-          rescueTargets.set('core', Math.min(rescueTargets.get('core') ?? tracksPerPlaylist, Math.max(2, Math.round(tracksPerPlaylist * 0.35))));
-        }
-        if (adjacentAvailability.trackCount > 0) {
-          rescueTargets.set('adjacent', Math.max(rescueTargets.get('adjacent') ?? 0, Math.max(1, Math.round(tracksPerPlaylist * 0.15))));
-        }
-        if (rootAvailability.trackCount > 0) {
-          rescueTargets.set('root', Math.max(rescueTargets.get('root') ?? 0, Math.max(1, Math.round(tracksPerPlaylist * 0.18))));
-        }
-        if (acousticAvailability.trackCount > 0) {
-          rescueTargets.set('acoustic', Math.max(rescueTargets.get('acoustic') ?? 0, Math.max(2, Math.round(tracksPerPlaylist * 0.20))));
-        }
-        if (bridgeAvailability.trackCount > 0) {
-          rescueTargets.set('bridge', Math.max(rescueTargets.get('bridge') ?? 0, Math.max(1, Math.round(tracksPerPlaylist * 0.12))));
-        }
-        if (discoveryAvailability.trackCount > 0) {
-          rescueTargets.set('discovery', Math.max(rescueTargets.get('discovery') ?? 0, Math.max(1, Math.round(tracksPerPlaylist * 0.12))));
-        }
-
-        const rescuedSelection = selectDiverseTracks(
-          uniqueRanked,
-          tracksPerPlaylist,
-          Math.min(1, diversity + 0.12),
-          Math.max(1, maxTracksPerArtist - 1),
-          rescueTargets,
-          {
-            discoveryBias: Math.min(1, discoveryBias + 0.10),
-            artistSpread: Math.min(1, artistSpread + 0.15),
-          }
-        );
-
-        const rescuedIsBetter =
-          rescuedSelection.selected.length > selection.selected.length ||
-          rescuedSelection.diagnostics.distinctArtists > selection.diagnostics.distinctArtists ||
-          rescuedSelection.diversityScore > selection.diversityScore + 0.04;
-
-        if (rescuedIsBetter) {
-          selection = rescuedSelection;
-        }
-      }
-
-      const longPlaylistQualityFloorTriggered = tracksPerPlaylist >= 18 && (
-        selection.diagnostics.distinctArtists < 14 ||
-        selection.diversityScore < 0.45
-      );
-      if (longPlaylistQualityFloorTriggered) {
-        const qualityFloorTargets = new Map<string, number>();
-        if (coreAvailability.trackCount > 0) {
-          qualityFloorTargets.set('core', Math.max(2, Math.round(tracksPerPlaylist * 0.35)));
-        }
-        if (adjacentAvailability.trackCount > 0) {
-          qualityFloorTargets.set('adjacent', Math.max(2, Math.round(tracksPerPlaylist * 0.18)));
-        }
-        if (rootAvailability.trackCount > 0) {
-          qualityFloorTargets.set('root', Math.max(2, Math.round(tracksPerPlaylist * 0.18)));
-        }
-        if (acousticAvailability.trackCount > 0) {
-          qualityFloorTargets.set('acoustic', Math.max(3, Math.round(tracksPerPlaylist * 0.22)));
-        }
-        if (bridgeAvailability.trackCount > 0) {
-          qualityFloorTargets.set('bridge', Math.max(2, Math.round(tracksPerPlaylist * 0.12)));
-        }
-        if (discoveryAvailability.trackCount > 0) {
-          qualityFloorTargets.set('discovery', Math.max(2, Math.round(tracksPerPlaylist * 0.12)));
-        }
-
-        const qualityFloorRows = uniqueRanked.map((row) => ({
-          ...row,
-          pool_bias: Number(row.pool_bias ?? 0) + (String(row.pool_source || 'unknown') === 'core' ? -0.06 : 0.10),
-        }));
-
-        const qualityFloorSelection = selectDiverseTracks(
-          qualityFloorRows,
-          tracksPerPlaylist,
-          Math.min(1, diversity + 0.18),
-          1,
-          qualityFloorTargets,
-          {
-            discoveryBias: Math.min(1, discoveryBias + 0.15),
-            artistSpread: 1,
-          }
-        );
-
-        const floorSatisfied = qualityFloorSelection.selected.length === tracksPerPlaylist && (
-          qualityFloorSelection.diagnostics.distinctArtists >= 14 ||
-          qualityFloorSelection.diversityScore >= 0.45
-        );
-        const floorImproved =
-          qualityFloorSelection.diagnostics.distinctArtists > selection.diagnostics.distinctArtists ||
-          qualityFloorSelection.diversityScore > selection.diversityScore + 0.03;
-
-        if (floorSatisfied || floorImproved) {
-          selection = qualityFloorSelection;
-        }
-      }
-
-      topTracks = selection.selected;
-      if (topTracks.length === 0) {
-        console.warn(`[LLM Hub] Dropping playlist "${concept.title}" - no selectable tracks remained after ranking.`);
-        (concept as any).dropped = true;
-        continue;
-      }
-
-      const selectedPoolMix = topTracks.reduce<Record<string, number>>((acc, track) => {
-        const key = String(track.pool_source || 'unknown');
-        acc[key] = (acc[key] ?? 0) + 1;
-        return acc;
-      }, {});
-      const selectedArtistCount = new Set(topTracks.map((track) => normalizeArtistName(track.artist || 'unknown-artist'))).size;
-      console.log(formatDiagnosticBlock({
-        title: concept.title || concept.section,
-        compiled,
-        relaxationSnapshots,
-        relaxationLabelReached,
-        relaxationLevelReached,
-        poolStats: poolStatsSummary,
-        vetoModeLabel,
-        referenceGenre,
-        llmGenreWeight,
-        selectedCount: topTracks.length,
-        selectedArtistCount,
-        selectedPoolMix,
-        diversityScore: selection.diversityScore,
-        diagnostics: selection.diagnostics,
-      }));
       }
 
       // Register these track IDs to prevent overlap in subsequent playlists

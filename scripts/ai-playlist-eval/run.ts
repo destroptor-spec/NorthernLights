@@ -1,10 +1,13 @@
 /**
- * Runs the saved evaluation concepts (concepts.json) through an AI playlist
+ * Runs the saved evaluation concepts (concepts.json) through the AI playlist
  * engine without saving anything, and prints each playlist with every
- * track's genres and styles.
+ * track's genres and styles. AI_SCORE_DEBUG=1 also prints the top scores.
  *
- *   npx tsx scripts/ai-playlist-eval/run.ts score [userId] [--only=<prompt substring>]
- *   npx tsx scripts/ai-playlist-eval/run.ts pools [userId]
+ *   npx tsx scripts/ai-playlist-eval/run.ts [userId] [--only=<prompt substring>]
+ *
+ * The blind comparison against the old six-pool engine (rated 2026-11-11:
+ * the score 6, the pools 3, 1 tie) was built by make-ab.ts, removed with the
+ * pools; see git history before the pools' removal.
  */
 import fs from 'fs';
 import path from 'path';
@@ -12,8 +15,7 @@ import { initDB } from '../../server/database';
 import { getHubCollections } from '../../server/services/recommendation.service';
 import { getLlmPlaylistSettings } from '../../server/services/hubRefresh.service';
 
-const engine = (process.argv[2] === 'pools' ? 'pools' : 'score') as 'pools' | 'score';
-const userId = process.argv[3] && !process.argv[3].startsWith('--') ? process.argv[3] : null;
+const userId = process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : null;
 const only = process.argv.find(a => a.startsWith('--only='))?.slice(7).toLowerCase();
 
 (async () => {
@@ -23,9 +25,9 @@ const only = process.argv.find(a => a.startsWith('--only='))?.slice(7).toLowerCa
   for (const { prompt, concept } of concepts) {
     if (only && !prompt.toLowerCase().includes(only)) continue;
     const started = Date.now();
-    const [hub] = await getHubCollections([{ ...concept }], userId, { ...tuning, llmGenerationSource: 'custom', aiPlaylistEngine: engine, persist: false });
+    const [hub] = await getHubCollections([{ ...concept }], userId, { ...tuning, llmGenerationSource: 'custom', persist: false });
     const ms = Date.now() - started;
-    console.log(`\n=== ${prompt} → "${concept.title}" (${engine}, ${ms} ms)`);
+    console.log(`\n=== ${prompt} → "${concept.title}" (${ms} ms)`);
     if (!hub) { console.log('  (dropped)'); continue; }
     const ids = hub.tracks.map((t: any) => t.id);
     const styles = new Map((await db.query(`
