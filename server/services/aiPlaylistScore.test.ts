@@ -67,16 +67,16 @@ test('the sound target blends the styles\' sound and the AI\'s, each normalised'
   expect(blendEmbeddings('[1,0]', null)).toBe('[1,0]');
 });
 
-test('focus: a mood request lets style count a third as much and aims at the AI\'s sound', () => {
+test('focus: a mood request lets style count half as much and leans to the AI\'s sound', () => {
   const { focusOf, scoreBeta: beta, styleSoundShare } = jest.requireActual('./aiPlaylistScore.service') as typeof import('./aiPlaylistScore.service');
   expect(focusOf(0.1)).toBe(0.1);
   expect(focusOf(3)).toBe(1);
   expect(focusOf(undefined)).toBe(0.6);
   expect(focusOf('x')).toBe(0.6);
   expect(beta(0.5, 200, 20, 1)).toBeCloseTo(2);
-  expect(beta(0.5, 200, 20, 0)).toBeCloseTo(2 / 3);
-  expect(styleSoundShare(0.6)).toBeCloseTo(0.5);
-  expect(styleSoundShare(0)).toBeCloseTo(0.2);
+  expect(beta(0.5, 200, 20, 0)).toBeCloseTo(1);
+  expect(styleSoundShare(0.6)).toBeCloseTo(0.56);
+  expect(styleSoundShare(0)).toBeCloseTo(0.35);
   expect(styleSoundShare(1)).toBeCloseTo(0.7);
 });
 
@@ -92,7 +92,32 @@ test('moods from the sound: the AI\'s target, the fit, and a weight that grows a
   expect(moodMatch(rainy, banger)).toBeLessThan(0.25);
   expect(moodMatch(null, ballad)).toBe(0);
   expect(moodMatch(rainy, undefined)).toBe(0);
-  expect(moodBeta(0, true)).toBeCloseTo(2.5);
-  expect(moodBeta(1, true)).toBeCloseTo(0.625);
+  expect(moodBeta(0, true)).toBeCloseTo(1.25);
+  expect(moodBeta(1, true)).toBeCloseTo(0.3125);
   expect(moodBeta(0, false)).toBe(0);
+});
+
+test('a mood request loosens to the nearest styles, not the whole genre', () => {
+  const { neighbourCount, neighbourWeight } = jest.requireActual('./aiPlaylistScore.service') as typeof import('./aiPlaylistScore.service');
+  expect(neighbourCount(1)).toBe(3);
+  expect(neighbourCount(0.4)).toBe(5);
+  expect(neighbourCount(0)).toBe(6);
+  expect(neighbourWeight(0.5, 1)).toBeCloseTo(0.25);
+  expect(neighbourWeight(0.5, 0.4)).toBeCloseTo(0.49);
+  expect(neighbourWeight(1, 0)).toBeCloseTo(0.8);
+  expect(neighbourWeight(0, 1)).toBe(0);
+});
+
+test('with style targets, mood picks among tracks of the concept instead of replacing them', () => {
+  const rows = [
+    { id: 'indie-upbeat', distance: 0.5, novelty_boost: 0 },
+    { id: 'classic-rock-moody', distance: 0.5, novelty_boost: 0 },
+    ...Array.from({ length: 8 }, (_, i) => ({ id: `far${i}`, distance: 0.6 + i * 0.05, novelty_boost: 0 })),
+  ];
+  const match = (r: { id: string }) => (r.id === 'indie-upbeat' ? 1 : r.id === 'classic-rock-moody' ? 0.5 : 0);
+  const mood = (r: { id: string }) => (r.id === 'classic-rock-moody' ? 1 : 0.4);
+  const ungated = rankByScore(rows, { match, mood, moodBeta: 2.5, beta: 1, nu: 0 });
+  const gated = rankByScore(rows, { match, mood, moodBeta: 1.25, moodGate: true, beta: 1, nu: 0 });
+  expect(ungated[0].id).toBe('classic-rock-moody');
+  expect(gated[0].id).toBe('indie-upbeat');
 });

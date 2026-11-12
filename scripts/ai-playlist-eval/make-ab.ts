@@ -4,7 +4,7 @@
  * "<label> NN · A" and "· B" in random order. Prints the key as JSON on the
  * last line; keep it away from whoever rates.
  *
- *   npx tsx scripts/ai-playlist-eval/make-ab.ts <userId> [label]
+ *   npx tsx scripts/ai-playlist-eval/make-ab.ts <userId> [label] [--concepts=<file>]
  *
  * Variants: mood-led (moodTerm: true: focus and moods from the sound)
  * against the engine before them (moodTerm: false).
@@ -16,11 +16,12 @@ import { getHubCollections } from '../../server/services/recommendation.service'
 import { getLlmPlaylistSettings } from '../../server/services/hubRefresh.service';
 
 const userId = process.argv[2];
-const label = process.argv[3] || 'Mood test';
+const label = process.argv[3] && !process.argv[3].startsWith('--') ? process.argv[3] : 'Mood test';
+const conceptsFile = process.argv.find(a => a.startsWith('--concepts='))?.slice(11) ?? path.join(__dirname, 'concepts.json');
 if (!userId) throw new Error('usage: make-ab.ts <userId> [label]');
 
 (async () => {
-  const concepts = JSON.parse(fs.readFileSync(path.join(__dirname, 'concepts.json'), 'utf8')) as Array<{ prompt: string; concept: any }>;
+  const concepts = JSON.parse(fs.readFileSync(conceptsFile, 'utf8')) as Array<{ prompt: string; concept: any }>;
   const tuning = await getLlmPlaylistSettings(userId);
   const key: Record<string, string> = {};
   for (const [index, { prompt, concept }] of concepts.entries()) {

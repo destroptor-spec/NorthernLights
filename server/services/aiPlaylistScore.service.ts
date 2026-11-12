@@ -34,14 +34,20 @@ export const SCORE_MAX_BETA = 4.0;
 export const NOVELTY_WEIGHT = 0.5;
 /** The largest novelty bonus the pool query gives (0.16 + 0.08). */
 const NOVELTY_FULL = 0.24;
-const NEIGHBOURS_PER_TARGET = 3;
+/** A target style's genre counts half the style. */
+const GENRE_WEIGHT = 0.5;
 /**
- * How much a target style's genre counts against the style itself: half for
- * a genre request, up to 0.9 for a mood request, where rock that feels right
- * beats indie rock that doesn't (dev: "Let Down" sounded closer to a rainy
- * day than "Riot Van" but, tagged plain Rock, lost to it at 0.5).
+ * The nearest styles a target brings in (by centroid), and how much they
+ * count: Adjacent Reach for a genre request, more for a mood request, which
+ * loosens to the styles that sound closest rather than the whole genre. (A
+ * rainy-day indie list given the whole Rock genre at 0.74 drifted to Journey,
+ * Toto and Queen and lost a blind comparison, 12 Nov 2026; Indie Rock's
+ * nearest are Indie Pop, Folk, Pop Rock, Alternative Rock, Blues Rock.)
  */
-export const genreWeight = (focus: number) => 0.5 + 0.4 * (1 - Math.max(0, Math.min(1, focus)));
+export const neighbourCount = (focus: number) => 3 + Math.round(3 * (1 - clamp01(focus)));
+export const neighbourWeight = (adjacentReach: number, focus: number) =>
+  Math.min(0.8, 0.5 * clamp01(adjacentReach) + 0.4 * (1 - clamp01(focus)));
+function clamp01(n: number) { return Math.max(0, Math.min(1, n)); }
 
 export interface ConceptStyles {
   vector: StyleVector | null;
@@ -70,7 +76,6 @@ export const targetWeight = (index: number) => Math.max(0.7, 1 - index * 0.1);
  * "hip hop") in the AI's order.
  */
 export async function conceptStyles(db: Db, paths: string[], adjacentReach: number, focus = 1): Promise<ConceptStyles> {
-  const GENRE_WEIGHT = genreWeight(focus);
   const rows = (await db.query(`
     SELECT s.id, s.genre, s.name, lower(replace(s.genre, '.', ' ')) || '.' || lower(replace(s.name, '.', ' ')) AS path
     FROM style s`)).rows as Array<{ id: number; genre: string; name: string; path: string }>;
@@ -103,7 +108,8 @@ export async function conceptStyles(db: Db, paths: string[], adjacentReach: numb
     }
   });
 
-  const reach = Math.max(0, Math.min(1, adjacentReach));
+  const reach = neighbourWeight(adjacentReach, focus);
+  const neighbours = neighbourCount(focus);
   if (reach > 0 && styleIds.length) {
     const near = (await db.query(`
       SELECT me.style_id AS target, n.id, n.name, n.genre
@@ -115,7 +121,7 @@ export async function conceptStyles(db: Db, paths: string[], adjacentReach: numb
         LIMIT $2
       ) c
       JOIN style n ON n.id = c.style_id
-      WHERE me.style_id = ANY($1::int[])`, [styleIds, NEIGHBOURS_PER_TARGET])).rows as Array<{ target: number; id: number; name: string; genre: string }>;
+      WHERE me.style_id = ANY($1::int[])`, [styleIds, neighbours])).rows as Array<{ target: number; id: number; name: string; genre: string }>;
     const withCentroid = new Set(near.map(r => r.target));
     // Without a centroid (fewer than 8 tracks by 3 artists): the genre's biggest styles.
     const fallback = styleIds.filter(id => !withCentroid.has(id));
@@ -128,10 +134,10 @@ export async function conceptStyles(db: Db, paths: string[], adjacentReach: numb
         ORDER BY (SELECT COUNT(*) FROM track_styles ts WHERE ts.style_id = s.id AND ts.strength >= $3) DESC, s.id
         LIMIT $2
       ) n
-      WHERE me.id = ANY($1::int[])`, [fallback, NEIGHBOURS_PER_TARGET, STRONG_MEMBER])).rows as typeof near : [];
+      WHERE me.id = ANY($1::int[])`, [fallback, neighbours, STRONG_MEMBER])).rows as typeof near : [];
     for (const r of [...near, ...siblings]) {
       const targetIndex = paths.findIndex(p => byPath.get(p)?.id === r.target);
-      const weight = targetWeight(Math.max(0, targetIndex)) * 0.5 * reach;
+      const weight = targetWeight(Math.max(0, targetIndex)) * reach;
       put(`s${r.id}`, weight, r.name);
       put(`g${r.genre}`, weight * GENRE_WEIGHT, r.genre);
     }
@@ -211,8 +217,12 @@ export function moodMatch(target: MoodTarget | null, moods: Partial<Record<Sound
   return n ? 1 - sum / n : 0;
 }
 
-/** β for the mood match at full Genre Cohesion, in spreads. */
-export const MOOD_MAX_BETA = 2.5;
+/**
+ * β for the mood fit at a pure mood request, in spreads. 2.5 let mood
+ * override style (the rainy-day list above); at 1.25 mood picks among tracks
+ * that fit rather than replacing them.
+ */
+export const MOOD_MAX_BETA = 1.25;
 /**
  * The mood's weight: most for a mood request (focus 0), a little for a genre
  * request (focus 1: a "90s Eurodance party" still wants party). None without
@@ -295,22 +305,25 @@ export function focusOf(value: unknown): number {
 
 /**
  * β for a general list: Genre Cohesion (0–1) times how much of the concept
- * the library has, times what the request is about: full at focus 1, a
- * third at focus 0, so a mood request ("music for code", "rainy day") can
- * reach into neighbouring genres for music that feels right.
+ * the library has, times what the request is about: full at focus 1, half
+ * at focus 0, so a mood request ("music for code") can reach into
+ * neighbouring styles for music that feels right.
  */
 export function scoreBeta(cohesion: number, support: number, playlistLength: number, focus = 1): number {
   const supportFactor = Math.min(1, support / Math.max(1, 4 * playlistLength));
-  const focusFactor = 1 / 3 + (2 / 3) * Math.max(0, Math.min(1, focus));
+  // Half at a pure mood request: a blind comparison (12 Nov 2026) preferred
+  // a rainy-day list that stayed indie rock over a moodier one that drifted
+  // into classic rock.
+  const focusFactor = 0.5 + 0.5 * Math.max(0, Math.min(1, focus));
   return Math.max(0, Math.min(1, cohesion)) * SCORE_MAX_BETA * supportFactor * focusFactor;
 }
 
 /**
  * The styles' share of the sound target: mostly the styles' own sound for a
  * genre request, mostly the AI's sound (mood, energy, instrumental) for a
- * mood request; 0.5 at the default focus 0.6.
+ * mood request; 0.56 at the default focus 0.6.
  */
-export const styleSoundShare = (focus: number) => 0.2 + 0.5 * Math.max(0, Math.min(1, focus));
+export const styleSoundShare = (focus: number) => 0.35 + 0.35 * Math.max(0, Math.min(1, focus));
 
 export interface ScoredRow {
   styleMatch: number;
@@ -325,7 +338,12 @@ export interface ScoredRow {
  */
 export function rankByScore<T extends { id: string; distance: number | string; novelty_boost?: number | string | null }>(
   rows: T[],
-  opts: { match: (row: T) => number; beta: number; nu: number; penalty?: (row: T) => number; mood?: (row: T) => number; moodBeta?: number },
+  opts: {
+    match: (row: T) => number; beta: number; nu: number; penalty?: (row: T) => number;
+    mood?: (row: T) => number; moodBeta?: number;
+    /** Mood counts in proportion to style fit (0.4 + 0.6 · match), so it picks among tracks of the concept. */
+    moodGate?: boolean;
+  },
 ): Array<T & ScoredRow> {
   const { low, spread } = distanceSpread(rows.map(r => Number(r.distance)));
   const ranked = rows
@@ -334,7 +352,7 @@ export function rankByScore<T extends { id: string; distance: number | string; n
       const moodFit = opts.mood ? opts.mood(row) : 0;
       const score = (Number(row.distance) - low) / spread
         - opts.beta * styleMatch
-        - (opts.moodBeta ?? 0) * moodFit
+        - (opts.moodBeta ?? 0) * moodFit * (opts.moodGate ? 0.4 + 0.6 * styleMatch : 1)
         - opts.nu * NOVELTY_WEIGHT * Math.min(1, Number(row.novelty_boost ?? 0) / NOVELTY_FULL)
         + (opts.penalty?.(row) ?? 0);
       return { ...row, styleMatch, moodFit, score };

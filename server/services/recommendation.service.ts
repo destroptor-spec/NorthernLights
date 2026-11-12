@@ -1063,6 +1063,7 @@ export async function getHubCollections(
           match: (r: any) => conceptMatch(styles.weights, memberships.get(String(r.id))),
           mood: (r: any) => moodMatch(moodTarget, moods.get(String(r.id))),
           moodBeta: moodWeight,
+          moodGate: hasTargets,
           beta,
           nu: discoveryBias,
           penalty: softVeto ? (r: any) => (isRowBanned(r, compiled.bannedGenres) ? 1 : 0) : undefined,
@@ -1073,9 +1074,14 @@ export async function getHubCollections(
         const fitting = ranked.filter((r: any) => r.styleMatch >= 0.5);
         const artistsAvailable = new Set((fitting.length ? fitting : ranked).map((r: any) => normalizeArtistName(r.artist || ''))).size;
         const bestScore = ranked[0]?.score ?? 0;
+        // A genre request on a thin theme (Danish 90s rap: about 8 artists)
+        // takes another track by a fitting artist before music outside the
+        // genre: Artist Spread counts in proportion to the fitting artists.
+        const thinGenreRequest = moodLed && focus >= 0.7 && fitting.length > 0 && artistsAvailable < L;
+        const spreadForPick = thinGenreRequest ? artistSpread * artistsAvailable / L : artistSpread;
         const selection = selectDiverseTracks(ranked, L, diversity, artistCap(L, artistsAvailable, artistSpread), new Map([['score', L]]), {
           discoveryBias,
-          artistSpread,
+          artistSpread: spreadForPick,
           fitOf: (r: any) => r.score - bestScore,
           // Playlist Diversity sets how much sound variety counts against fit.
           varietyWeight: diversity * 0.5,

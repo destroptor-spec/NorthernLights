@@ -4,13 +4,24 @@
  * saves the answers, so every change to the engine is judged on the same
  * input (run.ts). Run once; rerun only to replace the set.
  *
- *   npx tsx scripts/ai-playlist-eval/generate-concepts.ts
+ *   npx tsx scripts/ai-playlist-eval/generate-concepts.ts [--set=mood]
  */
 import fs from 'fs';
 import path from 'path';
 import { generateCustomPlaylist } from '../../server/services/llm.service';
 
-const PROMPTS = [
+// The mood-led set (--set=mood): requests about a mood or an activity more
+// than a genre, for comparing mood-led scoring (concepts-mood.json).
+const MOOD_PROMPTS = [
+  'Music for code: focused, steady, mostly instrumental',
+  'Acoustic Sunday morning with coffee',
+  'Melancholic indie rock for a rainy day',
+  'Dinner for two, candles and wine',
+  'A late-night drive through the city',
+  'Upbeat music for Sunday cleaning',
+];
+
+const MAIN_PROMPTS = [
   'Euphoric, melodic trance with progressive structures and soaring synthesizers',
   "Dansk rap fra 90'erne",
   'Music for code: focused, steady, mostly instrumental',
@@ -23,9 +34,12 @@ const PROMPTS = [
   'Jazz for a dinner party',
 ];
 
+const moodSet = process.argv.includes('--set=mood');
+const PROMPTS = moodSet ? MOOD_PROMPTS : MAIN_PROMPTS;
+
 (async () => {
   const out: unknown[] = [];
-  const file = path.join(__dirname, 'concepts.json');
+  const file = path.join(__dirname, moodSet ? 'concepts-mood.json' : 'concepts.json');
   // Written after every answer (a local model can take minutes each); the
   // set is replaced only when every prompt has one.
   const partial = `${file}.partial`;
