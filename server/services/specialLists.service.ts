@@ -60,7 +60,7 @@ export const ACTIVITIES: Record<ActivityName, { label: string; sql: string; desc
   'wind-down': {
     label: 'Wind-down',
     describe: 'calm, soft and unhurried',
-    sql: `mo.relaxed >= 0.85 AND mo.party <= 0.2 AND mo.aggressive <= 0.15`,
+    sql: `mo.relaxed >= 0.9 AND mo.party <= 0.15 AND mo.aggressive <= 0.1`,
   },
   party: {
     label: 'Party',
@@ -70,7 +70,12 @@ export const ACTIVITIES: Record<ActivityName, { label: string; sql: string; desc
 };
 
 /** How many of each kind the menu keeps, so one kind never fills it. */
-const KIND_CAP: Record<ThemeKind, number> = { style: 16, place: 10, era: 10, activity: 4 };
+/**
+ * Activities get fewer places: they rest on the five moods alone (energy,
+ * percussiveness and tempo from analysis barely vary: energy 0.80–0.86 for
+ * most dev tracks), so they are broader than style, place and era themes.
+ */
+const KIND_CAP: Record<ThemeKind, number> = { style: 16, place: 10, era: 10, activity: 2 };
 /**
  * A place theme must be distinctive: the country at least this many times
  * more common in the genre than in the library, so "Hip Hop · Denmark"
@@ -195,4 +200,32 @@ export async function buildThemeMenu(db: Db, opts: {
     .sort((a, b) => rank(b) - rank(a) || b.songs - a.songs || a.key.localeCompare(b.key))
     .filter(t => (perKind[t.kind]++ < KIND_CAP[t.kind]))
     .slice(0, limit);
+}
+
+/** The menu as the AI sees it. */
+export function menuForAi(menu: Theme[]) {
+  return menu.map(t => ({
+    key: t.key, label: t.label, kind: t.kind, songs: t.songs, artists: t.artists,
+    describe: t.activity ? ACTIVITIES[t.activity].describe : undefined,
+  }));
+}
+
+/**
+ * The concept getHubCollections builds for a special list: the AI's title,
+ * description and sound; the theme's style or genre as the target and its
+ * country or decade as hard filters. `special` makes the engine take only
+ * the theme's tracks and check that enough of them fit.
+ */
+export function conceptForTheme(theme: Theme, pick: { title: string; description: string; target_vector: number[] }) {
+  return {
+    section: 'Special',
+    title: pick.title,
+    description: pick.description,
+    target_vector: pick.target_vector,
+    target_genres: theme.styleName ? [theme.styleName] : theme.genre ? [theme.genre] : [],
+    banned_genres: [] as string[],
+    ...(theme.country ? { countries: [theme.country] } : {}),
+    ...(theme.decade !== undefined ? { year_from: theme.decade, year_to: theme.decade + 9 } : {}),
+    special: theme,
+  };
 }

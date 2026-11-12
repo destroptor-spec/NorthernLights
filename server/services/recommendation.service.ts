@@ -8,6 +8,10 @@ import { seedStyleVector, styleBeta, styleCosine, styleVectorForNames, styleVect
 import { isRowBanned, pathsMatchSql, trackGenrePathsJoin } from './genreTaxonomy/paths';
 import { artistCap, blendEmbeddings, conceptMatch, conceptStyles, focusOf, moodBeta, moodMatch, moodTargetOf, rankByScore, scoreBeta, soundQualitySql, STRONG_MEMBER, styleSoundShare, trackMemberships, trackMoods, type MoodTarget } from './aiPlaylistScore.service';
 import type { SoundQuality } from '../../shared/audioMoods';
+import { ACTIVITIES, type Theme } from './specialLists.service';
+
+/** A special list's tracks fit when they are within this share of the theme's tracks nearest by sound. */
+const SPECIAL_FIT_SHARE = 0.75;
 import { moodOf, vocalsOf, type Mood } from '../../shared/descriptors';
 
 // 1. Z-Score normalization is handled by scaling 0-1 mapped values in JS, but 
@@ -382,6 +386,8 @@ export async function getHubCollections(
     focus?: number,
     /** How the music should sound on the five moods from the sound, 0–1 (aiPlaylistScore.moodTargetOf). */
     sound_moods?: Record<string, number>,
+    /** A special list: built only from this theme's tracks, and only when enough of them fit (specialLists.service). */
+    special?: Theme,
   }[],
   userId: string | null = null,
   settings: {
@@ -666,6 +672,7 @@ export async function getHubCollections(
     withPaths = true,
     members,
     moodOrder,
+    activitySql,
   }: {
     poolName: 'core' | 'adjacent' | 'root' | 'acoustic' | 'discovery' | 'bridge' | 'score';
     vectorStr: string;
@@ -687,6 +694,8 @@ export async function getHubCollections(
     members?: { styleIds: number[]; genres: string[]; minStrength: number };
     /** Order by how well the moods from the sound fit (then by sound), instead of by sound. */
     moodOrder?: MoodTarget | null;
+    /** An activity theme's condition on the sound (specialLists.ACTIVITIES; `mo` = track_moods, `tf`, `t`). */
+    activitySql?: string;
   }): Promise<any[]> => {
     if (limit <= 0) return [];
     if (restrictIds && restrictIds.length === 0) return [];
@@ -777,6 +786,10 @@ export async function getHubCollections(
       params.push(restrictIds);
       whereClauses.push(`t.id = ANY($${nextParam}::text[])`);
       nextParam++;
+    }
+
+    if (activitySql) {
+      whereClauses.push(`EXISTS (SELECT 1 FROM track_moods mo WHERE mo.track_id = t.id AND ${activitySql})`);
     }
 
     if (members) {
@@ -982,7 +995,8 @@ export async function getHubCollections(
       if (compiled.diagnostics.notes.length > 0) {
         console.log(`[LLM Hub] "${concept.title}" → ${compiled.diagnostics.notes.join(' ')}`);
       }
-      if (compiled.diagnostics.shouldRegenerate) {
+      // A special list's theme is the specific part (Hip Hop from Denmark), not its genre.
+      if (compiled.diagnostics.shouldRegenerate && !concept.special) {
         console.warn(`[LLM Hub] Dropping playlist "${concept.title}" - low-quality concept compile (score=${compiled.diagnostics.qualityScore.toFixed(2)}). ${compiled.diagnostics.regenerateReason || ''}`.trim());
         (concept as any).dropped = true;
         continue;
@@ -1020,7 +1034,23 @@ export async function getHubCollections(
         let rows: any[] = [];
         let strongIds = new Set<string>();
         let counts = { sound: 0, strong: 0, weak: 0, mood: 0 };
-        for (let attempt = 0; attempt <= widenings; attempt++) {
+        const special = concept.special;
+        if (special) {
+          // Only the theme's own tracks: its style's (or genre's) strong
+          // members, narrowed by the theme's country or decade through the
+          // concept's filters, or the tracks an activity's sound calls for.
+          const limit = small ? libraryProfile.analyzedTracks + 1 : Math.max(15 * L, 500);
+          const members = special.activity
+            ? await fetchLlmPool({ ...base, limit, withPaths: false, activitySql: ACTIVITIES[special.activity].sql })
+            : await fetchLlmPool({ ...base, limit, withPaths: false, members: {
+              styleIds: special.styleId ? [special.styleId] : [], genres: special.styleId ? [] : [special.genre ?? ''], minStrength: STRONG_MEMBER,
+            } });
+          strongIds = new Set(members.map((r: any) => String(r.id)));
+          counts = { sound: 0, strong: members.length, weak: 0, mood: 0 };
+          rows = (await fetchLlmPool({ ...base, limit: members.length, restrictIds: [...strongIds], includeNovelty: true }))
+            .filter((r: any) => !assignedSongKeys.has(getSongDedupKey(r)));
+        }
+        for (let attempt = 0; !special && attempt <= widenings; attempt++) {
           const members = { styleIds: styles.styleIds, genres: styles.genres };
           const [sound, strong, byMood] = await Promise.all([
             fetchLlmPool({ ...base, limit: soundLimit, withPaths: false }),
@@ -1049,6 +1079,22 @@ export async function getHubCollections(
         }
 
         let allowed = rows.filter((r: any) => !isRowBanned(r, compiled.bannedGenres));
+        if (special) {
+          // Dry run: the theme's tracks within the nearest three quarters by
+          // sound fit. Too few songs or artists, and the list is not made.
+          const distances = allowed.map((r: any) => Number(r.distance)).filter(Number.isFinite).sort((a, b) => a - b);
+          const cut = distances[Math.max(0, Math.ceil(distances.length * SPECIAL_FIT_SHARE) - 1)] ?? -Infinity;
+          const fits = allowed.filter((r: any) => Number(r.distance) <= cut);
+          const fitSongs = new Set(fits.map(getSongDedupKey)).size;
+          const fitArtists = new Set(fits.map((r: any) => normalizeArtistName(r.artist || ''))).size;
+          if (fitSongs < L || fitArtists < Math.ceil(L / 2)) {
+            console.warn(`[LLM Hub] Special list "${concept.title}" (${special.label}) not made: ${fitSongs} fitting songs from ${fitArtists} artists, needs ${L} from ${Math.ceil(L / 2)}.`);
+            (concept as any).dropped = true;
+            (concept as any).dropReason = 'too-few-fitting';
+            continue;
+          }
+          allowed = fits;
+        }
         let softVeto = false;
         if (new Set(allowed.map(getSongDedupKey)).size < L && allowSoftVetoRecovery && compiled.bannedGenres.length) {
           allowed = rows;
@@ -1098,7 +1144,7 @@ export async function getHubCollections(
         const meanMood = topTracks.reduce((sum, t) => sum + Number(t.moodFit || 0), 0) / topTracks.length;
         const strongInList = topTracks.filter(t => strongIds.has(String(t.id))).length;
         console.log([
-          `[LLM Hub] Playlist Diagnostic (score): "${concept.title || concept.section}"`,
+          `[LLM Hub] Playlist Diagnostic (score${concept.special ? `, special: ${concept.special.label}` : ''}): "${concept.title || concept.section}"`,
           `  targets=${compiled.corePaths.join(', ') || 'none'} | concept=${styles.describe || 'none'}`,
           `  candidates=sound ${counts.sound} + strong members ${counts.strong} + weaker ${counts.weak} + by mood ${counts.mood} → ${new Set(allowed.map(getSongDedupKey)).size} songs, ${artistsAvailable} artists${small ? ' (small library: every track)' : ''}`,
           `  focus=${focus.toFixed(2)} | moods=${moodTarget ? Object.entries(moodTarget).map(([m, v]) => `${m} ${v}`).join(', ') : 'none'} (weight ${moodWeight.toFixed(2)}) | support=${support} | beta=${beta.toFixed(2)} | nu=${discoveryBias.toFixed(2)} | veto=${compiled.bannedGenres.length ? `${softVeto ? 'adaptive (relaxed)' : 'hard'} [${compiled.bannedNames.join(', ')}]` : 'none'}`,
@@ -1132,6 +1178,7 @@ export async function getHubCollections(
         title: concept.title || concept.section,
         description: concept.description,
         isLlmGenerated: true,
+        theme: concept.special?.key ?? null,
         tracks: topTracks.map((r: any) => ({
           ...r,
           albumArtist: r.album_artist,

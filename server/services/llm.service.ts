@@ -218,3 +218,53 @@ Only output valid JSON matching this schema exactly (countries, languages, year_
     return null;
   }
 }
+
+/** A theme as the AI sees it in the special-list menu. */
+export interface SpecialMenuEntry { key: string; label: string; kind: string; songs: number; artists: number; describe?: string }
+/** The AI's pick for a special list: a theme from the menu, named. */
+export interface SpecialPick { theme: string; title: string; description: string; target_vector: number[] }
+
+/**
+ * Special lists: the AI picks `count` themes from the menu (by key, all
+ * different, varied in kind) and names each one; the library has already
+ * decided what each theme is and that it can carry it.
+ */
+export async function generateSpecialPicks(
+  menu: SpecialMenuEntry[],
+  count: number,
+  context: { timeOfDay?: string; historySummary?: string } = {},
+): Promise<SpecialPick[]> {
+  if (!menu.length || count <= 0) return [];
+  const { apiKey, baseUrl, modelName } = await getLlmConfig();
+  if (baseUrl.includes('api.openai.com') && apiKey === 'dummy-key') return [];
+  const openai = new OpenAI({ baseURL: baseUrl, apiKey });
+  const lines = menu.map(m => `- ${m.key} | ${m.label}${m.describe ? ` (${m.describe})` : ''} | ${m.kind} | ${m.songs} songs, ${m.artists} artists`).join('\n');
+  const prompt = `
+You are a Creative Director for a music application. These are themes the listener's own library can carry (key | theme | kind | size):
+${lines}
+${context.timeOfDay ? `The listener's time of day is ${context.timeOfDay}.` : ''}${context.historySummary ? ` Recently played: ${context.historySummary}.` : ''}
+
+Pick exactly ${count} different themes from the list (prefer different kinds, and themes that suit the listener now) and name each as a special playlist: a short, specific, inviting title (e.g. "Trance Horizon", "Danish Rap Commute", "Music for Code") and a one-line description. Do not invent themes; use the keys exactly as written.
+Also give "target_vector", the sound of the playlist as 8 numbers from 0 to 1: [energy, brightness, percussiveness, chromagram, instrumentalness, acousticness, danceability, tempo] (tempo 0 = 60 BPM, 0.5 = 120 BPM, 1 = 200 BPM).
+
+Only output valid JSON:
+{
+  "special_lists": [
+    { "theme": "style:123", "title": "Trance Horizon", "description": "Euphoric, melodic trance for the long way home.", "target_vector": [0.8, 0.7, 0.6, 0.8, 0.6, 0.1, 0.8, 0.6] }
+  ]
+}
+`;
+  try {
+    const response = await openai.chat.completions.create({ model: modelName, messages: [{ role: 'user', content: prompt }] });
+    const parsed = extractJson(response.choices[0].message.content || '');
+    const keys = new Set(menu.map(m => m.key));
+    const seen = new Set<string>();
+    return (Array.isArray(parsed?.special_lists) ? parsed.special_lists : [])
+      .filter((p: any) => p && keys.has(p.theme) && !seen.has(p.theme) && seen.add(p.theme)
+        && typeof p.title === 'string' && Array.isArray(p.target_vector) && p.target_vector.length === 8)
+      .slice(0, count);
+  } catch (err) {
+    console.error('LLM special list error', err);
+    return [];
+  }
+}
