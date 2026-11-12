@@ -6,7 +6,8 @@ import { christmasExclusionSql, isChristmasSeason, isChristmasRow } from '../uti
 import { countryCode, languageCode, placeFromTag } from '../../shared/places';
 import { seedStyleVector, styleBeta, styleCosine, styleVectorForNames, styleVectors, type StyleVector } from './styleOverlap.service';
 import { isRowBanned, pathsMatchSql, trackGenrePathsJoin } from './genreTaxonomy/paths';
-import { artistCap, blendEmbeddings, conceptMatch, conceptStyles, rankByScore, scoreBeta, STRONG_MEMBER, trackMemberships } from './aiPlaylistScore.service';
+import { artistCap, blendEmbeddings, conceptMatch, conceptStyles, focusOf, moodBeta, moodMatch, moodTargetOf, rankByScore, scoreBeta, soundQualitySql, STRONG_MEMBER, styleSoundShare, trackMemberships, trackMoods, type MoodTarget } from './aiPlaylistScore.service';
+import type { SoundQuality } from '../../shared/audioMoods';
 import { moodOf, vocalsOf, type Mood } from '../../shared/descriptors';
 
 // 1. Z-Score normalization is handled by scaling 0-1 mapped values in JS, but 
@@ -377,6 +378,10 @@ export async function getHubCollections(
     countries?: string[], languages?: string[], year_from?: number, year_to?: number,
     /** By the artists' tags: vocals a hard filter, moods a preference. */
     vocals?: string, moods?: string[],
+    /** What the request is mainly about: 0 mood or activity, 1 genre or style (aiPlaylistScore.focusOf). */
+    focus?: number,
+    /** How the music should sound on the five moods from the sound, 0–1 (aiPlaylistScore.moodTargetOf). */
+    sound_moods?: Record<string, number>,
   }[],
   userId: string | null = null,
   settings: {
@@ -391,6 +396,12 @@ export async function getHubCollections(
     llmGenerationSource?: 'hub' | 'custom',
     /** false: build and return the playlists without saving them (comparisons, previews). */
     persist?: boolean,
+    /**
+     * true: mood-led requests (the AI's focus and moods from the sound in the
+     * score). Off until the blind comparison ("Mood test 01–10") decides;
+     * off = the engine as before: no mood term, focus ignored.
+     */
+    moodTerm?: boolean,
   } = {}
 ) {
   // Style vectors for genre references ("electronic.house"), read once per name.
@@ -654,6 +665,7 @@ export async function getHubCollections(
     includeNovelty = false,
     withPaths = true,
     members,
+    moodOrder,
   }: {
     poolName: 'core' | 'adjacent' | 'root' | 'acoustic' | 'discovery' | 'bridge' | 'score';
     vectorStr: string;
@@ -673,6 +685,8 @@ export async function getHubCollections(
     withPaths?: boolean;
     /** Only members of these styles or genres at this strength or more. */
     members?: { styleIds: number[]; genres: string[]; minStrength: number };
+    /** Order by how well the moods from the sound fit (then by sound), instead of by sound. */
+    moodOrder?: MoodTarget | null;
   }): Promise<any[]> => {
     if (limit <= 0) return [];
     if (restrictIds && restrictIds.length === 0) return [];
@@ -813,7 +827,19 @@ export async function getHubCollections(
 
     params.push(limit);
     const limitParam = nextParam;
-    const orderSql = enableDiscoveryBoost ? `(distance - novelty_boost)` : `distance`;
+    nextParam++;
+    let moodDistanceSql = 'NULL::float8';
+    if (moodOrder) {
+      const parts: string[] = [];
+      for (const [mood, want] of Object.entries(moodOrder)) {
+        params.push(want);
+        parts.push(`abs(${soundQualitySql(mood as SoundQuality)} - $${nextParam}::float8)`);
+        nextParam++;
+      }
+      joinSql += ` JOIN track_moods mo ON mo.track_id = t.id`;
+      moodDistanceSql = `((${parts.join(' + ')}) / ${parts.length})`;
+    }
+    const orderSql = moodOrder ? `mood_distance, distance` : enableDiscoveryBoost ? `(distance - novelty_boost)` : `distance`;
     const poolBiasByName: Record<string, number> = {
       core: 0.11,
       adjacent: 0.07,
@@ -834,6 +860,7 @@ export async function getHubCollections(
           tf.acoustic_vector_8d::text AS acoustic_vector_text,
           (${distanceSql}) - ${moodBoostSql} AS distance,
           ${noveltySql} AS novelty_boost,
+          ${moodDistanceSql} AS mood_distance,
           '${poolName}'::text AS pool_source,
           ${poolBiasByName[poolName]}::float8 AS pool_bias
         FROM tracks t
@@ -969,14 +996,22 @@ export async function getHubCollections(
         // when the library has few strong ones), then scored together.
         const db = await initDB();
         const L = tracksPerPlaylist;
-        const styles = await conceptStyles(db, compiled.corePaths, adjacentReach);
+        // What the request is mainly about (the AI's focus, 0 mood … 1 genre):
+        // a mood request lets style count less, counts a target's genre nearly
+        // as much as the style itself, and aims at the AI's sound.
+        const moodLed = settings.moodTerm === true;
+        const focus = focusOf(concept.focus);
+        // How the music should sound (moods from the sound: sad = tender or
+        // wistful, whatever the lyrics). It weighs most in a mood request.
+        const moodTarget = moodLed ? moodTargetOf(concept.sound_moods) : null;
+        const styles = await conceptStyles(db, compiled.corePaths, adjacentReach, moodLed ? focus : 1);
         const hasTargets = styles.styleIds.length + styles.genres.length > 0;
-        // The sound to aim at: the AI's 8 numbers, and an embedding halfway
-        // between the target styles' own sound (centroids) and the one
-        // imputed from the AI's numbers. Styles alone lost the mood
-        // ("melancholic indie rock" came out upbeat, "music for code" with
-        // vocals); the imputed embedding alone pointed a trance concept at R&B.
-        const embeddingTarget = blendEmbeddings(styles.centroid, embeddingCentroidStr);
+        // The sound to aim at: the AI's 8 numbers, and an embedding between
+        // the target styles' own sound (centroids) and the one imputed from
+        // the AI's numbers. Styles alone lost the mood ("melancholic indie
+        // rock" came out upbeat, "music for code" with vocals); the imputed
+        // embedding alone pointed a trance concept at R&B.
+        const embeddingTarget = blendEmbeddings(styles.centroid, embeddingCentroidStr, moodLed ? styleSoundShare(focus) : 0.5);
         const base = { origin: originFilter, poolName: 'score' as const, vectorStr, embeddingCentroidStr: embeddingTarget, effnetWeight, excludeIds: assignedIds };
         const small = libraryProfile.analyzedTracks < 2000;
         let soundLimit = small ? libraryProfile.analyzedTracks + 1 : Math.max(10 * L, 300);
@@ -984,12 +1019,15 @@ export async function getHubCollections(
         const widenings = recoveryStrength > 0 ? 1 : 0;
         let rows: any[] = [];
         let strongIds = new Set<string>();
-        let counts = { sound: 0, strong: 0, weak: 0 };
+        let counts = { sound: 0, strong: 0, weak: 0, mood: 0 };
         for (let attempt = 0; attempt <= widenings; attempt++) {
           const members = { styleIds: styles.styleIds, genres: styles.genres };
-          const [sound, strong] = await Promise.all([
+          const [sound, strong, byMood] = await Promise.all([
             fetchLlmPool({ ...base, limit: soundLimit, withPaths: false }),
             hasTargets ? fetchLlmPool({ ...base, limit: memberLimit, withPaths: false, members: { ...members, minStrength: STRONG_MEMBER } }) : Promise.resolve([]),
+            // The tracks whose moods fit best, from anywhere: a mood request
+            // ("music for code") can find them outside the target styles.
+            moodTarget ? fetchLlmPool({ ...base, limit: memberLimit, withPaths: false, moodOrder: moodTarget }) : Promise.resolve([]),
           ]);
           // Relative floor: too few strong members, so the weaker ones count too.
           const weak = hasTargets && new Set(strong.map(getSongDedupKey)).size < 2 * L
@@ -997,8 +1035,8 @@ export async function getHubCollections(
             : [];
           // Support: the strong members, or (relative floor) the weaker ones too.
           strongIds = new Set([...strong, ...weak].map((r: any) => String(r.id)));
-          counts = { sound: sound.length, strong: strong.length, weak: weak.length };
-          const ids = [...new Set([...sound, ...strong, ...weak].map((r: any) => String(r.id)))];
+          counts = { sound: sound.length, strong: strong.length, weak: weak.length, mood: byMood.length };
+          const ids = [...new Set([...sound, ...strong, ...weak, ...byMood].map((r: any) => String(r.id)))];
           rows = (await fetchLlmPool({ ...base, limit: ids.length, restrictIds: ids, includeNovelty: true }))
             .filter((r: any) => !assignedSongKeys.has(getSongDedupKey(r)));
           const allowed = rows.filter((r: any) => !isRowBanned(r, compiled.bannedGenres));
@@ -1017,10 +1055,14 @@ export async function getHubCollections(
           softVeto = true;
         }
         const support = new Set(allowed.filter((r: any) => strongIds.has(String(r.id))).map(getSongDedupKey)).size;
-        const beta = scoreBeta(genreBlend, support, L);
+        const beta = scoreBeta(genreBlend, support, L, moodLed ? focus : 1);
         const memberships = await trackMemberships(db, allowed.map((r: any) => String(r.id)));
+        const moods = moodTarget ? await trackMoods(db, allowed.map((r: any) => String(r.id))) : new Map();
+        const moodWeight = moodBeta(focus, Boolean(moodTarget));
         const ranked = rankByScore(allowed, {
           match: (r: any) => conceptMatch(styles.weights, memberships.get(String(r.id))),
+          mood: (r: any) => moodMatch(moodTarget, moods.get(String(r.id))),
+          moodBeta: moodWeight,
           beta,
           nu: discoveryBias,
           penalty: softVeto ? (r: any) => (isRowBanned(r, compiled.bannedGenres) ? 1 : 0) : undefined,
@@ -1046,13 +1088,14 @@ export async function getHubCollections(
           continue;
         }
         const meanMatch = topTracks.reduce((sum, t) => sum + Number(t.styleMatch || 0), 0) / topTracks.length;
+        const meanMood = topTracks.reduce((sum, t) => sum + Number(t.moodFit || 0), 0) / topTracks.length;
         const strongInList = topTracks.filter(t => strongIds.has(String(t.id))).length;
         console.log([
           `[LLM Hub] Playlist Diagnostic (score): "${concept.title || concept.section}"`,
           `  targets=${compiled.corePaths.join(', ') || 'none'} | concept=${styles.describe || 'none'}`,
-          `  candidates=sound ${counts.sound} + strong members ${counts.strong} + weaker ${counts.weak} → ${new Set(allowed.map(getSongDedupKey)).size} songs, ${artistsAvailable} artists${small ? ' (small library: every track)' : ''}`,
-          `  support=${support} | beta=${beta.toFixed(2)} | nu=${discoveryBias.toFixed(2)} | veto=${compiled.bannedGenres.length ? `${softVeto ? 'adaptive (relaxed)' : 'hard'} [${compiled.bannedNames.join(', ')}]` : 'none'}`,
-          `  selected=${topTracks.length} tracks / ${new Set(topTracks.map(t => normalizeArtistName(t.artist || ''))).size} artists | strong members ${strongInList}/${topTracks.length} | mean style match ${meanMatch.toFixed(2)}`,
+          `  candidates=sound ${counts.sound} + strong members ${counts.strong} + weaker ${counts.weak} + by mood ${counts.mood} → ${new Set(allowed.map(getSongDedupKey)).size} songs, ${artistsAvailable} artists${small ? ' (small library: every track)' : ''}`,
+          `  focus=${focus.toFixed(2)} | moods=${moodTarget ? Object.entries(moodTarget).map(([m, v]) => `${m} ${v}`).join(', ') : 'none'} (weight ${moodWeight.toFixed(2)}) | support=${support} | beta=${beta.toFixed(2)} | nu=${discoveryBias.toFixed(2)} | veto=${compiled.bannedGenres.length ? `${softVeto ? 'adaptive (relaxed)' : 'hard'} [${compiled.bannedNames.join(', ')}]` : 'none'}`,
+          `  selected=${topTracks.length} tracks / ${new Set(topTracks.map(t => normalizeArtistName(t.artist || ''))).size} artists | strong members ${strongInList}/${topTracks.length} | mean style match ${meanMatch.toFixed(2)} | mean mood fit ${meanMood.toFixed(2)}`,
         ].join('\n'));
       }
 

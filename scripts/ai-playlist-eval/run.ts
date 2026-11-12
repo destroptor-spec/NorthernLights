@@ -3,7 +3,7 @@
  * engine without saving anything, and prints each playlist with every
  * track's genres and styles. AI_SCORE_DEBUG=1 also prints the top scores.
  *
- *   npx tsx scripts/ai-playlist-eval/run.ts [userId] [--only=<prompt substring>]
+ *   npx tsx scripts/ai-playlist-eval/run.ts [userId] [--only=<prompt substring>] [--concepts=<file>] [--no-moods]
  *
  * The blind comparison against the old six-pool engine (rated 2026-11-11:
  * the score 6, the pools 3, 1 tie) was built by make-ab.ts, removed with the
@@ -17,15 +17,17 @@ import { getLlmPlaylistSettings } from '../../server/services/hubRefresh.service
 
 const userId = process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : null;
 const only = process.argv.find(a => a.startsWith('--only='))?.slice(7).toLowerCase();
+const conceptsFile = process.argv.find(a => a.startsWith('--concepts='))?.slice(11) ?? path.join(__dirname, 'concepts.json');
+const moodTerm = !process.argv.includes('--no-moods');
 
 (async () => {
   const db = await initDB();
-  const concepts = JSON.parse(fs.readFileSync(path.join(__dirname, 'concepts.json'), 'utf8')) as Array<{ prompt: string; concept: any }>;
+  const concepts = JSON.parse(fs.readFileSync(conceptsFile, 'utf8')) as Array<{ prompt: string; concept: any }>;
   const tuning = userId ? await getLlmPlaylistSettings(userId) : {};
   for (const { prompt, concept } of concepts) {
     if (only && !prompt.toLowerCase().includes(only)) continue;
     const started = Date.now();
-    const [hub] = await getHubCollections([{ ...concept }], userId, { ...tuning, llmGenerationSource: 'custom', persist: false });
+    const [hub] = await getHubCollections([{ ...concept }], userId, { ...tuning, llmGenerationSource: 'custom', persist: false, moodTerm });
     const ms = Date.now() - started;
     console.log(`\n=== ${prompt} → "${concept.title}" (${ms} ms)`);
     if (!hub) { console.log('  (dropped)'); continue; }

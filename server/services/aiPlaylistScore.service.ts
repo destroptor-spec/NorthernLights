@@ -18,6 +18,7 @@
 import type { Pool, PoolClient } from 'pg';
 import { normaliseStyleVector, type StyleVector } from './styleOverlap.service';
 import { pathSegment } from './genreTaxonomy/paths';
+import { SOUND_QUALITIES, type SoundQuality } from '../../shared/audioMoods';
 
 type Db = Pool | PoolClient;
 
@@ -34,7 +35,13 @@ export const NOVELTY_WEIGHT = 0.5;
 /** The largest novelty bonus the pool query gives (0.16 + 0.08). */
 const NOVELTY_FULL = 0.24;
 const NEIGHBOURS_PER_TARGET = 3;
-const GENRE_WEIGHT = 0.5;
+/**
+ * How much a target style's genre counts against the style itself: half for
+ * a genre request, up to 0.9 for a mood request, where rock that feels right
+ * beats indie rock that doesn't (dev: "Let Down" sounded closer to a rainy
+ * day than "Riot Van" but, tagged plain Rock, lost to it at 0.5).
+ */
+export const genreWeight = (focus: number) => 0.5 + 0.4 * (1 - Math.max(0, Math.min(1, focus)));
 
 export interface ConceptStyles {
   vector: StyleVector | null;
@@ -62,7 +69,8 @@ export const targetWeight = (index: number) => Math.max(0.7, 1 - index * 0.1);
  * The concept's style vector from its target paths ("electronic.trance",
  * "hip hop") in the AI's order.
  */
-export async function conceptStyles(db: Db, paths: string[], adjacentReach: number): Promise<ConceptStyles> {
+export async function conceptStyles(db: Db, paths: string[], adjacentReach: number, focus = 1): Promise<ConceptStyles> {
+  const GENRE_WEIGHT = genreWeight(focus);
   const rows = (await db.query(`
     SELECT s.id, s.genre, s.name, lower(replace(s.genre, '.', ' ')) || '.' || lower(replace(s.name, '.', ' ')) AS path
     FROM style s`)).rows as Array<{ id: number; genre: string; name: string; path: string }>;
@@ -175,6 +183,75 @@ export function blendEmbeddings(styleSound: string | null, aiSound: string | nul
   return `[${mixed.map(e => e / n).join(',')}]`;
 }
 
+export type MoodTarget = Partial<Record<SoundQuality, number>>;
+
+/** The AI's sound_moods: the qualities it named (moods, acoustic, instrumental), clamped to 0–1; null when none. */
+export function moodTargetOf(value: unknown): MoodTarget | null {
+  if (!value || typeof value !== 'object') return null;
+  const out: MoodTarget = {};
+  for (const mood of SOUND_QUALITIES) {
+    const n = Number((value as Record<string, unknown>)[mood]);
+    if (Number.isFinite(n)) out[mood] = Math.max(0, Math.min(1, n));
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** How well a track's moods from the sound fit the target: 1 − mean distance over the named moods. */
+export function moodMatch(target: MoodTarget | null, moods: Partial<Record<SoundQuality, number>> | undefined): number {
+  if (!target || !moods) return 0;
+  let sum = 0;
+  let n = 0;
+  for (const mood of SOUND_QUALITIES) {
+    const want = target[mood];
+    const have = moods[mood];
+    if (want === undefined || have === undefined) continue;
+    sum += Math.abs(want - have);
+    n++;
+  }
+  return n ? 1 - sum / n : 0;
+}
+
+/** β for the mood match at full Genre Cohesion, in spreads. */
+export const MOOD_MAX_BETA = 2.5;
+/**
+ * The mood's weight: most for a mood request (focus 0), a little for a genre
+ * request (focus 1: a "90s Eurodance party" still wants party). None without
+ * a mood target.
+ */
+export function moodBeta(focus: number, hasTarget: boolean): number {
+  if (!hasTarget) return 0;
+  return MOOD_MAX_BETA * (0.25 + 0.75 * (1 - Math.max(0, Math.min(1, focus))));
+}
+
+/**
+ * Tracks' sound qualities: moods from track_moods, acoustic and instrumental
+ * from analysis (acoustic_vector_8d positions 6 and 5). A track without mood
+ * scores still has those two.
+ */
+export async function trackMoods(db: Db, trackIds: string[]): Promise<Map<string, Partial<Record<SoundQuality, number>>>> {
+  const out = new Map<string, Partial<Record<SoundQuality, number>>>();
+  if (!trackIds.length) return out;
+  const rows = (await db.query(`
+    SELECT tf.track_id, m.happy, m.sad, m.relaxed, m.aggressive, m.party,
+           (tf.acoustic_vector_8d::real[])[6] AS acoustic, (tf.acoustic_vector_8d::real[])[5] AS instrumental
+    FROM track_features tf LEFT JOIN track_moods m ON m.track_id = tf.track_id
+    WHERE tf.track_id = ANY($1::text[]) AND NOT tf.is_simulated`,
+    [[...new Set(trackIds)]])).rows as Array<Record<string, unknown>>;
+  for (const r of rows) {
+    const q: Partial<Record<SoundQuality, number>> = {};
+    for (const k of SOUND_QUALITIES) if (r[k] !== null && r[k] !== undefined) q[k] = Number(r[k]);
+    out.set(String(r.track_id), q);
+  }
+  return out;
+}
+
+/** SQL for one quality, with track_moods as `mo` and track_features as `tf`. */
+export function soundQualitySql(quality: SoundQuality): string {
+  if (quality === 'acoustic') return '(tf.acoustic_vector_8d::real[])[6]';
+  if (quality === 'instrumental') return '(tf.acoustic_vector_8d::real[])[5]';
+  return `mo.${quality}`;
+}
+
 /** Tracks' memberships: "s<style id>" / "g<genre>" → strength. */
 export async function trackMemberships(db: Db, trackIds: string[]): Promise<Map<string, Map<string, number>>> {
   const out = new Map<string, Map<string, number>>();
@@ -207,14 +284,37 @@ export function distanceSpread(distances: number[]): { low: number; spread: numb
   return { low: at(0.1), spread: Math.max(0.02, at(0.9) - at(0.1)) };
 }
 
-/** β for a general list: Genre Cohesion (0–1) times how much of the concept the library has. */
-export function scoreBeta(cohesion: number, support: number, playlistLength: number): number {
-  const supportFactor = Math.min(1, support / Math.max(1, 4 * playlistLength));
-  return Math.max(0, Math.min(1, cohesion)) * SCORE_MAX_BETA * supportFactor;
+/** What a concept is about when the AI didn't say: a little more style than mood. */
+export const DEFAULT_FOCUS = 0.6;
+
+/** The AI's focus, 0 (mood, activity, feeling) to 1 (genre, style); the default when missing or not a number. */
+export function focusOf(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) && value !== null && value !== '' ? Math.max(0, Math.min(1, n)) : DEFAULT_FOCUS;
 }
+
+/**
+ * β for a general list: Genre Cohesion (0–1) times how much of the concept
+ * the library has, times what the request is about: full at focus 1, a
+ * third at focus 0, so a mood request ("music for code", "rainy day") can
+ * reach into neighbouring genres for music that feels right.
+ */
+export function scoreBeta(cohesion: number, support: number, playlistLength: number, focus = 1): number {
+  const supportFactor = Math.min(1, support / Math.max(1, 4 * playlistLength));
+  const focusFactor = 1 / 3 + (2 / 3) * Math.max(0, Math.min(1, focus));
+  return Math.max(0, Math.min(1, cohesion)) * SCORE_MAX_BETA * supportFactor * focusFactor;
+}
+
+/**
+ * The styles' share of the sound target: mostly the styles' own sound for a
+ * genre request, mostly the AI's sound (mood, energy, instrumental) for a
+ * mood request; 0.5 at the default focus 0.6.
+ */
+export const styleSoundShare = (focus: number) => 0.2 + 0.5 * Math.max(0, Math.min(1, focus));
 
 export interface ScoredRow {
   styleMatch: number;
+  moodFit: number;
   score: number;
 }
 
@@ -225,24 +325,26 @@ export interface ScoredRow {
  */
 export function rankByScore<T extends { id: string; distance: number | string; novelty_boost?: number | string | null }>(
   rows: T[],
-  opts: { match: (row: T) => number; beta: number; nu: number; penalty?: (row: T) => number },
+  opts: { match: (row: T) => number; beta: number; nu: number; penalty?: (row: T) => number; mood?: (row: T) => number; moodBeta?: number },
 ): Array<T & ScoredRow> {
   const { low, spread } = distanceSpread(rows.map(r => Number(r.distance)));
   const ranked = rows
     .map(row => {
       const styleMatch = opts.match(row);
+      const moodFit = opts.mood ? opts.mood(row) : 0;
       const score = (Number(row.distance) - low) / spread
         - opts.beta * styleMatch
+        - (opts.moodBeta ?? 0) * moodFit
         - opts.nu * NOVELTY_WEIGHT * Math.min(1, Number(row.novelty_boost ?? 0) / NOVELTY_FULL)
         + (opts.penalty?.(row) ?? 0);
-      return { ...row, styleMatch, score };
+      return { ...row, styleMatch, moodFit, score };
     })
     .filter(row => Number.isFinite(row.score))
     .sort((a, b) => a.score - b.score);
   if (process.env.AI_SCORE_DEBUG) {
     console.log(`[AI score] low=${low.toFixed(3)} spread=${spread.toFixed(3)} beta=${opts.beta.toFixed(2)} nu=${opts.nu.toFixed(2)}`);
-    for (const r of ranked.slice(0, 12)) {
-      console.log(`  ${r.score.toFixed(2)} d̂=${((Number(r.distance) - low) / spread).toFixed(2)} match=${r.styleMatch.toFixed(2)} nov=${Math.min(1, Number(r.novelty_boost ?? 0) / NOVELTY_FULL).toFixed(2)} ${(r as any).artist} — ${(r as any).title}`);
+    for (const r of ranked.slice(0, Number(process.env.AI_SCORE_DEBUG) > 1 ? Number(process.env.AI_SCORE_DEBUG) : 12)) {
+      console.log(`  ${r.score.toFixed(2)} d̂=${((Number(r.distance) - low) / spread).toFixed(2)} match=${r.styleMatch.toFixed(2)} mood=${r.moodFit.toFixed(2)} nov=${Math.min(1, Number(r.novelty_boost ?? 0) / NOVELTY_FULL).toFixed(2)} ${(r as any).artist} — ${(r as any).title}`);
     }
   }
   return ranked;

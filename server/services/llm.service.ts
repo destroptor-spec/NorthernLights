@@ -55,6 +55,10 @@ export interface HubCollection {
   vocals?: string;
   /** Moods from MOOD_NAMES (shared/descriptors.ts): a preference, not a filter. */
   moods?: string[];
+  /** 0 = about a mood, activity or feeling; 1 = about a genre or style. Sets how strictly the playlist keeps to target_genres. */
+  focus?: number;
+  /** How the music should sound, 0–1, on any of the five moods from the sound (shared/audioMoods.ts). */
+  sound_moods?: Partial<Record<'happy' | 'sad' | 'relaxed' | 'aggressive' | 'party' | 'acoustic' | 'instrumental', number>>;
 }
 
 export async function generateHubConcepts(
@@ -87,6 +91,8 @@ The vector array must precisely match this order: [energy, brightness, percussiv
 - tempo: normalized BPM where 0.0 = 60 BPM (slow), 0.5 = 120 BPM (moderate), 1.0 = 200+ BPM (fast)
 You must also include "target_genres": an array of 2-4 genre names that best match the playlist's mood and concept. Prefer specific, library-supported genre names so the recommendation engine can anchor the playlist locally.
 You must also include "banned_genres": an array of 2-5 genre names that should be ABSOLUTELY EXCLUDED from this playlist. These are genres that clash with the playlist's mood (e.g., a "Club Fever" playlist should ban "rock", "country", "classical").
+You must also include "focus": a number from 0 to 1 for what the playlist is mainly about. 1 = a genre or style ("90s Eurodance" 0.9, "Danish rap" 0.9, "Dinner jazz" 0.7); 0 = a mood, an activity or a feeling, whatever the genre ("Music for coding" 0.1, "Rainy day" 0.2). Both count in "Melancholic indie rock for a rainy day" (0.4). A low focus lets close-sounding music from neighbouring genres in; a high one keeps to the genres.
+You must also include "sound_moods": how the music should sound, on these scales from 0 to 1; include only the ones that matter for this playlist. happy = bright and cheerful; sad = slow, soft, tender or wistful (whatever the lyrics are about; a tender love ballad counts); relaxed = calm and unhurried; aggressive = hard, loud and intense; party = danceable and festive; acoustic = played on real instruments rather than produced electronically (a rock band counts as well as an unplugged guitar; low for electronic music); instrumental = without vocals. Examples: a rainy day {"sad": 0.8, "relaxed": 0.8, "party": 0.1}; music for coding {"relaxed": 0.8, "instrumental": 0.8, "aggressive": 0.1, "party": 0.1}; an acoustic Sunday morning {"relaxed": 0.9, "happy": 0.6, "acoustic": 0.9}; gym metal {"aggressive": 0.9, "relaxed": 0.1}; a 90s dance party {"party": 0.9, "happy": 0.7, "acoustic": 0.1}.
 Only output valid JSON matching this schema:
 {
   "hub_collections": [
@@ -96,6 +102,8 @@ Only output valid JSON matching this schema:
       "description": "Driving electronic beats with zero vocals.",
       "target_genres": ["Ambient", "Techno", "Downtempo"],
       "banned_genres": ["Rock", "Heavy Metal", "Country", "Classical"],
+      "focus": 0.2,
+      "sound_moods": { "relaxed": 0.7, "aggressive": 0.1, "party": 0.2 },
       "target_vector": [0.6, 0.3, 0.8, 0.5, 0.9, 0.1, 0.8, 0.7] 
     }
   ]
@@ -163,6 +171,8 @@ Only when the user asks for where the music is from, the language it is sung in,
 - "year_from" and "year_to": release years, inclusive. "fra 90'erne", "from the 90s" → 1990 and 1999; "after 2010" → year_from 2010 only.
 - "vocals": "female" or "male", only when the user asks for the singer's voice ("med kvindelig vokal", "female singers").
 Also include "moods" when the description has a mood: 1-3 of ${MOOD_NAMES.join(', ')}. They gently favour artists known for that mood; the target_vector still sets the sound.
+You must also include "focus": a number from 0 to 1 for what the playlist is mainly about. 1 = a genre or style ("90s Eurodance" 0.9, "Danish rap" 0.9, "Dinner jazz" 0.7); 0 = a mood, an activity or a feeling, whatever the genre ("Music for coding" 0.1, "Rainy day" 0.2). Both count in "Melancholic indie rock for a rainy day" (0.4). A low focus lets close-sounding music from neighbouring genres in; a high one keeps to the genres.
+You must also include "sound_moods": how the music should sound, on these scales from 0 to 1; include only the ones that matter for this playlist. happy = bright and cheerful; sad = slow, soft, tender or wistful (whatever the lyrics are about; a tender love ballad counts); relaxed = calm and unhurried; aggressive = hard, loud and intense; party = danceable and festive; acoustic = played on real instruments rather than produced electronically (a rock band counts as well as an unplugged guitar; low for electronic music); instrumental = without vocals. Examples: a rainy day {"sad": 0.8, "relaxed": 0.8, "party": 0.1}; music for coding {"relaxed": 0.8, "instrumental": 0.8, "aggressive": 0.1, "party": 0.1}; an acoustic Sunday morning {"relaxed": 0.9, "happy": 0.6, "acoustic": 0.9}; gym metal {"aggressive": 0.9, "relaxed": 0.1}; a 90s dance party {"party": 0.9, "happy": 0.7, "acoustic": 0.1}.
 
 Only output valid JSON matching this schema exactly (countries, languages, year_from, year_to and vocals only when asked for):
 {
@@ -171,6 +181,8 @@ Only output valid JSON matching this schema exactly (countries, languages, year_
   "description": "A very short description matching the mood.",
   "target_genres": ["Indie Rock", "Alternative Rock", "Shoegaze"],
   "banned_genres": ["Classical", "Opera", "Country"],
+  "focus": 0.6,
+  "sound_moods": { "sad": 0.6, "relaxed": 0.7 },
   "target_vector": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
   "countries": ["DK"],
   "languages": ["da"],

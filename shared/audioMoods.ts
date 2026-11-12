@@ -17,5 +17,17 @@ export const MOOD_THEMES = [
 ] as const;
 export type MoodTheme = typeof MOOD_THEMES[number];
 
+/**
+ * What an AI playlist can ask of the sound: the five moods, plus acoustic and
+ * instrumental, which analysis already measures (acousticness and
+ * instrumentalness in track_features). "Acoustic" there means real
+ * instruments rather than electronic production: "Layla" scores 0.73, Foo
+ * Fighters' "Everlong" 0.03. No model here tells unplugged from electric:
+ * the MTG-Jamendo instrument head (tried 2026-11-12) put "Layla" above
+ * "Sunday Morning Coming Down" for acoustic guitar.
+ */
+export const SOUND_QUALITIES = [...AUDIO_MOODS, 'acoustic', 'instrumental'] as const;
+export type SoundQuality = typeof SOUND_QUALITIES[number];
+
 /** Bumped when the models or the way scores are made change; the backfill redoes older rows. */
 export const MOOD_SCORE_VERSION = 1;

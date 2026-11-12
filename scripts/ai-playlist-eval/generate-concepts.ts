@@ -25,13 +25,22 @@ const PROMPTS = [
 
 (async () => {
   const out: unknown[] = [];
-  for (const prompt of PROMPTS) {
-    const concept = await generateCustomPlaylist(prompt);
-    console.log(prompt, '→', concept ? `${concept.title} | targets ${JSON.stringify((concept as any).target_genres)} | banned ${JSON.stringify((concept as any).banned_genres)}` : 'no answer');
-    if (concept) out.push({ prompt, concept });
-  }
   const file = path.join(__dirname, 'concepts.json');
-  fs.writeFileSync(file, JSON.stringify(out, null, 2) + '\n');
-  console.log(`Saved ${out.length} concepts to ${file}`);
+  // Written after every answer (a local model can take minutes each); the
+  // set is replaced only when every prompt has one.
+  const partial = `${file}.partial`;
+  for (const prompt of PROMPTS) {
+    const started = Date.now();
+    const concept = await generateCustomPlaylist(prompt);
+    console.log(prompt, '→', concept ? `${concept.title} | targets ${JSON.stringify((concept as any).target_genres)} | focus ${(concept as any).focus} | moods ${JSON.stringify((concept as any).sound_moods)}` : 'no answer', `(${Math.round((Date.now() - started) / 1000)} s)`);
+    if (concept) out.push({ prompt, concept });
+    fs.writeFileSync(partial, JSON.stringify(out, null, 2) + '\n');
+  }
+  if (out.length === PROMPTS.length) {
+    fs.renameSync(partial, file);
+    console.log(`Saved ${out.length} concepts to ${file}`);
+  } else {
+    console.log(`Only ${out.length} of ${PROMPTS.length} answered; kept them in ${partial}`);
+  }
   process.exit(0);
 })();

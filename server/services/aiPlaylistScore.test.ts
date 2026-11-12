@@ -66,3 +66,33 @@ test('the sound target blends the styles\' sound and the AI\'s, each normalised'
   expect(blendEmbeddings(null, '[0,1]')).toBe('[0,1]');
   expect(blendEmbeddings('[1,0]', null)).toBe('[1,0]');
 });
+
+test('focus: a mood request lets style count a third as much and aims at the AI\'s sound', () => {
+  const { focusOf, scoreBeta: beta, styleSoundShare } = jest.requireActual('./aiPlaylistScore.service') as typeof import('./aiPlaylistScore.service');
+  expect(focusOf(0.1)).toBe(0.1);
+  expect(focusOf(3)).toBe(1);
+  expect(focusOf(undefined)).toBe(0.6);
+  expect(focusOf('x')).toBe(0.6);
+  expect(beta(0.5, 200, 20, 1)).toBeCloseTo(2);
+  expect(beta(0.5, 200, 20, 0)).toBeCloseTo(2 / 3);
+  expect(styleSoundShare(0.6)).toBeCloseTo(0.5);
+  expect(styleSoundShare(0)).toBeCloseTo(0.2);
+  expect(styleSoundShare(1)).toBeCloseTo(0.7);
+});
+
+test('moods from the sound: the AI\'s target, the fit, and a weight that grows as the request turns to mood', () => {
+  const { moodTargetOf, moodMatch, moodBeta } = jest.requireActual('./aiPlaylistScore.service') as typeof import('./aiPlaylistScore.service');
+  expect(moodTargetOf({ sad: 0.8, relaxed: 2, party: 'x', loud: 1 })).toEqual({ sad: 0.8, relaxed: 1 });
+  expect(moodTargetOf({})).toBeNull();
+  expect(moodTargetOf(undefined)).toBeNull();
+  const rainy = { sad: 0.8, relaxed: 0.8, party: 0.1 };
+  const ballad = { happy: 0.01, sad: 0.99, relaxed: 1, aggressive: 0, party: 0 };
+  const banger = { happy: 0.6, sad: 0.05, relaxed: 0.1, aggressive: 0.4, party: 0.95 };
+  expect(moodMatch(rainy, ballad)).toBeGreaterThan(0.8);
+  expect(moodMatch(rainy, banger)).toBeLessThan(0.25);
+  expect(moodMatch(null, ballad)).toBe(0);
+  expect(moodMatch(rainy, undefined)).toBe(0);
+  expect(moodBeta(0, true)).toBeCloseTo(2.5);
+  expect(moodBeta(1, true)).toBeCloseTo(0.625);
+  expect(moodBeta(0, false)).toBe(0);
+});
