@@ -852,4 +852,30 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     await db.addTrackFeatures(idOf('m-analysed'), { ...base, is_simulated: true });
     expect(await row('m-analysed')).toBeUndefined();
   });
+
+  test('special lists: the theme menu keeps styles and eras the library can carry, and leaves out recent themes', async () => {
+    const { buildThemeMenu, themeMinimums } = await import('../../services/specialLists.service');
+    expect(themeMinimums(5)).toEqual({ songs: 10, artists: 3 });
+    const gabber = (await pool.query(`SELECT id FROM style WHERE genre = 'Electronic' AND name = 'Gabber'`)).rows[0].id;
+    const artists = [];
+    for (const name of ['Menu A', 'Menu B', 'Menu C']) artists.push((await pool.query(`INSERT INTO artists (name) VALUES ($1) RETURNING id`, [name])).rows[0].id);
+    for (let i = 0; i < 12; i++) {
+      const name = `menu-gabber-${i}`;
+      await db.addTrack({ ...track(name, null), artist: `Menu ${'ABC'[i % 3]}`, title: name });
+      await pool.query('UPDATE tracks SET artist_id = $2 WHERE id = $1', [idOf(name), artists[i % 3]]);
+      await pool.query(`INSERT INTO track_styles (track_id, genre, style_id, source, strength, confidence, fusion_version)
+        VALUES ($1, 'Electronic', $2, 'tag', $3, 1, 2)`, [idOf(name), gabber, i < 10 ? 1 : 0.2]);
+      await pool.query(`INSERT INTO track_origin (track_id, decade) VALUES ($1, 1990)
+        ON CONFLICT (track_id) DO UPDATE SET decade = 1990`, [idOf(name)]);
+    }
+    const menu = await buildThemeMenu(pool, { userId: null, playlistLength: 5 });
+    const style = menu.find(t => t.key === `style:${gabber}`);
+    // Ten strong members (the two weak ones don't count) from three artists: just enough for a 5-track list.
+    expect(style).toMatchObject({ kind: 'style', label: 'Gabber', songs: 10, artists: 3 });
+    expect(menu.find(t => t.key === `era:${gabber}:1990`)).toMatchObject({ kind: 'era', label: 'Gabber · 1990s', decade: 1990 });
+    // A longer list needs more than the library has.
+    expect((await buildThemeMenu(pool, { userId: null, playlistLength: 10 })).find(t => t.key === `style:${gabber}`)).toBeUndefined();
+    // A theme made recently is left out.
+    expect((await buildThemeMenu(pool, { userId: null, playlistLength: 5, excludeKeys: [`style:${gabber}`] })).find(t => t.key === `style:${gabber}`)).toBeUndefined();
+  });
 });
