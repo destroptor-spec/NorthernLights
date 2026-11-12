@@ -1077,7 +1077,8 @@ export async function getHubCollections(
         // A genre request on a thin theme (Danish 90s rap: about 8 artists)
         // takes another track by a fitting artist before music outside the
         // genre: Artist Spread counts in proportion to the fitting artists.
-        const thinGenreRequest = moodLed && focus >= 0.7 && fitting.length > 0 && artistsAvailable < L;
+        // Without mood-led requests every request is a genre request.
+        const thinGenreRequest = (!moodLed || focus >= 0.7) && fitting.length > 0 && artistsAvailable < L;
         const spreadForPick = thinGenreRequest ? artistSpread * artistsAvailable / L : artistSpread;
         const selection = selectDiverseTracks(ranked, L, diversity, artistCap(L, artistsAvailable, artistSpread), new Map([['score', L]]), {
           discoveryBias,
