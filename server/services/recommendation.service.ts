@@ -9,7 +9,7 @@ import { isRowBanned, pathsMatchSql, trackGenrePathsJoin } from './genreTaxonomy
 import { artistCap, blendEmbeddings, conceptMatch, conceptStyles, focusOf, moodBeta, moodMatch, moodTargetOf, rankByScore, scoreBeta, soundQualitySql, STRONG_MEMBER, styleSoundShare, trackMemberships, trackMoods, type MoodTarget } from './aiPlaylistScore.service';
 import type { SoundQuality } from '../../shared/audioMoods';
 import { ACTIVITIES, buildThemeMenu, recentSpecialThemes, type Theme } from './specialLists.service';
-import { splitAtFeaturing } from '../../shared/artistCredit';
+import { imputeEffNetCentroid, leadArtistKey } from './scoredMix.service';
 import { hasHardFilter, thinRequest } from './aiPlaylistSupport';
 
 /** A special list's tracks fit when they are within this share of the theme's tracks nearest by sound. */
@@ -55,19 +55,8 @@ function normalizeArtistName(artist: string): string {
   return (artist || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, ' ');
 }
 
-/**
- * The artist a track counts under for artist spread: the lead name of the
- * credit, before any featuring, joint or "presents" part, so "ATB feat.
- * JanSoon", "ATB & Sean Ryan", "ATB, Amurai & Melissa Loretta" and "ATB with
- * Dash Berlin" all count as ATB.
- * Only a key: a group like "Above & Beyond" becomes "above", the same for
- * all its credits.
- */
-const JOINT_CREDIT = /\s*,\s+|\s+(?:&|\+|and|og|und|et|with|vs\.?|x|presents|pres\.)\s+/i;
-function spreadArtistKey(artist: string): string {
-  const main = splitAtFeaturing(artist)?.[0] ?? artist;
-  return normalizeArtistName(main.split(JOINT_CREDIT)[0] || main);
-}
+/** The artist a track counts under for artist spread: the credit's lead name (scoredMix.leadArtistKey). */
+const spreadArtistKey = leadArtistKey;
 
 function normalizeLooseKey(value: string): string {
   return (value || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, ' ');
@@ -904,63 +893,7 @@ export async function getHubCollections(
     return res.rows;
   };
 
-  // Helper: synthesize a 1280D EffNet embedding centroid from the 8D acoustic seed results.
-  // The LLM generates an 8D target vector — we don't have a 1280D embedding from the LLM.
-  // Instead, we find the 20 closest 8D tracks and average their 1280D embeddings.
-  // Uses "Relative Cliff" check to detect sparse/poisoned neighborhoods.
-  const imputeEffNetCentroid = async (seed8DStr: string): Promise<string | null> => {
-    try {
-      const seedRes = await queryWithRetry(`
-        SELECT tf.embedding_vector::text as vec,
-               (tf.acoustic_vector_8d <-> $1::vector) as distance
-        FROM tracks t
-        JOIN track_features tf ON t.id = tf.track_id
-        WHERE tf.embedding_vector IS NOT NULL
-        ORDER BY tf.acoustic_vector_8d <-> $1::vector ASC
-        LIMIT 20
-      `, [seed8DStr]);
-
-      if (seedRes.rows.length < 5) return null;
-
-      const firstBestDistance = seedRes.rows[0].distance;
-      const fifthBestDistance = seedRes.rows[4].distance;
-
-      const ABSOLUTE_CEILING = 1.5;
-      const MAX_ALLOWED_CLIFF = 0.5;
-
-      if (fifthBestDistance > ABSOLUTE_CEILING || (fifthBestDistance - firstBestDistance > MAX_ALLOWED_CLIFF)) {
-        console.log(`[EffNet Impute] Neighborhood too sparse/steep. 1st: ${firstBestDistance.toFixed(3)}, 5th: ${fifthBestDistance.toFixed(3)}. Aborting.`);
-        return null;
-      }
-
-      // Compute centroid from valid seeds
-      const validSeeds = seedRes.rows.filter((r: any) => r.distance <= 1.5);
-
-      // Determine dimension from the first valid EffNet seed; current embeddings are 1280D.
-      const firstVec = JSON.parse(validSeeds[0].vec);
-      const dim = firstVec.length;
-      const centroid = new Array(dim).fill(0);
-
-      for (const row of validSeeds) {
-        const vec = JSON.parse(row.vec);
-        for (let i = 0; i < dim; i++) centroid[i] += vec[i];
-      }
-
-      const n = validSeeds.length;
-      // L2-normalize the centroid for cosine distance compatibility
-      const norm = Math.sqrt(centroid.reduce((s, v) => s + (v / n) * (v / n), 0));
-      if (norm > 0) {
-        for (let i = 0; i < dim; i++) centroid[i] = (centroid[i] / n) / norm;
-      } else {
-        for (let i = 0; i < dim; i++) centroid[i] = centroid[i] / n;
-      }
-
-      console.log(`[EffNet Impute] Successfully blended ${n} seeds (${dim}D) for embedding centroid.`);
-      return `[${centroid.join(',')}]`;
-    } catch {
-      return null;
-    }
-  };
+  // The AI's 8 numbers become an embedding target through scoredMix.imputeEffNetCentroid.
 
   // Generate tracks for each LLM concept and persist them as Playlists
   // What filters the library can honour; read once, when a concept asks for one.

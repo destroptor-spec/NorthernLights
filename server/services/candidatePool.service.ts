@@ -132,6 +132,10 @@ export interface PoolSpec {
   dormantOnly?: boolean;
   favoritesScore?: boolean;
   restrictArtistIds?: string[];
+  /** Leave out these artists' tracks (artist radio's other tracks). */
+  excludeArtistIds?: string[];
+  /** Only members of these styles or genres at this strength or more (track_styles). */
+  memberOf?: { styleIds: number[]; genres: string[]; minStrength: number };
   poolBias?: number;
 }
 
@@ -272,6 +276,19 @@ export async function fetchCandidatePool(opts: FetchPoolOptions): Promise<any[]>
     params.push(opts.restrictArtistIds);
     const p = nextParam++;
     where.push(`t.artist_id::text = ANY($${p}::text[])`);
+  }
+
+  if (opts.excludeArtistIds && opts.excludeArtistIds.length > 0) {
+    params.push(opts.excludeArtistIds);
+    const p = nextParam++;
+    where.push(`(t.artist_id IS NULL OR NOT (t.artist_id::text = ANY($${p}::text[])))`);
+  }
+
+  if (opts.memberOf && (opts.memberOf.styleIds.length > 0 || opts.memberOf.genres.length > 0)) {
+    params.push(opts.memberOf.styleIds, opts.memberOf.genres, opts.memberOf.minStrength);
+    const [ids, genres, floor] = [nextParam++, nextParam++, nextParam++];
+    where.push(`EXISTS (SELECT 1 FROM track_styles ms WHERE ms.track_id = t.id AND ms.strength >= $${floor}
+      AND (ms.style_id = ANY($${ids}::int[]) OR (ms.style_id IS NULL AND ms.genre = ANY($${genres}::text[]))))`);
   }
 
   if (opts.excludeIds && opts.excludeIds.length > 0) {

@@ -291,3 +291,9 @@ Nothing to run. A custom AI playlist that names a theme with a hard filter (wher
 Nothing to run. On the next engine refresh (the Hub schedule, or Reset Hub), "Your … favourites" and "Rediscover …" are per style, decade mixes go by the original release decade, and "… from the 2000's" mixes are the styles × decades the library has enough of. Ids and titles keep their forms; the old playlists are replaced by the refresh as always.
 
 - [ ] Hub → Discover shows style names ("Your Trance favourites", "House from the 2010's") rather than file-tag genres.
+
+### Step 7: artist radio and the daylist on the score (no schema change; off until compared)
+
+Nothing to run. A system setting `smartMixEngine` (`pools`, the default, or `score`) picks how artist radio and the daylist are built. Leave it unset until the blind comparison on dev decides; if it does, the runbook will say to set it, or the default changes.
+
+- [ ] With `smartMixEngine` = `score`, artist radio and the daylist log `[Scored mix] … picked N from M artists`.
