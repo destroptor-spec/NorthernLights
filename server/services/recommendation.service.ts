@@ -10,6 +10,7 @@ import { artistCap, blendEmbeddings, conceptMatch, conceptStyles, focusOf, moodB
 import type { SoundQuality } from '../../shared/audioMoods';
 import { ACTIVITIES, type Theme } from './specialLists.service';
 import { splitAtFeaturing } from '../../shared/artistCredit';
+import { hasHardFilter, thinRequest } from './aiPlaylistSupport';
 
 /** A special list's tracks fit when they are within this share of the theme's tracks nearest by sound. */
 const SPECIAL_FIT_SHARE = 0.75;
@@ -1049,6 +1050,23 @@ export async function getHubCollections(
         let rows: any[] = [];
         let strongIds = new Set<string>();
         let counts = { sound: 0, strong: 0, weak: 0, mood: 0 };
+        // A custom request that names a theme with hard filters ("Dansk rap
+        // fra 90'erne") is made only when the library has enough of it:
+        // otherwise Aurora says how much there is instead of padding the list.
+        if (!concept.special && (settings.llmGenerationSource ?? 'hub') === 'custom' && hasTargets && hasHardFilter(originFilter)) {
+          const found = await fetchLlmPool({ ...base, limit: 4 * L, withPaths: false, members: { styleIds: styles.styleIds, genres: styles.genres, minStrength: 0 } });
+          const songs = new Set(found.map(getSongDedupKey)).size;
+          if (songs < L) {
+            const named = (await db.query('SELECT id, name FROM style WHERE id = ANY($1::int[])', [styles.styleIds])).rows as Array<{ id: number; name: string }>;
+            const names = [...styles.styleIds.map(id => named.find(r => r.id === id)?.name).filter((n): n is string => !!n), ...styles.genres];
+            const support = thinRequest(names, originFilter, { songs, artists: new Set(found.map((r: any) => spreadArtistKey(r.artist || ''))).size }, L);
+            console.warn(`[LLM Hub] Custom request "${concept.title}" not made: ${support.message}`);
+            (concept as any).dropped = true;
+            (concept as any).dropReason = 'too-thin';
+            (concept as any).support = support;
+            continue;
+          }
+        }
         const special = concept.special;
         if (special) {
           // Only the theme's own tracks: its style's (or genre's) strong

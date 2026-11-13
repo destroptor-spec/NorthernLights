@@ -13,6 +13,7 @@ import { getPlaylists, getUserSetting } from '../database';
 import { generateCustomPlaylist } from './llm.service';
 import { getHubCollections } from './recommendation.service';
 import { generateCustomHubPlaylist } from './hubRefresh.service';
+import { ThinRequestError } from './aiPlaylistSupport';
 
 /**
  * Shared by the legacy /api/hub/generate-custom and v1 POST /hub/custom. v1
@@ -68,4 +69,17 @@ it('passes a requested track count through', async () => {
   jest.mocked(getHubCollections).mockResolvedValue([saved('new')] as never);
   await generateCustomHubPlaylist('u1', 'rainy jazz', { tracksPerPlaylist: 25, retryDelayMs: 0 });
   expect(jest.mocked(getHubCollections).mock.calls[0][2]).toMatchObject({ llmTracksPerPlaylist: 25 });
+});
+
+it('says how little the library has of a theme, without retrying', async () => {
+  const support = { songs: 6, artists: 3, needed: 20, theme: 'Hip Hop tracks from Denmark', message: 'Your library has 6 Hip Hop tracks from Denmark, too few for a 20-track playlist.' };
+  jest.mocked(generateCustomPlaylist).mockResolvedValue(concept() as never);
+  jest.mocked(getHubCollections).mockImplementation(async (concepts: any) => {
+    Object.assign(concepts[0], { dropped: true, dropReason: 'too-thin', support });
+    return [] as never;
+  });
+  const result = generateCustomHubPlaylist('u1', 'dansk rap', { retryDelayMs: 0 });
+  await expect(result).rejects.toBeInstanceOf(ThinRequestError);
+  await expect(result).rejects.toMatchObject({ message: support.message, support });
+  expect(generateCustomPlaylist).toHaveBeenCalledTimes(1);
 });

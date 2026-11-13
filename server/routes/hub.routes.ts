@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getHubCollections } from '../services/recommendation.service';
 import { generateCustomHubPlaylist, queueLlmHubRefreshForUser, runLlmHubRegeneration } from '../services/hubRefresh.service';
+import { ThinRequestError } from '../services/aiPlaylistSupport';
 import {
   computeSmartHubBundle,
   generateArtistRadio,
@@ -59,7 +60,13 @@ router.post('/generate-custom', async (req, res) => {
     if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
       return res.status(400).json({ error: 'A prompt is required' });
     }
-    const playlist = await generateCustomHubPlaylist(userId, prompt.trim());
+    let playlist;
+    try {
+      playlist = await generateCustomHubPlaylist(userId, prompt.trim());
+    } catch (error) {
+      if (!(error instanceof ThinRequestError)) throw error;
+      return res.status(422).json({ error: error.message, code: 'CUSTOM_PLAYLIST_TOO_THIN', support: error.support });
+    }
     if (!playlist) {
       return res.status(503).json({ error: 'LLM generated genres could not be matched after 3 retries or failed completely.' });
     }

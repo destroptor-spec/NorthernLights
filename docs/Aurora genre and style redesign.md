@@ -524,6 +524,8 @@ A special list is a tightly themed playlist the library can carry: "Trance Horiz
 
 **Custom requests** go through the same check when they name a theme ("Dansk rap fra 90'erne" → Hip Hop, Denmark or Danish, 1990s): too little in the library, and Aurora says so ("Your library has 6 Danish rap tracks from the 1990s") instead of padding the list with something else.
 
+**Built (2026-11-13, `aiPlaylistSupport.ts`):** a custom request whose concept has target styles and a hard filter (countries, languages, years or vocals; moods are a preference and don't count) is made only when the library has at least L songs that are members of the target styles (any strength) and pass the filters. Otherwise the engine drops it (`dropReason` 'too-thin'), `generateCustomHubPlaylist` throws `ThinRequestError` without retrying, and API v1 `POST /hub/custom` answers 422 `CUSTOM_PLAYLIST_TOO_THIN` with the message ("Your library has no Pop Rap or Hip Hop tracks from Denmark or sung in Danish from the 1980s.") and `details` {songs, artists, needed, theme}; the Generate dialog shows the message. Requests without a hard filter still widen to neighbouring styles as before. On dev: "Dansk rap fra 90'erne" made (20 of 20, 7 artists), "Dansk rap fra 80'erne" refused with none; "Islandsk rap fra 80'erne" was read by the AI as Danish (the model's mistake, not the check's).
+
 ### The Discover rail
 
 The Hub's system playlists (Settings → System → Hub) mostly use neither pools nor the score; they are queries over play history, years and each track's genres:
@@ -578,7 +580,7 @@ The moods describe the sound, not the meaning: the models never hear lyrics, so 
 1. One score and the bounded candidate set for general lists, built beside the pools.
 2. Fixed evaluation set: about 10 concepts with the AI's answers saved (including "Trance Horizon", "Velvet Shadows", "Dansk rap fra 90'erne" and a thin-library one), run on dev (30k tracks) and on a 500-track library carved from it (whole albums at random). Blind A/B against the pools, as for the engine; the pools go when the new score wins or ties.
 3. Special lists: themes, menu, dry run, the 2/3/6/9 setting, the prompt and theme rotation (built 2026-11-13; rotation in a user setting, not `playlists.llm_theme`).
-4. The support check for custom requests.
+4. The support check for custom requests (built 2026-11-13).
 5. Later: artist radio and the daylist on the same score.
 
 ## Three levels: track, album, artist

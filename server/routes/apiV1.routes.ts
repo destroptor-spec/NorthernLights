@@ -54,6 +54,7 @@ import { isPathAllowed, pathToBuffer, addToSessionHistory } from '../state';
 import { getHubCollections } from '../services/recommendation.service';
 import { getNextInfinityTrackForUser } from '../services/infinityRequest.service';
 import { generateCustomHubPlaylist, queueLlmHubRefreshForUser, runLlmHubRegeneration } from '../services/hubRefresh.service';
+import { ThinRequestError } from '../services/aiPlaylistSupport';
 import {
   computeSmartHubBundle,
   evaluateArtistRadioEligibility,
@@ -1100,7 +1101,14 @@ router.post('/hub/artist-radio', async (req, res) => {
 router.post('/hub/custom', async (req, res) => {
   const input = parseBody(z.object({ prompt: z.string().trim().min(1).max(1000), count: z.number().int().min(1).max(100).optional() }).strict(), req, res);
   if (!input) return;
-  const playlist = await generateCustomHubPlaylist(req.apiV1!.userId, input.prompt, { tracksPerPlaylist: input.count });
+  let playlist;
+  try {
+    playlist = await generateCustomHubPlaylist(req.apiV1!.userId, input.prompt, { tracksPerPlaylist: input.count });
+  } catch (error) {
+    if (!(error instanceof ThinRequestError)) throw error;
+    const { songs, artists, needed, theme } = error.support;
+    return sendApiV1Error(req, res, 422, 'CUSTOM_PLAYLIST_TOO_THIN', error.message, { songs, artists, needed, theme });
+  }
   if (!playlist) return sendApiV1Error(req, res, 503, 'CUSTOM_PLAYLIST_FAILED', 'Aurora could not match that prompt to the library. Try rephrasing it.');
   const meta = await getPlaylistByIdReadable(playlist.id, req.apiV1!.userId);
   const tracks = await getPlaylistTracks(playlist.id, req.apiV1!.userId);

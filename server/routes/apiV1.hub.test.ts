@@ -105,6 +105,14 @@ describe('POST /hub/custom', () => {
     expect(data(res)).toMatchObject({ id: 'p1', title: 'Rainy jazz' });
   });
 
+  it('returns 422 with what the library has when the theme is too thin', async () => {
+    const { ThinRequestError } = jest.requireActual('../services/aiPlaylistSupport');
+    jest.mocked(generateCustomHubPlaylist).mockRejectedValue(new ThinRequestError({ songs: 6, artists: 3, needed: 20, theme: 'Hip Hop tracks from Denmark', message: 'Your library has 6 Hip Hop tracks from Denmark, too few for a 20-track playlist.' }));
+    const res = await call('post', '/hub/custom', { body: { prompt: 'dansk rap' } });
+    expect(res.status).toHaveBeenCalledWith(422);
+    expect(jest.mocked(res.json).mock.calls[0][0]).toMatchObject({ error: { code: 'CUSTOM_PLAYLIST_TOO_THIN', message: expect.stringMatching(/^Your library has 6/), details: { songs: 6, needed: 20 } } });
+  });
+
   it('returns 503 when every attempt failed', async () => {
     jest.mocked(generateCustomHubPlaylist).mockResolvedValue(null as never);
     const res = await call('post', '/hub/custom', { body: { prompt: 'rainy jazz' } });

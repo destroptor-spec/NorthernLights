@@ -10346,6 +10346,7 @@
     "/hub/custom": {
       "post": {
         "summary": "Generate a prompt-driven playlist",
+        "description": "A request that names a theme with hard filters (where the music is from, its language, years or vocals: \"Dansk rap fra 90'erne\") is made only when the library has at least `count` songs of it; otherwise 422 says how many there are.",
         "tags": [
           "Discovery"
         ],
@@ -10488,8 +10489,28 @@
               }
             }
           },
+          "422": {
+            "description": "CUSTOM_PLAYLIST_TOO_THIN: the library has too little of the requested theme; the message says how much (\"Your library has 6 Hip Hop tracks from Denmark from the 1990s, too few for a 20-track playlist.\"), details has songs, artists, needed and theme",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "500": {
             "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "CUSTOM_PLAYLIST_FAILED: the AI gave no usable answer after three attempts",
             "content": {
               "application/json": {
                 "schema": {

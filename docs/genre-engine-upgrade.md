@@ -279,3 +279,9 @@ Nothing to run. Number of playlists (Settings → Playback) is now 2, 3, 6 or 9,
 - [ ] A local model needs a context window that holds the prompt and its own reasoning: on dev, a reasoning model loaded with 8,192 tokens failed every Hub request with `Context size has been exceeded` (the prompts are 1–2k tokens). Load it with 32k or more.
 
 Rollback: the old code reads a saved 6 or 9 as that many playlists and ignores `specialListHistory`.
+
+### Step 5: custom requests the library can't carry (no schema change)
+
+Nothing to run. A custom AI playlist that names a theme with a hard filter (where from, language, years, vocals) is made only when the library has at least as many songs of it as the playlist length; otherwise the Generate dialog says how many there are, and API v1 `POST /hub/custom` answers 422 `CUSTOM_PLAYLIST_TOO_THIN` (new in the API document).
+
+- [ ] Ask for something the library lacks ("Dansk rap fra 80'erne"): the dialog reads "Your library has …", the log `[LLM Hub] Custom request "…" not made: …`, and no playlist is saved.

@@ -11,6 +11,7 @@ import { generateCustomPlaylist, generateHubConcepts, generateSpecialPicks, HubC
 import { buildThemeMenu, conceptForTheme, menuForAi } from './specialLists.service';
 import { normalizeHubPlaylistCount, specialListCount } from '../../shared/hubPlaylists';
 import { getHubCollections } from './recommendation.service';
+import { ThinRequestError } from './aiPlaylistSupport';
 import { publishApiV1Event } from './apiV1Events.service';
 
 type LlmVetoMode = 'hard' | 'adaptive';
@@ -269,7 +270,9 @@ const CUSTOM_PLAYLIST_ATTEMPTS = 3;
  * Turn a listener's prompt into a saved custom playlist. The LLM's concept can
  * fail outright or name genres the library can't match (the matcher marks it
  * `dropped`), so this retries up to three times with a short backoff. Returns
- * the newly saved collection, or null when every attempt failed.
+ * the newly saved collection, or null when every attempt failed. Throws
+ * ThinRequestError when the request names a theme the library has too little
+ * of ("Your library has 6 Hip Hop tracks from Denmark from the 1990s…").
  */
 export async function generateCustomHubPlaylist(
   userId: string,
@@ -288,6 +291,8 @@ export async function generateCustomHubPlaylist(
         ...(opts.tracksPerPlaylist ? { llmTracksPerPlaylist: opts.tracksPerPlaylist } : {}),
         llmGenerationSource: 'custom',
       });
+      // The library can't carry what was asked for: say so, don't retry.
+      if ((concept as any).dropReason === 'too-thin' && (concept as any).support) throw new ThinRequestError((concept as any).support);
       const playlist = saved.find((candidate: any) => candidate.isLlmGenerated && candidate.id && !existingIds.has(candidate.id));
       if (playlist && !(concept as any).dropped) return playlist;
       console.warn(`[LLM Hub] Custom concept failed/dropped on attempt ${attempt}. Retrying...`);
