@@ -21,7 +21,7 @@ const only = process.argv.find(a => a.startsWith('--theme='))?.slice(8);
   const db = await initDB();
   const tuning = await getLlmPlaylistSettings(userId);
   const L = tuning.llmTracksPerPlaylist;
-  const menu = await buildThemeMenu(db, { userId, playlistLength: L });
+  const menu = await buildThemeMenu(db, { userId, playlistLength: L, activities: process.argv.includes('--activities') });
   console.log(`Menu: ${menu.length} themes for ${L}-track lists`);
   const picks = only
     ? [{ theme: only, title: `Test: ${menu.find(t => t.key === only)?.label}`, description: '', target_vector: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5] }]

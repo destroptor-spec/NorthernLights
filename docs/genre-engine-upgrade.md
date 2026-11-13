@@ -269,3 +269,13 @@ New table `track_moods` (created on start): per track five mood probabilities fr
 - [ ] The analysis worker needs a working Python with Essentia: on dev the project's `.venv` pointed at a Python the system no longer had (`.venv/bin/python` → removed `python3.14`), so analysis fell back to a Python without Essentia and failed. Check `.venv/bin/python3 -c "import essentia"` on the server.
 
 Rollback: the old code ignores `track_moods`; drop it or leave it.
+
+### Step 4: special lists in the Hub (no schema change)
+
+Nothing to run. Number of playlists (Settings → Playback) is now 2, 3, 6 or 9, of which up to 1, 1, 2 or 3 are special lists: tightly themed playlists the library can carry ("Trance Horizon", "Danish Rap Commute"). A saved 5 reads as 6; nothing is rewritten. Themes made for a user in the last 14 days are kept in the user setting `specialListHistory` and stay off the menu while enough other themes remain. Activity themes (focus, workout…) are off for now. Artist spread in all AI and Hub playlists now counts the lead artist of a credit, so "ATB feat. X" and "ATB & Y" count as one artist. The Hub now deletes its old AI playlists only after new ones are made.
+
+- [ ] Refresh the Hub; the log reads `[LLM Hub] Playlist Diagnostic (score, special: …)` for each special list, or `[LLM Hub] No special lists: …` when no theme in the library is big enough, or `[LLM Hub] Special list "…" not made: …` when one fails its dry run.
+- [ ] `SELECT value FROM user_settings WHERE key = 'specialListHistory'` lists the themes made.
+- [ ] A local model needs a context window that holds the prompt and its own reasoning: on dev, a reasoning model loaded with 8,192 tokens failed every Hub request with `Context size has been exceeded` (the prompts are 1–2k tokens). Load it with 32k or more.
+
+Rollback: the old code reads a saved 6 or 9 as that many playlists and ignores `specialListHistory`.

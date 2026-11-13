@@ -1,4 +1,5 @@
 import { resolveLoggingPreferences } from '../utils/loggingPreferences';
+import { normalizeHubPlaylistCount } from '../../shared/hubPlaylists';
 import type { ServerLoggingSetting } from '../../shared/logging';
 import { create, StateCreator } from 'zustand';
 import { persist, PersistOptions } from 'zustand/middleware';
@@ -2001,7 +2002,8 @@ export const usePlayerStore = create<PlayerState>()(
                 llmRecoveryStrength: data.llmRecoveryStrength !== undefined ? data.llmRecoveryStrength : 50,
                 llmAdjacentReach: data.llmAdjacentReach !== undefined ? data.llmAdjacentReach : 50,
                 llmTracksPerPlaylist: data.llmTracksPerPlaylist !== undefined ? data.llmTracksPerPlaylist : 10,
-                llmPlaylistCount: data.llmPlaylistCount !== undefined ? data.llmPlaylistCount : 3,
+                // 2, 3, 6 or 9 (shared/hubPlaylists.ts); a saved 5 becomes 6.
+                llmPlaylistCount: data.llmPlaylistCount !== undefined ? normalizeHubPlaylistCount(data.llmPlaylistCount) : 3,
                 audioAnalysisCpu: data.audioAnalysisCpu || 'Balanced',
                 scannerConcurrency: data.scannerConcurrency || 'SSD',
                 loudnessComputeMode: (data.loudnessComputeMode === 'lazy' || data.loudnessComputeMode === 'full') ? data.loudnessComputeMode : 'both',

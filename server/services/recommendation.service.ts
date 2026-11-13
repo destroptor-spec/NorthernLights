@@ -9,6 +9,7 @@ import { isRowBanned, pathsMatchSql, trackGenrePathsJoin } from './genreTaxonomy
 import { artistCap, blendEmbeddings, conceptMatch, conceptStyles, focusOf, moodBeta, moodMatch, moodTargetOf, rankByScore, scoreBeta, soundQualitySql, STRONG_MEMBER, styleSoundShare, trackMemberships, trackMoods, type MoodTarget } from './aiPlaylistScore.service';
 import type { SoundQuality } from '../../shared/audioMoods';
 import { ACTIVITIES, type Theme } from './specialLists.service';
+import { splitAtFeaturing } from '../../shared/artistCredit';
 
 /** A special list's tracks fit when they are within this share of the theme's tracks nearest by sound. */
 const SPECIAL_FIT_SHARE = 0.75;
@@ -51,6 +52,20 @@ function isSameSong(a: { title: string, artist: string, mb_recording_id?: string
 
 function normalizeArtistName(artist: string): string {
   return (artist || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, ' ');
+}
+
+/**
+ * The artist a track counts under for artist spread: the lead name of the
+ * credit, before any featuring, joint or "presents" part, so "ATB feat.
+ * JanSoon", "ATB & Sean Ryan", "ATB, Amurai & Melissa Loretta" and "ATB with
+ * Dash Berlin" all count as ATB.
+ * Only a key: a group like "Above & Beyond" becomes "above", the same for
+ * all its credits.
+ */
+const JOINT_CREDIT = /\s*,\s+|\s+(?:&|\+|and|og|und|et|with|vs\.?|x|presents|pres\.)\s+/i;
+function spreadArtistKey(artist: string): string {
+  const main = splitAtFeaturing(artist)?.[0] ?? artist;
+  return normalizeArtistName(main.split(JOINT_CREDIT)[0] || main);
 }
 
 function normalizeLooseKey(value: string): string {
@@ -518,7 +533,7 @@ export async function getHubCollections(
         const songKey = getSongDedupKey(row);
         if (selectedSongKeys.has(songKey)) return false;
 
-        const artistKey = normalizeArtistName(row.artist || 'unknown-artist');
+        const artistKey = spreadArtistKey(row.artist || 'unknown-artist');
         if (enforceArtistCap && (artistCounts.get(artistKey) ?? 0) >= maxTracksPerArtist) {
           return false;
         }
@@ -535,7 +550,7 @@ export async function getHubCollections(
 
       for (const candidate of window) {
         const songKey = getSongDedupKey(candidate);
-        const artistKey = normalizeArtistName(candidate.artist || 'unknown-artist');
+        const artistKey = spreadArtistKey(candidate.artist || 'unknown-artist');
         const albumKey = normalizeLooseKey(candidate.album || candidate.album_title || '');
         const rootKey = getGenreRoot(candidate);
         const poolKey = String(candidate.pool_source || 'acoustic');
@@ -590,7 +605,7 @@ export async function getHubCollections(
       }
 
       const songKey = getSongDedupKey(best);
-      const artistKey = normalizeArtistName(best.artist || 'unknown-artist');
+      const artistKey = spreadArtistKey(best.artist || 'unknown-artist');
       const albumKey = normalizeLooseKey(best.album || best.album_title || '');
       const rootKey = getGenreRoot(best);
       const poolKey = String(best.pool_source || 'acoustic');
@@ -1071,7 +1086,7 @@ export async function getHubCollections(
             .filter((r: any) => !assignedSongKeys.has(getSongDedupKey(r)));
           const allowed = rows.filter((r: any) => !isRowBanned(r, compiled.bannedGenres));
           const songs = new Set(allowed.map(getSongDedupKey)).size;
-          const artists = new Set(allowed.map((r: any) => normalizeArtistName(r.artist || ''))).size;
+          const artists = new Set(allowed.map((r: any) => spreadArtistKey(r.artist || ''))).size;
           if (small || (songs >= 3 * L && artists >= Math.ceil(L / 2))) break;
           // Short: widen once, as far as Recovery Strength allows.
           soundLimit = Math.ceil(soundLimit * (1 + 2 * recoveryStrength));
@@ -1086,7 +1101,7 @@ export async function getHubCollections(
           const cut = distances[Math.max(0, Math.ceil(distances.length * SPECIAL_FIT_SHARE) - 1)] ?? -Infinity;
           const fits = allowed.filter((r: any) => Number(r.distance) <= cut);
           const fitSongs = new Set(fits.map(getSongDedupKey)).size;
-          const fitArtists = new Set(fits.map((r: any) => normalizeArtistName(r.artist || ''))).size;
+          const fitArtists = new Set(fits.map((r: any) => spreadArtistKey(r.artist || ''))).size;
           if (fitSongs < L || fitArtists < Math.ceil(L / 2)) {
             console.warn(`[LLM Hub] Special list "${concept.title}" (${special.label}) not made: ${fitSongs} fitting songs from ${fitArtists} artists, needs ${L} from ${Math.ceil(L / 2)}.`);
             (concept as any).dropped = true;
@@ -1118,7 +1133,7 @@ export async function getHubCollections(
         // Artists who actually fit (match ≥ 0.5): with few of them, each may
         // bring more tracks before the list reaches outside the concept.
         const fitting = ranked.filter((r: any) => r.styleMatch >= 0.5);
-        const artistsAvailable = new Set((fitting.length ? fitting : ranked).map((r: any) => normalizeArtistName(r.artist || ''))).size;
+        const artistsAvailable = new Set((fitting.length ? fitting : ranked).map((r: any) => spreadArtistKey(r.artist || ''))).size;
         const bestScore = ranked[0]?.score ?? 0;
         // A genre request on a thin theme (Danish 90s rap: about 8 artists)
         // takes another track by a fitting artist before music outside the
@@ -1148,7 +1163,7 @@ export async function getHubCollections(
           `  targets=${compiled.corePaths.join(', ') || 'none'} | concept=${styles.describe || 'none'}`,
           `  candidates=sound ${counts.sound} + strong members ${counts.strong} + weaker ${counts.weak} + by mood ${counts.mood} → ${new Set(allowed.map(getSongDedupKey)).size} songs, ${artistsAvailable} artists${small ? ' (small library: every track)' : ''}`,
           `  focus=${focus.toFixed(2)} | moods=${moodTarget ? Object.entries(moodTarget).map(([m, v]) => `${m} ${v}`).join(', ') : 'none'} (weight ${moodWeight.toFixed(2)}) | support=${support} | beta=${beta.toFixed(2)} | nu=${discoveryBias.toFixed(2)} | veto=${compiled.bannedGenres.length ? `${softVeto ? 'adaptive (relaxed)' : 'hard'} [${compiled.bannedNames.join(', ')}]` : 'none'}`,
-          `  selected=${topTracks.length} tracks / ${new Set(topTracks.map(t => normalizeArtistName(t.artist || ''))).size} artists | strong members ${strongInList}/${topTracks.length} | mean style match ${meanMatch.toFixed(2)} | mean mood fit ${meanMood.toFixed(2)}`,
+          `  selected=${topTracks.length} tracks / ${new Set(topTracks.map(t => spreadArtistKey(t.artist || ''))).size} artists | strong members ${strongInList}/${topTracks.length} | mean style match ${meanMatch.toFixed(2)} | mean mood fit ${meanMood.toFixed(2)}`,
         ].join('\n'));
       }
 

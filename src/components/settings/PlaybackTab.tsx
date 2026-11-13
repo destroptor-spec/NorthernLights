@@ -1,5 +1,6 @@
 import { PlaybackLoggingSettings } from './PlaybackLoggingSettings';
 import React, { useEffect, useState } from 'react';
+import { HUB_PLAYLIST_COUNTS, specialListCount } from '../../../shared/hubPlaylists';
 import { usePlayerStore, type PrebufferPolicy } from '../../store/index';
 import { useNetworkInfo } from '../../hooks/useNetworkInfo';
 import { Speaker } from 'lucide-react';
@@ -619,11 +620,11 @@ export const PlaybackTab: React.FC = () => {
                             onChange={e => setSettings({ llmPlaylistCount: Number(e.target.value) })}
                             className="w-full p-2 rounded-lg border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none"
                         >
-                            <option value={2}>2 playlists</option>
-                            <option value={3}>3 playlists</option>
-                            <option value={5}>5 playlists</option>
+                            {HUB_PLAYLIST_COUNTS.map(count => (
+                                <option key={count} value={count}>{count} playlists</option>
+                            ))}
                         </select>
-                        <p className="text-xs text-[var(--color-text-muted)] mt-1.5"><strong>Step 1:</strong> How many separate playlists the AI creates. Each has its own theme (e.g., "Evening Chill", "Morning Energy").</p>
+                        <p className="text-xs text-[var(--color-text-muted)] mt-1.5"><strong>Step 1:</strong> How many separate playlists the AI creates. Each has its own theme (e.g., "Evening Chill", "Morning Energy"). Up to {specialListCount(llmPlaylistCount)} of them {specialListCount(llmPlaylistCount) === 1 ? 'is a special list' : 'are special lists'}: a tight theme your library has plenty of, like a style, a style from one country, or a decade, made only when your library can carry it.</p>
                     </div>
 
                     <div className="mb-6">

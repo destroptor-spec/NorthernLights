@@ -69,8 +69,8 @@ export const ACTIVITIES: Record<ActivityName, { label: string; sql: string; desc
   },
 };
 
-/** How many of each kind the menu keeps, so one kind never fills it. */
 /**
+ * How many of each kind the menu keeps, so one kind never fills it.
  * Activities get fewer places: they rest on the five moods alone (energy,
  * percussiveness and tempo from analysis barely vary: energy 0.80–0.86 for
  * most dev tracks), so they are broader than style, place and era themes.
@@ -102,19 +102,53 @@ function countryName(code: string): string {
 }
 
 /**
- * The themes this library supports for this user, best first: what the user
- * has played in the last 90 days, then depth, never a theme in `excludeKeys`
- * (made recently). At most `limit`, with a cap per kind.
+ * The menu from all themes: best first (what the user has played in the last
+ * 90 days, then depth), at most `limit`, with a cap per kind, and without
+ * the themes made recently (`recentKeys`, newest first) as long as at least
+ * `keepAtLeast` themes remain. A small library takes turns through what it
+ * has: the newest themes stay out, the oldest come back first.
+ */
+export function assembleMenu(themes: Theme[], opts: { recentKeys?: string[]; keepAtLeast?: number; limit?: number } = {}): Theme[] {
+  const limit = opts.limit ?? 40;
+  const keepAtLeast = opts.keepAtLeast ?? 0;
+  // What the user plays leads; depth breaks ties and ranks themes nobody has played yet.
+  const rank = (t: Theme) => Math.log10(1 + t.recentPlays) + 0.25 * Math.log10(t.songs);
+  const sorted = [...themes].sort((a, b) => rank(b) - rank(a) || b.songs - a.songs || a.key.localeCompare(b.key));
+  const menuWithout = (exclude: Set<string>) => {
+    const perKind: Record<ThemeKind, number> = { style: 0, place: 0, era: 0, activity: 0 };
+    return sorted
+      .filter(t => !exclude.has(t.key))
+      .filter(t => (perKind[t.kind]++ < KIND_CAP[t.kind]))
+      .slice(0, limit);
+  };
+  const exclude = new Set<string>();
+  let menu = menuWithout(exclude);
+  for (const key of opts.recentKeys ?? []) {
+    if (exclude.has(key) || !sorted.some(t => t.key === key)) continue;
+    const next = menuWithout(new Set([...exclude, key]));
+    if (next.length < keepAtLeast) break;
+    exclude.add(key);
+    menu = next;
+  }
+  return menu;
+}
+
+/**
+ * The themes this library supports for this user (assembleMenu). Activity
+ * themes only with `activities` (saved for a later version: on their own
+ * the moods from the sound make lists that cross every genre).
  */
 export async function buildThemeMenu(db: Db, opts: {
   userId: string | null;
   playlistLength: number;
-  excludeKeys?: Iterable<string>;
+  /** Themes made recently, newest first. */
+  recentKeys?: string[];
+  /** Leave recent themes out only while at least this many remain. */
+  keepAtLeast?: number;
   limit?: number;
+  activities?: boolean;
 }): Promise<Theme[]> {
   const min = themeMinimums(opts.playlistLength);
-  const exclude = new Set(opts.excludeKeys ?? []);
-  const limit = opts.limit ?? 40;
   const params = [opts.userId, STRONG_MEMBER, min.songs, min.artists];
   const [styles, places, eras, activities] = await Promise.all([
     db.query(`
@@ -163,7 +197,7 @@ export async function buildThemeMenu(db: Db, opts: {
       WHERE ts.strength >= $2
       GROUP BY ts.style_id, s.genre, s.name, o.decade
       HAVING COUNT(DISTINCT ${SONG_KEY}) >= $3 AND COUNT(DISTINCT t.artist_id) >= $4`, params),
-    Promise.all((Object.entries(ACTIVITIES) as Array<[ActivityName, typeof ACTIVITIES[ActivityName]]>).map(async ([name, a]) => {
+    Promise.all(((opts.activities ? Object.entries(ACTIVITIES) : []) as Array<[ActivityName, typeof ACTIVITIES[ActivityName]]>).map(async ([name, a]) => {
       const row = (await db.query(`
         SELECT COUNT(DISTINCT ${SONG_KEY})::int AS songs, COUNT(DISTINCT t.artist_id)::int AS artists, ${RECENT_PLAYS} AS plays
         FROM tracks t
@@ -192,14 +226,7 @@ export async function buildThemeMenu(db: Db, opts: {
     themes.push({ key: `activity:${r.name}`, kind: 'activity', label: ACTIVITIES[r.name as ActivityName].label, activity: r.name as ActivityName, songs: r.songs, artists: r.artists, recentPlays: r.plays });
   }
 
-  // What the user plays leads; depth breaks ties and ranks themes nobody has played yet.
-  const rank = (t: Theme) => Math.log10(1 + t.recentPlays) + 0.25 * Math.log10(t.songs);
-  const perKind: Record<ThemeKind, number> = { style: 0, place: 0, era: 0, activity: 0 };
-  return themes
-    .filter(t => !exclude.has(t.key))
-    .sort((a, b) => rank(b) - rank(a) || b.songs - a.songs || a.key.localeCompare(b.key))
-    .filter(t => (perKind[t.kind]++ < KIND_CAP[t.kind]))
-    .slice(0, limit);
+  return assembleMenu(themes, { recentKeys: opts.recentKeys, keepAtLeast: opts.keepAtLeast, limit: opts.limit });
 }
 
 /** The menu as the AI sees it. */

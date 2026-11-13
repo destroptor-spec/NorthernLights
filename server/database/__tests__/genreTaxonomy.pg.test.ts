@@ -876,6 +876,8 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     // A longer list needs more than the library has.
     expect((await buildThemeMenu(pool, { userId: null, playlistLength: 10 })).find(t => t.key === `style:${gabber}`)).toBeUndefined();
     // A theme made recently is left out.
-    expect((await buildThemeMenu(pool, { userId: null, playlistLength: 5, excludeKeys: [`style:${gabber}`] })).find(t => t.key === `style:${gabber}`)).toBeUndefined();
+    expect((await buildThemeMenu(pool, { userId: null, playlistLength: 5, recentKeys: [`style:${gabber}`] })).find(t => t.key === `style:${gabber}`)).toBeUndefined();
+    // Activity themes only when asked for.
+    expect(menu.some(t => t.kind === 'activity')).toBe(false);
   });
 });
