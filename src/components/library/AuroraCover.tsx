@@ -12,7 +12,9 @@ import React, { useId } from 'react';
 //   rediscover  — echo arcs (violet/rose): a low glow with soft concentric
 //                 rings radiating out, genre label. Genre rediscovery mixes.
 //   decade      — a sweeping aurora ribbon with the decade numeral printed
-//                 into the art, always readable. Decade / decade-genre mixes.
+//                 into the art, always readable. Decade / decade-genre mixes;
+//                 a decade-genre mix also prints its style under the numeral
+//                 ("2010" over "House"), so it never reads as the plain decade.
 //
 // Everything is deterministic from `seed` (playlist id/title): same playlist
 // always gets the same cover, different playlists spread across variants.
@@ -90,6 +92,36 @@ export function systemDecadeCoverLabel(title: string | null | undefined): string
   const short = /\b(\d0)'s\b/.exec(t);
   if (short) return `${Number(short[1]) >= 50 ? 19 : 20}${short[1]}`;
   return t.replace(/\s+Mix$/i, '').trim();
+}
+
+/** Style for the cover from a decade-genre title: "House from the 2010's" → "House". */
+export function systemDecadeGenreCoverLabel(title: string | null | undefined): string | undefined {
+  const m = /^(.+?)\s+from the\s+(?:(?:19|20)\d0|\d0)'?s$/i.exec((title || '').trim());
+  return m ? m[1].trim() : undefined;
+}
+
+/** The Aurora cover of a Discover (engine) playlist. */
+export interface SystemPlaylistCover {
+  variant: AuroraCoverVariant;
+  /** Seeded by title, as the Hub always has, so the shape is the same on every surface. */
+  seed: string;
+  label?: string;
+  sublabel?: string;
+}
+
+/**
+ * The cover a Discover playlist has wherever it shows (the Hub, the
+ * Playlists view, the playlist page), from its engine id and title; null
+ * for every other playlist.
+ */
+export function systemPlaylistCover(id: string | null | undefined, title: string | null | undefined): SystemPlaylistCover | null {
+  const key = id || '';
+  const t = title || '';
+  if (key.startsWith('engine_genre-most')) return { variant: 'favourites', seed: t, label: systemGenreCoverLabel(t) };
+  if (key.startsWith('engine_genre-stale')) return { variant: 'rediscover', seed: t, label: systemGenreCoverLabel(t) };
+  if (key.startsWith('engine_decade-genre')) return { variant: 'decade', seed: t, label: systemDecadeCoverLabel(t), sublabel: systemDecadeGenreCoverLabel(t) };
+  if (key.startsWith('engine_decade')) return { variant: 'decade', seed: t, label: systemDecadeCoverLabel(t) };
+  return null;
 }
 
 // ─── Wrapped: wave horizon ─────────────────────────────────────────────
@@ -190,10 +222,15 @@ interface AuroraCoverProps {
    * the numeral printed into the art (e.g. "10's").
    */
   label?: string;
+  /** Decade only: a smaller line under the numeral (a decade-genre mix's style). */
+  sublabel?: string;
 }
 
+/** Widest a line of cover text may run (of 200), before it is squeezed to fit. */
+const SUBLABEL_MAX_WIDTH = 168;
+
 /** Absolute-fill cover; parent supplies the rounded, clipped square. */
-export const AuroraCover: React.FC<AuroraCoverProps> = ({ variant, seed, title, label }) => {
+export const AuroraCover: React.FC<AuroraCoverProps> = ({ variant, seed, title, label, sublabel }) => {
   const uid = useId();
   const hash = hashSeed(seed || title || '');
   const flip = (hash & 0x8) !== 0;
@@ -313,7 +350,7 @@ export const AuroraCover: React.FC<AuroraCoverProps> = ({ variant, seed, title, 
         {label && (
           <text
             x="100"
-            y="124"
+            y={sublabel ? 110 : 124}
             textAnchor="middle"
             fontSize="66"
             fontWeight="900"
@@ -322,6 +359,24 @@ export const AuroraCover: React.FC<AuroraCoverProps> = ({ variant, seed, title, 
             style={{ fontFamily: 'inherit', letterSpacing: '-0.02em' }}
           >
             {label}
+          </text>
+        )}
+        {sublabel && (
+          <text
+            x="100"
+            y="150"
+            textAnchor="middle"
+            fontSize="22"
+            fontWeight="800"
+            fill="#ffffff"
+            opacity="0.92"
+            style={{ fontFamily: 'inherit' }}
+            // Long styles ("Progressive House") are squeezed to the width, never cut.
+            {...(sublabel.length * 22 * 0.56 > SUBLABEL_MAX_WIDTH
+              ? { textLength: SUBLABEL_MAX_WIDTH, lengthAdjust: 'spacingAndGlyphs' }
+              : {})}
+          >
+            {sublabel}
           </text>
         )}
         <path d={ribbon.cross} fill={tintB} opacity="0.16" />

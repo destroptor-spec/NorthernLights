@@ -35,7 +35,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { AlbumArt } from '../AlbumArt';
-import { AuroraCover, wrappedCoverLabel } from './AuroraCover';
+import { AuroraCover, systemPlaylistCover, wrappedCoverLabel } from './AuroraCover';
 import { LoveButton } from '../LoveButton';
 import { BackButton } from './BackButton';
 import { useToast } from '../../hooks/useToast';
@@ -593,6 +593,7 @@ export const PlaylistDetail: React.FC = () => {
   const trackListRef = useRef<HTMLDivElement>(null);
   const deferredPlaylistTracks = useDeferredValue(playlistTracks);
 
+  const systemCover = playlist?.isSystem ? systemPlaylistCover(playlist.id, playlist.title) : null;
   const heroArtUrls = useMemo(
     () => Array.from(new Set(playlistTracks.map((track) => track.artUrl).filter(Boolean) as string[])).slice(0, 8),
     [playlistTracks]
@@ -884,6 +885,9 @@ export const PlaylistDetail: React.FC = () => {
                 title={playlist.title}
                 label={wrappedCoverLabel(playlist.title) || undefined}
               />
+            ) : systemCover ? (
+              // A Discover playlist keeps the Aurora cover it has in the Hub.
+              <AuroraCover variant={systemCover.variant} seed={systemCover.seed} label={systemCover.label} sublabel={systemCover.sublabel} />
             ) : (
               <div className="grid h-full w-full grid-cols-2 gap-0.5">
                 {(heroArtUrls.length > 0 ? heroArtUrls.slice(0, 4) : [null, null, null, null]).map((artUrl, index) => (

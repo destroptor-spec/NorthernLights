@@ -14,7 +14,7 @@ import {
   type PlaylistMenuTrigger,
 } from './PlaylistContextMenu';
 import { prefetchPlaylistDetail } from '../../utils/routePrefetch';
-import { AuroraCover, wrappedCoverLabel, type AuroraCoverVariant } from './AuroraCover';
+import { AuroraCover, systemPlaylistCover, wrappedCoverLabel, type AuroraCoverVariant } from './AuroraCover';
 import type { PlaylistHeroState } from '../../utils/heroState';
 import { HorizontalScrollRail } from '../HorizontalScrollRail';
 import CreatePlaylistModal from './CreatePlaylistModal';
@@ -35,8 +35,10 @@ const PlaylistCard: React.FC<{
   /** Render a single full-bleed image (e.g. artist image for radios) instead of the collage. */
   coverImageUrl?: string;
 }> = ({ playlist, onOpen, onMenuOpen, onPlay, ownerName, showMenu = true, coverVariant, coverImageUrl }) => {
+  // A Discover playlist keeps the Aurora cover it has in the Hub.
+  const systemCover = !coverVariant && playlist.isSystem ? systemPlaylistCover(playlist.id, playlist.title) : null;
   // Skip art extraction when a generated/explicit cover replaces the collage.
-  const { artUrls } = useDominantColor(coverVariant || coverImageUrl ? [] : playlist.tracks);
+  const { artUrls } = useDominantColor(coverVariant || systemCover || coverImageUrl ? [] : playlist.tracks);
   const covers = artUrls.slice(0, 4);
   // Collage thumbnails render small, so request the smallest pre-encoded art
   // bucket (256) instead of the server default (640).
@@ -71,6 +73,8 @@ const PlaylistCard: React.FC<{
             title={playlist.title}
             label={coverVariant === 'wrapped' ? (wrappedCoverLabel(playlist.title) || undefined) : undefined}
           />
+        ) : systemCover ? (
+          <AuroraCover variant={systemCover.variant} seed={systemCover.seed} label={systemCover.label} sublabel={systemCover.sublabel} />
         ) : coverImageUrl ? (
           <img src={coverImageUrl} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
         ) : covers.length > 1 ? (
