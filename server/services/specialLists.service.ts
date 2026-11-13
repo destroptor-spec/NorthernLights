@@ -12,6 +12,7 @@
  */
 import type { Pool, PoolClient } from 'pg';
 import { STRONG_MEMBER } from './aiPlaylistScore.service';
+import { getUserSetting, setUserSetting } from '../database';
 
 type Db = Pool | PoolClient;
 
@@ -86,6 +87,29 @@ const PLACE_MIN_LIFT = 1.5;
 const SONG_KEY = `COALESCE(NULLIF(t.mb_recording_id, ''), lower(t.artist) || ':' || lower(t.title))`;
 const RECENT_PLAYS = `COALESCE(SUM(ups.play_count) FILTER (WHERE ups.last_played_at > NOW() - INTERVAL '90 days'), 0)::int`;
 
+/** Themes made for a user recently are left off the menu, so special lists rotate. */
+const SPECIAL_THEME_ROTATION_DAYS = 14;
+const SPECIAL_HISTORY_SETTING = 'specialListHistory';
+
+/** The themes made for a user in the last 14 days (user setting `specialListHistory`). */
+export async function recentSpecialThemes(userId: string): Promise<Array<{ theme: string; at: number }>> {
+  const raw = await getUserSetting(userId, SPECIAL_HISTORY_SETTING);
+  let list: unknown = raw;
+  if (typeof raw === 'string') { try { list = JSON.parse(raw); } catch { list = []; } }
+  const cutoff = Date.now() - SPECIAL_THEME_ROTATION_DAYS * 86400000;
+  return (Array.isArray(list) ? list : [])
+    .filter((e: any) => e && typeof e.theme === 'string' && Number(e.at) > cutoff)
+    .map((e: any) => ({ theme: e.theme, at: Number(e.at) }));
+}
+
+/** Notes themes made for a user now. */
+export async function rememberSpecialThemes(userId: string, themes: string[]) {
+  if (!themes.length) return;
+  const history = await recentSpecialThemes(userId);
+  const now = Date.now();
+  await setUserSetting(userId, SPECIAL_HISTORY_SETTING, JSON.stringify([...history, ...themes.map((theme) => ({ theme, at: now }))]));
+}
+
 export function themeMinimums(playlistLength: number) {
   return { songs: 2 * playlistLength, artists: Math.ceil(playlistLength / 2) };
 }
@@ -147,11 +171,15 @@ export async function buildThemeMenu(db: Db, opts: {
   keepAtLeast?: number;
   limit?: number;
   activities?: boolean;
+  /** Only these kinds (all but activities by default); skips the other queries. */
+  kinds?: ThemeKind[];
 }): Promise<Theme[]> {
   const min = themeMinimums(opts.playlistLength);
+  const want = (kind: ThemeKind) => !opts.kinds || opts.kinds.includes(kind);
+  const none = Promise.resolve({ rows: [] as any[] });
   const params = [opts.userId, STRONG_MEMBER, min.songs, min.artists];
   const [styles, places, eras, activities] = await Promise.all([
-    db.query(`
+    !want('style') ? none : db.query(`
       SELECT ts.style_id, s.genre, s.name, COUNT(DISTINCT ${SONG_KEY})::int AS songs,
              COUNT(DISTINCT t.artist_id)::int AS artists, ${RECENT_PLAYS} AS plays
       FROM track_styles ts
@@ -162,7 +190,7 @@ export async function buildThemeMenu(db: Db, opts: {
       WHERE ts.strength >= $2
       GROUP BY ts.style_id, s.genre, s.name
       HAVING COUNT(DISTINCT ${SONG_KEY}) >= $3 AND COUNT(DISTINCT t.artist_id) >= $4`, params),
-    db.query(`
+    !want('place') ? none : db.query(`
       WITH members AS (
         SELECT DISTINCT ts.genre, t.id, t.artist_id, t.mb_recording_id, t.artist, t.title
         FROM track_styles ts JOIN taxonomy_genre g ON g.name = ts.genre AND NOT g.hidden
@@ -185,7 +213,7 @@ export async function buildThemeMenu(db: Db, opts: {
       LEFT JOIN user_playback_stats ups ON ups.track_id = m.id AND ups.user_id = $1::uuid
       GROUP BY m.genre, o.country
       HAVING COUNT(DISTINCT ${SONG_KEY.replace(/t\./g, 'm.')}) >= $3 AND COUNT(DISTINCT m.artist_id) >= $4`, params),
-    db.query(`
+    !want('era') ? none : db.query(`
       SELECT ts.style_id, s.genre, s.name, o.decade, COUNT(DISTINCT ${SONG_KEY})::int AS songs,
              COUNT(DISTINCT t.artist_id)::int AS artists, ${RECENT_PLAYS} AS plays
       FROM track_styles ts
@@ -197,7 +225,7 @@ export async function buildThemeMenu(db: Db, opts: {
       WHERE ts.strength >= $2
       GROUP BY ts.style_id, s.genre, s.name, o.decade
       HAVING COUNT(DISTINCT ${SONG_KEY}) >= $3 AND COUNT(DISTINCT t.artist_id) >= $4`, params),
-    Promise.all(((opts.activities ? Object.entries(ACTIVITIES) : []) as Array<[ActivityName, typeof ACTIVITIES[ActivityName]]>).map(async ([name, a]) => {
+    Promise.all(((opts.activities && want('activity') ? Object.entries(ACTIVITIES) : []) as Array<[ActivityName, typeof ACTIVITIES[ActivityName]]>).map(async ([name, a]) => {
       const row = (await db.query(`
         SELECT COUNT(DISTINCT ${SONG_KEY})::int AS songs, COUNT(DISTINCT t.artist_id)::int AS artists, ${RECENT_PLAYS} AS plays
         FROM tracks t

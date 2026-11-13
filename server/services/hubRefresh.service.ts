@@ -8,7 +8,7 @@ import {
   setUserSetting,
 } from '../database';
 import { generateCustomPlaylist, generateHubConcepts, generateSpecialPicks, HubCollection } from './llm.service';
-import { buildThemeMenu, conceptForTheme, menuForAi } from './specialLists.service';
+import { buildThemeMenu, conceptForTheme, menuForAi, recentSpecialThemes, rememberSpecialThemes } from './specialLists.service';
 import { normalizeHubPlaylistCount, specialListCount } from '../../shared/hubPlaylists';
 import { getHubCollections } from './recommendation.service';
 import { ThinRequestError } from './aiPlaylistSupport';
@@ -209,28 +209,8 @@ export async function runLlmHubRegeneration(
   }
 }
 
-/** Themes made for a user recently are left off the menu, so special lists rotate. */
-const SPECIAL_THEME_ROTATION_DAYS = 14;
-const SPECIAL_HISTORY_SETTING = 'specialListHistory';
 /** Spare picks asked for beyond the special lists wanted, for picks that fail their dry run. */
 const SPECIAL_SPARES = 2;
-
-async function recentSpecialThemes(userId: string): Promise<Array<{ theme: string; at: number }>> {
-  const raw = await getUserSetting(userId, SPECIAL_HISTORY_SETTING);
-  let list: unknown = raw;
-  if (typeof raw === 'string') { try { list = JSON.parse(raw); } catch { list = []; } }
-  const cutoff = Date.now() - SPECIAL_THEME_ROTATION_DAYS * 86400000;
-  return (Array.isArray(list) ? list : [])
-    .filter((e: any) => e && typeof e.theme === 'string' && Number(e.at) > cutoff)
-    .map((e: any) => ({ theme: e.theme, at: Number(e.at) }));
-}
-
-async function rememberSpecialThemes(userId: string, themes: string[]) {
-  if (!themes.length) return;
-  const history = await recentSpecialThemes(userId);
-  const now = Date.now();
-  await setUserSetting(userId, SPECIAL_HISTORY_SETTING, JSON.stringify([...history, ...themes.map((theme) => ({ theme, at: now }))]));
-}
 
 /**
  * Special-list concepts for the Hub: the menu of themes this library can

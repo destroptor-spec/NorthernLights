@@ -8,7 +8,7 @@ import { seedStyleVector, styleBeta, styleCosine, styleVectorForNames, styleVect
 import { isRowBanned, pathsMatchSql, trackGenrePathsJoin } from './genreTaxonomy/paths';
 import { artistCap, blendEmbeddings, conceptMatch, conceptStyles, focusOf, moodBeta, moodMatch, moodTargetOf, rankByScore, scoreBeta, soundQualitySql, STRONG_MEMBER, styleSoundShare, trackMemberships, trackMoods, type MoodTarget } from './aiPlaylistScore.service';
 import type { SoundQuality } from '../../shared/audioMoods';
-import { ACTIVITIES, type Theme } from './specialLists.service';
+import { ACTIVITIES, buildThemeMenu, recentSpecialThemes, type Theme } from './specialLists.service';
 import { splitAtFeaturing } from '../../shared/artistCredit';
 import { hasHardFilter, thinRequest } from './aiPlaylistSupport';
 
@@ -1573,13 +1573,17 @@ export async function getHubCollections(
     }
   }
 
-  // 4. Genre system playlists. For the user's strongest genres, create one
-  // full familiar set and one rediscovery set whose tracks are untouched for 4+ weeks.
+  // 4. Style system playlists. For the user's most-played styles, one full
+  // familiar set and one rediscovery set whose tracks are untouched for 4+
+  // weeks. A style's tracks are its strong members (as the special-list menu
+  // counts them), so a track counts under each style it really is; tracks
+  // that have a genre but no style in it count under the genre.
   if (userId && (systemPlaylistConfig.genreHeavyRotation || systemPlaylistConfig.genreRediscovery)) {
     const genreStatsRes = await queryWithRetry(`
       SELECT
-        g.id AS genre_id,
-        g.name AS genre,
+        ts.style_id,
+        ts.genre,
+        COALESCE(MAX(s.name), ts.genre) AS name,
         COUNT(*)::int AS track_count,
         COALESCE(SUM(ups.play_count), 0)::int AS user_plays,
         COUNT(*) FILTER (
@@ -1588,20 +1592,24 @@ export async function getHubCollections(
              OR ups.last_played_at IS NULL
              OR ups.last_played_at < NOW() - INTERVAL '4 weeks'
         )::int AS rediscovery_count
-      FROM tracks t
-      JOIN genres g ON g.id = t.genre_id AND g.merged_into IS NULL
-      LEFT JOIN user_playback_stats ups ON ups.track_id = t.id AND ups.user_id = $1
-      WHERE trim(g.name) <> ''
-      GROUP BY g.id, g.name
+      FROM track_styles ts
+      JOIN taxonomy_genre tg ON tg.name = ts.genre AND NOT tg.hidden
+      LEFT JOIN style s ON s.id = ts.style_id
+      LEFT JOIN user_playback_stats ups ON ups.track_id = ts.track_id AND ups.user_id = $1
+      WHERE ts.strength >= $2
+      GROUP BY ts.style_id, ts.genre
       HAVING COUNT(*) >= ${systemPlaylistMinTracks}
       ORDER BY COALESCE(SUM(ups.play_count), 0) DESC, COUNT(*) DESC
       LIMIT ${maxGenreSystemMixes}
-    `, [userId]);
+    `, [userId, STRONG_MEMBER]);
+    // The style's strong members ($2 style id or null for the genre alone, $3 genre, $4 floor).
+    const inStyle = `EXISTS (SELECT 1 FROM track_styles ts WHERE ts.track_id = t.id AND ts.genre = $3
+      AND ts.style_id IS NOT DISTINCT FROM $2::int AND ts.strength >= $4)`;
 
     const seenGenreSlugs = new Set<string>();
     for (const row of genreStatsRes.rows) {
-      const rawGenre = String((row as any).genre || '').trim();
-      const canonicalGenreId = String((row as any).genre_id || '');
+      const rawGenre = String((row as any).name || '').trim();
+      const styleParams = [(row as any).style_id ?? null, String((row as any).genre), STRONG_MEMBER];
       const genreSlug = toSystemGenreSlug(rawGenre);
       if (!rawGenre || seenGenreSlugs.has(genreSlug)) continue;
       seenGenreSlugs.add(genreSlug);
@@ -1614,10 +1622,10 @@ export async function getHubCollections(
             JOIN tracks t ON t.id = ups.track_id
             WHERE ups.user_id = $1
               AND ups.play_count > 0
-              AND t.genre_id = $2::uuid
+              AND ${inStyle}
             ORDER BY ups.play_count DESC, ups.last_played_at DESC NULLS LAST
-            LIMIT ${systemPlaylistTrackLimit}
-          `, [userId, canonicalGenreId])
+            LIMIT ${systemPlaylistTrackLimit * 2}
+          `, [userId, ...styleParams])
         : { rows: [] };
 
       if (systemPlaylistConfig.genreHeavyRotation && mostPlayedRes.rows.length >= systemPlaylistMinTracks) {
@@ -1635,7 +1643,7 @@ export async function getHubCollections(
             SELECT t.*, COALESCE(ups.play_count, 0) AS play_count, ups.last_played_at AS user_last_played
             FROM tracks t
             LEFT JOIN user_playback_stats ups ON ups.track_id = t.id AND ups.user_id = $1
-            WHERE t.genre_id = $2::uuid
+            WHERE ${inStyle}
               AND (
                 ups.track_id IS NULL
                 OR ups.play_count = 0
@@ -1646,8 +1654,8 @@ export async function getHubCollections(
               CASE WHEN ups.track_id IS NULL OR ups.play_count = 0 THEN 0 ELSE 1 END ASC,
               ups.last_played_at ASC NULLS FIRST,
               random()
-            LIMIT ${systemPlaylistTrackLimit}
-          `, [userId, canonicalGenreId])
+            LIMIT ${systemPlaylistTrackLimit * 2}
+          `, [userId, ...styleParams])
         : { rows: [] };
 
       if (systemPlaylistConfig.genreRediscovery && rediscoveryRes.rows.length >= systemPlaylistMinTracks) {
@@ -1662,38 +1670,38 @@ export async function getHubCollections(
     }
   }
 
-  // 5. Decade system playlists. Build broad decade mixes first, then expand
-  // into decade + genre cards only when the library can fill the card.
-  if (userId && (systemPlaylistConfig.decadeMixes || systemPlaylistConfig.decadeGenreMixes)) {
+  // 5. Decade system playlists, by the decade Browse uses (track_origin:
+  // the original release year first, so a 2011 remaster of a 1991 album is
+  // a 90s track). Then the style × decade mixes ("Trance from the 2000's"):
+  // the era themes of the special-list menu (enough strong members from
+  // enough artists), leaving out those made as special lists lately.
+  if (userId && systemPlaylistConfig.decadeMixes) {
     const decadeStatsRes = await queryWithRetry(`
       SELECT
-        (floor(t.year / 10) * 10)::int AS decade,
+        o.decade,
         COUNT(*)::int AS track_count,
         COALESCE(SUM(ups.play_count), 0)::int AS user_plays
-      FROM tracks t
-      LEFT JOIN user_playback_stats ups ON ups.track_id = t.id AND ups.user_id = $1
-      WHERE t.year IS NOT NULL
-        AND t.year >= 1950
-        AND t.year <= EXTRACT(YEAR FROM NOW())::int
-      GROUP BY (floor(t.year / 10) * 10)::int
+      FROM track_origin o
+      LEFT JOIN user_playback_stats ups ON ups.track_id = o.track_id AND ups.user_id = $1
+      WHERE o.decade IS NOT NULL
+        AND o.decade >= 1950
+        AND o.decade <= EXTRACT(YEAR FROM NOW())::int
+      GROUP BY o.decade
       HAVING COUNT(*) >= ${systemPlaylistMinTracks}
-      ORDER BY COALESCE(SUM(ups.play_count), 0) DESC, COUNT(*) DESC, (floor(t.year / 10) * 10)::int DESC
+      ORDER BY COALESCE(SUM(ups.play_count), 0) DESC, COUNT(*) DESC, o.decade DESC
       LIMIT ${maxDecadeSystemMixes}
     `, [userId]);
 
-    const decadeValues = decadeStatsRes.rows
-      .map((row: any) => Number(row.decade))
-      .filter((decade: number) => Number.isFinite(decade));
-
-    for (const decade of systemPlaylistConfig.decadeMixes ? decadeValues : []) {
+    for (const decade of decadeStatsRes.rows.map((row: any) => Number(row.decade)).filter(Number.isFinite)) {
       const decadeRes = await queryWithRetry(`
         SELECT t.*, COALESCE(ups.play_count, 0) AS play_count, ups.last_played_at AS user_last_played
-        FROM tracks t
+        FROM track_origin o
+        JOIN tracks t ON t.id = o.track_id
         LEFT JOIN user_playback_stats ups ON ups.track_id = t.id AND ups.user_id = $1
-        WHERE t.year >= $2 AND t.year < $3
+        WHERE o.decade = $2
         ORDER BY COALESCE(ups.play_count, 0) DESC, ups.last_played_at DESC NULLS LAST, random()
-        LIMIT ${systemPlaylistTrackLimit}
-      `, [userId, decade, decade + 10]);
+        LIMIT ${systemPlaylistTrackLimit * 2}
+      `, [userId, decade]);
 
       if (decadeRes.rows.length >= systemPlaylistMinTracks) {
         const playlist = await persistSystem(
@@ -1705,75 +1713,42 @@ export async function getHubCollections(
         if (playlist) engineHubs.push(playlist);
       }
     }
+  }
 
-    if (systemPlaylistConfig.decadeGenreMixes && decadeValues.length > 0) {
-      const decadeGenreRes = await queryWithRetry(`
-        SELECT
-          (floor(t.year / 10) * 10)::int AS decade,
-          g.id AS genre_id,
-          g.name AS genre,
-          COUNT(*)::int AS track_count,
-          COALESCE(SUM(ups.play_count), 0)::int AS user_plays
-        FROM tracks t
-        JOIN genres g ON g.id = t.genre_id AND g.merged_into IS NULL
+  if (userId && systemPlaylistConfig.decadeGenreMixes) {
+    const recent = (await recentSpecialThemes(userId)).map((e) => e.theme);
+    const eras = (await buildThemeMenu(await initDB(), {
+      userId, playlistLength: systemPlaylistTrackLimit, kinds: ['era'], recentKeys: recent, limit: maxDecadeGenreSystemMixes,
+    })).filter((theme) => theme.kind === 'era' && theme.styleId != null && theme.decade != null);
+
+    for (const theme of eras) {
+      const decade = Number(theme.decade);
+      const styleName = formatSystemGenreName(theme.styleName || theme.label);
+      const eraRes = await queryWithRetry(`
+        SELECT t.*, COALESCE(ups.play_count, 0) AS play_count, ups.last_played_at AS user_last_played
+        FROM track_origin o
+        JOIN tracks t ON t.id = o.track_id
         LEFT JOIN user_playback_stats ups ON ups.track_id = t.id AND ups.user_id = $1
-        WHERE t.year IS NOT NULL
-          AND t.year >= 1950
-          AND t.year <= EXTRACT(YEAR FROM NOW())::int
-          AND trim(g.name) <> ''
-        GROUP BY (floor(t.year / 10) * 10)::int, g.id, g.name
-        HAVING COUNT(*) >= ${systemPlaylistMinTracks}
-        ORDER BY user_plays DESC, track_count DESC, decade DESC
-        LIMIT 40
-      `, [userId]);
-
-      const decadeGenreCandidates = decadeGenreRes.rows as any[];
-      const selectedDecadeGenreRows: any[] = [];
-      const selectedGenreSlugs = new Set<string>();
-      for (const row of decadeGenreCandidates) {
-        const genreSlug = toSystemGenreSlug(String((row as any).genre || ''));
-        if (selectedGenreSlugs.has(genreSlug)) continue;
-        selectedGenreSlugs.add(genreSlug);
-        selectedDecadeGenreRows.push(row);
-        if (selectedDecadeGenreRows.length >= maxDecadeGenreSystemMixes) break;
-      }
-      for (const row of decadeGenreCandidates) {
-        if (selectedDecadeGenreRows.length >= maxDecadeGenreSystemMixes) break;
-        if (!selectedDecadeGenreRows.includes(row)) selectedDecadeGenreRows.push(row);
-      }
-
-      const seenDecadeGenreSlugs = new Set<string>();
-      for (const row of selectedDecadeGenreRows) {
-        const decade = Number((row as any).decade);
-        const rawGenre = String((row as any).genre || '').trim();
-        const canonicalGenreId = String((row as any).genre_id || '');
-        const genreSlug = toSystemGenreSlug(rawGenre);
-        const slug = `${decade}-${genreSlug}`;
-        if (!Number.isFinite(decade) || !rawGenre || seenDecadeGenreSlugs.has(slug)) continue;
-        seenDecadeGenreSlugs.add(slug);
-
-        const genreName = formatSystemGenreName(rawGenre);
-        const decadeGenreTracksRes = await queryWithRetry(`
-          SELECT t.*, COALESCE(ups.play_count, 0) AS play_count, ups.last_played_at AS user_last_played
-          FROM tracks t
-          LEFT JOIN user_playback_stats ups ON ups.track_id = t.id AND ups.user_id = $1
-          WHERE t.year >= $2
-            AND t.year < $3
-            AND t.genre_id = $4::uuid
-          ORDER BY COALESCE(ups.play_count, 0) DESC, ups.last_played_at DESC NULLS LAST, random()
-          LIMIT ${systemPlaylistTrackLimit}
-        `, [userId, decade, decade + 10, canonicalGenreId]);
-
-        if (decadeGenreTracksRes.rows.length >= systemPlaylistMinTracks) {
-          const playlist = await persistSystem(
-            `decade-genre-${slug}`,
-            `${genreName} from the ${formatDecadeTitleLabel(decade)}`,
-            `A decade mix with ${genreName} from the ${formatDecadeTitleLabel(decade)}.`,
-            decadeGenreTracksRes.rows
-          );
-          if (playlist) engineHubs.push(playlist);
-        }
-      }
+        WHERE o.decade = $2
+          AND EXISTS (SELECT 1 FROM track_styles ts WHERE ts.track_id = t.id AND ts.style_id = $3 AND ts.strength >= $4)
+        ORDER BY COALESCE(ups.play_count, 0) DESC, ups.last_played_at DESC NULLS LAST, random()
+        LIMIT ${systemPlaylistTrackLimit * 4}
+      `, [userId, decade, theme.styleId, STRONG_MEMBER]);
+      // At most two tracks per artist: the theme has enough artists for that.
+      const perArtist = new Map<string, number>();
+      const tracks = eraRes.rows.filter((r: any) => {
+        const key = spreadArtistKey(r.artist || '');
+        const n = perArtist.get(key) ?? 0;
+        perArtist.set(key, n + 1);
+        return n < 2;
+      });
+      const playlist = await persistSystem(
+        `decade-genre-${decade}-${toSystemGenreSlug(styleName)}`,
+        `${styleName} from the ${formatDecadeTitleLabel(decade)}`,
+        topArtistsBlurb(tracks, `${styleName} from the ${formatDecadeTitleLabel(decade)}.`),
+        tracks
+      );
+      if (playlist) engineHubs.push(playlist);
     }
   }
 

@@ -879,5 +879,9 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     expect((await buildThemeMenu(pool, { userId: null, playlistLength: 5, recentKeys: [`style:${gabber}`] })).find(t => t.key === `style:${gabber}`)).toBeUndefined();
     // Activity themes only when asked for.
     expect(menu.some(t => t.kind === 'activity')).toBe(false);
+    // One kind only (the Discover rail's style × decade mixes).
+    const eras = await buildThemeMenu(pool, { userId: null, playlistLength: 5, kinds: ['era'] });
+    expect(eras.find(t => t.key === `era:${gabber}:1990`)).toBeDefined();
+    expect(eras.every(t => t.kind === 'era')).toBe(true);
   });
 });

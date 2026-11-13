@@ -538,6 +538,8 @@ The Hub's system playlists (Settings → System → Hub) mostly use neither pool
 | Decade Mixes | By the file's `year` | By the decade Browse uses (`track_origin.decade`: original release year first), so a 2011 remaster of a 1991 album is a 90s track |
 | Decade Genre Mixes ("90's Pop") | Year × `genre_id`, made at 15 tracks | Becomes the style × era special-list kind, with its menu and dry run |
 
+**Built (2026-11-13):** Heavy Rotation and Rediscovery go per style over `track_styles` strong members (strength ≥ 0.5), ranked by the user's plays; tracks with a genre but no style in it count under the genre ("Your Electronic favourites"). Decade Mixes go by `track_origin.decade` ("Hey Baby", a 2012 file of a 2006 song, is in the 2000's). Decade Genre Mixes are the menu's era themes (`buildThemeMenu` with `kinds: ['era']`: 30 strong members from 8 artists at 15 tracks), leaving out those made as special lists in the last 14 days, ordered by the user's plays with at most two tracks per artist; no dry run, since there is no target sound without the AI. Titles and ids keep their forms ("Trance from the 2020's", `engine_decade-genre-2020-trance`), so covers and settings are unchanged. Dev: the engine rail rebuilt in 4.3 s with 4 favourites, 9 rediscover, 6 decade and 8+ style × decade mixes.
+
 ### Settings (Settings → Playback → LLM Playlists)
 
 | Setting | Becomes |

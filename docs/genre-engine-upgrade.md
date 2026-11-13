@@ -285,3 +285,9 @@ Rollback: the old code reads a saved 6 or 9 as that many playlists and ignores `
 Nothing to run. A custom AI playlist that names a theme with a hard filter (where from, language, years, vocals) is made only when the library has at least as many songs of it as the playlist length; otherwise the Generate dialog says how many there are, and API v1 `POST /hub/custom` answers 422 `CUSTOM_PLAYLIST_TOO_THIN` (new in the API document).
 
 - [ ] Ask for something the library lacks ("Dansk rap fra 80'erne"): the dialog reads "Your library has …", the log `[LLM Hub] Custom request "…" not made: …`, and no playlist is saved.
+
+### Step 6: the Discover rail by styles and original years (no schema change)
+
+Nothing to run. On the next engine refresh (the Hub schedule, or Reset Hub), "Your … favourites" and "Rediscover …" are per style, decade mixes go by the original release decade, and "… from the 2000's" mixes are the styles × decades the library has enough of. Ids and titles keep their forms; the old playlists are replaced by the refresh as always.
+
+- [ ] Hub → Discover shows style names ("Your Trance favourites", "House from the 2010's") rather than file-tag genres.
