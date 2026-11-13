@@ -7,10 +7,10 @@ import React, { useId } from 'react';
 //
 //   wrapped     — a horizontal wave horizon: seasonal sky over a wave-split
 //                 field, soft bloom along the crest, big period label.
-//   favourites  — vertical aurora curtains (green/teal): light pillars over a
-//                 night base, genre label. Genre heavy-rotation mixes.
-//   rediscover  — echo arcs (violet/rose): a low glow with soft concentric
-//                 rings radiating out, genre label. Genre rediscovery mixes.
+//   favourites  — vertical aurora curtains (green/teal): light pillars across
+//                 a glowing night sky, genre label. Heavy-rotation mixes.
+//   rediscover  — echo arcs (violet/rose): rings radiating from a lit corner
+//                 across the cover, genre label. Rediscovery mixes.
 //   decade      — a sweeping aurora ribbon with the decade numeral printed
 //                 into the art, always readable. Decade / decade-genre mixes;
 //                 a decade-genre mix also prints its style under the numeral
@@ -135,21 +135,23 @@ const WAVE_PATHS = [
 ];
 
 // ─── Favourites: aurora curtains (generated) ───────────────────────────
-// 2–4 gently swaying full-height bands; the vertical gradient does the fading
-// so the path stays simple. Positions/widths/sway/peak all seeded per cover.
-// Bands roam freely (they may overlap — overlaps blend like layered light) and
-// range from slim streaks to broad sheets; the wider the band, the softer its
-// peak so fat overlaps never go blocky.
+// 3–5 gently swaying full-height bands spread across the width (one per
+// slot, jittered, so they never all clump on one side and leave the night
+// bare), from slim streaks to broad sheets. The vertical gradient does the
+// fading; the bands blend with `screen`, so overlaps brighten like layered
+// light instead of muddying. Positions/widths/sway/peak all seeded per cover.
 interface Curtain { x: number; w: number; sway: number; peak: number; peakAt: number }
 
 function genCurtains(rnd: () => number): Curtain[] {
-  const count = 2 + Math.floor(rnd() * 3); // 2–4
-  return Array.from({ length: count }, () => {
-    const w = lerp(rnd, 18, 90);
-    const x = lerp(rnd, -12, 210 - w); // slight offscreen bleed allowed
-    const sway = (rnd() < 0.5 ? -1 : 1) * lerp(rnd, 6, 16);
-    const peak = lerp(rnd, 0.38, 0.6) * (1 - ((w - 18) / 72) * 0.3);
-    return { x, w, sway, peak, peakAt: lerp(rnd, 0.2, 0.45) };
+  const count = 3 + Math.floor(rnd() * 3); // 3–5
+  const slot = 220 / count;
+  return Array.from({ length: count }, (_, i) => {
+    const w = lerp(rnd, 20, 72);
+    const centre = -10 + slot * (i + 0.5) + lerp(rnd, -slot * 0.35, slot * 0.35);
+    const sway = (rnd() < 0.5 ? -1 : 1) * lerp(rnd, 6, 18);
+    // Broad sheets a little softer than streaks, so wide overlaps stay luminous, not blocky.
+    const peak = lerp(rnd, 0.62, 0.85) * (1 - ((w - 20) / 52) * 0.25);
+    return { x: centre - w / 2, w, sway, peak, peakAt: lerp(rnd, 0.16, 0.4) };
   });
 }
 
@@ -159,35 +161,37 @@ function curtainPath({ x, w, sway }: Curtain): string {
 }
 
 // ─── Rediscover: echo arcs (generated) ─────────────────────────────────
-// A glow with 1–5 concentric rings radiating out — light returning. Origin,
-// ring count, spacing, stroke widths and opacities all seeded per cover.
-// Fewer rings → thicker bands: 1–2 rings target the decade ribbon's 38–58u
-// scale, and each extra ring steps the range down toward fine lines.
-const RING_WIDTH_RANGES: Array<[number, number]> = [
-  [38, 58], // 1 ring
-  [18, 32], // 2 rings
-  [8, 16],  // 3 rings
-  [4, 9],   // 4 rings
-  [1.6, 4], // 5 rings
+// Light returning: concentric rings radiating from a source at or just past
+// one corner (never the bottom-left, where the label sits), wide enough that
+// the arcs sweep across the whole cover. A broad glow sits at the source and
+// a softer wash of the second tint fills the far side. Corner, ring count,
+// spacing, stroke widths and opacities all seeded per cover.
+const ECHO_SOURCES: Array<{ x: [number, number]; y: [number, number] }> = [
+  { x: [150, 215], y: [-20, 40] },  // top right
+  { x: [-15, 50], y: [-20, 30] },   // top left
+  { x: [160, 220], y: [120, 190] }, // bottom right
+  { x: [175, 225], y: [50, 110] },  // right
 ];
 
 interface EchoRing { r: number; sw: number; op: number }
 
 function genEcho(rnd: () => number): { cx: number; cy: number; glowR: number; rings: EchoRing[] } {
-  const cx = lerp(rnd, 48, 152);
-  const cy = lerp(rnd, 66, 152);
-  const count = 1 + Math.floor(rnd() * 5); // 1–5
-  const [wMin, wMax] = RING_WIDTH_RANGES[count - 1];
+  const source = ECHO_SOURCES[Math.floor(rnd() * ECHO_SOURCES.length)];
+  const cx = lerp(rnd, source.x[0], source.x[1]);
+  const cy = lerp(rnd, source.y[0], source.y[1]);
+  // Reach the far corner, so the outer arcs cross the whole square.
+  const reach = Math.hypot(Math.max(cx, 200 - cx), Math.max(cy, 200 - cy));
+  const count = 4 + Math.floor(rnd() * 3); // 4–6
   const rings: EchoRing[] = [];
-  // Track the outer edge of the previous ring so fat bands never overlap.
-  let edge = lerp(rnd, 10, 26);
+  let edge = lerp(rnd, 14, 30);
+  const step = (reach - edge) / count;
   for (let i = 0; i < count; i++) {
-    const sw = lerp(rnd, wMin, wMax);
+    const sw = lerp(rnd, step * 0.2, step * 0.5);
     const r = edge + sw / 2;
-    rings.push({ r, sw, op: Math.max(0.1, lerp(rnd, 0.34, 0.5) - i * 0.07) });
-    edge = r + sw / 2 + lerp(rnd, 10, 24);
+    rings.push({ r, sw, op: Math.max(0.22, lerp(rnd, 0.5, 0.72) - i * 0.05) });
+    edge = r + sw / 2 + lerp(rnd, step * 0.35, step * 0.75);
   }
-  return { cx, cy, glowR: lerp(rnd, 48, 78), rings };
+  return { cx, cy, glowR: lerp(rnd, 95, 140), rings };
 }
 
 // ─── Decade: aurora ribbon (generated) ─────────────────────────────────
@@ -299,18 +303,27 @@ export const AuroraCover: React.FC<AuroraCoverProps> = ({ variant, seed, title, 
             <stop offset="0" stopColor="var(--aurora-cover-night-a)" />
             <stop offset="1" stopColor="var(--aurora-cover-night-b)" />
           </linearGradient>
+          <radialGradient id={`${uid}-sky`} cx="0.5" cy="0.22" r="0.85">
+            <stop offset="0" stopColor={tintB} stopOpacity="0.28" />
+            <stop offset="0.55" stopColor={tintA} stopOpacity="0.12" />
+            <stop offset="1" stopColor={tintA} stopOpacity="0" />
+          </radialGradient>
           {curtains.map((c, i) => (
             <linearGradient key={i} id={`${uid}-c${i}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0" stopColor={i % 2 === 1 ? tintB : tintA} stopOpacity="0.08" />
+              <stop offset="0" stopColor={i % 2 === 1 ? tintB : tintA} stopOpacity="0.16" />
               <stop offset={c.peakAt} stopColor={i % 2 === 1 ? tintB : tintA} stopOpacity={c.peak} />
               <stop offset="1" stopColor={i % 2 === 1 ? tintB : tintA} stopOpacity="0" />
             </linearGradient>
           ))}
         </defs>
         <rect width="200" height="200" fill={`url(#${uid}-night)`} />
-        {curtains.map((c, i) => (
-          <path key={i} d={curtainPath(c)} fill={`url(#${uid}-c${i})`} />
-        ))}
+        {/* The sky the curtains hang in: a soft glow of the tint behind them. */}
+        <rect width="200" height="200" fill={`url(#${uid}-sky)`} />
+        <g style={{ mixBlendMode: 'screen' }}>
+          {curtains.map((c, i) => (
+            <path key={i} d={curtainPath(c)} fill={`url(#${uid}-c${i})`} />
+          ))}
+        </g>
       </>
     );
   } else if (variant === 'rediscover') {
@@ -327,12 +340,18 @@ export const AuroraCover: React.FC<AuroraCoverProps> = ({ variant, seed, title, 
             <stop offset="1" stopColor="var(--aurora-cover-night-b)" />
           </linearGradient>
           <radialGradient id={`${uid}-glow`}>
-            <stop offset="0" stopColor={tintA} stopOpacity="0.55" />
-            <stop offset="0.6" stopColor={tintA} stopOpacity="0.18" />
+            <stop offset="0" stopColor={tintA} stopOpacity="0.8" />
+            <stop offset="0.45" stopColor={tintA} stopOpacity="0.32" />
             <stop offset="1" stopColor={tintA} stopOpacity="0" />
+          </radialGradient>
+          {/* The far side: a soft wash of the second tint, so the cover is lit edge to edge. */}
+          <radialGradient id={`${uid}-wash`} cx={`${(200 - echo.cx) / 200}`} cy={`${(200 - echo.cy) / 200}`} r="0.9">
+            <stop offset="0" stopColor={tintB} stopOpacity="0.26" />
+            <stop offset="1" stopColor={tintB} stopOpacity="0" />
           </radialGradient>
         </defs>
         <rect width="200" height="200" fill={`url(#${uid}-night)`} />
+        <rect width="200" height="200" fill={`url(#${uid}-wash)`} />
         <circle cx={echo.cx} cy={echo.cy} r={echo.glowR} fill={`url(#${uid}-glow)`} />
         {echo.rings.map((ring, i) => (
           <circle
@@ -344,6 +363,7 @@ export const AuroraCover: React.FC<AuroraCoverProps> = ({ variant, seed, title, 
             stroke={i % 2 === 0 ? tintA : tintB}
             strokeWidth={ring.sw}
             opacity={ring.op}
+            style={{ mixBlendMode: 'screen' }}
           />
         ))}
       </>
@@ -415,7 +435,8 @@ export const AuroraCover: React.FC<AuroraCoverProps> = ({ variant, seed, title, 
         preserveAspectRatio="none"
         className="absolute inset-0 h-full w-full"
       >
-        <g transform={flip && variant !== 'decade' ? 'scale(-1,1) translate(-200,0)' : undefined}>
+        {/* Mirrored for variety; not the echo arcs, whose source must stay out of the label's corner. */}
+        <g transform={flip && (variant === 'wrapped' || variant === 'favourites') ? 'scale(-1,1) translate(-200,0)' : undefined}>
           {svgBody}
         </g>
       </svg>
