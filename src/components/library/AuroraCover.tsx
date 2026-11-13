@@ -226,8 +226,31 @@ interface AuroraCoverProps {
   sublabel?: string;
 }
 
-/** Widest a line of cover text may run (of 200), before it is squeezed to fit. */
+/** Widest a line of cover text may run (of 200). */
 const SUBLABEL_MAX_WIDTH = 168;
+/** Rough glyph width of the cover font at 800 weight, as a share of the font size. */
+const GLYPH_WIDTH = 0.54;
+const fitSize = (text: string, max: number) => Math.min(max, SUBLABEL_MAX_WIDTH / (Math.max(1, text.length) * GLYPH_WIDTH));
+
+/**
+ * How the style line under a decade numeral is set: one line at 22, smaller
+ * down to 17 when it is long ("Progressive House"), else two lines split at
+ * the space nearest the middle ("Contemporary Jazz Fusion"). Never squeezed.
+ */
+export function sublabelLayout(text: string): { lines: string[]; fontSize: number } {
+  const one = fitSize(text, 22);
+  const words = text.split(/\s+/).filter(Boolean);
+  if (one >= 17 || words.length < 2) return { lines: [text], fontSize: Math.round(Math.max(one, 12) * 10) / 10 };
+  let best: string[] = [text];
+  let bestLongest = Infinity;
+  for (let i = 1; i < words.length; i++) {
+    const lines = [words.slice(0, i).join(' '), words.slice(i).join(' ')];
+    const longest = Math.max(...lines.map(l => l.length));
+    if (longest < bestLongest) { best = lines; bestLongest = longest; }
+  }
+  const size = Math.min(...best.map(l => fitSize(l, 19)));
+  return { lines: best, fontSize: Math.round(Math.max(size, 12) * 10) / 10 };
+}
 
 /** Absolute-fill cover; parent supplies the rounded, clipped square. */
 export const AuroraCover: React.FC<AuroraCoverProps> = ({ variant, seed, title, label, sublabel }) => {
@@ -350,7 +373,7 @@ export const AuroraCover: React.FC<AuroraCoverProps> = ({ variant, seed, title, 
         {label && (
           <text
             x="100"
-            y={sublabel ? 110 : 124}
+            y={sublabel ? (sublabelLayout(sublabel).lines.length > 1 ? 98 : 110) : 124}
             textAnchor="middle"
             fontSize="66"
             fontWeight="900"
@@ -361,24 +384,25 @@ export const AuroraCover: React.FC<AuroraCoverProps> = ({ variant, seed, title, 
             {label}
           </text>
         )}
-        {sublabel && (
-          <text
-            x="100"
-            y="150"
-            textAnchor="middle"
-            fontSize="22"
-            fontWeight="800"
-            fill="#ffffff"
-            opacity="0.92"
-            style={{ fontFamily: 'inherit' }}
-            // Long styles ("Progressive House") are squeezed to the width, never cut.
-            {...(sublabel.length * 22 * 0.56 > SUBLABEL_MAX_WIDTH
-              ? { textLength: SUBLABEL_MAX_WIDTH, lengthAdjust: 'spacingAndGlyphs' }
-              : {})}
-          >
-            {sublabel}
-          </text>
-        )}
+        {sublabel && (() => {
+          const { lines, fontSize } = sublabelLayout(sublabel);
+          const firstY = lines.length > 1 ? 132 : 150;
+          return (
+            <text
+              x="100"
+              textAnchor="middle"
+              fontSize={fontSize}
+              fontWeight="800"
+              fill="#ffffff"
+              opacity="0.92"
+              style={{ fontFamily: 'inherit' }}
+            >
+              {lines.map((line, i) => (
+                <tspan key={i} x="100" y={firstY + i * fontSize * 1.15}>{line}</tspan>
+              ))}
+            </text>
+          );
+        })()}
         <path d={ribbon.cross} fill={tintB} opacity="0.16" />
       </>
     );
