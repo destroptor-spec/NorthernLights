@@ -186,8 +186,8 @@ function genEcho(rnd: () => number): { cx: number; cy: number; glowR: number; ri
   const rings: EchoRing[] = [];
   let edge = lerp(rnd, 12, 30);
   const step = (reach - edge) / count;
-  // Widths vary widely within a cover: hairlines beside broad bands. One
-  // ring is always broad, so no cover is all fine lines.
+  // Widths vary widely within a cover: hairlines beside broad bands, and
+  // rings may overlap. One ring is always broad, so no cover is all fine lines.
   const broadAt = Math.floor(rnd() * count);
   for (let i = 0; i < count; i++) {
     const broad = i === broadAt || rnd() < 0.35;
@@ -196,8 +196,16 @@ function genEcho(rnd: () => number): { cx: number; cy: number; glowR: number; ri
     // Thin lines need more opacity to read; broad bands less, to stay soft.
     const op = broad ? lerp(rnd, 0.38, 0.6) : lerp(rnd, 0.55, 0.85);
     rings.push({ r, sw, op: Math.max(0.22, op - i * 0.03) });
-    edge = r + sw / 2 + lerp(rnd, step * 0.12, step * 0.55);
+    // About a third of rings overlap the last (screen blend brightens the
+    // overlap); the radius still always grows outward.
+    const gap = rnd() < 0.35 ? -lerp(rnd, step * 0.1, step * 0.6) : lerp(rnd, step * 0.12, step * 0.55);
+    edge = Math.max(r + 2, r + sw / 2 + gap);
   }
+  // Overlaps and broad bands change how far the set reaches: scale it so
+  // the outer ring always crosses the cover to (about) the far corner.
+  const last = rings[rings.length - 1];
+  const scale = (reach * lerp(rnd, 0.88, 1.05)) / (last.r + last.sw / 2);
+  for (const ring of rings) { ring.r *= scale; ring.sw = Math.max(1.5, ring.sw * scale); }
   return { cx, cy, glowR: lerp(rnd, 95, 140), rings };
 }
 
