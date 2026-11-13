@@ -135,29 +135,30 @@ const WAVE_PATHS = [
 ];
 
 // ─── Favourites: aurora curtains (generated) ───────────────────────────
-// 3–5 gently swaying full-height bands spread across the width (one per
-// slot, jittered, so they never all clump on one side and leave the night
-// bare), from slim streaks to broad sheets. The vertical gradient does the
-// fading; the bands blend with `screen`, so overlaps brighten like layered
-// light instead of muddying. Positions/widths/sway/peak all seeded per cover.
-interface Curtain { x: number; w: number; sway: number; peak: number; peakAt: number }
+// 2–4 broad, swaying sheets of light spread across the width (one per slot,
+// jittered, so they never all clump on one side), each leaning so its foot
+// sits off its head: abstract aurora, not stripes. The vertical gradient
+// does the fading; the sheets blend with `screen`, so overlaps brighten like
+// layered light. Positions/widths/lean/sway/peak all seeded per cover.
+interface Curtain { x: number; w: number; sway: number; lean: number; peak: number; peakAt: number }
 
 function genCurtains(rnd: () => number): Curtain[] {
-  const count = 3 + Math.floor(rnd() * 3); // 3–5
+  const count = 2 + Math.floor(rnd() * 3); // 2–4
   const slot = 220 / count;
   return Array.from({ length: count }, (_, i) => {
-    const w = lerp(rnd, 20, 72);
-    const centre = -10 + slot * (i + 0.5) + lerp(rnd, -slot * 0.35, slot * 0.35);
-    const sway = (rnd() < 0.5 ? -1 : 1) * lerp(rnd, 6, 18);
-    // Broad sheets a little softer than streaks, so wide overlaps stay luminous, not blocky.
-    const peak = lerp(rnd, 0.62, 0.85) * (1 - ((w - 20) / 52) * 0.25);
-    return { x: centre - w / 2, w, sway, peak, peakAt: lerp(rnd, 0.16, 0.4) };
+    const w = lerp(rnd, 46, 120);
+    const centre = -10 + slot * (i + 0.5) + lerp(rnd, -slot * 0.3, slot * 0.3);
+    const sway = (rnd() < 0.5 ? -1 : 1) * lerp(rnd, 14, 38);
+    const lean = lerp(rnd, -40, 40);
+    // Broad sheets a little softer, so wide overlaps stay luminous, not blocky.
+    const peak = lerp(rnd, 0.58, 0.82) * (1 - ((w - 46) / 74) * 0.3);
+    return { x: centre - w / 2, w, sway, lean, peak, peakAt: lerp(rnd, 0.14, 0.42) };
   });
 }
 
-function curtainPath({ x, w, sway }: Curtain): string {
+function curtainPath({ x, w, sway, lean }: Curtain): string {
   const r = x + w;
-  return `M${x} 0 C ${x + sway} 60, ${x - sway} 130, ${x} 200 L ${r} 200 C ${r - sway} 130, ${r + sway} 60, ${r} 0 Z`;
+  return `M${x} 0 C ${x + sway} 60, ${x + lean - sway} 130, ${x + lean} 200 L ${r + lean} 200 C ${r + lean - sway} 130, ${r + sway} 60, ${r} 0 Z`;
 }
 
 // ─── Rediscover: echo arcs (generated) ─────────────────────────────────
@@ -181,15 +182,21 @@ function genEcho(rnd: () => number): { cx: number; cy: number; glowR: number; ri
   const cy = lerp(rnd, source.y[0], source.y[1]);
   // Reach the far corner, so the outer arcs cross the whole square.
   const reach = Math.hypot(Math.max(cx, 200 - cx), Math.max(cy, 200 - cy));
-  const count = 4 + Math.floor(rnd() * 3); // 4–6
+  const count = 3 + Math.floor(rnd() * 5); // 3–7
   const rings: EchoRing[] = [];
-  let edge = lerp(rnd, 14, 30);
+  let edge = lerp(rnd, 12, 30);
   const step = (reach - edge) / count;
+  // Widths vary widely within a cover: hairlines beside broad bands. One
+  // ring is always broad, so no cover is all fine lines.
+  const broadAt = Math.floor(rnd() * count);
   for (let i = 0; i < count; i++) {
-    const sw = lerp(rnd, step * 0.2, step * 0.5);
+    const broad = i === broadAt || rnd() < 0.35;
+    const sw = broad ? lerp(rnd, step * 0.55, step * 1.05) : lerp(rnd, 1.5, Math.max(2, step * 0.22));
     const r = edge + sw / 2;
-    rings.push({ r, sw, op: Math.max(0.22, lerp(rnd, 0.5, 0.72) - i * 0.05) });
-    edge = r + sw / 2 + lerp(rnd, step * 0.35, step * 0.75);
+    // Thin lines need more opacity to read; broad bands less, to stay soft.
+    const op = broad ? lerp(rnd, 0.38, 0.6) : lerp(rnd, 0.55, 0.85);
+    rings.push({ r, sw, op: Math.max(0.22, op - i * 0.03) });
+    edge = r + sw / 2 + lerp(rnd, step * 0.12, step * 0.55);
   }
   return { cx, cy, glowR: lerp(rnd, 95, 140), rings };
 }
