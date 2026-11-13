@@ -11,7 +11,7 @@ import React, { useId } from 'react';
 //                 a glowing night sky, genre label. Heavy-rotation mixes.
 //   rediscover  — echo arcs (violet/rose): rings radiating from a lit corner
 //                 across the cover, genre label. Rediscovery mixes.
-//   decade      — a sweeping aurora ribbon with the decade numeral printed
+//   decade      — 2–3 sweeping aurora ribbons with the decade numeral printed
 //                 into the art, always readable. Decade / decade-genre mixes;
 //                 a decade-genre mix also prints its style under the numeral
 //                 ("2010" over "House"), so it never reads as the plain decade.
@@ -209,25 +209,45 @@ function genEcho(rnd: () => number): { cx: number; cy: number; glowR: number; ri
   return { cx, cy, glowR: lerp(rnd, 95, 140), rings };
 }
 
-// ─── Decade: aurora ribbon (generated) ─────────────────────────────────
-// The sweeping band's waveform and thickness are seeded per cover; thickness
-// never drops below the original hand-tuned 38 units so the ribbon stays
-// substantial. The numeral stays fixed and readable.
-function genRibbon(rnd: () => number): { main: string; cross: string } {
-  const t = lerp(rnd, 38, 58);
-  const y0 = lerp(rnd, 118, 168);           // left anchor
-  const y1 = lerp(rnd, 72, 126);            // right anchor
-  const c1y = y0 - lerp(rnd, 28, 66);       // first control: rise
-  const c2y = y1 + lerp(rnd, 30, 84);       // second control: dip
-  const main = `M-10 ${y0} C 44 ${c1y}, 118 ${c2y}, 210 ${y1} L 210 ${y1 + t} C 118 ${c2y + t}, 44 ${c1y + t}, -10 ${y0 + t} Z`;
-  // Thin counter-band recrossing the glyph at low opacity.
-  const ct = lerp(rnd, 12, 20);
-  const cy0 = lerp(rnd, 100, 128);
-  const cy1 = lerp(rnd, 112, 146);
-  const cc1 = cy0 + lerp(rnd, 24, 48);
-  const cc2 = cy1 - lerp(rnd, 28, 52);
-  const cross = `M-10 ${cy0} C 52 ${cc1}, 128 ${cc2}, 210 ${cy1} L 210 ${cy1 + ct} C 128 ${cc2 + ct}, 52 ${cc1 + ct}, -10 ${cy0 + ct} Z`;
-  return { main, cross };
+// ─── Decade: aurora ribbons (generated) ────────────────────────────────
+// 2–3 sweeping ribbons whose width and curve vary widely: one broad band
+// (it can be wider than the cover is tall, washing most of it) and one or
+// two narrower ones, from hairline streaks to wide bands. Each may taper,
+// wider at one end, and arcs gently or steeply. A thin one may recross the
+// numeral at low opacity, so the numeral sits *in* the aurora; the rest lie
+// under it. All seeded per cover; the numeral stays fixed and readable.
+interface Ribbon { d: string; broad: boolean; over: boolean }
+
+function ribbonPath(rnd: () => number, t0: number, t1: number): string {
+  const y0 = lerp(rnd, -30, 200 - t0 * 0.4);  // left anchor (top edge)
+  const y1 = lerp(rnd, -30, 200 - t1 * 0.4);  // right anchor
+  const bend = lerp(rnd, 20, 150);            // how far the curve swings
+  const c1x = lerp(rnd, 20, 90);
+  const c2x = lerp(rnd, 110, 180);
+  const c1y = y0 - bend * lerp(rnd, 0.3, 1);
+  const c2y = y1 + bend * lerp(rnd, 0.3, 1) * (rnd() < 0.5 ? 1 : -0.4);
+  const b0 = t0, b1 = t1;
+  const bc1 = t0 * 0.7 + t1 * 0.3, bc2 = t0 * 0.3 + t1 * 0.7;
+  return `M-10 ${y0} C ${c1x} ${c1y}, ${c2x} ${c2y}, 210 ${y1} `
+    + `L 210 ${y1 + b1} C ${c2x} ${c2y + bc2}, ${c1x} ${c1y + bc1}, -10 ${y0 + b0} Z`;
+}
+
+function genRibbons(rnd: () => number): Ribbon[] {
+  const count = 2 + Math.floor(rnd() * 2); // 2–3
+  const broadAt = Math.floor(rnd() * count);
+  const ribbons: Ribbon[] = [];
+  for (let i = 0; i < count; i++) {
+    const broad = i === broadAt;
+    const width = () => (broad ? lerp(rnd, 60, 240) : rnd() < 0.5 ? lerp(rnd, 4, 22) : lerp(rnd, 22, 80));
+    const t0 = width();
+    const t1 = rnd() < 0.5 ? t0 : width(); // half of them taper
+    ribbons.push({ d: ribbonPath(rnd, t0, t1), broad, over: false });
+  }
+  // The narrowest ribbon may cross over the numeral, faintly.
+  const thin = ribbons.filter(r => !r.broad);
+  if (thin.length && rnd() < 0.6) thin[thin.length - 1].over = true;
+  // Broad first, so narrower ribbons read on top of it.
+  return [...ribbons.filter(r => r.broad), ...ribbons.filter(r => !r.broad)];
 }
 
 interface AuroraCoverProps {
@@ -384,13 +404,13 @@ export const AuroraCover: React.FC<AuroraCoverProps> = ({ variant, seed, title, 
       </>
     );
   } else {
-    // decade — a sweeping ribbon with the numeral printed into the art. One
-    // thin band recrosses the glyph at low opacity so it sits *in* the aurora
+    // decade — 2–3 sweeping ribbons with the numeral printed into the art. A
+    // thin one may recross the glyph at low opacity so it sits *in* the aurora
     // while staying easily readable.
     const p = (auroraSeedVariant(seed, 4) + 1) as 1 | 2 | 3 | 4;
     const tintA = `var(--aurora-cover-disc-${p}a)`;
     const tintB = `var(--aurora-cover-disc-${p}b)`;
-    const ribbon = genRibbon(mulberry32(hash));
+    const ribbons = genRibbons(mulberry32(hash));
     svgBody = (
       <>
         <defs>
@@ -402,9 +422,18 @@ export const AuroraCover: React.FC<AuroraCoverProps> = ({ variant, seed, title, 
             <stop offset="0" stopColor={tintA} stopOpacity="0.5" />
             <stop offset="1" stopColor={tintB} stopOpacity="0.2" />
           </linearGradient>
+          <linearGradient id={`${uid}-band`} x1="1" y1="0" x2="0" y2="0.6">
+            <stop offset="0" stopColor={tintB} stopOpacity="0.62" />
+            <stop offset="1" stopColor={tintA} stopOpacity="0.3" />
+          </linearGradient>
         </defs>
         <rect width="200" height="200" fill={`url(#${uid}-night)`} />
-        <path d={ribbon.main} fill={`url(#${uid}-ribbon)`} />
+        <g style={{ mixBlendMode: 'screen' }}>
+          {ribbons.filter(r => !r.over).map((r, i) => (
+            // The broad band softer, so it washes the cover without drowning the numeral.
+            <path key={i} d={r.d} fill={`url(#${uid}-${r.broad ? 'ribbon' : 'band'})`} opacity={r.broad ? 0.85 : 1} />
+          ))}
+        </g>
         {label && (
           <text
             x="100"
@@ -438,7 +467,9 @@ export const AuroraCover: React.FC<AuroraCoverProps> = ({ variant, seed, title, 
             </text>
           );
         })()}
-        <path d={ribbon.cross} fill={tintB} opacity="0.16" />
+        {ribbons.filter(r => r.over).map((r, i) => (
+          <path key={i} d={r.d} fill={tintB} opacity="0.18" />
+        ))}
       </>
     );
   }
