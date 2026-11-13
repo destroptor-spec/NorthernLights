@@ -440,10 +440,11 @@ export const AuroraCover: React.FC<AuroraCoverProps> = ({ variant, seed, title, 
             y={sublabel ? (sublabelLayout(sublabel).lines.length > 1 ? 98 : 110) : 124}
             textAnchor="middle"
             fontSize="66"
-            fontWeight="900"
+            // Cal Sans has one weight: 400, never a synthetic bold.
+            fontWeight="400"
             fill="#ffffff"
-            opacity="0.96"
-            style={{ fontFamily: 'inherit', letterSpacing: '-0.02em' }}
+            opacity="0.8"
+            style={{ fontFamily: 'var(--font-display)', letterSpacing: '0.02em' }}
           >
             {label}
           </text>
