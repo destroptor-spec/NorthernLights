@@ -577,6 +577,21 @@ The moods describe the sound, not the meaning: the models never hear lyrics, so 
 
 **Round 1 rated (12 Nov 2026): mood-led lost 3–5 with 2 ties**, and lost its own cases: the rainy-day list drifted into classic rock (Journey, Toto, Queen, Blue Öyster Cult) because a low focus let the whole Rock genre count almost like Indie Rock, and music for code lost on one odd pick (Scooter); jazz and coding lists shared 70–80 % of tracks. Changed: a mood request loosens to the target's nearest styles by centroid (3 + 3 (1 − focus) of them, weight 0.5 Adjacent Reach + 0.4 (1 − focus), at most 0.8), never the whole genre (genre stays at half); mood weight halved (β_mood 1.25) and counted in proportion to style fit (0.4 + 0.6 match), so it picks among tracks of the concept; style weight at a pure mood request half, not a third; the AI's sound share 0.35–0.7; the prompt sets focus ≥ 0.5 when a request names a genre (its own example had taught 0.4 for the rainy day); a genre request on a thin theme (Danish 90s rap, about 8 artists) gives Artist Spread in proportion to the fitting artists, so it stays rap (20 of 20, no Johnny Madsen). Round 2: six mood-only requests (`generate-concepts.ts --set=mood`), one blind pair each.
 
+### Scale test (2026-11-14)
+
+`scripts/library-scale/make-library.ts` builds a test library in its own database from the dev library (whole albums at random, or the library copied k times with new ids, paths and titles) and runs Aurora's own genre pipeline on it; `run-scale.ts` times the saved AI concepts, the special-list menu and builds, artist radio and the Discover rail. Results:
+
+| | 576 tracks | 31,868 (dev) | 95,604 |
+| --- | --- | --- | --- |
+| AI playlist, median | 53 ms | 201 ms | 873 ms |
+| Special-list menu | 5 ms (no themes) | 150 ms (36) | 1.26 s (36) |
+| Special list build | — | 88 ms | 118 ms |
+| Artist radio | 16 ms | 208 ms | 680 ms |
+| Discover rail (all) | 157 ms (19) | 1.4 s (34) | 4.1 s (38) |
+| Fusion, full | 0.3 s | 18 s | 70 s |
+
+Found and fixed: at 95,604 tracks fusion failed on the pool's 30 s statement timeout (the audio step probed the unindexed, never-analysed temp tables row by row); `fz_tag` and `fz_rows` now get an index and `ANALYZE`, and fusion's own transaction allows 15 minutes. The library profile (genre health and sound ranges) takes about 7 s at that size and was cached for 5 minutes, so the first AI playlist after a quiet spell waited for it; it now answers from the cache while a fresh one is computed. The menu grows faster than the library (8× for 3×) but stays a background second per Hub refresh. At 576 tracks: AI playlists are made (20 tracks), the support check answers ("Your library has no Eurodance, Hands Up or Hi NRG tracks from the 1990s"), there are no special lists (no theme with 40 songs from 10 artists, as designed), and a request for a style the library lacks is filled with whatever sounds nearest ("Jazz for a dinner party" → Emancipator, Pink Floyd, orchestral Metallica): the support check covers only requests with a hard filter.
+
 ### Evaluation and build order
 
 1. One score and the bounded candidate set for general lists, built beside the pools.

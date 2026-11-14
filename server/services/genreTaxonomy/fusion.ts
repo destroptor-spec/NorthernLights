@@ -153,10 +153,15 @@ const AUDIO_STYLES_SQL = (pairs: string) => `
 export async function runFusion(db: Pool, { trackIds }: { trackIds?: string[] } = {}): Promise<FusionStatus> {
   const started = Date.now();
   const full = !trackIds;
-  const trusted = trustedAudioGenres(await audioAgreementFor(db, full));
   const client = await db.connect();
+  let trusted: AudioAgreement[] = [];
   try {
     await client.query('BEGIN');
+    // A background rebuild, not a request: the pool's 30 s guard is for
+    // interactive queries. On a 94,000-track test library a full run takes
+    // well over a minute and single statements over 30 s.
+    await client.query(`SET LOCAL statement_timeout = '15min'`);
+    trusted = trustedAudioGenres(await audioAgreementFor(client, full));
     await client.query(`
       CREATE TEMP TABLE fz_t ON COMMIT DROP AS
       SELECT t.id AS track_id, t.artist_id, t.album_id FROM tracks t
@@ -172,6 +177,11 @@ export async function runFusion(db: Pool, { trackIds }: { trackIds?: string[] } 
       JOIN tag_map m ON m.tag = tt.tag_key
       WHERE m.reliability >= $1 AND NOT EXISTS (SELECT 1 FROM tag_ignored i WHERE i.tag = tt.tag_key)
       GROUP BY tt.track_id, m.genre, m.style_id`, [MEMBER_RELIABILITY]);
+    // Temp tables are never auto-analysed: without an index and statistics
+    // the planner took them for tiny and probed them row by row (the audio
+    // step below passed 30 s at 94,000 tracks).
+    await client.query('CREATE INDEX ON fz_tag (track_id, genre)');
+    await client.query('ANALYZE fz_tag');
 
     await client.query(`
       CREATE TEMP TABLE fz_rows (
@@ -183,6 +193,8 @@ export async function runFusion(db: Pool, { trackIds }: { trackIds?: string[] } 
       INSERT INTO fz_rows SELECT track_id, genre, style_id, 'tag', r, r FROM fz_tag WHERE style_id IS NOT NULL`);
     await client.query(`
       INSERT INTO fz_rows SELECT track_id, genre, NULL, 'tag', MAX(r), MAX(r) FROM fz_tag GROUP BY track_id, genre`);
+    await client.query('CREATE INDEX ON fz_rows (track_id, style_id)');
+    await client.query('ANALYZE fz_rows');
     // A tagged genre with no tagged style: styles from the sound within it.
     await client.query(`
       CREATE TEMP TABLE fz_genre_only ON COMMIT DROP AS

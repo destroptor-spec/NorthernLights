@@ -297,3 +297,9 @@ Nothing to run. On the next engine refresh (the Hub schedule, or Reset Hub), "Yo
 Nothing to run. Artist radio is built by the scored mix (it won its blind comparison): one version of each song, music only (no skits, solos, a cappellas, untitled hidden tracks, nothing over 20 minutes). The daylist stays on the old pools until its own comparison: a system setting `daylistEngine` (`pools`, the default, or `score`).
 
 - [ ] Play an artist radio; the log reads `[Scored mix] <artist> Radio: … picked N from M artists`.
+
+### Step 8: large libraries (no schema change)
+
+Nothing to run. A full genre rebuild (fusion) no longer stops on the 30 s statement timeout on large libraries (it failed at 95,000 tracks in a test; it now takes about 70 s there, 18 s at 32,000), and AI playlists no longer wait for the library profile after a quiet spell.
+
+- [ ] After start (or a scan), the log reads `[GenreTaxonomy] Fused N tracks in … ms` without `canceling statement due to statement timeout`.
