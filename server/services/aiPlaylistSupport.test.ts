@@ -25,3 +25,9 @@ test('the answer says how much there is, or that there is none', () => {
   });
   expect(thinRequest(['Hip Hop'], filter, { songs: 0, artists: 0 }, 20).message).toBe('Your library has no Hip Hop tracks from Denmark from the 1990s.');
 });
+
+test('a plain style request reads as the style alone', () => {
+  const { thinRequest: thin, NO_HARD_FILTER: none2 } = jest.requireActual('./aiPlaylistSupport');
+  expect(thin(['Jazz'], none2, { songs: 3, artists: 2 }, 20).message).toBe('Your library has 3 Jazz tracks, too few for a 20-track playlist.');
+  expect(thin(['Jazz', 'Bossa Nova'], none2, { songs: 0, artists: 0 }, 20).message).toBe('Your library has no Jazz or Bossa Nova tracks.');
+});

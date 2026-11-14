@@ -2,9 +2,9 @@
  * The support check for custom AI playlists (docs/Aurora genre and style
  * redesign.md, AI playlists → Special lists → Custom requests): a request
  * that names a theme with hard filters ("Dansk rap fra 90'erne" → Hip Hop,
- * Denmark or Danish, 1990s) is only made when the library has enough of it.
- * Otherwise Aurora says how much there is, instead of padding the list with
- * something else.
+ * Denmark or Danish, 1990s), or one that names a style ("Jazz for a dinner
+ * party"), is only made when the library has enough of it. Otherwise Aurora
+ * says how much there is, instead of padding the list with something else.
  */
 
 /** What the library has of a requested theme that is too thin for a playlist. */
@@ -37,6 +37,16 @@ export interface HardFilter {
   yearTo: number | null;
   vocals: string | null;
 }
+
+/** No hard filter: a request that only names styles ("Jazz tracks"). */
+export const NO_HARD_FILTER: HardFilter = { countries: [], languages: [], yearFrom: null, yearTo: null, vocals: null };
+
+/**
+ * A request whose focus (the AI's 0 mood … 1 genre) is at least this names a
+ * style, so the library must have enough of it; the prompt sets focus ≥ 0.5
+ * whenever a request names a genre or style.
+ */
+export const STYLE_REQUEST_FOCUS = 0.5;
 
 export function hasHardFilter(filter: HardFilter | null | undefined): filter is HardFilter {
   return !!filter && (filter.countries.length > 0 || filter.languages.length > 0

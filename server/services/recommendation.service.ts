@@ -10,7 +10,7 @@ import { artistCap, blendEmbeddings, conceptMatch, conceptStyles, focusOf, moodB
 import type { SoundQuality } from '../../shared/audioMoods';
 import { ACTIVITIES, buildThemeMenu, recentSpecialThemes, type Theme } from './specialLists.service';
 import { imputeEffNetCentroid, leadArtistKey } from './scoredMix.service';
-import { hasHardFilter, thinRequest } from './aiPlaylistSupport';
+import { hasHardFilter, NO_HARD_FILTER, STYLE_REQUEST_FOCUS, thinRequest } from './aiPlaylistSupport';
 
 /** A special list's tracks fit when they are within this share of the theme's tracks nearest by sound. */
 const SPECIAL_FIT_SHARE = 0.75;
@@ -983,16 +983,23 @@ export async function getHubCollections(
         let rows: any[] = [];
         let strongIds = new Set<string>();
         let counts = { sound: 0, strong: 0, weak: 0, mood: 0 };
-        // A custom request that names a theme with hard filters ("Dansk rap
-        // fra 90'erne") is made only when the library has enough of it:
-        // otherwise Aurora says how much there is instead of padding the list.
-        if (!concept.special && (settings.llmGenerationSource ?? 'hub') === 'custom' && hasTargets && hasHardFilter(originFilter)) {
-          const found = await fetchLlmPool({ ...base, limit: 4 * L, withPaths: false, members: { styleIds: styles.styleIds, genres: styles.genres, minStrength: 0 } });
+        // A custom request is made only when the library has enough of what
+        // it asks for, otherwise Aurora says how much there is instead of
+        // padding the list: a theme with hard filters ("Dansk rap fra
+        // 90'erne": any member of its styles that passes the filters counts),
+        // or a request that names a style (focus ≥ 0.5, the AI's own rule:
+        // the style's strong members count). A mood request ("music for
+        // code") may still reach anything close in sound.
+        const hardFilter = hasHardFilter(originFilter) ? originFilter : null;
+        if (!concept.special && (settings.llmGenerationSource ?? 'hub') === 'custom' && hasTargets
+          && (hardFilter || focus >= STYLE_REQUEST_FOCUS)) {
+          const minStrength = hardFilter ? 0 : STRONG_MEMBER;
+          const found = await fetchLlmPool({ ...base, limit: 4 * L, withPaths: false, members: { styleIds: styles.styleIds, genres: styles.genres, minStrength } });
           const songs = new Set(found.map(getSongDedupKey)).size;
           if (songs < L) {
             const named = (await db.query('SELECT id, name FROM style WHERE id = ANY($1::int[])', [styles.styleIds])).rows as Array<{ id: number; name: string }>;
             const names = [...styles.styleIds.map(id => named.find(r => r.id === id)?.name).filter((n): n is string => !!n), ...styles.genres];
-            const support = thinRequest(names, originFilter, { songs, artists: new Set(found.map((r: any) => spreadArtistKey(r.artist || ''))).size }, L);
+            const support = thinRequest(names, hardFilter ?? NO_HARD_FILTER, { songs, artists: new Set(found.map((r: any) => spreadArtistKey(r.artist || ''))).size }, L);
             console.warn(`[LLM Hub] Custom request "${concept.title}" not made: ${support.message}`);
             (concept as any).dropped = true;
             (concept as any).dropReason = 'too-thin';
