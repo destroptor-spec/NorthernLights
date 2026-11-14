@@ -1,4 +1,4 @@
-import { getUserSetting, initDB, createPlaylist, addTracksToPlaylist, getPlaylists, getPlaylistTracks, getUserRecentTracks, getUserTopTracks, deleteSystemPlaylistsForUser, getSystemSetting } from '../database';
+import { initDB, createPlaylist, addTracksToPlaylist, getPlaylists, getPlaylistTracks, getUserRecentTracks, getUserTopTracks, deleteSystemPlaylistsForUser, getSystemSetting } from '../database';
 import { getLibraryProfile } from './libraryProfile.service';
 import { compileConceptToLibrary } from './llmConceptCompiler.service';
 import { queryWithRetry } from '../utils/db';
@@ -916,11 +916,6 @@ export async function getHubCollections(
           banned_genres: (concept as any).banned_genres || [],
         },
         libraryProfile,
-        {
-          requestedGenreBlend: genreBlend,
-          tracksPerPlaylist,
-          adjacentReach,
-        }
       );
 
       const asked = originFilterOf(concept);
@@ -946,7 +941,7 @@ export async function getHubCollections(
       }
       // A special list's theme is the specific part (Hip Hop from Denmark), not its genre.
       if (compiled.diagnostics.shouldRegenerate && !concept.special) {
-        console.warn(`[LLM Hub] Dropping playlist "${concept.title}" - low-quality concept compile (score=${compiled.diagnostics.qualityScore.toFixed(2)}). ${compiled.diagnostics.regenerateReason || ''}`.trim());
+        console.warn(`[LLM Hub] Dropping playlist "${concept.title}" - ${compiled.diagnostics.regenerateReason}`);
         (concept as any).dropped = true;
         continue;
       }
@@ -1370,9 +1365,6 @@ export async function getHubCollections(
   }
 
   // 2. Jump Back In — Heat Score system (per-user)
-  const nowMs = Date.now();
-  const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
-  const twoYearsMs = 2 * 365 * 24 * 60 * 60 * 1000;
 
   let jumpRes;
   if (userId && systemPlaylistConfig.jumpBackIn) {

@@ -1,7 +1,7 @@
 import { initDB } from '../database';
 import { queryWithRetry } from '../utils/db';
 import { christmasExclusionSql } from '../utils/seasonalFilter';
-import { artistGenrePaths, isRowBanned, pathsMatchSql, resolveBannedPaths, resolveGenrePaths, trackGenrePathsJoin } from './genreTaxonomy/paths';
+import { artistGenrePaths, isRowBanned, pathsMatchSql, resolveBannedPaths, trackGenrePathsJoin } from './genreTaxonomy/paths';
 
 // Shared multi-pool primitive used by smart-hub features (artist radio,
 // daylist). Concepts are borrowed from the LLM playlist generator
@@ -778,58 +778,6 @@ export async function computeArtistCentroids(
   };
 }
 
-// ─── Library mainstream centroid (cached) ──────────────────
-
-let _mainstreamCache: { acousticVectorStr: string; ts: number } | null = null;
-const MAINSTREAM_CACHE_MS = 60 * 60 * 1000;
-
-export async function getLibraryMainstreamVector(): Promise<string | null> {
-  if (_mainstreamCache && Date.now() - _mainstreamCache.ts < MAINSTREAM_CACHE_MS) {
-    return _mainstreamCache.acousticVectorStr;
-  }
-  // PostgreSQL has no native vector AVG, so we pull a random sample of
-  // acoustic vectors and average them in JS.
-  const sample = await queryWithRetry(
-    `SELECT tf.acoustic_vector_8d::text AS v
-     FROM track_features tf
-     WHERE tf.acoustic_vector_8d IS NOT NULL
-       AND tf.is_simulated = FALSE
-     ORDER BY RANDOM()
-     LIMIT 1000`,
-    []
-  ).catch(() => null);
-  if (!sample || sample.rowCount === 0) return null;
-  const acc = new Array(8).fill(0);
-  let n = 0;
-  for (const r of sample.rows as any[]) {
-    try {
-      const v = JSON.parse(r.v);
-      if (Array.isArray(v) && v.length === 8) {
-        for (let i = 0; i < 8; i++) acc[i] += Number(v[i]);
-        n++;
-      }
-    } catch {}
-  }
-  if (n === 0) return null;
-  const avg = acc.map((x) => x / n);
-  const str = `[${avg.join(',')}]`;
-  _mainstreamCache = { acousticVectorStr: str, ts: Date.now() };
-  return str;
-}
-
-// ─── Genre path resolver ───────────────────────────────────
-
-/** The first path for a genre or style name (see genreTaxonomy/paths.ts). */
-export async function resolveGenrePath(genre: string): Promise<string | null> {
-  return (await resolveGenrePaths(await initDB(), genre))[0] ?? null;
-}
-
-// ─── Seed-artist genre paths ──────────────────────────────
-
-// For artist radio: the seed artist's strongest style, their next styles as
-// adjacent paths, and the genre as the root, from the artist's profile
-// (artist_styles). An artist with no profile gets empty paths and the radio
-// falls back to embedding K-NN with no genre filter.
 export async function getArtistGenrePaths(artistId: string): Promise<{
   primaryPath: string | null;
   adjacentPaths: string[];

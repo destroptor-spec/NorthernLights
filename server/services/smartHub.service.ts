@@ -101,14 +101,6 @@ async function loadCachedSmart(id: string): Promise<CachedSmart | null> {
   };
 }
 
-async function getCachedSmartPlaylist(id: string, ttlMs: number) {
-  const cached = await loadCachedSmart(id);
-  if (!cached) return null;
-  if (cached.ageMs > ttlMs) return null;
-  const { ageMs: _drop, ...rest } = cached;
-  return rest;
-}
-
 // Stale-while-revalidate: returns the cache regardless of age, plus a flag
 // indicating whether a refresh should be triggered.
 async function getStaleOrFresh(id: string, ttlMs: number) {

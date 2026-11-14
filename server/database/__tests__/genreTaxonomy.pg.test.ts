@@ -760,12 +760,11 @@ describeDb('genre & style taxonomy on a fresh database', () => {
     const vocabulary = await paths.getStyleVocabulary(pool);
     expect(vocabulary.indexOf('Rock')).toBeLessThan(vocabulary.indexOf('Punk'));
     expect(vocabulary).not.toContain('Gabber');
-    // Genre health counts a track under its genre and each of its styles.
+    // The library profile: sizes and the sound's range (genre health went with the pool-era compiler).
     clearLibraryProfileCache();
     const profile = await getLibraryProfile();
-    expect(profile.genreHealth.get('rock.punk')?.trackCount).toBeGreaterThanOrEqual(1);
-    expect(profile.genreHealth.get('pop')!.trackCount).toBeGreaterThanOrEqual(2);
-    expect(profile.genreHealth.get('rock')!.trackCount).toBeGreaterThanOrEqual(profile.genreHealth.get('rock.punk')!.trackCount);
+    expect(profile.totalTracks).toBeGreaterThanOrEqual(2);
+    expect(profile.vector).toHaveLength(8);
   });
 
   test('track genres (phase 4): derived from the fused genres and styles, kept through rescans, and the only genres listed', async () => {

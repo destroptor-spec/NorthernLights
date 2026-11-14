@@ -5,7 +5,6 @@ import {
   getUserRecentTracks,
   getUserSetting,
   initDB,
-  setUserSetting,
 } from '../database';
 import { generateCustomPlaylist, generateHubConcepts, generateSpecialPicks, HubCollection } from './llm.service';
 import { buildThemeMenu, conceptForTheme, menuForAi, recentSpecialThemes, rememberSpecialThemes } from './specialLists.service';
