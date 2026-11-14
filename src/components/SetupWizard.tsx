@@ -37,6 +37,16 @@ interface ModelProgress {
     status: string;
 }
 
+/**
+ * The analysis models as the wizard shows them: the one network, and the
+ * small classifiers that read styles, sound and moods from it (ten files).
+ */
+const NETWORK_FILE = /^discogs-effnet/i;
+const MODEL_GROUPS = [
+    { id: 'network', name: 'Discogs-EffNet', detail: 'The network that listens to every track', match: (filename: string) => NETWORK_FILE.test(filename) },
+    { id: 'classifiers', name: 'Classifiers', detail: 'Styles, danceability, acoustic, vocals and moods', match: (filename: string) => !NETWORK_FILE.test(filename) },
+] as const;
+
 const SETUP_STEPS: ReadonlyArray<{ id: SetupStep; label: string }> = [
     { id: 'account', label: 'Account' },
     { id: 'analysis', label: 'Analysis' },
@@ -159,6 +169,17 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
         [modelStatus],
     );
     const allModelsReady = flattenedModels.length > 0 && flattenedModels.every(model => model.cached);
+    const modelGroups = useMemo(() => MODEL_GROUPS.map(group => {
+        const files = flattenedModels.filter(file => group.match(file.filename));
+        const progress = files.map(file => modelProgress.get(`${file.modelName}/${file.filename}`));
+        const downloading = progress.some(p => p?.status === 'downloading');
+        const ready = files.length > 0 && files.every(file => file.cached);
+        const readyFiles = files.filter((file, i) => file.cached || progress[i]?.status === 'done').length;
+        const bytes = progress.reduce((sum, p) => sum + (p?.bytes || 0), 0);
+        const total = progress.reduce((sum, p) => sum + (p?.total || 0), 0);
+        const size = files.reduce((sum, file) => sum + (file.cached ? file.size : 0), 0);
+        return { ...group, files, downloading, ready, readyFiles, bytes, total, size };
+    }).filter(group => group.files.length > 0), [flattenedModels, modelProgress]);
     const accountValid = username.trim().length >= 3 && password.length >= 12;
     const libraryValid = libraryPath.trim().length > 0;
 
@@ -178,9 +199,11 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
         setIsSubmitting(true);
         setModelProgress(new Map());
         try {
+            // Only what is missing: models already here stay as they are.
             const response = await fetch('/api/settings/models/download', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+                body: JSON.stringify({ missingOnly: true }),
             });
             if (!response.ok) throw new Error(await responseError(response, 'Could not start the model download.'));
             setModelDownloading(true);
@@ -318,7 +341,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
                                 <div>
                                     <p className="setup-wizard__eyebrow">Recommended</p>
                                     <h2 ref={headingRef} tabIndex={-1}>Prepare audio analysis</h2>
-                                    <p>MusiCNN supplies Aurora's 8D acoustic features. Discogs-EffNet adds a 1280D timbre and production fingerprint for better local recommendations.</p>
+                                    <p>Aurora listens to every track with Discogs-EffNet, and small classifiers read its styles, danceability, acoustic or electronic sound, vocals and moods. Genres from the sound, recommendations, radio and AI playlists all build on it.</p>
                                 </div>
                             </div>
 
@@ -327,30 +350,35 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
                                     <p className="setup-wizard__model-empty"><Loader2 size={17} className="setup-wizard__spinner" aria-hidden="true" /> Checking model files...</p>
                                 ) : (
                                     <ul className="setup-wizard__model-list" aria-label="Audio analysis models">
-                                        {flattenedModels.map(model => {
-                                            const progress = modelProgress.get(`${model.modelName}/${model.filename}`);
-                                            const downloading = progress?.status === 'downloading';
-                                            const progressValue = downloading && progress.total > 0
-                                                ? Math.min(progress.bytes, progress.total)
-                                                : undefined;
+                                        {modelGroups.map(group => {
+                                            const several = group.files.length > 1;
+                                            // One file: its bytes; several: how many of them are in.
+                                            const value = several ? group.readyFiles : group.total > 0 ? Math.min(group.bytes, group.total) : undefined;
+                                            const max = several ? group.files.length : group.total || undefined;
+                                            const state = group.ready ? 'ready' : group.downloading ? 'downloading' : 'missing';
+                                            const status = group.ready
+                                                ? `${formatBytes(group.size)} ready`
+                                                : group.downloading
+                                                    ? several ? `${group.readyFiles} of ${group.files.length} downloaded` : `${formatBytes(group.bytes)} downloaded`
+                                                    : several && group.readyFiles > 0 ? `${group.files.length - group.readyFiles} of ${group.files.length} missing` : 'Not downloaded';
                                             return (
-                                                <li key={model.filename} data-state={model.cached ? 'ready' : downloading ? 'downloading' : 'missing'}>
+                                                <li key={group.id} data-state={state}>
                                                     <div className="setup-wizard__model-row">
                                                         <span className="setup-wizard__model-icon" aria-hidden="true">
-                                                            {model.cached ? <CheckCircle2 size={17} /> : downloading ? <Download size={17} /> : <AlertCircle size={17} />}
+                                                            {group.ready ? <CheckCircle2 size={17} /> : group.downloading ? <Download size={17} /> : <AlertCircle size={17} />}
                                                         </span>
                                                         <div>
-                                                            <strong>{model.modelName}</strong>
-                                                            <code>{model.filename}</code>
+                                                            <strong>{group.name}{several ? ` (${group.files.length})` : ''}</strong>
+                                                            <small>{group.detail}</small>
                                                         </div>
-                                                        <span>{model.cached ? `${formatBytes(model.size)} ready` : downloading ? `${formatBytes(progress?.bytes || 0)} downloaded` : 'Not downloaded'}</span>
+                                                        <span>{status}</span>
                                                     </div>
-                                                    {downloading ? (
+                                                    {group.downloading ? (
                                                         <progress
                                                             className="setup-wizard__progress"
-                                                            value={progressValue}
-                                                            max={progress?.total || undefined}
-                                                            aria-label={`Downloading ${model.modelName}`}
+                                                            value={value}
+                                                            max={max}
+                                                            aria-label={`Downloading ${group.name}`}
                                                         />
                                                     ) : null}
                                                 </li>
@@ -361,7 +389,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
                             </div>
 
                             <p className="setup-wizard__note">
-                                If you skip this step, Aurora will still import playable tracks and metadata. Audio analysis stays pending until both models are downloaded later in Settings.
+                                If you skip this step, Aurora still imports playable tracks and their tags. Analysis waits until the models are downloaded in Settings → Library.
                             </p>
 
                             {operationError ? (
@@ -420,7 +448,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
                             </div>
 
                             <p className="setup-wizard__note">
-                                LLM playlists, MusicBrainz taxonomy, Last.fm, Genius, and other optional integrations remain available in Settings after launch.
+                                AI playlists, Last.fm, MusicBrainz, Genius and the other optional integrations can be set up in Settings after launch.
                             </p>
 
                             {operationError ? (

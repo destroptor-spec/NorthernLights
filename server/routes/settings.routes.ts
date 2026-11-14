@@ -166,7 +166,7 @@ router.post('/health/llm', requireAdmin, async (req, res) => {
 });
 
 // ─── ML Model Management ──────────────────────────────────────────────────
-import { getModelStatus, clearAndRedownloadModels, modelProgressEmitter, isDownloadInProgress } from '../services/downloadModels';
+import { getModelStatus, clearAndRedownloadModels, downloadModels, modelProgressEmitter, isDownloadInProgress } from '../services/downloadModels';
 
 // Get model download status
 router.get('/settings/models/status', requireAdmin, async (_req, res) => {
@@ -178,15 +178,16 @@ router.get('/settings/models/status', requireAdmin, async (_req, res) => {
   }
 });
 
-// Trigger model redownload
-router.post('/settings/models/download', requireAdmin, async (_req, res) => {
+// Trigger a model download: every model again (Settings), or only the
+// missing ones ({ missingOnly: true }, the setup wizard).
+router.post('/settings/models/download', requireAdmin, async (req, res) => {
   try {
     if (isDownloadInProgress()) {
       res.json({ status: 'already_downloading' });
       return;
     }
     // Start download in background
-    clearAndRedownloadModels().catch(err => {
+    (req.body?.missingOnly === true ? downloadModels(false) : clearAndRedownloadModels()).catch(err => {
       console.error('[Models] Redownload failed:', err.message);
     });
     res.json({ status: 'started' });

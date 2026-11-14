@@ -56,14 +56,19 @@ describe('SetupWizard navigation', () => {
       json: async () => ({
         isDownloading: false,
         models: [
-          { name: 'MusiCNN', files: [{ filename: 'musicnn.pb', size: 0, cached: false, downloading: false }] },
-          { name: 'Discogs-EffNet', files: [{ filename: 'effnet.pb', size: 0, cached: false, downloading: false }] },
+          { name: 'Discogs-EffNet', files: [{ filename: 'discogs-effnet-bs64-1.pb', size: 0, cached: false, downloading: false }] },
+          { name: 'Danceability', files: [{ filename: 'danceability-discogs-effnet-1.pb', size: 0, cached: false, downloading: false }] },
+          { name: 'Mood: happy', files: [{ filename: 'mood_happy-discogs-effnet-1.pb', size: 5_000_000, cached: true, downloading: false }] },
         ],
       }),
     });
 
     render(<SetupWizard onComplete={jest.fn()} />);
     const skip = await screen.findByRole('button', { name: /skip for now/i });
+    // The network and its classifiers, as two rows.
+    expect(screen.getByText('Discogs-EffNet')).toBeTruthy();
+    expect(screen.getByText('Classifiers (2)')).toBeTruthy();
+    expect(screen.getByText('1 of 2 missing')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /previous/i })).toBeNull();
     fireEvent.click(skip);
 
