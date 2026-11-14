@@ -292,8 +292,8 @@ Nothing to run. On the next engine refresh (the Hub schedule, or Reset Hub), "Yo
 
 - [ ] Hub → Discover shows style names ("Your Trance favourites", "House from the 2010's") rather than file-tag genres.
 
-### Step 7: artist radio and the daylist on the score (no schema change; off until compared)
+### Step 7: artist radio on the score; the daylist behind a switch (no schema change)
 
-Nothing to run. A system setting `smartMixEngine` (`pools`, the default, or `score`) picks how artist radio and the daylist are built. Leave it unset until the blind comparison on dev decides; if it does, the runbook will say to set it, or the default changes.
+Nothing to run. Artist radio is built by the scored mix (it won its blind comparison): one version of each song, music only (no skits, solos, a cappellas, untitled hidden tracks, nothing over 20 minutes). The daylist stays on the old pools until its own comparison: a system setting `daylistEngine` (`pools`, the default, or `score`).
 
-- [ ] With `smartMixEngine` = `score`, artist radio and the daylist log `[Scored mix] … picked N from M artists`.
+- [ ] Play an artist radio; the log reads `[Scored mix] <artist> Radio: … picked N from M artists`.

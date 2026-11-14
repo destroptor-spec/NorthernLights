@@ -17,7 +17,7 @@
 import { queryWithRetry } from '../utils/db';
 import { initDB } from '../database';
 import { fetchCandidatePool, getSongDedupKey } from './candidatePool.service';
-import { artistCap, conceptMatch, rankByScore, scoreBeta, STRONG_MEMBER, trackMemberships, type ConceptStyles } from './aiPlaylistScore.service';
+import { artistCap, conceptMatch, moodMatch, rankByScore, scoreBeta, STRONG_MEMBER, trackMemberships, trackMoods, type ConceptStyles, type MoodTarget } from './aiPlaylistScore.service';
 import { splitAtFeaturing } from '../../shared/artistCredit';
 
 /**
@@ -74,6 +74,23 @@ export function leadArtistKey(artist: string): string {
   return (main.split(JOINT_CREDIT)[0] || main).toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').trim().replace(/\s+/g, ' ');
 }
 
+/**
+ * A song's title without its version: "Hey Baby (Olav Basoski mix)" and
+ * "Hey Baby - Radio Edit" are both "hey baby", so a mix keeps one version.
+ */
+export function baseTitle(title: string): string {
+  return (title || '')
+    .replace(/\s*[([][^)\]]*[)\]]/g, '')
+    .replace(/\s+-\s+.*$/, '')
+    .toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ').trim();
+}
+
+/** One key per song across its versions: the credit's lead artist and the base title. */
+export function versionKey(row: { artist?: string; title?: string }): string {
+  return `${leadArtistKey(row.artist || '')}:${baseTitle(row.title || '')}`;
+}
+
 /** How much a favourite counts at most, in spreads (as the novelty bonus). */
 const FAVOURITE_WEIGHT = 0.5;
 /** Plays at which a track counts as a full favourite. */
@@ -96,6 +113,11 @@ export interface ScoredMixOptions {
   artistSpread: number;
   /** Random jitter on each score, in spreads (0 = the same mix every time). */
   freshness?: number;
+  /** How the mix should feel, from the moods from the sound (track_moods), and how much it counts in spreads. */
+  moods?: MoodTarget | null;
+  moodWeight?: number;
+  /** Longest track, in seconds; music only (MUSIC_ONLY_SQL) always. */
+  maxSeconds?: number;
   bannedPaths?: string[];
   excludeIds?: string[];
   excludeArtistIds?: string[];
@@ -118,6 +140,7 @@ export async function scoredMix(opts: ScoredMixOptions): Promise<any[]> {
     bannedPaths: opts.bannedPaths,
     excludeIds: opts.excludeIds,
     excludeArtistIds: opts.excludeArtistIds,
+    musicOnly: { minSeconds: 60, maxSeconds: opts.maxSeconds ?? 900 },
   };
   const styles = opts.styles && (opts.styles.styleIds.length || opts.styles.genres.length) ? opts.styles : null;
   const [sound, strong, favourites] = await Promise.all([
@@ -153,6 +176,7 @@ export async function scoredMix(opts: ScoredMixOptions): Promise<any[]> {
     );
     for (const r of res.rows as any[]) plays.set(String(r.track_id), Number(r.score) || 0);
   }
+  const moods = opts.moods ? await trackMoods(db, ids) : new Map();
   const beta = styles ? scoreBeta(opts.cohesion, support, L) : 0;
   const phi = opts.favourites ?? 0;
   const jitter = opts.freshness ?? 0;
@@ -160,6 +184,8 @@ export async function scoredMix(opts: ScoredMixOptions): Promise<any[]> {
     match: (r: any) => (styles ? conceptMatch(styles.weights, memberships.get(String(r.id))) : 0),
     beta,
     nu: opts.discovery,
+    mood: (r: any) => moodMatch(opts.moods ?? null, moods.get(String(r.id))),
+    moodBeta: opts.moods ? opts.moodWeight ?? 1.5 : 0,
     penalty: (r: any) => {
       const favourite = Math.min(1, Math.log1p(plays.get(String(r.id)) ?? 0) / Math.log1p(FAVOURITE_FULL_PLAYS));
       return -phi * FAVOURITE_WEIGHT * favourite + (jitter > 0 ? Math.random() * jitter : 0);
@@ -176,16 +202,19 @@ export async function scoredMix(opts: ScoredMixOptions): Promise<any[]> {
   for (const row of ranked) {
     if (picked.length >= L) break;
     const song = getSongDedupKey(row);
+    const version = versionKey(row as any);
     const artist = leadArtistKey((row as any).artist || '');
-    if (songs.has(song) || (perArtist.get(artist) ?? 0) >= cap) continue;
+    if (songs.has(song) || songs.has(version) || (perArtist.get(artist) ?? 0) >= cap) continue;
     songs.add(song);
+    songs.add(version);
     perArtist.set(artist, (perArtist.get(artist) ?? 0) + 1);
     picked.push(row);
   }
 
   const meanMatch = picked.reduce((sum, r) => sum + Number(r.styleMatch || 0), 0) / Math.max(1, picked.length);
+  const meanMood = picked.reduce((sum, r) => sum + Number(r.moodFit || 0), 0) / Math.max(1, picked.length);
   console.log(`[Scored mix] ${opts.label ?? 'mix'}: candidates sound ${sound.length} + strong ${strong.length} + favourites ${favourites.length} → ${rows.length}`
     + ` | support=${support} beta=${beta.toFixed(2)} nu=${opts.discovery.toFixed(2)} phi=${phi.toFixed(2)} cap=${cap}`
-    + ` | picked ${picked.length} from ${perArtist.size} artists, mean style match ${meanMatch.toFixed(2)}`);
+    + ` | picked ${picked.length} from ${perArtist.size} artists, mean style match ${meanMatch.toFixed(2)}${opts.moods ? `, mean mood fit ${meanMood.toFixed(2)}` : ''}`);
   return picked;
 }

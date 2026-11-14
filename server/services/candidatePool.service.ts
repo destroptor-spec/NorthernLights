@@ -136,6 +136,8 @@ export interface PoolSpec {
   excludeArtistIds?: string[];
   /** Only members of these styles or genres at this strength or more (track_styles). */
   memberOf?: { styleIds: number[]; genres: string[]; minStrength: number };
+  /** Music only, within this length (MUSIC_ONLY_SQL): no skits, a cappellas, solos, talk or hidden tracks. */
+  musicOnly?: { minSeconds: number; maxSeconds: number };
   poolBias?: number;
 }
 
@@ -183,6 +185,18 @@ export interface BuildPlaylistResult {
 }
 
 // ─── Pool fetch ────────────────────────────────────────────
+
+/**
+ * Tracks that are music to play in a mix: not a skit, interlude, a cappella,
+ * instrument solo, interview, commentary, spoken word, poem version or an
+ * untitled hidden track (by title), and not mainly non-music (a Non-Music
+ * membership of 0.3 or more). On dev the daylists were full of these
+ * (Radiohead's hour-long MiniDisc tapes, "Drum Solo", Outkast skits); the
+ * audio model's spoken-word scores barely notice them, the titles do.
+ */
+export const MUSIC_ONLY_SQL = `t.title !~* '\\m(skit|interlude|a ?capp?ella|acapella|commentary|interview|spoken word|poem version|untitled|(drum|bass|guitar|piano|keyboard) solo)\\M'
+        AND t.title !~* '\\msolo\\s*$'
+        AND NOT EXISTS (SELECT 1 FROM track_styles nm WHERE nm.track_id = t.id AND nm.genre = 'Non-Music' AND nm.strength >= 0.3)`;
 
 export async function fetchCandidatePool(opts: FetchPoolOptions): Promise<any[]> {
   if (opts.limit <= 0) return [];
@@ -282,6 +296,13 @@ export async function fetchCandidatePool(opts: FetchPoolOptions): Promise<any[]>
     params.push(opts.excludeArtistIds);
     const p = nextParam++;
     where.push(`(t.artist_id IS NULL OR NOT (t.artist_id::text = ANY($${p}::text[])))`);
+  }
+
+  if (opts.musicOnly) {
+    params.push(opts.musicOnly.minSeconds, opts.musicOnly.maxSeconds);
+    const [min, max] = [nextParam++, nextParam++];
+    where.push(`t.duration BETWEEN $${min} AND $${max}`);
+    where.push(MUSIC_ONLY_SQL);
   }
 
   if (opts.memberOf && (opts.memberOf.styleIds.length > 0 || opts.memberOf.genres.length > 0)) {
