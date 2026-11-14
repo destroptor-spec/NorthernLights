@@ -61,11 +61,25 @@ export interface HubCollection {
   sound_moods?: Partial<Record<'happy' | 'sad' | 'relaxed' | 'aggressive' | 'party' | 'acoustic' | 'instrumental', number>>;
 }
 
+/**
+ * The default OpenAI address with the placeholder key: no AI is set up, so
+ * nothing is asked. Compares the URL's host (a substring check would also
+ * match "api.openai.com.example.net").
+ */
+export function isPlaceholderOpenAi(baseUrl: string, apiKey: string): boolean {
+  if (apiKey !== 'dummy-key') return false;
+  try {
+    return new URL(baseUrl).hostname === 'api.openai.com';
+  } catch {
+    return false;
+  }
+}
+
 export async function generateHubConcepts(
   context: { timeOfDay: string, historySummary: string, count?: number }
 ): Promise<HubCollection[]> {
   const { apiKey, baseUrl, modelName } = await getLlmConfig();
-  if (baseUrl.includes('api.openai.com') && apiKey === 'dummy-key') return [];
+  if (isPlaceholderOpenAi(baseUrl, apiKey)) return [];
 
   const openai = new OpenAI({
     baseURL: baseUrl,
@@ -133,7 +147,7 @@ Only output valid JSON matching this schema:
 
 export async function generateCustomPlaylist(userPrompt: string): Promise<HubCollection | null> {
   const { apiKey, baseUrl, modelName } = await getLlmConfig();
-  if (baseUrl.includes('api.openai.com') && apiKey === 'dummy-key') return null;
+  if (isPlaceholderOpenAi(baseUrl, apiKey)) return null;
 
   const openai = new OpenAI({ baseURL: baseUrl, apiKey });
 
@@ -236,7 +250,7 @@ export async function generateSpecialPicks(
 ): Promise<SpecialPick[]> {
   if (!menu.length || count <= 0) return [];
   const { apiKey, baseUrl, modelName } = await getLlmConfig();
-  if (baseUrl.includes('api.openai.com') && apiKey === 'dummy-key') return [];
+  if (isPlaceholderOpenAi(baseUrl, apiKey)) return [];
   const openai = new OpenAI({ baseURL: baseUrl, apiKey });
   const lines = menu.map(m => `- ${m.key} | ${m.label}${m.describe ? ` (${m.describe})` : ''} | ${m.kind} | ${m.songs} songs, ${m.artists} artists`).join('\n');
   const prompt = `

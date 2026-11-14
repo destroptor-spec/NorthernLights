@@ -1,6 +1,6 @@
 import { initDB, getPlaylistTracks, getSystemSetting, getUserSetting, setUserSetting } from '../database';
 import OpenAI from 'openai';
-import { getLlmConfig, extractJson } from './llm.service';
+import { getLlmConfig, extractJson, isPlaceholderOpenAi } from './llm.service';
 import { withTransaction } from '../utils/db';
 import { christmasExclusionSql } from '../utils/seasonalFilter';
 import { artistImageSql } from '../utils/artistImage';
@@ -937,7 +937,7 @@ async function generateDaylistConcept(
   recentGenres: string[]
 ): Promise<DaylistConcept | null> {
   const { apiKey, baseUrl, modelName } = await getLlmConfig();
-  if (baseUrl.includes('api.openai.com') && apiKey === 'dummy-key') return null;
+  if (isPlaceholderOpenAi(baseUrl, apiKey)) return null;
 
   const openai = new OpenAI({ baseURL: baseUrl, apiKey });
   const recentGenresStr = recentGenres.length > 0 ? recentGenres.join(', ') : 'eclectic';
