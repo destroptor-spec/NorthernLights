@@ -1,4 +1,5 @@
 import { resolveLoggingPreferences } from '../utils/loggingPreferences';
+import { normalizeHubPlaylistCount } from '../../shared/hubPlaylists';
 import type { ServerLoggingSetting } from '../../shared/logging';
 import { create, StateCreator } from 'zustand';
 import { persist, PersistOptions } from 'zustand/middleware';
@@ -309,33 +310,6 @@ const normalizeSystemPlaylistConfig = (value: unknown): Record<string, boolean> 
       typeof parsed[key] === 'boolean' ? parsed[key] : defaultValue,
     ])
   );
-};
-
-const normalizeMbdbLastImport = (value: unknown): PlayerState['mbdbLastImported'] => {
-  if (!value) return null;
-
-  let parsed = value;
-  if (typeof value === 'string') {
-    try {
-      parsed = JSON.parse(value);
-    } catch {
-      return null;
-    }
-  }
-
-  if (!parsed || typeof parsed !== 'object') return null;
-  const info = parsed as Partial<NonNullable<PlayerState['mbdbLastImported']>>;
-  const counts = (info.counts || {}) as Partial<NonNullable<PlayerState['mbdbLastImported']>['counts']>;
-
-  return {
-    timestamp: Number(info.timestamp || 0),
-    duration: Number(info.duration || 0),
-    counts: {
-      genres: Number(counts.genres || 0),
-      aliases: Number(counts.aliases || 0),
-      links: Number(counts.links || 0),
-    },
-  };
 };
 
 const hydratePlaylistTracks = (
@@ -753,6 +727,13 @@ export interface PlayerState {
   /** Admin only. */
   savePlaybackSyncMode: (mode: PlaybackSyncMode) => Promise<void>;
   savePlaybackSyncUserEnabled: (enabled: boolean) => Promise<void>;
+  /**
+   * Genre & style browse (preview, genre redesign phase 2): Library → Genres
+   * shows Aurora's genres and styles instead of the old genre list. Stored per
+   * user on the server so every device agrees; persisted locally for reloads.
+   */
+  newBrowseEnabled: boolean;
+  saveNewBrowseEnabled: (enabled: boolean) => Promise<void>;
   /** Re-reads the two settings, e.g. after another device or an admin changed them. */
   refreshPlaybackSync: () => Promise<void>;
   /** Another device plays the user's session and this idle one follows it (SessionFollower). Not persisted. */
@@ -793,7 +774,6 @@ export interface PlayerState {
   llmGenreCohesion: number;
   llmDiscoveryBias: number;
   llmArtistSpread: number;
-  genrePenaltyCurve: number;
   llmRecoveryStrength: number;
   llmAdjacentReach: number;
   llmTracksPerPlaylist: number;
@@ -821,10 +801,6 @@ export interface PlayerState {
   llmApiKey: string;
   llmModelName: string;
   llmConnected: boolean; // Live connection status
-  mbdbLastImported: { timestamp: number; duration: number; counts: { genres: number; aliases: number; links: number } } | null;
-  genreMatrixLastRun: number | null;
-  genreMatrixLastResult: string | null;
-  genreMatrixProgress: string | null;
   autoFolderWalk: boolean;
 
   // Sign-in captcha (Cloudflare Turnstile, system-level, admin)
@@ -1526,6 +1502,7 @@ export const usePlayerStore = create<PlayerState>()(
         playbackSyncMode: 'off' as PlaybackSyncMode,
         playbackSyncUserEnabled: false as boolean,
         syncPlaybackAcrossDevices: false as boolean,
+        newBrowseEnabled: false as boolean,
         sessionFollow: null as FollowedOutput | null,
         remoteControlOutputId: null as string | null,
         remoteVolumeIntent: null as number | null,
@@ -1589,7 +1566,6 @@ export const usePlayerStore = create<PlayerState>()(
         llmGenreCohesion: 50,
         llmDiscoveryBias: 45,
         llmArtistSpread: 70,
-        genrePenaltyCurve: 50,
         llmRecoveryStrength: 50,
         llmAdjacentReach: 50,
         llmTracksPerPlaylist: 10,
@@ -1613,13 +1589,9 @@ export const usePlayerStore = create<PlayerState>()(
         llmApiKey: '',
         llmModelName: '',
         llmConnected: false,
-        mbdbLastImported: null,
-        genreMatrixLastRun: null as number | null,
-        genreMatrixLastResult: null as string | null,
         turnstileEnabled: false as boolean,
         turnstileSiteKey: '',
         turnstileSecretKey: '',
-        genreMatrixProgress: null as string | null,
         autoFolderWalk: false as boolean,
 
         isSidebarCollapsed: false as boolean,
@@ -1822,6 +1794,17 @@ export const usePlayerStore = create<PlayerState>()(
           }
         },
 
+        saveNewBrowseEnabled: async (enabled: boolean) => {
+          const previous = get().newBrowseEnabled;
+          set({ newBrowseEnabled: enabled });
+          try {
+            await postSettings(get().getAuthHeader(), { newBrowseEnabled: enabled });
+          } catch (error) {
+            set({ newBrowseEnabled: previous });
+            get().addToast(error instanceof Error ? error.message : 'Could not change the browse setting.', 'error');
+          }
+        },
+
         refreshPlaybackSync: async () => {
           if (!get().authToken) return;
           try {
@@ -2016,11 +1999,11 @@ export const usePlayerStore = create<PlayerState>()(
                 llmGenreCohesion: data.llmGenreCohesion !== undefined ? data.llmGenreCohesion : (data.genreBlendWeight !== undefined ? data.genreBlendWeight : 50),
                 llmDiscoveryBias: data.llmDiscoveryBias !== undefined ? data.llmDiscoveryBias : 45,
                 llmArtistSpread: data.llmArtistSpread !== undefined ? data.llmArtistSpread : 70,
-                genrePenaltyCurve: data.genrePenaltyCurve !== undefined ? data.genrePenaltyCurve : 50,
                 llmRecoveryStrength: data.llmRecoveryStrength !== undefined ? data.llmRecoveryStrength : 50,
                 llmAdjacentReach: data.llmAdjacentReach !== undefined ? data.llmAdjacentReach : 50,
                 llmTracksPerPlaylist: data.llmTracksPerPlaylist !== undefined ? data.llmTracksPerPlaylist : 10,
-                llmPlaylistCount: data.llmPlaylistCount !== undefined ? data.llmPlaylistCount : 3,
+                // 2, 3, 6 or 9 (shared/hubPlaylists.ts); a saved 5 becomes 6.
+                llmPlaylistCount: data.llmPlaylistCount !== undefined ? normalizeHubPlaylistCount(data.llmPlaylistCount) : 3,
                 audioAnalysisCpu: data.audioAnalysisCpu || 'Balanced',
                 scannerConcurrency: data.scannerConcurrency || 'SSD',
                 loudnessComputeMode: (data.loudnessComputeMode === 'lazy' || data.loudnessComputeMode === 'full') ? data.loudnessComputeMode : 'both',
@@ -2033,6 +2016,7 @@ export const usePlayerStore = create<PlayerState>()(
                 loudnessLoggingEnabled: data.loudnessLoggingEnabled === true,
                 openSubsonicEnabled: data.openSubsonicEnabled !== false,
                 ...playbackSyncFrom(data.playbackSyncMode, data.playbackSyncEnabled),
+                newBrowseEnabled: data.newBrowseEnabled === true,
                 loudnessNormEnabled: data.loudnessNormEnabled === true,
                 loudnessTargetLufs: typeof data.loudnessTargetLufs === 'number' ? data.loudnessTargetLufs : -18,
                 loudnessPreampDb: typeof data.loudnessPreampDb === 'number' ? data.loudnessPreampDb : 0,
@@ -2040,10 +2024,6 @@ export const usePlayerStore = create<PlayerState>()(
                 llmBaseUrl: data.llmBaseUrl || '',
                 llmApiKey: data.llmApiKey || '',
                 llmModelName: data.llmModelName || '',
-                mbdbLastImported: normalizeMbdbLastImport(data.mbdbLastImport),
-                genreMatrixLastRun: data.genreMatrixLastRun || null,
-                genreMatrixLastResult: data.genreMatrixLastResult || null,
-                genreMatrixProgress: data.genreMatrixProgress || null,
                 lastFmApiKey: data.lastFmApiKey || '',
                 lastFmSharedSecret: data.lastFmSharedSecret || '',
                 lastFmScrobbleEnabled: data.lastFmScrobbleEnabled ?? false,
@@ -2136,7 +2116,6 @@ export const usePlayerStore = create<PlayerState>()(
                 llmGenreCohesion: state.llmGenreCohesion,
                 llmDiscoveryBias: state.llmDiscoveryBias,
                 llmArtistSpread: state.llmArtistSpread,
-                genrePenaltyCurve: state.genrePenaltyCurve,
                 llmRecoveryStrength: state.llmRecoveryStrength,
                 llmAdjacentReach: state.llmAdjacentReach,
                 llmTracksPerPlaylist: state.llmTracksPerPlaylist,
@@ -3569,6 +3548,7 @@ export const usePlayerStore = create<PlayerState>()(
         repeat: state.repeat,
         theme: state.theme,
         reducedMotion: state.reducedMotion,
+        newBrowseEnabled: state.newBrowseEnabled,
         mobileVideoBackgrounds: state.mobileVideoBackgrounds,
         lastFmApiKey: state.lastFmApiKey,
         lastFmScrobbleEnabled: state.lastFmScrobbleEnabled,

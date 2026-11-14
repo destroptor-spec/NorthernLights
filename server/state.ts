@@ -1,6 +1,5 @@
 import { Response } from 'express';
 import { migrateEntityIds } from './database';
-import { genreMatrixService } from './services/genreMatrix.service';
 
 import { EventEmitter } from 'events';
 
@@ -25,9 +24,10 @@ export async function initDatabaseConnection(retries = 15, initialDelay = 1000) 
 
   for (let i = 0; i < retries; i++) {
     try {
-      await genreMatrixService.init();
+      const { initDB } = await import('./database');
+      await (await initDB()).query('SELECT 1');
       setDbConnected(true);
-      console.log('[DB] Connected and genre matrix initialized.');
+      console.log('[DB] Connected.');
       // Backfill entity IDs for existing tracks
       try {
         const { migrateEntityIds } = await import('./database');
@@ -50,6 +50,23 @@ export async function initDatabaseConnection(retries = 15, initialDelay = 1000) 
       } catch (e: any) {
         console.error('[DB] Logging settings load failed (non-fatal):', e.message || e);
       }
+      // Genre & style taxonomy: seeding, track-tag backfill and tag mapping run
+      // in the background so they never delay startup.
+      import('./services/genreTaxonomy')
+        .then(m => m.initializeGenreTaxonomy())
+        .catch((e: any) => console.error('[GenreTaxonomy] Initialisation failed (non-fatal):', e?.message || e));
+      // Credit imports from MusicBrainz and Genius: automatic, slow, only when
+      // a provider is set up.
+      import('./services/creditsEnrichment.service')
+        .then(m => m.startCreditsImports())
+        .catch((e: any) => console.error('[Credits] Import scheduler failed to start (non-fatal):', e?.message || e));
+      // Moods from the sound for tracks analysed before mood scores: from the
+      // stored embeddings, after the models have had time to download.
+      setTimeout(() => {
+        Promise.all([import('./services/moodScores.service'), import('./database')])
+          .then(([m, d]) => m.startMoodBackfill(d.initDB))
+          .catch((e: any) => console.error('[Moods] Backfill failed to start (non-fatal):', e?.message || e));
+      }, 2 * 60 * 1000).unref();
       isInitializing = false;
       return;
     } catch (e: any) {
@@ -130,19 +147,6 @@ export async function isPathAllowed(requestedPathBuf: Buffer): Promise<boolean> 
   return false;
 }
 
-// ─── MBDB State ────────────────────────────────────────────────────────
-export const mbdbStatus = {
-  isImporting: false,
-  phase: 'idle', // 'idle' | 'downloading' | 'inserting' | 'refreshing' | 'complete' | 'error'
-  progress: 0,
-  message: '',
-  elapsedSeconds: 0,
-  currentTable: '',
-  counts: { genres: 0, aliases: 0, links: 0 },
-  lastImport: null as { timestamp: number; duration: number; counts: { genres: number; aliases: number; links: number } } | null,
-  completedPhases: [] as string[],
-};
-
 // Track long-running operations to suppress false-positive leak warnings
 let longRunningOperationCount = 0;
 
@@ -156,23 +160,5 @@ export function endLongRunningOperation() {
 
 export function isLongRunningOperationActive(): boolean {
   return longRunningOperationCount > 0;
-}
-
-export const mbdbClients = new Set<Response>();
-let mbdbCancelRequested = false;
-
-export function setMbdbCancelRequested(val: boolean) {
-  mbdbCancelRequested = val;
-}
-
-export function getMbdbCancelRequested() {
-  return mbdbCancelRequested;
-}
-
-export function broadcastMbdbStatus() {
-  const payload = `data: ${JSON.stringify(mbdbStatus)}\n\n`;
-  for (const client of mbdbClients) {
-    client.write(payload);
-  }
 }
 

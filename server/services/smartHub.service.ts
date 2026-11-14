@@ -1,6 +1,6 @@
 import { initDB, getPlaylistTracks, getSystemSetting, getUserSetting, setUserSetting } from '../database';
 import OpenAI from 'openai';
-import { getLlmConfig, extractJson } from './llm.service';
+import { getLlmConfig, extractJson, isPlaceholderOpenAi } from './llm.service';
 import { withTransaction } from '../utils/db';
 import { christmasExclusionSql } from '../utils/seasonalFilter';
 import { artistImageSql } from '../utils/artistImage';
@@ -14,11 +14,14 @@ import {
   computeArtistCentroids,
   fetchCandidatePool,
   getArtistGenrePaths,
-  getLibraryMainstreamVector,
   getSongDedupKey,
+  MUSIC_ONLY_SQL,
   PoolName,
   PoolSpec,
 } from './candidatePool.service';
+import { conceptStyles, STRONG_MEMBER, type MoodTarget } from './aiPlaylistScore.service';
+import { imputeEffNetCentroid, leadArtistKey, scoredMix, versionKey } from './scoredMix.service';
+import { resolveBannedPaths, resolveGenrePaths } from './genreTaxonomy/paths';
 import { getScrobblesInRange } from './lastfm.service';
 import { getListensInRange } from './listenbrainz.service';
 import { publishApiV1Event } from './apiV1Events.service';
@@ -96,14 +99,6 @@ async function loadCachedSmart(id: string): Promise<CachedSmart | null> {
     ageMs: Date.now() - new Date(row.created_at).getTime(),
     createdAtMs: new Date(row.created_at).getTime(),
   };
-}
-
-async function getCachedSmartPlaylist(id: string, ttlMs: number) {
-  const cached = await loadCachedSmart(id);
-  if (!cached) return null;
-  if (cached.ageMs > ttlMs) return null;
-  const { ageMs: _drop, ...rest } = cached;
-  return rest;
 }
 
 // Stale-while-revalidate: returns the cache regardless of age, plus a flag
@@ -661,6 +656,98 @@ export async function evaluateArtistRadioEligibility(
 // and discovery (never-played / dormant neighbors). Dedup by MB recording
 // id + normalized title; artist diversity enforced via the shared
 // candidatePool primitive.
+// ─── The daylist: which engine ──────────────────────────────
+// Artist radio is on the scored mix (scoredMix.service: it won its blind
+// comparison 3–2, one tie, 2026-11-14). The daylist stays on the pools
+// ('pools') until its own comparison decides; system setting daylistEngine.
+export type SmartMixEngine = 'pools' | 'score';
+
+export async function daylistEngine(): Promise<SmartMixEngine> {
+  return (await getSystemSetting('daylistEngine')) === 'score' ? 'score' : 'pools';
+}
+
+type ArtistCentroids = NonNullable<Awaited<ReturnType<typeof computeArtistCentroids>>>;
+
+/** The radio length for this library (adaptiveRadioLength). */
+export async function artistRadioLength(): Promise<number> {
+  return adaptiveRadioLength(await getAnalyzedLibrarySize());
+}
+
+/** An artist radio's tracks, without saving them. */
+export async function artistRadioTrackIds(
+  userId: string,
+  artistId: string,
+  artistName: string,
+  limit: number,
+  centroids: ArtistCentroids,
+): Promise<string[]> {
+  return scoredArtistRadioIds(userId, artistId, artistName, limit, centroids);
+}
+
+/** Radio tracks up to 20 minutes: long pieces fit a radio, hour-long tapes do not. */
+const RADIO_MAX_SECONDS = 1200;
+
+/**
+ * Artist radio on the score: a few of the artist's own most-played tracks
+ * (13 %, at least 3), spread through the radio, and the rest from the
+ * scored mix around the artist's sound and style profile (their strongest
+ * styles), other artists only. Each press samples a different centroid and
+ * jitters the scores, so the radio changes.
+ */
+async function scoredArtistRadioIds(userId: string, artistId: string, artistName: string, limit: number, centroids: ArtistCentroids): Promise<string[]> {
+  if (!centroids.acousticVectorStr) return [];
+  const db = await initDB();
+  const ownCount = Math.min(limit, Math.max(3, Math.round(limit * 0.13)));
+  const ownRes = await db.query(
+    `SELECT t.id, t.title, t.artist, t.mb_recording_id
+     FROM tracks t
+     LEFT JOIN user_playback_stats ups ON ups.track_id = t.id AND ups.user_id = $1
+     WHERE t.artist_id::text = $2 ${christmasExclusionSql('t')}
+       AND t.duration BETWEEN 60 AND ${RADIO_MAX_SECONDS} AND ${MUSIC_ONLY_SQL}
+     ORDER BY COALESCE(ups.play_count, 0) DESC, random()
+     LIMIT 24`,
+    [userId, artistId]
+  );
+  // Weighted toward the most played, as the centroid is.
+  const ownSongs = new Set<string>();
+  const own = (ownRes.rows as any[])
+    .map((row, i) => ({ row, key: Math.random() / (i + 1) }))
+    .sort((a, b) => b.key - a.key)
+    .map(({ row }) => row)
+    // One version of each song: "Hey Baby" came four times in four remixes.
+    .filter((row) => { const k = versionKey(row); if (ownSongs.has(k)) return false; ownSongs.add(k); return true; })
+    .slice(0, ownCount);
+  const { primaryPath, adjacentPaths } = await getArtistGenrePaths(artistId);
+  const paths = [primaryPath, ...adjacentPaths].filter((p): p is string => !!p);
+  const styles = paths.length ? await conceptStyles(db, paths, 0, 1) : null;
+  const others = await scoredMix({
+    userId,
+    length: limit - own.length,
+    sound: { vectorStr: centroids.acousticVectorStr, embeddingStr: centroids.embeddingCentroidStr, effnetWeight: 0.55 },
+    styles,
+    cohesion: 0.5,
+    discovery: 0.45,
+    artistSpread: 0.55,
+    freshness: 0.6,
+    maxSeconds: RADIO_MAX_SECONDS,
+    excludeIds: own.map((r: any) => String(r.id)),
+    excludeArtistIds: [artistId],
+    excludeArtistKeys: [leadArtistKey(artistName)],
+    label: `${artistName} Radio`,
+  });
+  // The artist's own tracks at even steps, starting with one.
+  const total = own.length + others.length;
+  const ids: string[] = [];
+  let o = 0;
+  let k = 0;
+  for (let i = 0; i < total; i++) {
+    const ownSlot = o < own.length && i >= Math.floor((o * total) / own.length);
+    if (ownSlot || k >= others.length) ids.push(String(own[o++].id));
+    else ids.push(String(others[k++].id));
+  }
+  return ids;
+}
+
 async function generateArtistRadioFresh(userId: string, artistId: string, requestedLimit?: number) {
   const id = smartPlaylistId('artist-radio', userId, artistId);
   const db = await initDB();
@@ -714,110 +801,9 @@ async function generateArtistRadioFresh(userId: string, artistId: string, reques
     );
   }
 
-  const { acousticVectorStr, embeddingCentroidStr } = centroids;
-  const { primaryPath, adjacentPaths, rootPath } = await getArtistGenrePaths(artistId);
-  const mainstreamVectorStr = await getLibraryMainstreamVector();
-
-  // Bridge vector = midpoint between seed centroid and library mainstream.
-  // Pulls the recommendation slightly toward the listener's general taste so
-  // the radio can sneak in safe non-genre matches without going random.
-  let bridgeVectorStr: string | null = null;
-  if (acousticVectorStr && mainstreamVectorStr) {
-    try {
-      const a = JSON.parse(acousticVectorStr);
-      const m = JSON.parse(mainstreamVectorStr);
-      if (Array.isArray(a) && Array.isArray(m) && a.length === 8 && m.length === 8) {
-        const mid = a.map((x: number, i: number) => (Number(x) + Number(m[i])) / 2);
-        bridgeVectorStr = `[${mid.join(',')}]`;
-      }
-    } catch {}
-  }
-
-  const seedSpec: PoolSpec = {
-    name: 'seed',
-    limit: 6,
-    favoritesScore: true,
-    restrictArtistIds: [artistId],
-  };
-
-  const coreSpec: PoolSpec = {
-    name: 'core',
-    limit: Math.max(40, limit * 2),
-    vectorStr: acousticVectorStr,
-    embeddingCentroidStr,
-    effnetWeight: 0.55,
-  };
-
-  const adjacentSpec: PoolSpec | null = adjacentPaths.length > 0 || primaryPath
-    ? {
-        name: 'adjacent',
-        limit: Math.max(15, limit),
-        vectorStr: acousticVectorStr,
-        embeddingCentroidStr,
-        effnetWeight: 0.35,
-        pathPrefixes: primaryPath ? [primaryPath, ...adjacentPaths] : adjacentPaths,
-      }
-    : null;
-
-  const bridgeSpec: PoolSpec = {
-    name: 'bridge',
-    limit: Math.max(12, Math.ceil(limit * 0.5)),
-    vectorStr: bridgeVectorStr ?? acousticVectorStr,
-    embeddingCentroidStr,
-    effnetWeight: 0.30,
-  };
-
-  const discoverySpec: PoolSpec = {
-    name: 'discovery',
-    limit: Math.max(15, limit),
-    vectorStr: acousticVectorStr,
-    embeddingCentroidStr,
-    effnetWeight: 0.45,
-    enableDiscoveryBoost: true,
-  };
-
-  const poolSpecs: PoolSpec[] = [seedSpec, coreSpec, bridgeSpec, discoverySpec];
-  if (adjacentSpec) poolSpecs.push(adjacentSpec);
-
-  const poolTargets = new Map<PoolName, number>([
-    ['seed', Math.max(3, Math.round(limit * 0.13))],
-    ['core', Math.round(limit * 0.38)],
-    ['adjacent', Math.round(limit * (adjacentSpec ? 0.18 : 0))],
-    ['bridge', Math.round(limit * 0.15)],
-    ['discovery', Math.round(limit * 0.16)],
-  ]);
-
-  // Protect the seed artist from the per-artist cap so the seed pool can
-  // actually surface multiple of their tracks. Everyone else is capped.
-  const result = await buildPlaylistFromPools({
-    userId,
-    count: limit,
-    poolSpecs,
-    poolTargets,
-    artistSpread: 0.55,
-    diversity: 0.50,
-    discoveryBias: 0.45,
-    // Radio regenerates on every press — raise the per-pick jitter so the mix
-    // is meaningfully different each time rather than a deterministic rerun.
-    freshness: 1.8,
-    relaxationPlan: [
-      // Drop genre filters, widen K, relax artist floor.
-      {
-        poolSpecs: [
-          seedSpec,
-          { ...coreSpec, limit: Math.max(60, limit * 3) },
-          { ...bridgeSpec, limit: Math.max(20, limit) },
-          { ...discoverySpec, limit: Math.max(25, limit * 2) },
-        ],
-        poolTargets,
-      },
-    ],
-  });
-
-  // Belt-and-braces: if the multi-pool came back empty (unusable centroid,
-  // tiny library, etc.) keep the legacy artist-only fallback as the last
-  // resort instead of returning a silent empty playlist.
-  let trackIds = result.trackIds;
+  let trackIds = await artistRadioTrackIds(userId, artistId, artistName, limit, centroids);
+  // Belt-and-braces: nothing came back (unusable centroid, tiny library):
+  // the artist's own catalogue, rather than a silent empty playlist.
   if (trackIds.length === 0) {
     const fallbackRes = await db.query(
       `
@@ -833,8 +819,6 @@ async function generateArtistRadioFresh(userId: string, artistId: string, reques
     );
     trackIds = fallbackRes.rows.map((r: any) => r.id);
   }
-
-  void rootPath;
 
   return persistSmart(
     id,
@@ -896,14 +880,16 @@ const DAYLIST_TITLE_WORDS = new Set([
   'focused', 'slow', 'sunny', 'cozy', 'gentle', 'calm', 'loose', 'late',
 ]);
 
-const DAYLIST_DEFAULT_MOODS: Record<string, { word: string; vector: number[]; banned: string[] }> = {
-  'late night': { word: 'Quiet', vector: [0.16, 0.22, 0.18, 0.42, 0.58, 0.72, 0.16, 0.18], banned: ['metal', 'punk', 'hardcore', 'techno'] },
-  'early morning': { word: 'Gentle', vector: [0.22, 0.36, 0.24, 0.45, 0.38, 0.66, 0.24, 0.28], banned: ['metal', 'hardcore', 'industrial'] },
-  morning: { word: 'Easy', vector: [0.34, 0.52, 0.36, 0.52, 0.24, 0.48, 0.42, 0.42], banned: ['doom metal', 'hardcore', 'noise'] },
-  midday: { word: 'Bright', vector: [0.58, 0.66, 0.54, 0.56, 0.18, 0.30, 0.62, 0.58], banned: ['ambient', 'drone', 'doom metal'] },
-  afternoon: { word: 'Lazy', vector: [0.32, 0.42, 0.30, 0.48, 0.28, 0.58, 0.38, 0.34], banned: ['metal', 'hardcore', 'drum and bass', 'techno'] },
-  evening: { word: 'Warm', vector: [0.42, 0.38, 0.38, 0.54, 0.26, 0.54, 0.48, 0.42], banned: ['hardcore', 'noise', 'industrial'] },
-  night: { word: 'Mellow', vector: [0.28, 0.30, 0.28, 0.48, 0.42, 0.62, 0.34, 0.30], banned: ['metal', 'hardcore', 'gabber', 'drum and bass'] },
+// `moods`: how the time of day should feel, on the moods from the sound
+// (track_moods; shared/audioMoods.ts). The scored daylist steers by them.
+const DAYLIST_DEFAULT_MOODS: Record<string, { word: string; vector: number[]; banned: string[]; moods: MoodTarget }> = {
+  'late night': { word: 'Quiet', vector: [0.16, 0.22, 0.18, 0.42, 0.58, 0.72, 0.16, 0.18], banned: ['metal', 'punk', 'hardcore', 'techno'], moods: { relaxed: 0.95, aggressive: 0.02, party: 0.05, happy: 0.3 } },
+  'early morning': { word: 'Gentle', vector: [0.22, 0.36, 0.24, 0.45, 0.38, 0.66, 0.24, 0.28], banned: ['metal', 'hardcore', 'industrial'], moods: { relaxed: 0.85, happy: 0.5, aggressive: 0.05, party: 0.1 } },
+  morning: { word: 'Easy', vector: [0.34, 0.52, 0.36, 0.52, 0.24, 0.48, 0.42, 0.42], banned: ['doom metal', 'hardcore', 'noise'], moods: { happy: 0.65, relaxed: 0.65, aggressive: 0.08, party: 0.3 } },
+  midday: { word: 'Bright', vector: [0.58, 0.66, 0.54, 0.56, 0.18, 0.30, 0.62, 0.58], banned: ['ambient', 'drone', 'doom metal'], moods: { happy: 0.8, party: 0.6, relaxed: 0.3, aggressive: 0.15 } },
+  afternoon: { word: 'Lazy', vector: [0.32, 0.42, 0.30, 0.48, 0.28, 0.58, 0.38, 0.34], banned: ['metal', 'hardcore', 'drum and bass', 'techno'], moods: { relaxed: 0.8, happy: 0.5, aggressive: 0.05, party: 0.2 } },
+  evening: { word: 'Warm', vector: [0.42, 0.38, 0.38, 0.54, 0.26, 0.54, 0.48, 0.42], banned: ['hardcore', 'noise', 'industrial'], moods: { relaxed: 0.65, happy: 0.55, aggressive: 0.1, party: 0.35 } },
+  night: { word: 'Mellow', vector: [0.28, 0.30, 0.28, 0.48, 0.42, 0.62, 0.34, 0.30], banned: ['metal', 'hardcore', 'gabber', 'drum and bass'], moods: { relaxed: 0.85, aggressive: 0.05, party: 0.15, happy: 0.35 } },
 };
 
 function clamp01(value: number): number {
@@ -951,7 +937,7 @@ async function generateDaylistConcept(
   recentGenres: string[]
 ): Promise<DaylistConcept | null> {
   const { apiKey, baseUrl, modelName } = await getLlmConfig();
-  if (baseUrl.includes('api.openai.com') && apiKey === 'dummy-key') return null;
+  if (isPlaceholderOpenAi(baseUrl, apiKey)) return null;
 
   const openai = new OpenAI({ baseURL: baseUrl, apiKey });
   const recentGenresStr = recentGenres.length > 0 ? recentGenres.join(', ') : 'eclectic';
@@ -1020,46 +1006,89 @@ function isDaylistFromCurrentBucket(cached: Pick<CachedSmart, 'createdAtMs'> | n
   return !!cached && cached.createdAtMs >= getDaylistBucketStartMs(now);
 }
 
-async function computeDaylistFresh(userId: string, limit: number) {
-  const id = smartPlaylistId('daylist', userId);
+/** What a daylist is made from: its mood's sound, its genres, what it leaves out. */
+export interface DaylistTarget {
+  targetVector: number[];
+  bannedGenres: string[];
+  /** The AI's genres for the mood, else empty (the listener's recent styles are used). */
+  targetGenres: string[];
+  /** How the time of day should feel (moods from the sound). */
+  moods?: MoodTarget;
+  label: string;
+}
+
+/** A daylist's tracks, without saving them (both engines; the A/B script uses it). */
+export async function daylistTrackIds(userId: string, limit: number, target: DaylistTarget, engine?: SmartMixEngine): Promise<string[]> {
+  return (engine ?? await daylistEngine()) === 'score'
+    ? scoredDaylistIds(userId, limit, target)
+    : poolDaylistIds(userId, limit, target);
+}
+
+/** The default mood for a time of day (when the AI gives no concept). */
+export function daylistDefaults(timeOfDay: string): DaylistTarget {
+  const mood = DAYLIST_DEFAULT_MOODS[timeOfDay] || DAYLIST_DEFAULT_MOODS.afternoon;
+  return { targetVector: mood.vector, bannedGenres: mood.banned, targetGenres: [], moods: mood.moods, label: `${mood.word} ${timeOfDay}` };
+}
+
+/** The styles the listener played most in the last 7 days, strongest memberships only. */
+async function recentStyleNames(userId: string, limit = 4): Promise<string[]> {
   const db = await initDB();
-  const now = new Date();
-  const weekday = now.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
-  const timeOfDay = describeTimeOfDay(now.getHours());
-
-  // Recent listening signature: top genres by play count over last 7 days.
-  // Used as flavor input for the LLM title/description and to derive
-  // banned-genre paths (mood-driven), not as a hard track filter.
-  const genresRes = await db.query(
-    `
-    SELECT g.name AS genre, SUM(b.play_count) AS plays
-    FROM user_track_play_buckets b
-    JOIN tracks t ON t.id = b.track_id
-    JOIN genres g ON g.id = t.genre_id AND g.merged_into IS NULL
-    WHERE b.user_id = $1
-      AND b.year_month >= date_trunc('month', NOW() - INTERVAL '7 days')::date
-      AND g.name <> ''
-    GROUP BY g.id, g.name
-    ORDER BY plays DESC
-    LIMIT 8
-    `,
-    [userId]
+  const res = await db.query(
+    `SELECT COALESCE(s.name, ts.genre) AS name, SUM(b.play_count) AS plays
+     FROM user_track_play_buckets b
+     JOIN track_styles ts ON ts.track_id = b.track_id AND ts.strength >= $2
+     LEFT JOIN style s ON s.id = ts.style_id
+     WHERE b.user_id = $1 AND b.year_month >= date_trunc('month', NOW() - INTERVAL '7 days')::date
+     GROUP BY COALESCE(s.name, ts.genre)
+     ORDER BY plays DESC
+     LIMIT $3`,
+    [userId, STRONG_MEMBER, limit]
   );
-  const recentGenres = genresRes.rows.map((r: any) => String(r.genre).toLowerCase());
+  return (res.rows as any[]).map((r) => String(r.name));
+}
 
-  const concept = await generateDaylistConcept(weekday, timeOfDay, recentGenres);
-  const fallbackTitle = simplifyDaylistTitle(undefined, weekday, timeOfDay);
-  const title = concept?.title ? simplifyDaylistTitle(concept.title, weekday, timeOfDay) : fallbackTitle;
-  const description =
-    concept?.description ||
-    `A fresh mix for your ${weekday} ${timeOfDay}.`;
-  const bannedGenres = normalizeDaylistGenres(
-    concept?.banned_genres,
-    DAYLIST_DEFAULT_MOODS[timeOfDay]?.banned || []
-  );
-  const targetVector = normalizeDaylistVector(concept?.target_vector, timeOfDay);
-  const targetVectorStr = `[${targetVector.join(',')}]`;
+/** Daylist tracks up to 10 minutes. */
+const DAYLIST_MAX_SECONDS = 600;
 
+/**
+ * The daylist on the score: steered by how the time of day should feel (the
+ * moods from the sound: late night relaxed and calm), around the mood's
+ * sound (its 8 numbers and the embedding imputed from them), loosely held to
+ * the AI's genres for the mood (else the listener's recent styles), with
+ * unheard and favourite tracks both favoured. Music only, up to 10 minutes.
+ */
+async function scoredDaylistIds(userId: string, limit: number, target: DaylistTarget): Promise<string[]> {
+  const db = await initDB();
+  const vectorStr = `[${target.targetVector.join(',')}]`;
+  const embeddingStr = await imputeEffNetCentroid(vectorStr);
+  const names = target.targetGenres.length ? target.targetGenres : await recentStyleNames(userId);
+  const paths = [...new Set((await Promise.all(names.map((name) => resolveGenrePaths(db, name)))).flat())].slice(0, 6);
+  // A mood leads, so neighbouring styles count too (focus 0.4).
+  const styles = paths.length ? await conceptStyles(db, paths, 0.5, 0.4) : null;
+  const bannedPaths = target.bannedGenres.length ? await resolveBannedPaths(db, target.bannedGenres) : [];
+  const picked = await scoredMix({
+    userId,
+    length: limit,
+    sound: { vectorStr, embeddingStr, effnetWeight: 0.45 },
+    styles,
+    cohesion: 0.3,
+    discovery: 0.6,
+    favourites: 0.6,
+    artistSpread: 0.7,
+    freshness: 0.3,
+    moods: target.moods ?? null,
+    moodWeight: 1.5,
+    maxSeconds: DAYLIST_MAX_SECONDS,
+    bannedPaths,
+    label: `Daylist (${target.label})`,
+  });
+  return picked.map((r: any) => String(r.id));
+}
+
+/** The daylist from three pools (the engine before the scored mix). */
+async function poolDaylistIds(userId: string, limit: number, target: DaylistTarget): Promise<string[]> {
+  const targetVectorStr = `[${target.targetVector.join(',')}]`;
+  const bannedGenres = target.bannedGenres;
   // Daylist identity: discovery mix of favorites the user hasn't reached for
   // and tracks they haven't heard. Mood vector biases the acoustic pool but
   // doesn't dominate. Banned genres are honoured.
@@ -1128,7 +1157,55 @@ async function computeDaylistFresh(userId: string, limit: number) {
     ],
   });
 
-  let trackIds = result.trackIds;
+  return result.trackIds;
+}
+
+async function computeDaylistFresh(userId: string, limit: number) {
+  const id = smartPlaylistId('daylist', userId);
+  const db = await initDB();
+  const now = new Date();
+  const weekday = now.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+  const timeOfDay = describeTimeOfDay(now.getHours());
+
+  // Recent listening signature: top genres by play count over last 7 days.
+  // Used as flavor input for the LLM title/description and to derive
+  // banned-genre paths (mood-driven), not as a hard track filter.
+  const genresRes = await db.query(
+    `
+    SELECT g.name AS genre, SUM(b.play_count) AS plays
+    FROM user_track_play_buckets b
+    JOIN tracks t ON t.id = b.track_id
+    JOIN genres g ON g.id = t.genre_id AND g.merged_into IS NULL
+    WHERE b.user_id = $1
+      AND b.year_month >= date_trunc('month', NOW() - INTERVAL '7 days')::date
+      AND g.name <> ''
+    GROUP BY g.id, g.name
+    ORDER BY plays DESC
+    LIMIT 8
+    `,
+    [userId]
+  );
+  const recentGenres = genresRes.rows.map((r: any) => String(r.genre).toLowerCase());
+
+  const concept = await generateDaylistConcept(weekday, timeOfDay, recentGenres);
+  const fallbackTitle = simplifyDaylistTitle(undefined, weekday, timeOfDay);
+  const title = concept?.title ? simplifyDaylistTitle(concept.title, weekday, timeOfDay) : fallbackTitle;
+  const description =
+    concept?.description ||
+    `A fresh mix for your ${weekday} ${timeOfDay}.`;
+  const bannedGenres = normalizeDaylistGenres(
+    concept?.banned_genres,
+    DAYLIST_DEFAULT_MOODS[timeOfDay]?.banned || []
+  );
+  const targetVector = normalizeDaylistVector(concept?.target_vector, timeOfDay);
+
+  let trackIds = await daylistTrackIds(userId, limit, {
+    targetVector,
+    bannedGenres,
+    targetGenres: concept?.target_genres ?? [],
+    moods: DAYLIST_DEFAULT_MOODS[timeOfDay]?.moods,
+    label: title,
+  });
   if (trackIds.length === 0) {
     // Final safety net: pure random by recency, no acoustic guidance.
     const fallbackRes = await db.query(

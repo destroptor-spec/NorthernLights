@@ -94,13 +94,13 @@ Pairing requests expire after ten minutes. Approval binds the request to the use
 | Discovery | `GET /hub`, `/hub/smart`, `/hub/artist-radio/eligibility`; `POST /hub/regenerate`, `/hub/artist-radio`, `/hub/custom`, `/recommendations/next` |
 | Listening state | `PUT /tracks/:id/loved`, `/tracks/:id/rating`; `POST /playback/reports`; `GET/PATCH /preferences` |
 
-`POST /recommendations/next` is the shared Infinity Mode endpoint. Its body is `{ sessionHistoryTrackIds?, exclude?, seedTrackIds?, settings? }` (all optional; history and exclusions capped at 200 IDs, seeds at 50): `sessionHistoryTrackIds` is the client's playback-start history (oldest → newest, including the playing track) and is merged after older server history for this request only — it never records plays; `exclude` lists queued/held track IDs; `seedTrackIds` is the end of the play queue (oldest → newest, ending with the track the recommendation will follow) — when present, its last 10 IDs steer the similarity centroid, energy/dance trend and genre anchor, so Infinity continues from the queue rather than from whatever played last; without it the engine seeds from history as before. Seeds are never recommended back. `settings` overrides saved `discoveryLevel`/`genreStrictness` (0–100) and `artistAmnesiaLimit` (integer 0–200; shown as "Repeat Protection" — it blocks the last N played *tracks*, not artists, and is never relaxed when the search widens). Genre strictness is skipped when the anchor track has no genre tag. Returns `data: Track | null`; `null` means no eligible track remains. The legacy `POST /api/recommend` (body uses `excludeTrackIds`) is a thin compatibility wrapper over the same request handling.
+`POST /recommendations/next` is the shared Infinity Mode endpoint. Its body is `{ sessionHistoryTrackIds?, exclude?, seedTrackIds?, settings? }` (all optional; history and exclusions capped at 200 IDs, seeds at 50): `sessionHistoryTrackIds` is the client's playback-start history (oldest → newest, including the playing track) and is merged after older server history for this request only — it never records plays; `exclude` lists queued/held track IDs; `seedTrackIds` is the end of the play queue (oldest → newest, ending with the track the recommendation will follow) — when present, its last 10 IDs steer the similarity centroid, energy/dance trend and style seed, so Infinity continues from the queue rather than from whatever played last; without it the engine seeds from history as before. Seeds are never recommended back. `settings` overrides saved `discoveryLevel`/`genreStrictness` (0–100) and `artistAmnesiaLimit` (integer 0–200; shown as "Repeat Protection" — it blocks the last N played *tracks*, not artists, and is never relaxed when the search widens). `genreStrictness` is the "Style match" setting: it sets β (0–0.2) in d − β·cos, so a candidate that shares the seed's genres and styles ranks a little closer; changing genre never counts against a track, and a seed with no genres or styles adds nothing. Returns `data: Track | null`; `null` means no eligible track remains. The legacy `POST /api/recommend` (body uses `excludeTrackIds`) is a thin compatibility wrapper over the same request handling.
 
 `PUT /tracks/:id/loved` stores the flag and then mirrors it to connected providers — a Last.fm love/unlove and a MusicBrainz rating of 100/0 — returning `data: { trackId, loved, providers }`, where each provider entry is `{ provider, status: 'ok' | 'skipped' | 'failed', reason?, error? }`. A provider failure never undoes the local write. The web route `POST /api/library/love` and this endpoint share one implementation. `POST /playback/reports` takes `{ eventId, trackId, kind: 'played' | 'skipped' | 'nowPlaying', occurredAt?, positionMs? }`; `eventId` must be a UUID and makes the report idempotent — a repeated id is answered with `status: 'duplicate'` and counted once. The server also scrobbles these reports to the Last.fm and ListenBrainz accounts the user has connected and switched on (Settings → Scrobbling), so a client needs no provider credentials: `nowPlaying` sends "now playing", and `played` scrobbles once per `eventId`, dated from when the listen started — the report's time (`occurredAt`, else receipt) minus `positionMs`. Send `nowPlaying` when a track starts and `played` with the position at which it counted as played. The web client reports plays, skips and now playing here and omits `occurredAt`, so the server stamps receipt time, but only for playback outside a playback session; a client playing a session must not also send these reports, or the listen is counted and scrobbled twice (see **Plays, skips and scrobbles** under Durable playback sessions).
 
 `GET /me` returns `{ user: { id, username, role }, client: { id, name, authKind, scope } }` for whichever credential made the call: a web session (`jwt`), an app key (`appKey`) or a scoped token (`scoped`). The web client polls it to keep `currentUser` current.
 
-`GET /artists/:id` returns `{ artist, details, tracks, ownedAlbums }`. `tracks` lists the artist's credited tracks first, then tracks on albums the artist owns as album artist without a performer credit (DJ mixes, mixed compilations). The Various Artists pseudo-artist owns too many compilations to ship their tracks, so for it that second list is skipped and `ownedAlbums` carries those albums as AlbumSummary rows instead; for every other artist `ownedAlbums` is empty. `GET /albums/:id` returns `{ album, details, tracks }` and `GET /genres/:id` returns `{ genre, tracks }`. AlbumSummary includes `editionLabel` (e.g. "Deluxe Edition"), and a Track's `musicBrainz` includes `albumArtistId`, which identifies an artist who appears only as album artist.
+`GET /artists/:id` returns `{ artist, details, tracks, ownedAlbums }`. `tracks` lists the artist's credited tracks first, then tracks on albums the artist owns as album artist without a performer credit (DJ mixes, mixed compilations). The Various Artists pseudo-artist owns too many compilations to ship their tracks, so for it that second list is skipped and `ownedAlbums` carries those albums as AlbumSummary rows instead; for every other artist `ownedAlbums` is empty. `GET /albums/:id` returns `{ album, details, tracks }` and `GET /genres/:id` returns `{ genre, tracks }`. Genres here, a track's `genreId` and Subsonic `getGenres` / `getSongsByGenre` are Aurora's genres and styles (a track's strongest style first, then its genres), derived from the fused results; the file's own tags stay in `genre`. AlbumSummary includes `editionLabel` (e.g. "Deluxe Edition"), and a Track's `musicBrainz` includes `albumArtistId`, which identifies an artist who appears only as album artist.
 
 `GET /hub` returns the listener's hub collections and queues a background refresh of the AI and smart playlists; pass `queueRefresh=false` on re-polls that only want what that refresh has produced since. `POST /hub/regenerate` (`{ force? }`) regenerates the AI hub playlists and returns `{ skipped, reason, generated }`; a skipped run (refresh already running, no LLM configured, playlists still fresh without `force`) is a 200 with `skipped: true`. `GET /hub/artist-radio/eligibility?artistId=` returns `{ eligible, reason, targetLength }`, and `POST /hub/artist-radio` answers `409 ARTIST_RADIO_UNAVAILABLE` for an ineligible artist. `POST /hub/custom` makes up to three attempts at turning the prompt into a playlist the library can satisfy before answering `503 CUSTOM_PLAYLIST_FAILED`.
 
@@ -141,6 +141,26 @@ What an owner may change depends on the kind, by one rule shared by the server a
 A Hub collection is rebuilt on a schedule under the same id, so renames and track edits would be overwritten; deleting one lasts until the next rebuild. `PATCH /playlists/:id`, `PUT /playlists/:id/tracks`, `POST /playlists/:id/share`, `PATCH /playlists/:id/state` (`pinned` and `private` checked separately) and `DELETE /playlists/:id` refuse a disallowed change with `403 PLAYLIST_READ_ONLY`. `readOnly` on a Playlist is true when its title, description and tracks cannot be changed. OpenSubsonic `updatePlaylist` and `deletePlaylist` follow the same rule.
 
 Playback reports carry a caller-generated UUID `eventId`; retrying the same event is idempotent. `nowPlaying`, `played`, and `skipped` are distinct report kinds.
+
+### Browse: Genre → Style
+
+Aurora's own 15 genres and 400 styles (docs/Aurora genre and style redesign.md), from each track's file tags, its sound and, when the server has them, artist tags. A style name can exist under two genres ("Trip Hop" in Electronic and Hip Hop), so styles are addressed by numeric id. Every list is ranked: tracks by how strongly they belong, albums by how much of the album is in the genre or style, artists by the same with each of their albums counted once.
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/v1/browse/genres` | Genres with track counts, their 3 biggest styles, up to 4 covers (`artworkIds`), and the unsorted count. `?hidden=true` includes hidden genres (Non-Music). |
+| `GET` | `/api/v1/browse/genres/:genre` | A genre by name: every style with tracks, tracks without a style (`noStyleTrackCount`), the first 24 albums and artists, track counts per decade (by the original release year, else the year, else the artist's era tag), `countries` (where its tracks are from: ISO codes with at least 3 tracks, most first, up to 12), and `vocals` and `moods` by the artists' tags (values with at least 3 tracks). |
+| `GET` | `/api/v1/browse/styles/:id` | A style: the first 24 albums and artists, decades, `countries`, `vocals` and `moods` (as for a genre), and `soundsCloseTo`: the 6 styles whose centroids (the mean audio embedding of their tagged tracks) sit nearest, from any genre; empty until the style has at least 8 tagged tracks by 3 artists. |
+| `GET` | `/api/v1/browse/tracks` | Tracks, strongest first, cursor-paged (`limit` up to 500). Filter: `genre`, `style`, `noStyle=true` (with `genre`), `decade=1990`, `country=DK` (ISO 3166-1, where the artists are from), `vocals=female|male`, `mood=chill|party|uplifting|melancholic|dark|atmospheric|romantic|energetic|funky`, or `unsorted=true` with an optional `tag`. |
+| `GET` | `/api/v1/browse/mix` | What Shuffle plays, in play order: about a quarter of the genre or style, 15 to 30 tracks (all of one with 15 or fewer), drawn at random from its 300 strongest, at most 2 per artist, the same artist never twice in a row where avoidable. Same filter as `/browse/tracks`. Infinity mode, when on, continues from there. |
+| `GET` | `/api/v1/browse/albums`, `/api/v1/browse/artists` | More albums or artists for `genre` or `style`, cursor-paged; each item has `share` (0–1). |
+| `GET` | `/api/v1/browse/search?q=` | Genres and styles by name, or by a genre tag that maps to them (`matchedAlias`: "Drum & Bass" finds Drum n Bass). Only those with tracks. |
+| `GET` | `/api/v1/browse/unsorted` | Genre tags on tracks without a genre, and how many tracks have no genre tag at all. |
+| `GET` | `/api/v1/albums/:id/styles` | The album's genres and styles from its tracks: those held by at least 20 % of its tracks, or among its 3 strongest. |
+| `GET` | `/api/v1/tracks/:id/rays` | "Aurora rays from {title}": the v1 track, its credits (the billed artists first, `artist` and `featured` from the artist tag, matched to library artists by name and unlinked when there is none; then every stored role credit, in role order, one row per credit), the genre tags in the file, its genres and styles with `source` (`tag`, `audio`, `artist`, `override`), the file tags behind each and `disputed` (a tag the sound contradicts), its `sound` (energy, danceability, acousticness, instrumentalness, brightness, percussiveness, BPM, the audio model's 12 highest style scores, and `genreMix`: each genre's share of the summed scores over all 400 styles; `null` before analysis), its album (with `artworkId`) and artist (with stored `imageUrl`/`artworkUrl` and `musicBrainzId`, for the client's cached artist lookup) profiles, `soundsCloseTo` (`null` without a real audio embedding; else the 6 styles whose centroids sit nearest the track, its own styles left out, and up to 12 nearest tracks as v1 tracks: none from its album or recording, one version per song, at most two per artist), `otherArtists` (the other billed artists, the featured artists and the remixers, in that order, each once with its `role` (`artist`, `featured`, `remixer`) and the same profile as `artist`; only artists in the library, at most 10, stored images only), and `otherAlbums` with the same recording (each with `artworkId`). Credits carry a stored artist `imageUrl` when the library has one; Aurora makes no provider lookup per credited person. |
+| `GET` | `/api/v1/artists/:id/styles` | The same for an artist, each album counted once, plus `listenerTags` (Last.fm and MusicBrainz, empty without provider data). |
+
+A filter that names nothing, or a cursor that is not one Aurora issued, is `400 INVALID_BROWSE_FILTER`; an unknown genre or style is `404 GENRE_NOT_FOUND` / `STYLE_NOT_FOUND`. Rankings change whenever the server recomputes genres (after scans and reviews), so a cursor reflects the order when it was issued.
 
 ### Playback sources
 
@@ -675,46 +695,8 @@ Control the PostgreSQL container.
   { "status": "started" }
   ```
 
-### MusicBrainz Taxonomy
-
-### [GET] `/api/admin/mbdb/status` (SSE)
-Receive real-time import progress.
-- **How to use**: Connect via `new EventSource('/api/admin/mbdb/status?token=<jwt>')`.
-- **Example Message**:
-  ```json
-  {
-    "isImporting": true,
-    "phase": "downloading",
-    "message": "Downloading and extracting MusicBrainz dump...",
-    "progress": 45
-  }
-  ```
-
-### [POST] `/api/admin/mbdb/import`
-Trigger the MusicBrainz hierarchical taxonomy import.
-- **How to use**: Downloads the latest MusicBrainz dump, extracts (~5GB needed), and populates the genre hierarchy tables.
-- **Example Response**:
-  ```json
-  { "message": "MBDB Import started" }
-  ```
-
-### [POST] `/api/admin/mbdb/cancel`
-Cancel an in-progress import.
-
-### [GET] `/api/admin/mbdb/check-update`
-Check if a newer MusicBrainz dump is available.
-- **Example Response**:
-  ```json
-  {
-    "latestTag": "2024-04-01",
-    "lastImportTag": "2024-03-01",
-    "updateAvailable": true,
-    "lastImport": { "tag": "2024-03-01", "timestamp": 1711968000000 }
-  }
-  ```
-
 ### [GET] `/api/admin/health`
-Unified admin health check (SSE, DB, container, scanner, MBDB status).
+Unified admin health check (SSE, DB, container, scanner). The MusicBrainz import and its `/api/admin/mbdb/*` endpoints were removed in phase 4 of the genre redesign; MusicBrainz genre data ships as a snapshot.
 
 ---
 
@@ -1107,17 +1089,6 @@ Test connection to the configured LLM API (Admin only).
   { "status": "ok", "models": ["gpt-4", "gpt-3.5-turbo"] }
   ```
 
-### Genre Matrix & Taxonomy
-
-### [GET] `/api/genre-matrix/mappings`
-Get all genre-to-subgenre mappings.
-
-### [POST] `/api/genre-matrix/remap-all`
-Trigger a full remapping of all genres based on the taxonomy hierarchy (Admin only).
-
-### [POST] `/api/genre-matrix/regenerate`
-Manually trigger genre matrix matrix weight diff and generation (Admin only).
-
 ### ML Model Management
 
 Local machine learning models can be managed dynamically for audio categorization.
@@ -1254,22 +1225,48 @@ Get album details with tracks.
 ### Genres
 
 ### [GET] `/api/genres`
-List active canonical genres. Each row includes `track_count` across primary and secondary associations and `alias_count`. Grouped alias rows are hidden.
+List the genres tracks are in: Aurora's genres and styles ("Grunge", "Rock"), derived from the fused results, not the file tags. Each row includes `track_count` across a track's styles and genres and `alias_count`. Grouped alias rows and tag spellings without tracks are hidden.
 
 ### [GET] `/api/genres/:id`
-Get canonical genre details with tracks. A grouped alias ID redirects to its canonical genre, and membership includes both primary and secondary tags.
+Get a genre or style with its tracks. A grouped alias ID redirects to its canonical genre, and membership includes every track with that genre or style (not only the strongest).
 
-### [GET] `/api/library/genre-duplicates`
-Return the admin genre-hygiene state: scored duplicate candidates, separately quarantined slash-compound tags, and active reversible groups. Scores rank spelling/token similarity and never apply a merge automatically. Admin only.
+### Genre review queue (admin)
+Settings → Library Entities → Genres. Each entry is one question about an original genre tag that the tag mapping can't settle by name (no match, a style name under two genres, a MusicBrainz-parent guess, several genres in one tag), or two spellings of a genre in the genre list. Every answer stores the affected tags' state from before, so it can be undone for 30 days, newest first per tag. Types: `shared/genreReview.ts`. Errors a user can act on (a stale entry, an unknown style, a later decision to undo first) return `409` with `error` and, for spellings in different parts of the genre tree, `code: "GENRE_TAXONOMY_CONFLICT"`. Admin only.
 
-### [POST] `/api/library/genre-duplicates/dismiss`
-Dismiss a scored or compound candidate by `candidateKey`, `signature`, and `genreIds`. The dismissal remains active until names, mappings, or library counts change the signature. Admin only.
+### [GET] `/api/library/genre-reviews`
+The queue: `entries` (most tracks first), `exact` (name matches waiting for a bulk accept), `ignored` (tags that are not genres; `byHand` for those marked in the review), `groups` (spellings kept as one genre), and `coverage` (`tagged`, `mapped`, `ratio`, `target`).
 
-### [POST] `/api/library/genres/merge`
-Group `aliasGenreIds` into `canonicalGenreId` without rewriting `tracks.genre` or `tracks.genres`. The transaction repoints canonical primary/secondary associations and records an audit row. Taxonomy-root conflicts return `409 GENRE_TAXONOMY_CONFLICT` unless `acknowledgeTaxonomyConflict` is true. Admin only.
+### [GET] `/api/admin/genre-taxonomy/fusion` / [POST] `/api/admin/genre-taxonomy/fusion`
+Admin. Fusion (phase 2 of the genre redesign) gives every track its genres and styles from tags, sound and optional artist tags, and builds album and artist profiles. It runs by itself after scans, tag mapping, review answers and analysis (debounced; at most every 10 minutes during an analysis run). GET returns `{ status }` of the last full run (`version`, `ranAt`, `durationMs`, `tracks`, `byGenreSource: { tag, artist, audio, override, unsorted }`, `withStyle`, `audioGenres`: the genres the sound may name on its own) or `null`; POST rebuilds every track now and returns the new status.
 
-### [POST] `/api/library/genres/:aliasId/restore`
-Restore a grouped alias and rebuild affected associations from the preserved raw track tags. Admin only.
+### [POST] `/api/library/track-styles/:trackId`
+Admin. Tracks with disputed tags (`GET /api/library/track-styles/disputed?offset&limit`, limit up to 200): tagged styles the sound contradicts, one entry per track (`trackId`, `title`, `artist`, `album`, `artworkId`, `styles`: genre, styleId, style, the model's `score`, `fromTags`), grouped by artist and album, with `total` (tracks) and `styles`. Keep and Remove go through the correction below (`add` and `remove`).
+
+Admin. A hand correction of one track's genres and styles, from "Aurora rays from {title}". Body `{ genre, styleId (number or null for the genre itself), action: "add" | "remove" }`. Remove takes back a style added by hand, or else excludes it from fusion (removing a genre takes its styles with it); add lifts an exclusion, or else adds it. Corrections persist across scans and fusion runs. The track is fused again before the answer (`{ status: "saved" }`); an unknown track is 404, an unknown genre or style 400.
+
+### [GET] `/api/library/genre-reviews/preview?key=`
+Evidence for one entry: the three artists with the most tracks carrying it, up to three albums, `lean` (where Last.fm and MusicBrainz artist tags put those artists, given two or more; `null` without provider data), `artistTags` (with a single artist, that artist's strongest tags on Last.fm and MusicBrainz in one list, each tag once), `audio` (`{ analysed, sampled, genres, styles }`: each analysed, non-simulated track counted once under its top style and that style's genre, and each style's `near` count of tracks that have it among their 5 closest; at most 1,000 tracks sampled; `null` before analysis), `suggestion` (`{ targets, basis: both | audio | artists, stylesVary, looseStyles }` or `null`: a starting answer when audio and artist tags agree, or one source is clear on its own. A style the tag names is kept unless under 20 % of the tracks have it among their 5 closest (then it is listed in `looseStyles`); a tag that names none gets a style only when half the tracks have it as top style, otherwise the genre alone (`stylesVary`)) and `targetTracks` (tracks each outcome target holds today from other tags).
+
+### [GET] `/api/library/genre-reviews/tags?q=`
+Find a tag: up to 12 tags containing `q`, as entries (also reviewed and ignored ones), so their mapping can be changed.
+
+### [GET] `/api/library/genre-reviews/taxonomy`
+The visible genres and styles for the picker: `{ genres, styles: [{ id, genre, name }] }`.
+
+### [POST] `/api/library/genre-reviews/decide`
+Body `{ key, signature, outcomeId, targets?, acknowledgeConflict? }`. Outcomes: `accept`, `only:<n>` (one of two genres), `pick` (with `targets: [{ genre, styleId|null }]`), `ignore`, `restore`, `merge:<genre id>` and `keep-apart` (spellings). `only` and `pick` write hand mappings that remaps keep; `merge` groups the old genre list like the previous duplicate tool. Returns `{ decisionId, summary }`.
+
+### [POST] `/api/library/genre-reviews/accept-exact`
+Body `{ items: [{ key, signature }] }`: accepts the listed name matches that are unchanged, as one decision. Returns `{ decisionId, summary, accepted }`.
+
+### [POST] `/api/library/genre-reviews/groups/:aliasId/separate`
+Separates a spelling kept as one genre (also groups made before this queue). Returns `{ decisionId, summary }`.
+
+### [GET] `/api/library/genre-reviews/decisions`
+Decisions of the last 30 days: `{ id, key, decision, summary, decidedAt, undoableUntil }`.
+
+### [POST] `/api/library/genre-reviews/decisions/:id/undo`
+Restores the tags as they were before the decision; a spelling decision also regroups or separates the genre list again.
 
 ---
 

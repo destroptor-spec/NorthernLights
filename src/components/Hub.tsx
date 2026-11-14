@@ -8,7 +8,7 @@ import { toPlayableTracks } from '../utils/playableTracks';
 import type { Playlist, LastOpenedAlbum } from '../store';
 import { useDominantColor } from '../hooks/useDominantColor';
 import { buildMeshCoverGradient } from '../utils/coverGradient';
-import { AuroraCover, wrappedCoverLabel, systemGenreCoverLabel, systemDecadeCoverLabel } from './library/AuroraCover';
+import { AuroraCover, wrappedCoverLabel, systemGenreCoverLabel, systemDecadeCoverLabel, systemDecadeGenreCoverLabel } from './library/AuroraCover';
 import { LiveConcertsHubSection } from './LiveConcertsHubSection';
 import { HorizontalScrollRail } from './HorizontalScrollRail';
 import { NowPlayingBadge } from './now-playing/NowPlayingBadge';
@@ -656,7 +656,7 @@ const UniqueCard: React.FC<UniqueCardProps> = ({
     );
     badgeLabel = 'wrapped';
   } else {
-    coverContent = <AuroraCover variant="decade" seed={title} label={systemDecadeCoverLabel(title)} />;
+    coverContent = <AuroraCover variant="decade" seed={title} label={systemDecadeCoverLabel(title)} sublabel={systemDecadeGenreCoverLabel(title)} />;
     badgeLabel = 'decade';
   }
 

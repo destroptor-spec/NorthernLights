@@ -1,16 +1,15 @@
 import { SERVER_LOGGING_SETTINGS } from '../../shared/logging';
 import { applyLoggingSettings, getLoggingSettings } from '../services/loggingConfig';
 import { Router } from 'express';
-import { getSystemSetting, setSystemSetting, getUserSetting, setUserSetting, getSubGenreMappings } from '../database';
+import { getSystemSetting, setSystemSetting, getUserSetting, setUserSetting } from '../database';
 import { requireAdmin } from '../middleware/auth';
-import { genreMatrixService } from '../services/genreMatrix.service';
 import OpenAI from 'openai';
 import { publishPlaybackSyncChanged } from '../services/playbackSync.service';
 import { PLAYBACK_SYNC_MODES } from '../../shared/playbackSync';
 
 const router = Router();
 
-const userKeys = new Set(['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'playedThresholdPercent', 'llmPlaylistDiversity', 'llmVetoMode', 'llmGenreCohesion', 'llmDiscoveryBias', 'llmArtistSpread', 'genrePenaltyCurve', 'llmRecoveryStrength', 'llmAdjacentReach', 'llmTracksPerPlaylist', 'llmPlaylistCount', 'lastFmScrobbleEnabled', 'listenBrainzScrobbleEnabled', 'subsonicProviderScrobbleEnabled', 'subsonicProviderLoveSyncEnabled', 'concertsEnabled', 'concertsLat', 'concertsLng', 'concertsLocationLabel', 'concertsRadiusKm', 'concertsAutoAddEnabled', 'loudnessNormEnabled', 'loudnessTargetLufs', 'loudnessPreampDb', 'loudnessMode', 'playbackSyncEnabled']);
+const userKeys = new Set(['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'playedThresholdPercent', 'llmPlaylistDiversity', 'llmVetoMode', 'llmGenreCohesion', 'llmDiscoveryBias', 'llmArtistSpread', 'llmRecoveryStrength', 'llmAdjacentReach', 'llmTracksPerPlaylist', 'llmPlaylistCount', 'lastFmScrobbleEnabled', 'listenBrainzScrobbleEnabled', 'subsonicProviderScrobbleEnabled', 'subsonicProviderLoveSyncEnabled', 'concertsEnabled', 'concertsLat', 'concertsLng', 'concertsLocationLabel', 'concertsRadiusKm', 'concertsAutoAddEnabled', 'loudnessNormEnabled', 'loudnessTargetLufs', 'loudnessPreampDb', 'loudnessMode', 'playbackSyncEnabled', 'newBrowseEnabled']);
 const serverKeys = new Set(['llmBaseUrl', 'llmApiKey', 'llmModelName', 'hubGenerationSchedule', 'systemPlaylistConfig', 'audioAnalysisCpu', 'scannerConcurrency', 'loudnessComputeMode', 'geniusApiKey', 'lastFmApiKey', 'lastFmSharedSecret', 'musicBrainzEnabled', 'musicBrainzClientId', 'musicBrainzClientSecret', 'musicBrainzRedirectUri', 'providerArtistImage', 'providerArtistArtwork', 'providerArtistBio', 'providerAlbumArt', 'autoFolderWalk', 'jambaseEnabled', 'jambaseMaxSubscriptionsPerUser', 'jambaseCacheTtlDays', 'jambaseMonthlyCap', 'jambaseHardStop', 'youtubeEnabled', 'youtubeApiKey', 'youtubeCacheTtlDays', 'youtubeDailyQuotaCap', 'youtubeHardStop', ...Object.keys(SERVER_LOGGING_SETTINGS), 'openSubsonicEnabled', 'turnstileEnabled', 'turnstileSiteKey', 'turnstileSecretKey', 'playbackSyncMode']);
 const secretServerKeys = new Set(['llmApiKey', 'geniusApiKey', 'lastFmApiKey', 'lastFmSharedSecret', 'musicBrainzClientSecret', 'youtubeApiKey', 'turnstileSecretKey']);
 const nonAdminReadableServerKeys = new Set(['hubGenerationSchedule', 'systemPlaylistConfig', 'providerArtistImage', 'providerArtistArtwork', 'providerArtistBio', 'providerAlbumArt', 'musicBrainzEnabled', 'musicBrainzConnected', 'openSubsonicEnabled', 'youtubeEnabled', 'playbackSyncMode']);
@@ -24,7 +23,7 @@ router.get('/settings', async (req, res) => {
     const isAdmin = req.user?.role === 'admin';
 
     // System-level (server-wide) settings
-    const serverKeys = ['audioAnalysisCpu', 'scannerConcurrency', 'loudnessComputeMode', 'hubGenerationSchedule', 'systemPlaylistConfig', 'llmBaseUrl', 'llmApiKey', 'llmModelName', 'genreMatrixLastRun', 'genreMatrixLastResult', 'genreMatrixProgress', 'geniusApiKey', 'lastFmApiKey', 'lastFmSharedSecret', 'musicBrainzEnabled', 'musicBrainzClientId', 'musicBrainzClientSecret', 'musicBrainzConnected', 'musicBrainzRedirectUri', 'providerArtistImage', 'providerArtistArtwork', 'providerArtistBio', 'providerAlbumArt', 'autoFolderWalk', 'mbdbLastImport', 'jambaseEnabled', 'jambaseMaxSubscriptionsPerUser', 'jambaseCacheTtlDays', 'jambaseMonthlyCap', 'jambaseHardStop', 'youtubeEnabled', 'youtubeApiKey', 'youtubeCacheTtlDays', 'youtubeDailyQuotaCap', 'youtubeHardStop', ...Object.keys(SERVER_LOGGING_SETTINGS), 'openSubsonicEnabled', 'turnstileEnabled', 'turnstileSiteKey', 'turnstileSecretKey', 'playbackSyncMode'];
+    const serverKeys = ['audioAnalysisCpu', 'scannerConcurrency', 'loudnessComputeMode', 'hubGenerationSchedule', 'systemPlaylistConfig', 'llmBaseUrl', 'llmApiKey', 'llmModelName', 'geniusApiKey', 'lastFmApiKey', 'lastFmSharedSecret', 'musicBrainzEnabled', 'musicBrainzClientId', 'musicBrainzClientSecret', 'musicBrainzConnected', 'musicBrainzRedirectUri', 'providerArtistImage', 'providerArtistArtwork', 'providerArtistBio', 'providerAlbumArt', 'autoFolderWalk', 'jambaseEnabled', 'jambaseMaxSubscriptionsPerUser', 'jambaseCacheTtlDays', 'jambaseMonthlyCap', 'jambaseHardStop', 'youtubeEnabled', 'youtubeApiKey', 'youtubeCacheTtlDays', 'youtubeDailyQuotaCap', 'youtubeHardStop', ...Object.keys(SERVER_LOGGING_SETTINGS), 'openSubsonicEnabled', 'turnstileEnabled', 'turnstileSiteKey', 'turnstileSecretKey', 'playbackSyncMode'];
     const settings: Record<string, any> = {};
     const loggingSettings: Record<string, boolean> = getLoggingSettings();
     for (const k of serverKeys) {
@@ -34,8 +33,8 @@ router.get('/settings', async (req, res) => {
     }
 
     // User-level settings (includes Last.fm which is per-user)
-    const allUserKeys = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'playedThresholdPercent', 'llmPlaylistDiversity', 'llmVetoMode', 'llmGenreCohesion', 'llmDiscoveryBias', 'llmArtistSpread', 'genrePenaltyCurve', 'llmRecoveryStrength', 'llmAdjacentReach', 'llmTracksPerPlaylist', 'llmPlaylistCount', 'lastFmScrobbleEnabled', 'lastFmConnected', 'lastFmUsername', 'listenBrainzScrobbleEnabled', 'listenBrainzConnected', 'listenBrainzUsername', 'subsonicProviderScrobbleEnabled', 'subsonicProviderLoveSyncEnabled', 'concertsEnabled', 'concertsLat', 'concertsLng', 'concertsLocationLabel', 'concertsRadiusKm', 'concertsAutoAddEnabled', 'loudnessNormEnabled', 'loudnessTargetLufs', 'loudnessPreampDb', 'loudnessMode', 'playbackSyncEnabled'];
-    const userOnlyKeys = ['playbackSyncEnabled', 'lastFmConnected', 'lastFmUsername', 'lastFmScrobbleEnabled', 'listenBrainzConnected', 'listenBrainzUsername', 'listenBrainzScrobbleEnabled', 'subsonicProviderScrobbleEnabled', 'subsonicProviderLoveSyncEnabled'];
+    const allUserKeys = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'playedThresholdPercent', 'llmPlaylistDiversity', 'llmVetoMode', 'llmGenreCohesion', 'llmDiscoveryBias', 'llmArtistSpread', 'llmRecoveryStrength', 'llmAdjacentReach', 'llmTracksPerPlaylist', 'llmPlaylistCount', 'lastFmScrobbleEnabled', 'lastFmConnected', 'lastFmUsername', 'listenBrainzScrobbleEnabled', 'listenBrainzConnected', 'listenBrainzUsername', 'subsonicProviderScrobbleEnabled', 'subsonicProviderLoveSyncEnabled', 'concertsEnabled', 'concertsLat', 'concertsLng', 'concertsLocationLabel', 'concertsRadiusKm', 'concertsAutoAddEnabled', 'loudnessNormEnabled', 'loudnessTargetLufs', 'loudnessPreampDb', 'loudnessMode', 'playbackSyncEnabled', 'newBrowseEnabled'];
+    const userOnlyKeys = ['playbackSyncEnabled', 'newBrowseEnabled', 'lastFmConnected', 'lastFmUsername', 'lastFmScrobbleEnabled', 'listenBrainzConnected', 'listenBrainzUsername', 'listenBrainzScrobbleEnabled', 'subsonicProviderScrobbleEnabled', 'subsonicProviderLoveSyncEnabled'];
     if (userId) {
       for (const k of allUserKeys) {
         const userVal = await getUserSetting(userId, k);
@@ -47,7 +46,7 @@ router.get('/settings', async (req, res) => {
         }
       }
     } else {
-      const fallbackKeys = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'playedThresholdPercent', 'llmPlaylistDiversity', 'llmVetoMode', 'llmGenreCohesion', 'llmDiscoveryBias', 'llmArtistSpread', 'genrePenaltyCurve', 'llmRecoveryStrength', 'llmAdjacentReach', 'llmTracksPerPlaylist', 'llmPlaylistCount', 'loudnessNormEnabled', 'loudnessTargetLufs', 'loudnessPreampDb', 'loudnessMode'];
+      const fallbackKeys = ['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'playedThresholdPercent', 'llmPlaylistDiversity', 'llmVetoMode', 'llmGenreCohesion', 'llmDiscoveryBias', 'llmArtistSpread', 'llmRecoveryStrength', 'llmAdjacentReach', 'llmTracksPerPlaylist', 'llmPlaylistCount', 'loudnessNormEnabled', 'loudnessTargetLufs', 'loudnessPreampDb', 'loudnessMode'];
       for (const k of fallbackKeys) {
         settings[k] = await getSystemSetting(k);
       }
@@ -108,6 +107,10 @@ router.post('/settings', async (req, res) => {
     if (Object.hasOwn(settings, 'playbackSyncEnabled') && typeof settings.playbackSyncEnabled !== 'boolean') {
       return res.status(400).json({ error: 'playbackSyncEnabled must be a boolean', keys: ['playbackSyncEnabled'] });
     }
+    // Genre & style browse (preview, genre redesign phase 2): per user.
+    if (Object.hasOwn(settings, 'newBrowseEnabled') && typeof settings.newBrowseEnabled !== 'boolean') {
+      return res.status(400).json({ error: 'newBrowseEnabled must be a boolean', keys: ['newBrowseEnabled'] });
+    }
 
     const invalidLoggingKeys = Object.keys(SERVER_LOGGING_SETTINGS)
       .filter(key => Object.hasOwn(settings, key) && typeof settings[key] !== 'boolean');
@@ -162,41 +165,8 @@ router.post('/health/llm', requireAdmin, async (req, res) => {
   }
 });
 
-// Genre Matrix mappings
-router.get('/genre-matrix/mappings', async (req, res) => {
-  try {
-    const mappings = await getSubGenreMappings();
-    res.json(mappings);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch mappings' });
-  }
-});
-
-// Full re-mapping of all genres
-router.post('/genre-matrix/remap-all', requireAdmin, async (req, res) => {
-  try {
-    genreMatrixService.remapAll();
-    res.json({ status: 'started' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to start full remap' });
-  }
-});
-
-// Manually trigger genre matrix regeneration
-router.post('/genre-matrix/regenerate', requireAdmin, async (req, res) => {
-  try {
-    await genreMatrixService.runDiffAndGenerate();
-    const lastRun = await getSystemSetting('genreMatrixLastRun');
-    const lastResult = await getSystemSetting('genreMatrixLastResult');
-    res.json({ status: 'ok', lastRun, lastResult });
-  } catch (error) {
-    console.error('Genre matrix regeneration error:', error);
-    res.status(500).json({ error: 'Failed to regenerate genre matrix' });
-  }
-});
-
 // ─── ML Model Management ──────────────────────────────────────────────────
-import { getModelStatus, clearAndRedownloadModels, modelProgressEmitter, isDownloadInProgress } from '../services/downloadModels';
+import { getModelStatus, clearAndRedownloadModels, downloadModels, modelProgressEmitter, isDownloadInProgress } from '../services/downloadModels';
 
 // Get model download status
 router.get('/settings/models/status', requireAdmin, async (_req, res) => {
@@ -208,15 +178,16 @@ router.get('/settings/models/status', requireAdmin, async (_req, res) => {
   }
 });
 
-// Trigger model redownload
-router.post('/settings/models/download', requireAdmin, async (_req, res) => {
+// Trigger a model download: every model again (Settings), or only the
+// missing ones ({ missingOnly: true }, the setup wizard).
+router.post('/settings/models/download', requireAdmin, async (req, res) => {
   try {
     if (isDownloadInProgress()) {
       res.json({ status: 'already_downloading' });
       return;
     }
     // Start download in background
-    clearAndRedownloadModels().catch(err => {
+    (req.body?.missingOnly === true ? downloadModels(false) : clearAndRedownloadModels()).catch(err => {
       console.error('[Models] Redownload failed:', err.message);
     });
     res.json({ status: 'started' });

@@ -9,7 +9,7 @@ Aurora is one Node.js service plus a PostgreSQL/pgvector database:
 - Express serves the API and built React app on `PORT` 3001 by default.
 - PostgreSQL can be managed by Aurora through Podman or Docker.
 - FFmpeg handles decoding, transcoding, HLS, and analysis input.
-- A Python 3.11 virtual environment runs Essentia TensorFlow extraction for MusiCNN and Discogs-EffNet.
+- A Python 3.14 virtual environment (`essentia-tensorflow==2.1b6.dev1438`) runs Essentia TensorFlow extraction: Discogs-EffNet plus small classifiers for the Discogs-400 style scores, danceability, acousticness and instrumentalness.
 - A reverse proxy should terminate HTTPS in front of Aurora for public access.
 
 ## Server Requirements
@@ -76,8 +76,8 @@ cp .env.example .env
 npm ci
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
-uv venv --python 3.11 .venv
-uv pip install essentia-tensorflow
+uv venv --python 3.14 .venv
+uv pip install --python .venv/bin/python "essentia-tensorflow==2.1b6.dev1438"
 npm run build
 ```
 
@@ -306,7 +306,9 @@ Use Certbot, Caddy, or your platform's TLS tooling to provide HTTPS.
 cd ~/NorthernLights
 git pull
 npm ci
-uv pip install essentia-tensorflow
+# Recreates the venv when the Python version or Essentia pin changed (safe to repeat)
+uv venv --clear --python 3.14 .venv
+uv pip install --python .venv/bin/python "essentia-tensorflow==2.1b6.dev1438"
 npm run build
 pm2 restart aurora
 ```

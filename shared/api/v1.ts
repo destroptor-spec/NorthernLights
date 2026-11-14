@@ -540,7 +540,8 @@ export const playbackReportSchema = z.object({
 
 export const infinitySettingsSchema = z.object({
   discoveryLevel: z.number().min(0).max(100).optional(),
-  genreStrictness: z.number().min(0).max(100).optional(),
+  genreStrictness: z.number().min(0).max(100).optional()
+    .describe('Style match: how much sharing styles with the queue lifts a close-sounding track (β from 0 to 0.2). Changing genre never counts against a track.'),
   artistAmnesiaLimit: z.number().int().min(0).max(200).optional(),
 }).passthrough().meta({
   id: 'InfinitySettings',
@@ -568,6 +569,8 @@ export const listenerPreferencesSchema = z.object({
   subsonicProviderScrobbleEnabled: z.boolean(),
   subsonicProviderLoveSyncEnabled: z.boolean()
     .describe('Mirror stars from OpenSubsonic clients to Last.fm and MusicBrainz. Defaults to true.'),
+  newBrowseEnabled: z.boolean()
+    .describe('Browse by Aurora\'s genres and styles instead of the old genre list (preview). Defaults to false.'),
 }).meta({ id: 'ListenerPreferences' });
 
 export const hubRegenerationSchema = z.object({
@@ -612,6 +615,199 @@ export const genreDetailSchema = z.object({
   genre: genreSchema,
   tracks: z.array(trackSchema),
 }).meta({ id: 'GenreDetail' });
+
+// ── Browse: Genre → Style (docs/Aurora genre and style redesign.md) ──────
+// Aurora's own 15 genres and 400 styles. Style ids are numbers; a style name
+// can exist under two genres ("Trip Hop" in Electronic and Hip Hop).
+
+export const browseStyleRefSchema = z.object({
+  id: z.number().int(),
+  genre: z.string(),
+  name: z.string(),
+  trackCount: z.number().int().nonnegative(),
+}).meta({ id: 'BrowseStyleRef' });
+
+export const browseGenreSchema = z.object({
+  name: z.string(),
+  hidden: z.boolean().describe('Hidden from Browse by default (Non-Music).'),
+  trackCount: z.number().int().nonnegative(),
+  styles: z.array(browseStyleRefSchema).describe('The 3 styles with the most tracks.'),
+  artworkIds: z.array(z.string()).describe('Covers of up to 4 albums that are most this genre.'),
+}).meta({ id: 'BrowseGenre' });
+
+export const browseGenresSchema = z.object({
+  genres: z.array(browseGenreSchema),
+  unsorted: z.object({
+    trackCount: z.number().int().nonnegative().describe('Tracks with no genre yet.'),
+    tagCount: z.number().int().nonnegative().describe('Their genre tags that match no genre or style.'),
+  }),
+}).meta({ id: 'BrowseGenres' });
+
+export const browseAlbumSchema = z.object({
+  album: albumSummarySchema,
+  share: z.number().min(0).max(1).describe('Share of the album\'s tracks in this genre or style.'),
+  trackCount: z.number().int().nonnegative().describe('Its tracks in this genre or style.'),
+}).meta({ id: 'BrowseAlbum' });
+
+export const browseArtistSchema = z.object({
+  artist: artistSummarySchema,
+  share: z.number().min(0).max(1).describe('Share of the artist\'s music in this genre or style, each album counted once.'),
+  albumCount: z.number().int().nonnegative(),
+}).meta({ id: 'BrowseArtist' });
+
+export const browseDecadeSchema = z.object({
+  decade: z.number().int().describe('1990 for the 1990s: by the original release year, else the year, else the artist\'s era tag.'),
+  trackCount: z.number().int().nonnegative(),
+}).meta({ id: 'BrowseDecade' });
+
+export const browseCountrySchema = z.object({
+  country: z.string().length(2).describe('ISO 3166-1 alpha-2: where the artists are from (MusicBrainz, artist tags, or the release country).'),
+  trackCount: z.number().int().nonnegative(),
+}).meta({ id: 'BrowseCountry' });
+
+export const browseDescriptorCountSchema = z.object({
+  value: z.string().describe('vocals: female or male; mood: chill, party, uplifting, melancholic, dark, atmospheric, romantic, energetic or funky.'),
+  trackCount: z.number().int().nonnegative(),
+}).meta({ id: 'BrowseDescriptorCount' });
+
+export const browseGenreDetailSchema = z.object({
+  genre: z.object({ name: z.string(), hidden: z.boolean(), trackCount: z.number().int().nonnegative() }),
+  styles: z.array(browseStyleRefSchema).describe('Every style with tracks, most tracks first.'),
+  noStyleTrackCount: z.number().int().nonnegative().describe('Tracks in the genre without a specific style.'),
+  albums: z.array(browseAlbumSchema),
+  artists: z.array(browseArtistSchema),
+  decades: z.array(browseDecadeSchema),
+  countries: z.array(browseCountrySchema).describe('The countries with at least 3 tracks here, most tracks first, at most 12.'),
+  vocals: z.array(browseDescriptorCountSchema).describe('Female and male vocals by the artists\' tags, with at least 3 tracks.'),
+  moods: z.array(browseDescriptorCountSchema).describe('Moods by the artists\' tags with at least 3 tracks here, most tracks first.'),
+}).meta({ id: 'BrowseGenreDetail' });
+
+export const browseStyleDetailSchema = z.object({
+  style: browseStyleRefSchema,
+  albums: z.array(browseAlbumSchema),
+  artists: z.array(browseArtistSchema),
+  decades: z.array(browseDecadeSchema),
+  countries: z.array(browseCountrySchema).describe('The countries with at least 3 tracks here, most tracks first, at most 12.'),
+  vocals: z.array(browseDescriptorCountSchema).describe('Female and male vocals by the artists\' tags, with at least 3 tracks.'),
+  moods: z.array(browseDescriptorCountSchema).describe('Moods by the artists\' tags with at least 3 tracks here, most tracks first.'),
+  soundsCloseTo: z.array(browseStyleRefSchema)
+    .describe('The styles that sound nearest, from any genre, nearest first (by the centroids of their tagged tracks\' audio embeddings). Empty until the style has a centroid: at least 8 tagged tracks by 3 artists.'),
+}).meta({ id: 'BrowseStyleDetail' });
+
+export const browseSearchResultSchema = z.object({
+  genre: z.string(),
+  styleId: z.number().int().nullable().describe('null: the genre itself.'),
+  label: z.string().describe('"Trip Hop · Electronic", or the genre name.'),
+  matchedAlias: z.string().nullable().describe('The tag that matched when it was not the name ("Drum & Bass").'),
+  trackCount: z.number().int().nonnegative(),
+}).meta({ id: 'BrowseSearchResult' });
+
+export const browseUnsortedSchema = z.object({
+  tags: z.array(z.object({ tag: z.string(), trackCount: z.number().int().nonnegative() }))
+    .describe('Genre tags on tracks without a genre, most tracks first.'),
+  untaggedTrackCount: z.number().int().nonnegative().describe('Tracks without a genre and without any genre tag.'),
+}).meta({ id: 'BrowseUnsorted' });
+
+export const styleProfileEntrySchema = z.object({
+  genre: z.string(),
+  styleId: z.number().int().nullable(),
+  style: z.string().nullable(),
+  share: z.number().min(0).max(1),
+  trackCount: z.number().int().nonnegative(),
+}).meta({ id: 'StyleProfileEntry' });
+
+export const albumStyleProfileSchema = z.object({
+  entries: z.array(styleProfileEntrySchema)
+    .describe('Genres and styles of at least 20 % of the album\'s tracks, or among its 3 strongest; strongest first.'),
+}).meta({ id: 'AlbumStyleProfile' });
+
+export const artistStyleProfileSchema = z.object({
+  entries: z.array(styleProfileEntrySchema.extend({ albumCount: z.number().int().nonnegative() }))
+    .describe('As for albums, with each of the artist\'s albums counted once.'),
+  listenerTags: z.array(z.string()).describe('What listeners tag the artist with on Last.fm and MusicBrainz; empty without provider data.'),
+}).meta({ id: 'ArtistStyleProfile' });
+
+/** "Aurora rays from {title}": everything Aurora knows about one track. */
+const raysArtistSchema = z.object({
+  id: z.string(), name: z.string(),
+  imageUrl: z.string().nullable(), artworkUrl: z.string().nullable(),
+  musicBrainzId: z.string().nullable(),
+  entries: z.array(styleProfileEntrySchema.extend({ albumCount: z.number().int().nonnegative() })),
+  listenerTags: z.array(z.string()),
+});
+
+export const trackRaysSchema = z.object({
+  track: trackSchema,
+  credits: z.array(z.object({
+    role: z.string().describe('artist and featured (the billed artists, from the artist tag), then composer, producer, lyricist, performer, …'),
+    artistId: z.string().nullable().describe('null for a billed name the library has no artist for.'),
+    name: z.string(),
+    detail: z.string().nullable().describe('An instrument for performers, when known.'),
+    imageUrl: z.string().nullable().describe('A stored artist image, when the library has one (no provider lookup).'),
+  })).describe('Every stored credit, in role order (performer, composer, conductor, lyricist, producer, …).'),
+  tags: z.array(z.string()).describe('The genre tags in the file, as written.'),
+  styles: z.array(z.object({
+    genre: z.string(),
+    styleId: z.number().int().nullable().describe('null: the genre row.'),
+    style: z.string().nullable(),
+    source: z.enum(['tag', 'audio', 'artist', 'override'])
+      .describe('tag: a genre tag in the file; audio: the sound; artist: the artist\'s tags on Last.fm or MusicBrainz; override: set by hand.'),
+    strength: z.number().min(0).max(1),
+    fromTags: z.array(z.string()).describe('With source tag: the file tags that map here.'),
+    disputed: z.boolean().describe('A tagged style the sound contradicts (a near-zero score, and far from the style\'s other tracks): kept, but waiting for an admin to Keep or Remove it.'),
+  })).describe('The track\'s genres and styles, genre rows first, strongest first.'),
+  sound: z.object({
+    energy: z.number().min(0).max(1),
+    danceability: z.number().min(0).max(1),
+    acousticness: z.number().min(0).max(1),
+    instrumentalness: z.number().min(0).max(1),
+    brightness: z.number().min(0).max(1).describe('Spectral centroid, scaled 0 (dark) to 1 (bright).'),
+    percussiveness: z.number().min(0).max(1),
+    bpm: z.number().int().nullable(),
+    closestStyles: z.array(z.object({ genre: z.string(), styleId: z.number().int(), style: z.string(), score: z.number() }))
+      .describe('The 12 styles the audio model scores highest (raw scores, 0-1; a track can score high on several).'),
+    genreMix: z.array(z.object({ genre: z.string(), share: z.number().min(0).max(1) }))
+      .describe('Each genre\'s share of the summed scores over all 400 styles, largest first.'),
+  }).nullable().describe('null before analysis, or for a track analysed without real audio.'),
+  album: z.object({
+    id: z.string(), title: z.string(),
+    artworkId: z.string().nullable().describe('Cover art of the album, as for AlbumSummary.'),
+    entries: z.array(styleProfileEntrySchema),
+  }).nullable(),
+  artist: raysArtistSchema.nullable().describe('The track\'s own artist.'),
+  otherArtists: z.array(raysArtistSchema.extend({
+    role: z.enum(['artist', 'featured', 'remixer']).describe('artist: billed alongside the track\'s own artist.'),
+  })).describe('The other billed artists, the featured artists and the remixers, in that order, each once; only artists in the library, at most 10.'),
+  soundsCloseTo: z.object({
+    styles: z.array(browseStyleRefSchema).describe('Styles whose centroids sit nearest the track\'s sound, its own styles left out, nearest first.'),
+    tracks: z.array(trackSchema).describe('The nearest tracks by sound: none from its album or recording, one version of a song, at most two per artist; up to 12.'),
+  }).nullable().describe('null for a track without a real audio embedding.'),
+  otherAlbums: z.array(z.object({
+    trackId: z.string(),
+    albumId: z.string().nullable(),
+    albumTitle: z.string(),
+    artistName: z.string(),
+    year: z.number().int().nullable(),
+    artworkId: z.string().nullable(),
+  })).describe('Other albums in the library with this recording (by MusicBrainz recording id, else artist and title).'),
+}).meta({ id: 'TrackRays' });
+
+export type TrackRays = z.infer<typeof trackRaysSchema>;
+export type BrowseStyleRef = z.infer<typeof browseStyleRefSchema>;
+export type BrowseGenre = z.infer<typeof browseGenreSchema>;
+export type BrowseGenres = z.infer<typeof browseGenresSchema>;
+export type BrowseAlbum = z.infer<typeof browseAlbumSchema>;
+export type BrowseArtist = z.infer<typeof browseArtistSchema>;
+export type BrowseDecade = z.infer<typeof browseDecadeSchema>;
+export type BrowseCountry = z.infer<typeof browseCountrySchema>;
+export type BrowseDescriptorCount = z.infer<typeof browseDescriptorCountSchema>;
+export type BrowseGenreDetail = z.infer<typeof browseGenreDetailSchema>;
+export type BrowseStyleDetail = z.infer<typeof browseStyleDetailSchema>;
+export type BrowseSearchResult = z.infer<typeof browseSearchResultSchema>;
+export type BrowseUnsorted = z.infer<typeof browseUnsortedSchema>;
+export type StyleProfileEntry = z.infer<typeof styleProfileEntrySchema>;
+export type AlbumStyleProfile = z.infer<typeof albumStyleProfileSchema>;
+export type ArtistStyleProfile = z.infer<typeof artistStyleProfileSchema>;
 
 export type ApiError = z.infer<typeof apiErrorSchema>;
 export type AuroraUser = z.infer<typeof userSchema>;

@@ -9,6 +9,8 @@ export const AppearanceTab: React.FC = () => {
     const setReducedMotion = usePlayerStore(state => state.setReducedMotion);
     const mobileVideoBackgrounds = usePlayerStore(state => state.mobileVideoBackgrounds);
     const setMobileVideoBackgrounds = usePlayerStore(state => state.setMobileVideoBackgrounds);
+    const newBrowseEnabled = usePlayerStore(state => state.newBrowseEnabled);
+    const saveNewBrowseEnabled = usePlayerStore(state => state.saveNewBrowseEnabled);
 
     return (
         <div className="settings-section mb-8">
@@ -78,6 +80,24 @@ export const AppearanceTab: React.FC = () => {
                     onClick={() => setMobileVideoBackgrounds(!mobileVideoBackgrounds)}
                     className="account-switch"
                     data-state={mobileVideoBackgrounds ? 'on' : 'off'}
+                >
+                    <span className="account-switch__thumb" />
+                </button>
+            </div>
+
+            <div className="appearance-toggle-row">
+                <div>
+                    <h5>Genre and style browse (preview)</h5>
+                    <p>Library → Genres shows Aurora's genres and their styles, from your tags and the sound of each track. Applies to every device you sign in on.</p>
+                </div>
+                <button
+                    type="button"
+                    role="switch"
+                    aria-checked={newBrowseEnabled}
+                    aria-label="Genre and style browse (preview)"
+                    onClick={() => void saveNewBrowseEnabled(!newBrowseEnabled)}
+                    className="account-switch"
+                    data-state={newBrowseEnabled ? 'on' : 'off'}
                 >
                     <span className="account-switch__thumb" />
                 </button>

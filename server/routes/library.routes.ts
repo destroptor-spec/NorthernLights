@@ -11,13 +11,11 @@ import * as mm from 'music-metadata';
 import { addDirectory, addTrack, addTrackFeatures, getTracksWithoutFeatures, getTracksWithSimulatedFeatures, getSimulatedFeatureTracks, getTrackCountWithFeatures, getAllTracks, getDirectories, removeDirectory, removeTracksByDirectory, getOrCreateArtist, getOrCreateAlbum, getOrCreateGenre, getAllArtists, getAllAlbums, getAllGenres, getPathsWithMeta, countTracksByArtHash, deleteTracksByPaths, purgeOrphanedEntities, recordUnparsedTrack, purgeOrphanedTracks, getSystemSetting, getPrimaryArtistName, setTrackCredits, alignArtistMbidsWithTracks, runArtistCreditSplitInBackground, setTrackLoudness, getTracksWithoutLoudness, getTracksWithFailedLoudness } from '../database';
 import { measureLoudness } from '../services/loudness.service';
 import { cleanupOrphanArt } from '../services/artCache';
-import { genreMatrixService } from '../services/genreMatrix.service';
 import { scanStatus, scanClients, broadcastScanStatus } from '../state';
 import { requireAdmin } from '../middleware/auth';
-import { startMbCreditsEnrichment, getMbCreditsProgress, startGeniusCreditsEnrichment, getGeniusCreditsProgress } from '../services/creditsEnrichment.service';
 import { enrichArtistImages, enrichArtistImagesInBackground } from '../services/artistImageEnrichment.service';
 import { resolveTrackArtists } from '../utils/trackArtists';
-import { getCreditsStatus, refreshArtistAudioProfiles, searchLibrary, searchLibraryRanked, InvalidSearchCursorError, getExistingTrackIds } from '../database';
+import { refreshArtistAudioProfiles, searchLibrary, searchLibraryRanked, InvalidSearchCursorError, getExistingTrackIds } from '../database';
 import { createRateLimiter } from '../middleware/rateLimit';
 import { areAnalysisModelsReady } from '../services/downloadModels';
 import { publishApiV1LibraryRevision } from '../services/apiV1Events.service';
@@ -213,129 +211,189 @@ router.post('/artist-reviews/decisions/:id/undo', requireAdmin, async (req, res)
   }
 });
 
-router.get('/genre-duplicates', requireAdmin, async (_req, res) => {
+// The genre review queue (Settings → Library entities → Genres). See
+// server/services/genreTaxonomy/review.ts. Spellings still group the old genre
+// list, so the old engine follows the answers until phase 4.
+const genreReviewError = (res: Response, error: any, fallback: string) => {
+  const known = error?.name === 'GenreReviewError';
+  if (!known) console.error('[GenreReviews]', fallback, error);
+  res.status(known ? 409 : 500).json({ error: error?.message || fallback, code: error?.code });
+};
+
+router.get('/genre-reviews', requireAdmin, async (_req, res) => {
   try {
-    const { getGenreReviewState } = await import('../services/genreCanonicalization.service');
-    res.json(await getGenreReviewState());
+    const { getGenreReviewState } = await import('../services/genreTaxonomy/review');
+    const { initDB } = await import('../database');
+    res.json(await getGenreReviewState(await initDB()));
   } catch (error: any) {
-    console.error('[GenreDuplicates] list error:', error);
-    res.status(500).json({ error: error.message || 'Failed to load genre duplicate candidates' });
+    genreReviewError(res, error, 'Failed to load the genre review queue');
   }
 });
 
-router.post('/genre-duplicates/dismiss', requireAdmin, async (req, res) => {
+router.get('/genre-reviews/preview', requireAdmin, async (req, res) => {
   try {
-    const { candidateKey, signature, genreIds } = req.body || {};
-    if (!candidateKey || !signature || !Array.isArray(genreIds) || genreIds.length < 1) {
-      return res.status(400).json({ error: 'candidateKey, signature, and genreIds are required' });
+    const key = typeof req.query.key === 'string' ? req.query.key : '';
+    if (!key) return res.status(400).json({ error: 'key is required' });
+    const { getGenreReviewEvidence } = await import('../services/genreTaxonomy/review');
+    const { initDB } = await import('../database');
+    const evidence = await getGenreReviewEvidence(await initDB(), key);
+    if (!evidence) return res.status(404).json({ error: 'This entry is no longer in the queue' });
+    res.json(evidence);
+  } catch (error: any) {
+    genreReviewError(res, error, 'Failed to preview the entry');
+  }
+});
+
+router.get('/genre-reviews/tags', requireAdmin, async (req, res) => {
+  try {
+    const q = typeof req.query.q === 'string' ? req.query.q.slice(0, 100) : '';
+    const { searchGenreTags } = await import('../services/genreTaxonomy/review');
+    const { initDB } = await import('../database');
+    res.json({ entries: await searchGenreTags(await initDB(), q) });
+  } catch (error: any) {
+    genreReviewError(res, error, 'Failed to search tags');
+  }
+});
+
+router.get('/genre-reviews/taxonomy', requireAdmin, async (_req, res) => {
+  try {
+    const { listTaxonomy } = await import('../services/genreTaxonomy/review');
+    const { initDB } = await import('../database');
+    res.json(await listTaxonomy(await initDB()));
+  } catch (error: any) {
+    genreReviewError(res, error, 'Failed to load the genre list');
+  }
+});
+
+const afterGenreDecision = async () => {
+  const { invalidateGenreEntityCache } = await import('../database');
+  invalidateGenreEntityCache();
+  // Review answers change mappings: rebuild genres and styles soon.
+  void import('../services/genreTaxonomy').then(m => m.scheduleFusion(5000)).catch(() => {});
+  await publishApiV1LibraryRevision({ source: 'genreReview' });
+};
+
+// Disputed tags (phase 3): tagged styles the sound contradicts, for an admin
+// to Keep or Remove through the hand corrections below.
+router.get('/track-styles/disputed', requireAdmin, async (req, res) => {
+  const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
+  const offset = Math.max(0, Number(req.query.offset) || 0);
+  try {
+    const { listDisputedStyles } = await import('../services/genreTaxonomy');
+    const { initDB } = await import('../database');
+    res.json(await listDisputedStyles(await initDB(), { limit, offset }));
+  } catch (error) {
+    console.error('[TrackStyles] Disputed list failed:', error);
+    res.status(500).json({ error: 'Could not load disputed tags.' });
+  }
+});
+
+// A hand correction of one track's genres and styles ("Aurora rays from
+// {title}"): add or remove a genre or style. Admin: it changes the library
+// for everyone. The track is fused again before the answer.
+router.post('/track-styles/:trackId', requireAdmin, async (req, res) => {
+  const { genre, styleId, action } = req.body || {};
+  if (typeof genre !== 'string' || !(styleId === null || Number.isInteger(styleId)) || !['add', 'remove'].includes(action)) {
+    return res.status(400).json({ error: 'Send genre, styleId (a number or null) and action (add or remove).' });
+  }
+  try {
+    const { setTrackStyleOverride } = await import('../services/genreTaxonomy');
+    const { initDB } = await import('../database');
+    await setTrackStyleOverride(await initDB(), {
+      trackId: String(req.params.trackId), genre, styleId, action, userId: (req as any).user?.userId ?? null,
+    });
+    await publishApiV1LibraryRevision({ source: 'trackStyles' });
+    res.json({ status: 'saved' });
+  } catch (error: any) {
+    if (error?.name === 'TrackStyleOverrideError') return res.status(error.status).json({ error: error.message });
+    console.error('[TrackStyles] Override failed:', error);
+    res.status(500).json({ error: 'Could not save the change.' });
+  }
+});
+
+router.post('/genre-reviews/decide', requireAdmin, async (req, res) => {
+  try {
+    const { key, signature, outcomeId, targets, acknowledgeConflict } = req.body || {};
+    if (!key || !signature || !outcomeId) {
+      return res.status(400).json({ error: 'key, signature and outcomeId are required' });
     }
-    const { dismissGenreCandidate } = await import('../services/genreCanonicalization.service');
-    await dismissGenreCandidate({
-      candidateKey: String(candidateKey),
-      signature: String(signature),
-      genreIds: genreIds.map(String),
-      userId: req.user?.userId || null,
+    const { decideGenreReview } = await import('../services/genreTaxonomy/review');
+    const { initDB } = await import('../database');
+    const result = await decideGenreReview(await initDB(), {
+      key: String(key), signature: String(signature), outcomeId: String(outcomeId), targets,
+      acknowledgeConflict: acknowledgeConflict === true, userId: req.user?.userId || null,
     });
-    res.json({ status: 'dismissed' });
+    await afterGenreDecision();
+    res.json({ status: 'decided', ...result });
   } catch (error: any) {
-    console.error('[GenreDuplicates] dismiss error:', error);
-    res.status(500).json({ error: error.message || 'Failed to dismiss genre candidate' });
+    genreReviewError(res, error, 'Failed to apply the decision');
   }
 });
 
-router.post('/genres/merge', requireAdmin, async (req, res) => {
+router.post('/genre-reviews/accept-exact', requireAdmin, async (req, res) => {
   try {
-    const {
-      canonicalGenreId,
-      aliasGenreIds,
-      candidateKey,
-      signature,
-      scoreEvidence,
-      acknowledgeTaxonomyConflict,
-    } = req.body || {};
-    if (!canonicalGenreId || !Array.isArray(aliasGenreIds) || aliasGenreIds.length < 1) {
-      return res.status(400).json({ error: 'canonicalGenreId and aliasGenreIds are required' });
-    }
-    const { groupGenres } = await import('../services/genreCanonicalization.service');
-    await groupGenres({
-      canonicalGenreId: String(canonicalGenreId),
-      aliasGenreIds: aliasGenreIds.map(String),
-      candidateKey: candidateKey ? String(candidateKey) : undefined,
-      signature: signature ? String(signature) : undefined,
-      scoreEvidence,
-      acknowledgeTaxonomyConflict: acknowledgeTaxonomyConflict === true,
-      userId: req.user?.userId || null,
-    });
-    res.json({ status: 'grouped' });
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    const { acceptExactMatches } = await import('../services/genreTaxonomy/review');
+    const { initDB } = await import('../database');
+    const result = await acceptExactMatches(await initDB(), { items, userId: req.user?.userId || null });
+    await afterGenreDecision();
+    res.json({ status: 'decided', ...result });
   } catch (error: any) {
-    console.error('[GenreDuplicates] merge error:', error);
-    const isConflict = error?.code === 'GENRE_TAXONOMY_CONFLICT';
-    res.status(isConflict ? 409 : 400).json({
-      error: error.message || 'Failed to group genres',
-      code: isConflict ? 'GENRE_TAXONOMY_CONFLICT' : undefined,
-    });
+    genreReviewError(res, error, 'Failed to accept the matches');
   }
 });
 
-router.post('/genres/:aliasId/restore', requireAdmin, async (req, res) => {
+router.post('/genre-reviews/groups/:aliasId/separate', requireAdmin, async (req, res) => {
   try {
-    const { restoreGenreAlias } = await import('../services/genreCanonicalization.service');
-    await restoreGenreAlias({
-      aliasGenreId: String(req.params.aliasId),
-      userId: req.user?.userId || null,
-    });
-    res.json({ status: 'restored' });
+    const { separateGenreSpelling } = await import('../services/genreTaxonomy/review');
+    const { initDB } = await import('../database');
+    const result = await separateGenreSpelling(await initDB(), { aliasGenreId: String(req.params.aliasId), userId: req.user?.userId || null });
+    await afterGenreDecision();
+    res.json({ status: 'decided', ...result });
   } catch (error: any) {
-    console.error('[GenreDuplicates] restore error:', error);
-    res.status(400).json({ error: error.message || 'Failed to restore genre alias' });
+    genreReviewError(res, error, 'Failed to separate the spelling');
   }
 });
 
-// ─── Credit enrichment from external providers ──────────────────────
-// Admin-triggered. Aurora's role-credit table is populated from on-disk
-// tags during scan (always-on); these endpoints layer additional rows
-// from MusicBrainz and Genius when those providers are connected.
-
-router.get('/credits/status', requireAdmin, async (_req, res) => {
+router.get('/genre-reviews/decisions', requireAdmin, async (_req, res) => {
   try {
-    const status = await getCreditsStatus();
-    res.json(status);
+    const { getRecentGenreReviewDecisions } = await import('../services/genreTaxonomy/review');
+    const { initDB } = await import('../database');
+    res.json({ decisions: await getRecentGenreReviewDecisions(await initDB()) });
+  } catch (error: any) {
+    genreReviewError(res, error, 'Failed to load recent decisions');
+  }
+});
+
+router.post('/genre-reviews/decisions/:id/undo', requireAdmin, async (req, res) => {
+  try {
+    const { undoGenreReviewDecision } = await import('../services/genreTaxonomy/review');
+    const { initDB } = await import('../database');
+    await undoGenreReviewDecision(await initDB(), String(req.params.id));
+    await afterGenreDecision();
+    res.json({ status: 'undone' });
+  } catch (error: any) {
+    genreReviewError(res, error, 'Failed to undo the decision');
+  }
+});
+
+// ─── Credit imports from external providers ─────────────────────────
+// Aurora's role-credit table is filled from on-disk tags during every scan;
+// MusicBrainz and Genius add rows on top through automatic server imports
+// (services/creditsEnrichment.service.ts). Nothing to start: this reports an
+// import's progress for its settings tab, and nudges it to start when it has
+// work (a key was just added, or new tracks arrived).
+router.get('/credits/import/:provider', requireAdmin, async (req, res) => {
+  const provider = String(req.params.provider);
+  if (provider !== 'musicbrainz' && provider !== 'genius') return res.status(404).json({ error: 'Unknown provider' });
+  try {
+    const { ensureCreditsImport, getCreditsImportStatus } = await import('../services/creditsEnrichment.service');
+    await ensureCreditsImport(provider);
+    res.json(await getCreditsImportStatus(provider));
   } catch (err: any) {
     console.error('[Credits] status error:', err);
-    res.status(500).json({ error: err?.message || 'Failed to read credits status' });
+    res.status(500).json({ error: err?.message || 'Failed to read the credit import' });
   }
-});
-
-// Start the MusicBrainz credit-enrichment background job (throttled to ~1 req/s,
-// so it can run for minutes). Returns immediately; the client polls /progress.
-router.post('/credits/enrich/musicbrainz', requireAdmin, async (_req, res) => {
-  try {
-    const result = await startMbCreditsEnrichment();
-    res.json(result);
-  } catch (err: any) {
-    console.error('[Credits] MB enrichment error:', err);
-    res.status(500).json({ error: err?.message || 'MusicBrainz enrichment failed' });
-  }
-});
-
-router.get('/credits/enrich/musicbrainz/progress', requireAdmin, (_req, res) => {
-  res.json(getMbCreditsProgress());
-});
-
-// Start the Genius credit-enrichment background job. Returns immediately; the
-// client polls /progress.
-router.post('/credits/enrich/genius', requireAdmin, async (_req, res) => {
-  try {
-    const result = await startGeniusCreditsEnrichment();
-    res.json(result);
-  } catch (err: any) {
-    console.error('[Credits] Genius enrichment error:', err);
-    res.status(500).json({ error: err?.message || 'Genius enrichment failed' });
-  }
-});
-
-router.get('/credits/enrich/genius/progress', requireAdmin, (_req, res) => {
-  res.json(getGeniusCreditsProgress());
 });
 
 // Backfill artist pictures for the whole library using the configured artist-image
@@ -562,6 +620,10 @@ async function processMetadataBatch(input: Array<Buffer | ScanItem>, concurrency
               mbAlbumArtistId: metadata.mbAlbumArtistId || null,
               mbReleaseGroupId: metadata.mbReleaseGroupId || null,
               mbWorkId: metadata.mbWorkId || null,
+              originRead: metadata.originRead === true,
+              releaseCountry: metadata.releaseCountry || null,
+              originalYear: metadata.originalYear || null,
+              lyricsLanguage: metadata.lyricsLanguage || null,
               rawUrls: metadata.rawUrls || null,
               artHash: metadata.artHash,
               artworkVersion: metadata.artworkVersion,
@@ -654,6 +716,8 @@ async function processMetadataBatch(input: Array<Buffer | ScanItem>, concurrency
 
   const duration = ((Date.now() - startTime) / 1000).toFixed(1);
   logScanner(`[Scanner] Phase: metadata - Duration: ${duration}s, Errors: ${errorCount}`);
+  // New or changed genre tags: map them shortly after (debounced, incremental).
+  if (total > 0) void import('../services/genreTaxonomy').then(m => m.scheduleTagMapping()).catch(() => {});
 }
 
 // ─── Phase 3: Parallel audio analysis (ffmpeg + Essentia) ────────────
@@ -668,7 +732,7 @@ async function getAnalysisConcurrency(): Promise<number> {
   }
 }
 
-async function processAnalysisBatch(tracks: { id: string; filePath: Buffer; title: string; artist?: string | null }[], concurrency: number): Promise<void> {
+async function processAnalysisBatch(tracks: { id: string; filePath: Buffer; title: string; artist?: string | null; duration?: number | null }[], concurrency: number): Promise<void> {
   const startTime = Date.now();
   let errorCount = 0;
   let featuresWritten = 0;
@@ -707,7 +771,8 @@ async function processAnalysisBatch(tracks: { id: string; filePath: Buffer; titl
               id: track.id,
               filePathBase64: track.filePath.toString('base64'),
               title: track.title,
-              artist: track.artist || null
+              artist: track.artist || null,
+              durationSeconds: track.duration ?? null
             }
           });
 
@@ -1135,14 +1200,6 @@ export async function runSyncWalk(
     }
   }
 
-  // Trigger Genre Matrix regeneration after any change
-  if (itemsToProcess.length > 0 || removedCount > 0) {
-    setImmediate(() => {
-      genreMatrixService.runDiffAndGenerate()
-        .catch(e => console.error('[Genre Matrix] Post-scan categorization failed:', e));
-    });
-  }
-
   // Fill in pictures for any newly-added artists (and backfill the rest), bounded
   // and throttled. No-ops when no metadata provider is configured — library is
   // canon, and no provider simply means initials in the Artists grid.
@@ -1257,11 +1314,6 @@ router.post('/refresh-metadata', async (req, res) => {
       resetScanStatus(true);
       await publishApiV1LibraryRevision({ source: 'metadataRefresh' });
 
-      const { genreMatrixService } = await import('../services/genreMatrix.service');
-      setImmediate(() => {
-        genreMatrixService.runDiffAndGenerate().catch(e => console.error('[Genre Matrix]', e));
-      });
-
       // Backfill artist pictures for the whole library (no-op without a provider),
       // after the split so joined credits it removes aren't looked up.
       void runArtistCreditSplitInBackground().then(enrichArtistImagesInBackground);
@@ -1309,7 +1361,7 @@ router.post('/analyze', async (req, res) => {
   const simulatedOnly = req.body?.simulatedOnly === true;
 
   try {
-    let tracksToAnalyze: { id: string; filePath: Buffer; title: string; artist?: string | null }[];
+    let tracksToAnalyze: { id: string; filePath: Buffer; title: string; artist?: string | null; duration?: number | null }[];
 
     if (simulatedOnly) {
       tracksToAnalyze = await getTracksWithSimulatedFeatures();
@@ -1317,12 +1369,13 @@ router.post('/analyze', async (req, res) => {
       // Re-analyze ALL tracks (e.g., after Essentia upgrade)
       const { initDB } = await import('../database');
       const db = await initDB();
-      const dbRes = await db.query('SELECT t.id, t.path, t.title, t.artist FROM tracks t ORDER BY t.title');
+      const dbRes = await db.query('SELECT t.id, t.path, t.title, t.artist, t.duration FROM tracks t ORDER BY t.title');
       tracksToAnalyze = dbRes.rows.map((r: any) => ({
         id: r.id,
         filePath: Buffer.from(r.path, 'base64'),
         title: r.title,
         artist: r.artist || null,
+        duration: r.duration ?? null,
       }));
     } else {
       tracksToAnalyze = await getTracksWithoutFeatures();
@@ -1347,12 +1400,6 @@ router.post('/analyze', async (req, res) => {
     const concurrency = await getAnalysisConcurrency();
     await processAnalysisBatch(tracksToAnalyze, concurrency);
     logAnalyzer(`[Analysis] Standalone analysis complete: ${tracksToAnalyze.length} tracks`);
-
-    // Trigger Genre Matrix regeneration after analysis
-    setImmediate(() => {
-      genreMatrixService.runDiffAndGenerate()
-        .catch(e => console.error('[Genre Matrix] Post-analysis categorization failed:', e));
-    });
 
     res.json({ status: 'completed', message: `Analyzed ${tracksToAnalyze.length} tracks`, count: tracksToAnalyze.length });
   } catch (error) {

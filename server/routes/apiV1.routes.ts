@@ -11,7 +11,9 @@ import {
   createPlaylist,
   deletePlaylist,
   getAlbumById,
+  getAlbumCardsByIds,
   getAlbumsPage,
+  getArtistCardsByIds,
   getArtistsPage,
   getAlbumLoudness,
   getArtistById,
@@ -52,6 +54,7 @@ import { isPathAllowed, pathToBuffer, addToSessionHistory } from '../state';
 import { getHubCollections } from '../services/recommendation.service';
 import { getNextInfinityTrackForUser } from '../services/infinityRequest.service';
 import { generateCustomHubPlaylist, queueLlmHubRefreshForUser, runLlmHubRegeneration } from '../services/hubRefresh.service';
+import { ThinRequestError } from '../services/aiPlaylistSupport';
 import {
   computeSmartHubBundle,
   evaluateArtistRadioEligibility,
@@ -157,6 +160,23 @@ import {
   joinNearbyGig,
 } from '../services/sessionMembers.service';
 import { isPlaybackSyncEnabledFor } from '../services/playbackSync.service';
+import {
+  BROWSE_PAGE_ENTITIES,
+  getAlbumStyleProfile,
+  getArtistStyleProfile,
+  getBrowseGenre,
+  getBrowseStyle,
+  getBrowseUnsorted,
+  listBrowseAlbumRows,
+  listBrowseArtistRows,
+  listBrowseGenres,
+  listBrowseTrackIds,
+  pickBrowseMix,
+  searchBrowseStyles,
+  type BrowseFilter,
+} from '../services/browse.service';
+import type { BrowseAlbum, BrowseArtist } from '../../shared/api/v1';
+import { getTrackRays } from '../services/trackRays.service';
 import { publishApiV1Event, replayApiV1Events, subscribeApiV1Events, noteClientListening, listConnectedDevices, isClientListening as isDeviceConnected } from '../services/apiV1Events.service';
 import { topUpSessionInfinity } from '../services/sessionInfinity.service';
 import { forgetSessionListen, noteSessionReport } from '../services/sessionListens.service';
@@ -172,6 +192,7 @@ import { generateAuroraApiDocument } from '../api/v1/openapi';
 import { signedArtworkLinks } from '../middleware/signedArtwork';
 import { artworkUrlFor } from '../services/artworkLink.service';
 import { artCachePath, DEFAULT_ART_SIZE, isValidArtSize } from '../services/artCache';
+import { MOOD_NAMES, VOCALS, type Mood } from '../../shared/descriptors';
 
 const router = Router();
 const startedAt = new Date().toISOString();
@@ -627,10 +648,173 @@ router.get('/genres/:id', async (req, res) => {
   dataResponse(req, res, { genre: mapGenreV1(genre), tracks });
 });
 
+// ── Browse: Genre → Style → music (genre redesign, phase 2) ──────────────
+// Offset cursors: rankings change with every fusion run, so a keyset over
+// (strength, id) would not be stable either.
+
+const offsetCursor = (offset: number) => Buffer.from(JSON.stringify({ o: offset }), 'utf8').toString('base64url');
+function readOffsetCursor(value: unknown): number | null {
+  if (value === undefined) return 0;
+  try {
+    const parsed = JSON.parse(Buffer.from(String(value), 'base64url').toString('utf8'));
+    return Number.isInteger(parsed?.o) && parsed.o >= 0 ? parsed.o : null;
+  } catch {
+    return null;
+  }
+}
+
+const browseFilterQuery = z.object({
+  genre: z.string().min(1).max(100).optional(),
+  style: z.coerce.number().int().positive().optional(),
+  noStyle: z.enum(['true', 'false']).optional(),
+  decade: z.coerce.number().int().min(1000).max(2990).optional(),
+  country: z.string().regex(/^[A-Za-z]{2}$/).transform(c => c.toUpperCase()).optional(),
+  vocals: z.enum(VOCALS).optional(),
+  mood: z.enum(MOOD_NAMES as [Mood, ...Mood[]]).optional(),
+  unsorted: z.enum(['true', 'false']).optional(),
+  tag: z.string().min(1).max(200).optional(),
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+});
+
+/** The filter of a browse list request, or null after answering 400. */
+function browseFilter(req: Request, res: Response, { tracks }: { tracks: boolean }): { filter: BrowseFilter; offset: number; limit: number } | null {
+  const parsed = browseFilterQuery.safeParse(req.query);
+  const offset = parsed.success ? readOffsetCursor(parsed.data.cursor) : null;
+  if (!parsed.success || offset === null) {
+    sendApiV1Error(req, res, 400, 'INVALID_BROWSE_FILTER', 'The browse filter or cursor is invalid.');
+    return null;
+  }
+  const q = parsed.data;
+  const filter: BrowseFilter = {
+    genre: q.genre, styleId: q.style, noStyle: q.noStyle === 'true', decade: q.decade, country: q.country, vocals: q.vocals, mood: q.mood,
+    unsorted: q.unsorted === 'true', tag: q.tag,
+  };
+  const scoped = filter.styleId !== undefined || filter.genre !== undefined || (tracks && filter.unsorted);
+  if (!scoped) {
+    sendApiV1Error(req, res, 400, 'INVALID_BROWSE_FILTER', tracks ? 'Name a genre, a style or unsorted.' : 'Name a genre or a style.');
+    return null;
+  }
+  return { filter, offset, limit: q.limit ?? (tracks ? LIST_DEFAULT : BROWSE_PAGE_ENTITIES) };
+}
+
+async function browseAlbums(filter: BrowseFilter, offset = 0, limit = BROWSE_PAGE_ENTITIES) {
+  const { rows, hasMore } = await listBrowseAlbumRows(await initDB(), filter, offset, limit);
+  const cards = new Map((await getAlbumCardsByIds(rows.map(r => r.albumId))).map((card: any) => [String(card.id), card]));
+  const items: BrowseAlbum[] = rows.filter(r => cards.has(r.albumId))
+    .map(r => ({ album: mapAlbumSummaryV1(cards.get(r.albumId)), share: Math.min(1, r.share), trackCount: r.tracks }));
+  return { items, hasMore };
+}
+
+async function browseArtists(filter: BrowseFilter, offset = 0, limit = BROWSE_PAGE_ENTITIES) {
+  const { rows, hasMore } = await listBrowseArtistRows(await initDB(), filter, offset, limit);
+  const cards = new Map((await getArtistCardsByIds(rows.map(r => r.artistId))).map((card: any) => [String(card.id), card]));
+  const items: BrowseArtist[] = rows.filter(r => cards.has(r.artistId))
+    .map(r => ({ artist: mapArtistSummaryV1(cards.get(r.artistId)), share: Math.min(1, r.share), albumCount: r.albums }));
+  return { items, hasMore };
+}
+
+const browseLoaders = {
+  albums: async (filter: BrowseFilter) => (await browseAlbums(filter)).items,
+  artists: async (filter: BrowseFilter) => (await browseArtists(filter)).items,
+};
+
+router.get('/browse/genres', async (req, res) => {
+  dataResponse(req, res, await listBrowseGenres(await initDB(), { includeHidden: req.query.hidden === 'true' }));
+});
+
+router.get('/browse/genres/:genre', async (req, res) => {
+  const detail = await getBrowseGenre(await initDB(), routeParam(req, 'genre'), browseLoaders);
+  if (!detail) return sendApiV1Error(req, res, 404, 'GENRE_NOT_FOUND', 'Genre not found.');
+  dataResponse(req, res, detail);
+});
+
+router.get('/browse/styles/:id', async (req, res) => {
+  const id = Number(routeParam(req, 'id'));
+  const detail = Number.isInteger(id) && id > 0 ? await getBrowseStyle(await initDB(), id, browseLoaders) : null;
+  if (!detail) return sendApiV1Error(req, res, 404, 'STYLE_NOT_FOUND', 'Style not found.');
+  dataResponse(req, res, detail);
+});
+
+router.get('/browse/tracks', async (req, res) => {
+  const request = browseFilter(req, res, { tracks: true });
+  if (!request) return;
+  const { ids, hasMore } = await listBrowseTrackIds(await initDB(), request.filter, request.offset, request.limit);
+  const byId = new Map((await getApiV1TracksByIds(req.apiV1!.userId, ids)).map(track => [track.id, track]));
+  res.json({
+    data: ids.map(id => byId.get(id)).filter(Boolean),
+    page: { nextCursor: hasMore ? offsetCursor(request.offset + request.limit) : null },
+    meta: { requestId: req.requestId },
+  });
+});
+
+// What Shuffle plays: a random handful (15-30, or all of a small one) of the
+// strongest members, spread over artists. Infinity mode, when on, continues.
+router.get('/browse/mix', async (req, res) => {
+  const request = browseFilter(req, res, { tracks: true });
+  if (!request) return;
+  const ids = await pickBrowseMix(await initDB(), request.filter);
+  const byId = new Map((await getApiV1TracksByIds(req.apiV1!.userId, ids)).map(track => [track.id, track]));
+  dataResponse(req, res, ids.map(id => byId.get(id)).filter(Boolean));
+});
+
+router.get('/browse/albums', async (req, res) => {
+  const request = browseFilter(req, res, { tracks: false });
+  if (!request) return;
+  const { items, hasMore } = await browseAlbums(request.filter, request.offset, request.limit);
+  res.json({ data: items, page: { nextCursor: hasMore ? offsetCursor(request.offset + request.limit) : null }, meta: { requestId: req.requestId } });
+});
+
+router.get('/browse/artists', async (req, res) => {
+  const request = browseFilter(req, res, { tracks: false });
+  if (!request) return;
+  const { items, hasMore } = await browseArtists(request.filter, request.offset, request.limit);
+  res.json({ data: items, page: { nextCursor: hasMore ? offsetCursor(request.offset + request.limit) : null }, meta: { requestId: req.requestId } });
+});
+
+router.get('/browse/search', async (req, res) => {
+  const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  if (!q || q.length > 100) return sendApiV1Error(req, res, 400, 'INVALID_SEARCH', 'Search needs 1 to 100 characters.');
+  dataResponse(req, res, await searchBrowseStyles(await initDB(), q));
+});
+
+router.get('/browse/unsorted', async (req, res) => {
+  dataResponse(req, res, await getBrowseUnsorted(await initDB()));
+});
+
+router.get('/albums/:id/styles', async (req, res) => {
+  const album = await getAlbumById(routeParam(req, 'id')).catch(() => null);
+  if (!album) return sendApiV1Error(req, res, 404, 'ALBUM_NOT_FOUND', 'Album not found.');
+  dataResponse(req, res, await getAlbumStyleProfile(await initDB(), String(album.id)));
+});
+
+router.get('/artists/:id/styles', async (req, res) => {
+  const artist = await getArtistById(routeParam(req, 'id')).catch(() => null);
+  if (!artist) return sendApiV1Error(req, res, 404, 'ARTIST_NOT_FOUND', 'Artist not found.');
+  dataResponse(req, res, await getArtistStyleProfile(await initDB(), String(artist.id)));
+});
+
 router.get('/tracks/:id', async (req, res) => {
   const track = await getApiV1TrackById(req.apiV1!.userId, req.params.id);
   if (!track) return sendApiV1Error(req, res, 404, 'TRACK_NOT_FOUND', 'Track not found.');
   dataResponse(req, res, track);
+});
+
+// "Aurora rays from {title}": credits, genres and styles with their sources,
+// sound, album and artist context, what it sounds close to, and other albums
+// with the recording.
+router.get('/tracks/:id/rays', async (req, res) => {
+  const id = routeParam(req, 'id');
+  const [track, rays] = await Promise.all([getApiV1TrackById(req.apiV1!.userId, id), getTrackRays(await initDB(), id)]);
+  if (!track || !rays) return sendApiV1Error(req, res, 404, 'TRACK_NOT_FOUND', 'Track not found.');
+  const near = rays.soundsCloseTo;
+  const nearTracks = near?.trackIds.length ? await getApiV1TracksByIds(req.apiV1!.userId, near.trackIds) : [];
+  const nearById = new Map(nearTracks.map(t => [t.id, t]));
+  dataResponse(req, res, {
+    track,
+    ...rays,
+    soundsCloseTo: near ? { styles: near.styles, tracks: near.trackIds.map(t => nearById.get(t)).filter(Boolean) } : null,
+  });
 });
 
 router.get('/tracks/:id/lyrics', async (req, res) => {
@@ -917,7 +1101,14 @@ router.post('/hub/artist-radio', async (req, res) => {
 router.post('/hub/custom', async (req, res) => {
   const input = parseBody(z.object({ prompt: z.string().trim().min(1).max(1000), count: z.number().int().min(1).max(100).optional() }).strict(), req, res);
   if (!input) return;
-  const playlist = await generateCustomHubPlaylist(req.apiV1!.userId, input.prompt, { tracksPerPlaylist: input.count });
+  let playlist;
+  try {
+    playlist = await generateCustomHubPlaylist(req.apiV1!.userId, input.prompt, { tracksPerPlaylist: input.count });
+  } catch (error) {
+    if (!(error instanceof ThinRequestError)) throw error;
+    const { songs, artists, needed, theme } = error.support;
+    return sendApiV1Error(req, res, 422, 'CUSTOM_PLAYLIST_TOO_THIN', error.message, { songs, artists, needed, theme });
+  }
   if (!playlist) return sendApiV1Error(req, res, 503, 'CUSTOM_PLAYLIST_FAILED', 'Aurora could not match that prompt to the library. Try rephrasing it.');
   const meta = await getPlaylistByIdReadable(playlist.id, req.apiV1!.userId);
   const tracks = await getPlaylistTracks(playlist.id, req.apiV1!.userId);
@@ -990,6 +1181,7 @@ const preferenceDefaults = {
   streamingQuality: 'auto', prebufferPolicy: 'conservative', playedThresholdPercent: 50,
   loudnessNormEnabled: false, loudnessTargetLufs: -18, loudnessPreampDb: 0,
   loudnessMode: 'track', subsonicProviderScrobbleEnabled: false, subsonicProviderLoveSyncEnabled: true,
+  newBrowseEnabled: false,
 } as const;
 
 router.get('/preferences', async (req, res) => {

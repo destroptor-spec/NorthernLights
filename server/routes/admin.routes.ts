@@ -9,8 +9,7 @@ import { hashPassword } from '../services/auth.service';
 import { requireAdmin } from '../middleware/auth';
 import { ACCOUNT_PROTECTION_MESSAGES } from '../../shared/accountProtection';
 import { getContainerStatus, startContainer, stopContainer, createContainer, recreateContainer, getConfiguredDatabaseInfo, ContainerConfig } from '../services/containerControl.service';
-import { dbConnected, setDbConnected, initDatabaseConnection, mbdbStatus, mbdbClients } from '../state';
-import { mbdbService } from '../services/mbdb.service';
+import { dbConnected, setDbConnected, initDatabaseConnection } from '../state';
 import { verifyToken } from '../services/auth.service';
 import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
@@ -420,74 +419,6 @@ router.post('/db/recreate', dbRecoveryRateLimit, requireAdminOrDbRecovery, async
   }
 });
 
-// ─── MBDB Endpoints ───────────────────────────────────────────────────
-
-router.get('/mbdb/status', adminReadRateLimit, requireAdmin, (req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-
-  if (mbdbClients) mbdbClients.add(res);
-  res.write(`data: ${JSON.stringify(mbdbStatus)}\n\n`);
-
-  req.on('close', () => {
-    if (mbdbClients) mbdbClients.delete(res);
-  });
-});
-
-router.post('/mbdb/import', adminMutationRateLimit, requireAdmin, async (req, res) => {
-  if (mbdbStatus.isImporting) {
-    return res.status(400).json({ error: 'Import already in progress' });
-  }
-  
-  // Fire and forget, client listens via SSE
-  mbdbService.importDatabase().catch(err => console.error('MBDB Import failed:', err));
-  
-  res.json({ message: 'MBDB Import started' });
-});
-
-router.post('/mbdb/cancel', adminMutationRateLimit, requireAdmin, async (req, res) => {
-  if (!mbdbStatus.isImporting) {
-    return res.status(400).json({ error: 'No import in progress' });
-  }
-  
-  mbdbService.cancelImport();
-  res.json({ message: 'Import cancellation requested' });
-});
-
-router.get('/mbdb/check-update', adminReadRateLimit, requireAdmin, async (req, res) => {
-  try {
-    const latestResponse = await fetch('https://data.metabrainz.org/pub/musicbrainz/data/fullexport/LATEST');
-    const latestTag = (await latestResponse.text()).trim();
-    
-    // Get last import info
-    const { queryWithRetry } = await import('../utils/db');
-    let lastImport = null;
-    try {
-      const result = await queryWithRetry("SELECT value FROM system_settings WHERE key = 'mbdbLastImport'");
-      if (result.rows.length > 0) {
-        lastImport = JSON.parse(result.rows[0].value);
-      }
-    } catch (e) {}
-    
-    // Ensure lastImport has a consistent structure for the frontend
-    const serializedLastImport = lastImport ? {
-      ...lastImport,
-      counts: lastImport.counts || { genres: 0, aliases: 0, links: 0 }
-    } : null;
-    
-    res.json({
-      latestTag,
-      lastImportTag: lastImport?.tag || null,
-      lastImportTimestamp: lastImport?.timestamp || null,
-      updateAvailable: lastImport ? latestTag !== lastImport.tag : true,
-      lastImport: serializedLastImport
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // ─── Unified Health Endpoint ──────────────────────────────────────────
 
 router.get('/health', adminReadRateLimit, requireAdmin, async (req, res) => {
@@ -495,30 +426,16 @@ router.get('/health', adminReadRateLimit, requireAdmin, async (req, res) => {
     const containerName = process.env.DB_CONTAINER_NAME || 'music-postgres';
     const containerStatus = await getContainerStatus(containerName);
     const poolStats = getPoolStats();
-    const { scanStatus, mbdbStatus } = await import('../state');
-    const { queryWithRetry } = await import('../utils/db');
-    
-    // Check MBDB record count for better "Import correct" feedback
-    let mbdbCount = 0;
-    if (dbConnected) {
-      try {
-        const mbdbCountRes = await queryWithRetry('SELECT COUNT(*) as count FROM genre_tree_paths');
-        mbdbCount = parseInt((mbdbCountRes.rows[0] as any).count, 10);
-      } catch (e) {
-        console.warn('[Admin Health] Could not fetch MBDB count (DB likely down or uninitialized)');
-      }
-    }
+    const { scanStatus } = await import('../state');
 
     res.json({
       status: 'ok',
       database: {
         connected: dbConnected,
         pool: poolStats,
-        mbdb_records: mbdbCount
       },
       container: containerStatus,
       scanner: scanStatus,
-      mbdb: mbdbStatus
     });
   } catch (error: any) {
     console.error('Admin health check error:', error);
@@ -586,6 +503,62 @@ router.get('/service/status', adminReadRateLimit, requireAdmin, async (_req, res
       invocationId: env.INVOCATION_ID || null,
     },
   });
+});
+
+// ── Genre & style taxonomy (docs/Aurora genre and style redesign.md, phase 1) ──
+// Coverage of the tag mapping and the phase-1 gate.
+router.get('/genre-taxonomy/coverage', adminReadRateLimit, requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 100, 0), 1000);
+    const { getMappingCoverage } = await import('../services/genreTaxonomy');
+    res.json(await getMappingCoverage(await initDB(), limit));
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || 'Coverage failed' });
+  }
+});
+
+// Artist-tag backfill (Last.fm / MusicBrainz, optional): status, start, stop.
+router.get('/genre-taxonomy/artist-tags/backfill', adminReadRateLimit, requireAdmin, async (_req, res) => {
+  try {
+    const taxonomy = await import('../services/genreTaxonomy');
+    res.json({ ...taxonomy.getArtistTagBackfillStatus(), remaining: await taxonomy.countArtistTagsRemaining(await initDB()) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || 'Status failed' });
+  }
+});
+router.post('/genre-taxonomy/artist-tags/backfill', adminMutationRateLimit, requireAdmin, async (req, res) => {
+  const taxonomy = await import('../services/genreTaxonomy');
+  if (req.body?.action === 'stop') taxonomy.stopArtistTagBackfill();
+  else taxonomy.startArtistTagBackfill();
+  res.json(taxonomy.getArtistTagBackfillStatus());
+});
+
+// Fusion (phase 2): the last run's summary, and a full rebuild on request.
+router.get('/genre-taxonomy/fusion', adminReadRateLimit, requireAdmin, async (_req, res) => {
+  try {
+    const { getFusionStatus } = await import('../services/genreTaxonomy');
+    res.json({ status: await getFusionStatus() });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || 'Status failed' });
+  }
+});
+router.post('/genre-taxonomy/fusion', adminMutationRateLimit, requireAdmin, async (_req, res) => {
+  try {
+    const { runFusion } = await import('../services/genreTaxonomy');
+    res.json({ status: await runFusion(await initDB()) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || 'Fusion failed' });
+  }
+});
+
+// Re-run tag mapping. full=true re-resolves every tag without a manual decision.
+router.post('/genre-taxonomy/remap', adminMutationRateLimit, requireAdmin, async (req, res) => {
+  try {
+    const { runTagMapping } = await import('../services/genreTaxonomy');
+    res.json(await runTagMapping(await initDB(), { full: req.body?.full === true }));
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || 'Remap failed' });
+  }
 });
 
 export default router;

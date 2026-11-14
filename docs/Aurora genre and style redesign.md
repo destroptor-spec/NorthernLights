@@ -154,29 +154,24 @@ CREATE TABLE tag_ignored (
   reason TEXT
 );
 
--- Per-track evidence and the fused result
+-- The fused result: one row per membership, saying where it came from.
+-- (Built in phase 2. The first plan also stored a row per evidence source;
+-- model scores already live in track_style_scores, so only the result is
+-- stored, and its source is what "Aurora rays from {title}" shows.)
 CREATE TABLE track_styles (
-  id             BIGSERIAL PRIMARY KEY,
   track_id       TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
   genre          TEXT NOT NULL REFERENCES taxonomy_genre(name),
-  style_id       INT,                        -- NULL = genre-level membership
-  source         TEXT NOT NULL,              -- 'tag' | 'ml' | 'knn' | 'lastfm' | 'override' | 'fused'
-  member         BOOLEAN NOT NULL,           -- listed under this genre/style in Browse
+  style_id       INT,                        -- NULL = the genre row; every member genre has one
+  source         TEXT NOT NULL,              -- 'tag' | 'audio' | 'artist' | 'override'
   strength       REAL NOT NULL,              -- ranking on pages, 0..1
   confidence     REAL NOT NULL,              -- how sure, 0..1
-  disputed       BOOLEAN NOT NULL DEFAULT false,  -- fused tag membership the audio contradicts (see Fusion)
+  disputed       BOOLEAN NOT NULL DEFAULT false,  -- tag membership the audio contradicts (phase 3)
   fusion_version INT NOT NULL,
   FOREIGN KEY (style_id, genre) REFERENCES style(id, genre),
-  UNIQUE NULLS NOT DISTINCT (track_id, genre, style_id, source)
+  UNIQUE NULLS NOT DISTINCT (track_id, genre, style_id)
 );
-
--- Browse reads fused members only; keep those lookups off the evidence rows
-CREATE INDEX track_styles_style_browse_idx ON track_styles (style_id, strength DESC)
-  WHERE source = 'fused' AND member;
-CREATE INDEX track_styles_genre_browse_idx ON track_styles (genre, strength DESC)
-  WHERE source = 'fused' AND member;
-CREATE INDEX track_styles_disputed_idx ON track_styles (genre, style_id)
-  WHERE source = 'fused' AND disputed;
+CREATE INDEX track_styles_style_idx ON track_styles (style_id, strength DESC) WHERE style_id IS NOT NULL;
+CREATE INDEX track_styles_genre_idx ON track_styles (genre, strength DESC) WHERE style_id IS NULL;
 
 -- Persistent user corrections, applied after fusion on every run.
 -- 'add' also confirms a disputed tag, so the dispute is not raised again.
@@ -220,6 +215,31 @@ CREATE TABLE descriptor_map (
   name TEXT                            -- display form; NULL for noise
 );
 
+-- Album and artist profiles: summaries of their tracks' fused memberships,
+-- rebuilt after every fusion run (see Three levels). Never edited directly.
+CREATE TABLE album_styles (
+  album_id       UUID NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+  genre          TEXT NOT NULL REFERENCES taxonomy_genre(name),
+  style_id       INT,                  -- NULL = the genre itself
+  share          REAL NOT NULL,        -- share of the album's tracks that are members, 0..1
+  strength       REAL NOT NULL,        -- mean member strength over all its tracks, 0..1
+  tracks         INT NOT NULL,         -- member tracks
+  fusion_version INT NOT NULL,
+  FOREIGN KEY (style_id, genre) REFERENCES style(id, genre),
+  UNIQUE NULLS NOT DISTINCT (album_id, genre, style_id)
+);
+CREATE TABLE artist_styles (
+  artist_id      UUID NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+  genre          TEXT NOT NULL REFERENCES taxonomy_genre(name),
+  style_id       INT,
+  share          REAL NOT NULL,        -- mean of the album shares: each album counts once
+  albums         INT NOT NULL,         -- albums where it appears
+  tracks         INT NOT NULL,         -- member tracks, own tracks only
+  fusion_version INT NOT NULL,
+  FOREIGN KEY (style_id, genre) REFERENCES style(id, genre),
+  UNIQUE NULLS NOT DISTINCT (artist_id, genre, style_id)
+);
+
 -- Library-specific sound of each style
 CREATE TABLE style_centroids (
   style_id       INT PRIMARY KEY REFERENCES style(id) ON DELETE CASCADE,
@@ -247,7 +267,7 @@ Each track gets evidence from up to four sources, and a fusion step writes the `
 
 &#91;embedded content: genre/style data flow · 4 sources, 1 fused table\]
 
-Only `track_styles` rows with `source = 'fused'` are read downstream; centroids are rebuilt from them after each scan and also drive "sounds close to" in Browse.
+Only `track_styles` is read downstream; centroids are rebuilt from it after each scan and also drive "sounds close to" in Browse.
 
 ### Extractor changes (`server/workers/extractor.py`)
 
@@ -279,7 +299,18 @@ Decision rule: a blind A/B listening round decides. Embed a pool of tracks at 20
 - **The mean of 20 / 50 / 80 % won 13–7**, with no ties; one group (progressive metal) was hard to call. That is 65 %. On 20 groups it is suggestive rather than conclusive (sign test p ≈ 0.26), but it points the same way as round 1, where the single window caused 2 of the 3 misses.
 - **Default:** adopt the mean of 20 / 50 / 80 %. A second blind round of 20 would firm it up if wanted: at the same 65 % rate, 40 groups give p ≈ 0.08.
 
-**Re-analysis cost.** About 5 h of CPU for the 30k-track dev library at today's speed. Decoding the three windows in one ffmpeg call per track, instead of three calls plus a probe, is the cheapest speed-up. Analysis is decode-bound (music on NFS), so a ROCm/GPU path would save at most a third and is not planned.
+**Implemented (feature version 3, branch `genre-engine-next`).** Measured per track on one worker, end to end:
+
+| Stage | Before (1 window) | Feature version 3 (3 windows) |
+| --- | --- | --- |
+| Decode + resample | ~325 ms (ffprobe + ffmpeg + Essentia resample) | ~400 ms, mostly NFS I/O (one ffmpeg call at 44.1 and 16 kHz, duration from the DB) |
+| Discogs-EffNet | 420 ms | 430 ms (three windows share one 64-patch batch) |
+| MusiCNN | 142 ms | removed |
+| Classifiers (styles, danceability, acoustic, instrumental) | — | 12 ms |
+| DSP | 79 ms | 83 ms (tempo from the middle window) |
+| Total | ~970 ms | ~990 ms |
+
+MusiCNN was replaced because over three windows it cost more than EffNet (480 ms) for three numbers; EffNet classifiers rank like it for danceability and acousticness (Spearman 0.88, 0.83) and better separate instrumental tracks. Full dev re-analysis: about 30,700 tracks × 1 s / 6 workers ≈ 1.5 h. Inference sits behind `EssentiaCpuBackend` (`infer` / `infer_many`), so a CUDA/ROCm backend replaces only that class; with EffNet as the only network it is the one model to accelerate. Python moved to 3.14 with `essentia-tensorflow==2.1b6.dev1438` (outputs identical to dev1389 on 20 tracks).
 
 ### Source evidence
 
@@ -298,9 +329,10 @@ Fusion writes three values per track and genre or style: **membership** (listed 
 Here tag(s) is the best mapping reliability among the track's tags for s. Rules, tuned on the reviewed sample:
 
 - **Tagged tracks**: tags dominate. A tag mapping with reliability of at least 0.8 makes the track a member. An ML-only style joins if its raw score is at least 0.5, or at least 0.3 inside a tagged genre.
+- **Tags mapped to a genre alone**: when none of a track's tags names a style, its styles come from audio within the tagged genre, as for untagged tracks below (top 3 with a raw ML score of at least 0.15). This ships in phase 2 with the untagged rule. It is how the review handles a tag one artist uses across varied albums ("Electric Hip Hop Soul": Downtempo, Glitch, Dubstep and Instrumental Hip Hop on different tracks): the tag sets the genre, and each track keeps its own style.
 - **Untagged tracks**: the genre comes from the first available source, and styles always come from audio. This rule touches only tracks with no genre tag, so it ships in phase 2 (see Migration) and cannot make tagged tracks worse.
   1. *Artist tags, when the install has them*: the artist's strongest tag that maps to a genre (weight at least 0.3) sets the genre. On prod this matched Picard for 86 % of tracks, against 70 % for audio (see Artist tags).
-  2. *Audio otherwise (the baseline)*: the model's top genre, but only in genres where it agrees with tags at least 70 % of the time (today Electronic, Reggae, Hip Hop and Rock; see Model choice).
+  2. *Audio otherwise (the baseline)*: the model's top genre, but only in genres where it agrees with tags at least 70 % of the time, measured on the library itself at every full fusion run (at least 50 tagged tracks per genre). On dev with three windows: Rock 89 %, Electronic 75 %, Jazz 72 % qualify; Hip Hop 61 %, Pop 48 % and the rest do not.
   3. *Neither*: the track goes to Unsorted with the model's suggestion for an admin to confirm.
 
   Within the chosen genre, the top 3 styles with a raw ML score of at least 0.15 join as inferred members; KNN only breaks ties. Thresholds always compare raw scores, never weighted ones. On dev the predictions for untagged tracks looked right (Pendulum → Drum n Bass 0.91, Static-X → Nu Metal, Benal → Cloud Rap, Coldplay → Alternative Rock).
@@ -410,40 +442,222 @@ The Genre Matrix is retired piece by piece. Every piece keeps working unchanged 
 
 | Piece today | Used by | Fate | When |
 | --- | --- | --- | --- |
-| MBDB import (`mbdb.service`: 4 GB dump → `genre`, `genre_alias`, `l_genre_genre`, `genre_tree_paths`) | Everything below | Data kept as a shipped snapshot for `mb_alias` / `mb_parent` tag mapping; the download and import are retired (see MusicBrainz genre data) | Snapshot in phase 1; import removed after it; `genre_tree_paths` with phase 4 |
-| Categorizer (`runDiffAndGenerate`: SQL → LLM → KNN into `subgenre_mappings`) | Post-scan job, Settings → Genre Matrix | Replaced by `tag_map` (exact → alias → LLM); it also filed artist names as genres under `dance` | Phase 1; retired in phase 4 |
-| Hop cost (`getHopCost`) | Infinity distance multiplier | Removed (see Problem and Engine) | Phase 4 |
-| Root enforcement (`reRankByHopCost`) | Hub and AI playlists at high cohesion | Removed | Phase 4 |
-| Banned-genre veto (`getGenrePath`, `isPathBlockedByBannedGenre`) | AI playlists | Re-pointed to genres and styles; stays a hard veto | Phase 4 |
-| LLM vocabulary (`getGenreVocabulary`) | AI playlist prompts | Replaced by the library's styles | Phases 3–4 |
-| Library genre health (`libraryProfile` → `llmConceptCompiler`) | AI playlists adapt genre blend to library coverage | Re-pointed to genre and style counts | Phase 4 |
-| Browse rails (`getGenreTaxonomyPaths` → `LibraryHome`) | Genre browse | Replaced by the new Browse | Phase 2 |
-| Candidate-pool genre paths (`candidatePool.service`) | Hub and candidate pools | Replaced by fused genres and styles | Phase 4 |
-| Settings → Genre Transition Matrix tab | Admin | Becomes the tag-mapping review screen (unmapped tags, ambiguous names, disputed tags) | Phases 1–2 |
+| MBDB import (`mbdb.service`: 4 GB dump → `genre`, `genre_alias`, `l_genre_genre`, `genre_tree_paths`) | Everything below | Data kept as a shipped snapshot for `mb_alias` / `mb_parent` tag mapping; the download and import are retired (see MusicBrainz genre data) | Snapshot in phase 1; import and `genre_tree_paths` removed in phase 4 (step 2c) |
+| Categorizer (`runDiffAndGenerate`: SQL → LLM → KNN into `subgenre_mappings`) | Post-scan job, Settings → Genre Matrix | Replaced by `tag_map` (exact → alias → LLM); it also filed artist names as genres under `dance` | Phase 1; retired in phase 4 (step 2c) |
+| Hop cost (`getHopCost`) | Infinity distance multiplier | Removed (see Problem and Engine) | Phase 4 (step 2a; code deleted in 2c) |
+| Root enforcement (`reRankByHopCost`) | Hub and AI playlists at high cohesion | Removed | Phase 4 (step 2a) |
+| Banned-genre veto (`getGenrePath`, `isPathBlockedByBannedGenre`) | AI playlists | Re-pointed to genres and styles; stays a hard veto | Phase 4 (step 2a) |
+| LLM vocabulary (`getGenreVocabulary`) | AI playlist prompts | Replaced by the library's styles | Phase 4 (step 2a) |
+| Library genre health (`libraryProfile` → `llmConceptCompiler`) | AI playlists adapt genre blend to library coverage | Re-pointed to genre and style counts | Phase 4 (step 2a) |
+| Browse rails (`getGenreTaxonomyPaths` → `LibraryHome`) | Genre browse | Replaced by the new Browse; the old view's grouping reads the new taxonomy | Phase 2; re-pointed in phase 4 (step 2c) |
+| Candidate-pool genre paths (`candidatePool.service`) | Hub and candidate pools | Replaced by fused genres and styles | Phase 4 (step 2a) |
+| Settings → Genre Transition Matrix tab | Admin | Becomes the tag-mapping review screen (unmapped tags, ambiguous names, disputed tags) | Phases 1–2; tab deleted in phase 4 (step 2c) |
+
+## AI playlists
+
+Status: designed 2026-11-11 for review, not built (phase 5). Covers the Hub's AI playlists and custom AI playlists; artist radio and the daylist share the pool code (`candidatePool.service.ts`) and follow later.
+
+### Why the pools go
+
+Today each AI playlist is mixed from six pools: core (the target styles), adjacent (neighbouring styles), root (the rest of the genre), acoustic (sound only), discovery (sound with a novelty bonus) and bridge (halfway to the library's average sound), each cut by sound distance with its own size and bonus, plus relaxation steps that switch pools when they run dry. The pools were built for yes-or-no genre labels: the only way to get "mostly trance, some neighbours" was separate lists in fixed shares. With strengths, "how trance is this track" is a number, and one score does what the pools approximated.
+
+What goes wrong with labels used as yes-or-no (dev, "Trance Horizon", 11 Nov 2026): the AI asked for Progressive Trance, Trance and Electro House; all 20 tracks came from the core pool, and 15 were tagged only "Dance", "Electronic" or "Edm", in the playlist because the sound model gave them Electro House at 0.13–0.28. The model gives Electro House to most loud EDM: 1,175 tracks have it from the sound alone (mean strength 0.27) against 70 tagged. The same pool with Trance and Progressive Trance only, at strength ≥ 0.5, gives Above & Beyond, ATB, Cosmic Gate, Andrew Rayel and Ørjan Nilsen.
+
+### One score
+
+For a concept c and candidate track t:
+
+> score(t) = d(t, c) − β · cos(v_t, v_c) − ν · novelty(t)
+
+- **d** is today's sound distance (8D acoustic plus the EffNet centroid, with the mood lean).
+- **v_t** is the track's style vector, as in Infinity: styles at their strength, genres at half, normalised. A weak sound guess (0.15) counts a little; a tag counts in full.
+- **v_c** is the concept's style vector: the AI's target styles at 1, 0.85, 0.7 in the order given; each target's nearest styles by centroid (up to 3) at 0.5 × Adjacent Reach; their genres at half.
+- **β** = Genre Cohesion × 0.2 (as Style match in Infinity), times the concept's support (below), so a library with little of the concept leans on sound instead of repeating the few tracks it has.
+- **novelty** is today's discovery boost (unplayed or long unplayed), ν from Discovery Bias.
+- Banned genres stay a hard veto, and places, languages, years and vocals stay hard filters, before scoring.
+
+The final pick keeps today's selector (`selectDiverseTracks`): best fit first, artist and album spread, sound clusters, controlled randomness (Playlist Diversity). Its "genre root" variety term reads the fused genre; pool shares go away.
+
+### Candidates: the same size at 500 and at 100,000 tracks
+
+The pool queries filter every analysed track by genre path and sort them all by sound: a full scan per pool, six per playlist, at 100k tracks. Instead, a bounded candidate set, scored in memory:
+
+1. **By style:** for each style in v_c, its strongest members through the `track_styles (style_id, strength)` index, up to max(8L, 200), where L is the playlist length; then their sound distance.
+2. **By sound:** the nearest max(10L, 300) through the vector index.
+3. Union, one row per song, veto and filters, then the style vectors in one query. At most about 1,500 rows whatever the library size. A library under 2,000 analysed tracks skips the indexes and scores every track.
+
+Short after filters: double the set once, then lower the strength floor (below). The veto and the hard filters never relax. A general list then fills with the best that remains; a special list is not made.
+
+A scratch database generated at 100k tracks times a full Hub run and checks that no candidate query scans the whole library; that stays as a test.
+
+### Size rules
+
+- **Strength floor, relative.** A style's "members" for counting support are its tracks at strength ≥ 0.5. When a style has fewer than 2L of those (a small or untagged library, where sound-only memberships stop at 0.8 × the model score), its strongest members count down to the fusion minimum, strongest first. In the score itself strength is continuous.
+- **Support.** The concept's support is the number of distinct songs among its target styles' members (after filters). β is scaled by min(1, support / 4L).
+- **Neighbours.** Centroids exist only for styles with 8 tracks by 3 artists; without one, a style's neighbours are its genre's biggest styles.
+- **Artist spread** comes from the candidates found: at most one track per artist when the candidates have L or more artists, otherwise ⌈L / artists⌉.
+
+### Special lists
+
+A special list is a tightly themed playlist the library can carry: "Trance Horizon", "Danish Rap Commute", "Music for Code". It is made only when the library supports it, and held to its theme instead of widened.
+
+**Themes.** Four kinds, all from data Aurora already has:
+
+| Kind | Example | Defined by |
+| --- | --- | --- |
+| Style | Trance Horizon | one style, or two neighbouring ones |
+| Style × place or language | Danish Rap Commute | a style plus `track_origin` country or language |
+| Style × era | 90s Eurodance | a style plus a decade |
+| Activity | Music for Code | a sound profile (energy, instrumentalness, tempo range) plus optional style and mood hints; a short fixed list in code (focus, workout, wind-down, party) |
+
+**The menu.** Each Hub refresh, Aurora lists the themes this library supports: at least 2L members (by the strength floor) from at least ⌈L / 2⌉ artists, after the user's banned genres. Too broad is not a theme (a whole genre is a general list); too narrow fails the minimum. The menu is ranked by the user's plays in each theme over the last 90 days, then depth, leaves out themes made in the last 14 days, and sends the AI the top 40 with their counts. At 100k tracks there are hundreds; at 500 there may be none.
+
+**The AI names, the library decides.** The AI picks themes from the menu by id and writes the title and description (in the user's language) and the target sound; it cannot change a theme's styles or filters.
+
+**Dry run.** Before saving, the engine scores the theme's candidates without writing anything. A track fits when it is a member of the theme's styles (by the strength floor), passes the filters, and is within the 75th percentile of sound distance among the members. Fewer than L fitting songs from ⌈L / 2⌉ artists: the list is not made and the AI is asked for another theme from the menu (two retries at most).
+
+**Built tight.** Special lists score with β fixed at 0.3 (above the general maximum of 0.2), and only fitting tracks are eligible: no widening.
+
+**How many.** Number of playlists becomes 2, 3, 6 or 9 (a saved 5 becomes 6). Up to 1, 1, 2 or 3 of them are special lists, fewer when the menu is short; the rest are general lists. They sit in the same Hub rail, mixed in with the general lists, with no badge. The playlist keeps its theme (`playlists.llm_theme`, new column, runbook) so themes rotate.
+
+**Built (2026-11-12/13, `specialLists.service.ts`):** the menu has four kinds. *Style*: one style's strong members. *Place*: a genre × `track_origin` country, only where the country is at least 1.5 times as common in the genre as in the library, so "Hip Hop · Denmark" qualifies and "Pop · United States" does not (language is not used yet). *Era*: a style × decade. *Activity*: four fixed conditions on the moods from the sound (`track_moods`): focus, workout, wind-down, party; built but off the menu (`activities` option) until a later version, because on their own the moods make lists that cross every genre (a party list mixed Danish hip hop, house, an Outkast a cappella and Imagine Dragons). Minimum 2L songs from ⌈L / 2⌉ artists; rank log10(1 + the user's plays in 90 days) + 0.25 · log10(songs); at most 16 style, 10 place, 10 era and 2 activity themes, 40 in all (dev at L = 20: 38 with activities). The AI picks by key and names each (`generateSpecialPicks`), plus two spare picks. The engine takes candidates only from the theme's tracks (`concept.special`) and runs the dry run on the nearest 75 % by sound; a pick that fails is replaced by a spare, and slots no special list fills go to general lists. Not built as planned: β is not fixed at 0.3, because the candidates are already only the theme's tracks, so the general score applies. Themes rotate through the user setting `specialListHistory` (`[{theme, at}]`, 14 days): recent themes stay off the menu only while at least as many themes remain as special lists are wanted, newest left out first, so a small library takes turns through what it has instead of waiting two weeks (`assembleMenu`). Not a `playlists.llm_theme` column: the Hub deletes its old playlists on every refresh, so a column would lose the history, and no schema change is needed. The count setting lives in `shared/hubPlaylists.ts` (a saved 5 reads as 6). General and special lists alternate in the rail. The Hub now keeps its old playlists until new ones are made, so a refresh the AI does not answer leaves the rail as it was. On dev: "Trance Horizon" 20 of 20 trance, a Dutch electronic night, Hip Hop × Denmark 20 of 20 Danish rap; wind-down and party were mediocre, because the activities rest on five coarse moods. The first Hub refresh with special lists (6 lists, 2 special) showed artist spread counting whole credits ("ATB feat. JanSoon", "ATB & Sean Ryan": ATB five times); it now counts the lead name of a credit (before feat., &, and, with, vs, x, presents or a comma).
+
+**Custom requests** go through the same check when they name a theme ("Dansk rap fra 90'erne" → Hip Hop, Denmark or Danish, 1990s): too little in the library, and Aurora says so ("Your library has 6 Danish rap tracks from the 1990s") instead of padding the list with something else.
+
+**Built (2026-11-13, `aiPlaylistSupport.ts`):** a custom request whose concept has target styles and a hard filter (countries, languages, years or vocals; moods are a preference and don't count) is made only when the library has at least L songs that are members of the target styles (any strength) and pass the filters. Otherwise the engine drops it (`dropReason` 'too-thin'), `generateCustomHubPlaylist` throws `ThinRequestError` without retrying, and API v1 `POST /hub/custom` answers 422 `CUSTOM_PLAYLIST_TOO_THIN` with the message ("Your library has no Pop Rap or Hip Hop tracks from Denmark or sung in Danish from the 1980s.") and `details` {songs, artists, needed, theme}; the Generate dialog shows the message. Requests without a hard filter still widen to neighbouring styles as before. On dev: "Dansk rap fra 90'erne" made (20 of 20, 7 artists), "Dansk rap fra 80'erne" refused with none; "Islandsk rap fra 80'erne" was read by the AI as Danish (the model's mistake, not the check's). Extended 2026-11-15 after the scale test (a 576-track library filled "Jazz for a dinner party" with Emancipator and orchestral Metallica): a request that names a style (the AI's focus ≥ 0.5, `STYLE_REQUEST_FOCUS`) also needs L strong members (≥ 0.5) of its target styles, else "Your library has no Smooth Jazz, Swing or Big Band tracks."; mood requests (focus below 0.5) still reach anything close in sound. On the 576-track library: jazz, deep house and Velvet Shadows refused, trance, metal and the mood requests made; on dev all ten saved requests behave as before (Eurodance refused, 10 tracks).
+
+### The Discover rail
+
+The Hub's system playlists (Settings → System → Hub) mostly use neither pools nor the score; they are queries over play history, years and each track's genres:
+
+| Playlist | Today | Change |
+| --- | --- | --- |
+| Up Next, The Vault | Nearest by sound to recent or top plays, re-ranked by shared styles | None: already one score |
+| Jump Back In, and the history rails (On Repeat, Repeat Rewind, Seasonal and Year Rewind, Wrapped) | Play history only | None |
+| Genre Heavy Rotation, Genre Rediscovery | Most-played, or forgotten, tracks per `tracks.genre_id` (top 10 genres) | Per style, by its strong members (as the special-list menu counts them), so a track counts under each style it really is |
+| Decade Mixes | By the file's `year` | By the decade Browse uses (`track_origin.decade`: original release year first), so a 2011 remaster of a 1991 album is a 90s track |
+| Decade Genre Mixes ("90's Pop") | Year × `genre_id`, made at 15 tracks | Becomes the style × era special-list kind, with its menu and dry run |
+
+**Built (2026-11-13):** Heavy Rotation and Rediscovery go per style over `track_styles` strong members (strength ≥ 0.5), ranked by the user's plays; tracks with a genre but no style in it count under the genre ("Your Electronic favourites"). Decade Mixes go by `track_origin.decade` ("Hey Baby", a 2012 file of a 2006 song, is in the 2000's). Decade Genre Mixes are the menu's era themes (`buildThemeMenu` with `kinds: ['era']`: 30 strong members from 8 artists at 15 tracks), leaving out those made as special lists in the last 14 days, ordered by the user's plays with at most two tracks per artist; no dry run, since there is no target sound without the AI. Titles and ids keep their forms ("Trance from the 2020's", `engine_decade-genre-2020-trance`), so covers and settings are unchanged. Dev: the engine rail rebuilt in 4.3 s with 4 favourites, 9 rediscover, 6 decade and 8+ style × decade mixes.
+
+### Settings (Settings → Playback → LLM Playlists)
+
+| Setting | Becomes |
+| --- | --- |
+| Number of playlists | 2, 3, 6, 9; up to 1, 1, 2, 3 special |
+| Tracks per playlist | Unchanged (5, 10, 15, 20); L in the rules above |
+| Genre Cohesion | β for general lists (0–0.2) |
+| Discovery Bias | ν, the novelty bonus |
+| Adjacent Reach | Weight of neighbouring styles in v_c |
+| Playlist Diversity, Artist Spread | Unchanged (the selector) |
+| Recovery Strength | How far a short general list widens (the set doubling and floor lowering) |
+| Banned Genre Handling | Unchanged |
+
+### Step 1 as built (2026-11-11)
+
+`server/services/aiPlaylistScore.service.ts` holds the score; `getHubCollections` used it beside the pools (`aiPlaylistEngine`) until the comparison below. Calibrated on dev against the 10 saved concepts (`scripts/ai-playlist-eval/`), which changed four things from the design above:
+
+- **Sound target from the styles and the AI together.** The AI's 8 numbers, and the embedding imputed from them, sat far from the styles it named: for a trance concept the nearest 300 by sound were R&B, hip hop and soundtracks, and only 2 of 20 picks were trance. The embedding target is the weighted centroid of the target styles averaged 50/50 with the imputed one (each normalised): the styles' sound alone lost the mood and gave the best trance and jazz only with the AI's half in (trance 19 of 20).
+- **match, not a cosine.** A cosine against a concept of several styles gave a pure jazz track about 0.4. match is the track's best membership against the concept's weights (weight × strength): tagged with a target 1, genre-only 0.5, a 0.15 sound guess near 0.
+- **β = Genre Cohesion × 4** in spreads of sound distance (p10 to p90 of the candidates), times support; at the default 50 % a full match outweighs two spreads. Target weights 1, 0.9, 0.8, then 0.7. The novelty bonus is scaled to 0–1 and worth at most half a spread (× Discovery Bias).
+- **The final pick uses the score.** The selector's fit was a track's rank as a fraction of the list, so a concept match could not outweigh the 1.1 penalty for a repeated artist (Danish 90s rap filled with Johnny Madsen and Thomas Helmig after 8 rap artists); it now takes the score in spreads, the sound-variety terms are weighted by Playlist Diversity × 0.5, and the artist cap counts only artists with a match of 0.5 or more.
+- **The AI's vocabulary counts strong members only** (`getStyleVocabulary`): it offered Trip Hop, Hardcore Hip-Hop and Boom Bap, which dev has only as weak sound guesses (0, 0 and 1 strong members), and the AI aimed playlists at them.
+
+Result on the 10 concepts (dev, 20 tracks, Andreas's tuning): 14 to 19 of 20 picks are strong members of the target styles for 8 of them (90s Eurodance 3: dev has 13 tagged Eurodance tracks), mean match 0.7 to 0.9; 0.2 s per playlist against about 1.5 s for the pools. The pools' six parallel full scans also ran Postgres out of shared memory (`/dev/shm`, 64 MB in the container) on dev; the score's queries are bounded.
+
+**Verdict (blind A/B, 11 Nov 2026, dev playlists "AI test 01–10"): the score 6, the pools 3, 1 tie**, so the pools were removed (step 2, same day): `getHubCollections` has one engine. The score won trance, Velvet Shadows, 90s Eurodance, gym metal, summer deep house and dinner jazz; the pools won Danish 90s rap (two near-identical lists; the pools allowed four tracks by one artist), music for code and melancholic indie rock. Those two are the score's trade-off: it keeps to the target styles (Indie Rock in this library is mostly upbeat; Ambient and Downtempo include vocal tracks), where the pools reached into broader Rock and untagged electronic music for the mood. Genre Cohesion sets that balance; a mood-aware β is a later refinement if it matters. A was preferred in 8 of 9 decided pairs, so the order played a part.
+
+### Mood-led requests (2026-11-11, in progress)
+
+The two playlists the pools won were mood requests ("music for code", "melancholic indie rock for a rainy day"). Loosening the style rule alone made them broader, not moodier, and hurt Acoustic Sunday and Velvet Shadows: the sound side knows energy and acoustics (8 numbers) but not melancholic from cosy. So Aurora now hears moods: five Essentia mood classifiers (happy, sad, relaxed, aggressive, party; cross-validated accuracy 0.87–0.98) and the 56-tag MTG-Jamendo mood/theme model (ROC-AUC 0.76; hints only) on the Discogs-EffNet embeddings it already computes, stored in `track_moods`. Scoring the stored embedding (unit length, × 2.75) instead of re-analysing reproduced the full per-patch classifiers at r 0.98–0.99, mean error 0.03–0.04 (400 dev tracks); one re-analysed track agreed to the third decimal. Next: the AI gives each concept a `focus` (0 = mood or activity, 1 = genre or style) and its mood in these terms, and the score gets a mood term, β_style ∝ focus and β_mood ∝ 1 − focus.
+
+The moods describe the sound, not the meaning: the models never hear lyrics, so a slow, soft, sparse song is "sad" whatever it is about. "Grow Old With Me" (a love song) scores sad 0.99 and relaxed 1.00, like "Angel"; the 56 themes ("love", "romantic") do not separate them either. Aurora therefore reads sad as tender or wistful in sound, the AI prompt defines the five moods that way, and a listener never sees a track labelled "sad". Meaning ("love songs", "breakup songs") needs lyrics: a later layer (TASKS.md: proper lyrics integration, then lyrics sentiment tied into mood) stores what a song is about beside `track_moods`.
+
+**Built (2026-11-12, off until the blind comparison "Mood test 01–10" decides):** the AI gives each concept `focus` (0 mood or activity … 1 genre or style) and `sound_moods` on seven scales: the five moods, plus acoustic and instrumental from analysis (acousticness, instrumentalness). "Acoustic" there means real instruments rather than electronic production ("Layla" 0.73, "Everlong" 0.03); no model available tells unplugged from electric (the MTG-Jamendo instrument head put "Layla" above "Sunday Morning Coming Down" for acoustic guitar), so the prompt defines it that way. In the score: style weight × (⅓ + ⅔ focus); a target's genre counts 0.5 + 0.4 (1 − focus) of the style; the sound target leans to the AI's sound at low focus (styles' share 0.2 + 0.5 focus); a mood term −β_mood · fit, fit = 1 − mean |target − track| over the named scales, β_mood = 2.5 (0.25 + 0.75 (1 − focus)) spreads; and a third candidate source, the tracks whose moods fit best. On the 10 concepts: mean mood fit 0.8–0.97 on mood-led requests (coding: instrumental electronica and film scores; rainy day: "Lover, You Should've Come Over", "Brothers in Arms", "Private Investigations"), style kept on genre requests (gym metal 14 → 18 strong members). The AI's answers vary run to run (one rainy day leaned on classic-rock instrumentals), which the comparison absorbs. Switched by `moodTerm` (`getHubCollections`), on in the evaluation scripts.
+
+**Round 1 rated (12 Nov 2026): mood-led lost 3–5 with 2 ties**, and lost its own cases: the rainy-day list drifted into classic rock (Journey, Toto, Queen, Blue Öyster Cult) because a low focus let the whole Rock genre count almost like Indie Rock, and music for code lost on one odd pick (Scooter); jazz and coding lists shared 70–80 % of tracks. Changed: a mood request loosens to the target's nearest styles by centroid (3 + 3 (1 − focus) of them, weight 0.5 Adjacent Reach + 0.4 (1 − focus), at most 0.8), never the whole genre (genre stays at half); mood weight halved (β_mood 1.25) and counted in proportion to style fit (0.4 + 0.6 match), so it picks among tracks of the concept; style weight at a pure mood request half, not a third; the AI's sound share 0.35–0.7; the prompt sets focus ≥ 0.5 when a request names a genre (its own example had taught 0.4 for the rainy day); a genre request on a thin theme (Danish 90s rap, about 8 artists) gives Artist Spread in proportion to the fitting artists, so it stays rap (20 of 20, no Johnny Madsen). Round 2: six mood-only requests (`generate-concepts.ts --set=mood`), one blind pair each. Round 2 tied 2–2 (2 ties; the by-mood source pulled soundtracks in); left off, tracked as issue #234 (Backlog).
+
+### Scale test (2026-11-14)
+
+`scripts/library-scale/make-library.ts` builds a test library in its own database from the dev library (whole albums at random, or the library copied k times with new ids, paths and titles) and runs Aurora's own genre pipeline on it; `run-scale.ts` times the saved AI concepts, the special-list menu and builds, artist radio and the Discover rail. Results:
+
+| | 576 tracks | 31,868 (dev) | 95,604 |
+| --- | --- | --- | --- |
+| AI playlist, median | 53 ms | 201 ms | 873 ms |
+| Special-list menu | 5 ms (no themes) | 150 ms (36) | 1.26 s (36) |
+| Special list build | — | 88 ms | 118 ms |
+| Artist radio | 16 ms | 208 ms | 680 ms |
+| Discover rail (all) | 157 ms (19) | 1.4 s (34) | 4.1 s (38) |
+| Fusion, full | 0.3 s | 18 s | 70 s |
+
+Found and fixed: at 95,604 tracks fusion failed on the pool's 30 s statement timeout (the audio step probed the unindexed, never-analysed temp tables row by row); `fz_tag` and `fz_rows` now get an index and `ANALYZE`, and fusion's own transaction allows 15 minutes. The library profile (genre health and sound ranges) takes about 7 s at that size and was cached for 5 minutes, so the first AI playlist after a quiet spell waited for it; it now answers from the cache while a fresh one is computed. The menu grows faster than the library (8× for 3×) but stays a background second per Hub refresh. At 576 tracks: AI playlists are made (20 tracks), the support check answers ("Your library has no Eurodance, Hands Up or Hi NRG tracks from the 1990s"), there are no special lists (no theme with 40 songs from 10 artists, as designed), and a request for a style the library lacks is filled with whatever sounds nearest ("Jazz for a dinner party" → Emancipator, Pink Floyd, orchestral Metallica): the support check covers only requests with a hard filter.
+
+### Evaluation and build order
+
+1. One score and the bounded candidate set for general lists, built beside the pools.
+2. Fixed evaluation set: about 10 concepts with the AI's answers saved (including "Trance Horizon", "Velvet Shadows", "Dansk rap fra 90'erne" and a thin-library one), run on dev (30k tracks) and on a 500-track library carved from it (whole albums at random). Blind A/B against the pools, as for the engine; the pools go when the new score wins or ties.
+3. Special lists: themes, menu, dry run, the 2/3/6/9 setting, the prompt and theme rotation (built 2026-11-13; rotation in a user setting, not `playlists.llm_theme`).
+4. The support check for custom requests (built 2026-11-13).
+5. Clean-up (done 2026-11-15): the concept compiler (`llmConceptCompiler.service.ts`) keeps only what the score reads (the concept's paths less its own bans, the banned paths, the target adapted to the library, and "only whole genres: ask again"); primary, adjacent and root paths, genre health, bridge and mainstream vectors and modes went with the pools, and so did the library profile's genre-health query (most of its 7 s at 95,000 tracks; the first AI playlist after a restart on dev went from 1.7 s to 0.6 s). The second regenerate rule (a broad primary genre with low quality and no adjacent paths) went too: it rested on those paths.
+6. Later: artist radio and the daylist on the same score. Built 2026-11-14, behind the system setting `smartMixEngine` ('pools' until a blind comparison): `scoredMix.service.ts` scores candidates (nearest the target sound, the target styles' strong members, and for the daylist the listener's favourites) by d̂ − β·match − ν·½·novelty − φ·½·favourite + jitter, then picks best first with one song once and the artist cap. Artist radio: the artist's sampled centroid and style profile (strongest style, the next three), cohesion 0.5, ν 0.45, jitter 0.6 so each press differs, other artists only (by id and by credit lead name), with 13 % (at least 3) of the artist's own most-played tracks at even steps. Daylist: the mood's 8 numbers and the embedding imputed from them, the AI's genres for the mood or the listener's styles of the last 7 days (neighbours included, focus 0.4), cohesion 0.3, ν 0.6, φ 0.6 (favourites you haven't reached for, and new), banned genres a veto. Blind A/B on dev: "Mix test 01–10" (6 radios from the same centroid, 4 daylists from the default time-of-day moods). **Rated 14 Nov 2026: radio score 3, pools 2, one tie**, so artist radio is on the score for good (the pool radio is gone); the score's loss on Melleefresh was four remixes of "Hey Baby" among the artist's own picks. The daylists got no verdict: both were full of talk and odd tracks (Radiohead's hour-long MiniDisc tapes, "Drum Solo", skits, a cappellas, a poem version) and neither felt like the time of day. Changed: every scored mix is music only (`MUSIC_ONLY_SQL`: no skit, interlude, a cappella, instrument solo, interview, commentary, spoken word, poem version or untitled track, nothing mainly Non-Music, 60 s to 10 min for daylists and 20 min for radio; the audio model's spoken-word scores barely noticed these, titles and length do) and keeps one version of a song (`versionKey`: lead artist + title without its version); the daylist is steered by how the time of day should feel on the moods from the sound (late night relaxed 0.95, aggressive 0.02 …; mood weight 1.5 spreads): on dev the late-night list went to mean mood fit 0.92, every track relaxed ≥ 0.8. Round 2: "Daylist test 01–06" (six times of day, scored vs pools), system setting `daylistEngine`.
+
+**Daylist benched (14 Nov 2026).** Round 2: neither engine's daylists were good. The approach changes before more tuning: a time of day is a recipe of styles and sounds, not a target in sound space. Andreas's direction for early morning: acoustic guitar, downtempo, easy pop (Rhye, Emancipator). The title already carries two modifiers that the music should follow, the mood word and the weekday ("Mellow Saturday late night": mellow, Saturday), so a Saturday and a Monday at the same hour can differ. To design: per time of day a short list of styles and sound qualities (acoustic, instrumental, relaxed …) drawn from the library, shaped by the mood word and by weekday or weekend, and judged by ear before code. Until then the daylist stays on the pools (`daylistEngine` unset); the music-only filter is there to reuse. Tracked as issue #233 (Backlog).
+
+## Three levels: track, album, artist
+
+Tracks, albums and artists each have genres and styles, but only the track is assigned. Album and artist profiles are summaries of their tracks, recomputed after every fusion run, so the levels can never contradict each other, and one tag never stamps a style on music that sounds different (a tag one artist uses across varied albums, like "Electric Hip Hop Soul"). Each level also shows the evidence that belongs to it.
+
+| Level | Comes from | Also shown |
+| --- | --- | --- |
+| **Track** | Fusion: file tags, its own sound, corrections. The only level that is stored as decided and the only one that is edited. | Where each style came from |
+| **Album** | Its tracks: for each genre and style, the share of the album's tracks that are members and the mean strength. | The album's own tags: Picard writes the release's genres to every track, so file tags are really release-level evidence |
+| **Artist** | Their own tracks (not appearances or features; Various Artists has no profile), **each album counted once**: the mean of the album shares, so a 40-track deluxe edition or a remix album does not outweigh the rest. Tracks without an album count together as one album. | What listeners tag the artist with (Last.fm, MusicBrainz), when available; styles album by album over time |
+
+- **Editing stays per track.** "Apply to the whole album" and "apply to every track by this artist" are shortcuts that write track overrides; there is no album or artist override.
+- **What a profile lists.** A genre or style appears on an album when at least 20 % of its tracks are members, or it is among the album's 3 strongest; the same rule applies to an artist's album-weighted shares. Smaller ones stay in the data for ranking.
+- **Ranking.** Browse ranks albums and artists on a style page by profile share times strength, so an album that is mostly the style comes before one with a single track in it.
+- **Compilations.** An album's profile shows its spread as it is ("Sun:Sets 2019": Electronic, Downtempo, Ambient, House); nothing is tidied.
+
+### Aurora rays from {title}
+
+One view per track, titled "Aurora rays from {title}", that shows everything Aurora knows about it. Reached from the track's menu only (decided 2026-11-10: no Now Playing entry). Named for Aurora; not "DNA", which reads as another service's feature.
+
+1. **Credits.** Artists and every role the scanner already stores in `track_artist_credits` (on dev: composer on 14,746 tracks, producer 6,335, lyricist 6,128, performer, writer, mixer, engineer, arranger, conductor, remixer), one card per person with all their roles and instruments, in a rail like the Hub's "uniquely yours" radio cards. The track's billed artists come first (artist, and featured from "feat."), so a featured artist with no role credits still appears.
+2. **Genres and styles.** Each with its source in words ("from the file tag", "from the sound", "set by you"), strength, and a flag when the sound disputes a tag. "Remove style" and "Add style" write overrides.
+3. **Sound.** Energy, danceability, acoustic ↔ electronic, instrumental, brightness and percussion from the analysis Aurora already runs, the tempo, and two charts of the raw model output: the 12 highest style scores (the track's own styles highlighted) and how the scores split across genres. As built, the page reads Credits, In context, Sound and style (genres and styles, then the sound and its charts), Also on.
+4. **In context.** How the track sits in its album and artist profiles ("Glitch, where most of the album is Downtempo"), and the listener tags for the artist.
+5. **Albums.** Every album in the library this recording is on (by `mb_recording_id`, or normalised artist + title without one), which is the same match the duplicate-recording fix uses.
+6. **Sounds close to.** Nearby styles and tracks, from style centroids (phase 3); hidden for a track without a real embedding. Built: between Sound and style and Also on.
 
 ## Browse UI
 
 Browse becomes Genre → Style → music, with Play at every level, consistent card sizes and direct style search. It replaces the rails and the "Other genres" grid in `LibraryHome.tsx`.
 
-1. **Genres.** Equal-size tiles for the genres present, ordered by track count, each showing its top 3 styles and a Play button. Non-Music is hidden unless toggled.
+1. **Genres.** Equal-size 3:2 cards for the genres present, ordered by track count, each in one of the Hub's cover gradients (the same per name), its name in the display font and one line under it: track count and biggest style. No hover effects. Non-Music is hidden unless toggled.
 2. **Genre page.** Its styles as equal-size cards with track counts and Play, sorted by count; every style appears, even one with 3 tracks. Genre-only tracks sit in a "Rock, no specific style" group, named for the genre. Play genre and a decade filter sit at the top.
 3. **Style page.** Albums and artists ranked by strength, Play this style, and "Sounds close to" with the 6 nearest styles by centroid, from any genre (hidden until the style has a centroid).
-4. **Style search.** A search box at the top of Browse matches style names and aliases. Duplicate names show their genre: "Trip Hop · Electronic", "Trip Hop · Hip Hop".
+4. **Style search.** Styles and tag aliases join the app's main search (decided 2026-11-07: no separate search box on Browse). Duplicate names show their genre: "Trip Hop · Electronic", "Trip Hop · Hip Hop".
 5. **Unsorted tags.** The last entry lists unmapped tags with track counts; their tracks stay playable, and admins can map a tag from there. Admins also see a **Disputed** list here (tagged memberships the audio contradicts) with Keep and Remove.
 6. **Facets** on genre and style pages: decade, energy, acoustic ↔ electronic, from features Aurora already computes.
-7. **Provenance in details only.** Track and album detail views say where each style came from (tag, model, neighbours, manual) and offer "Remove style", which writes an override. Cards carry no source badges.
+7. **Provenance in details only.** "Aurora rays from {title}" says where each style came from (tag, model, neighbours, manual) and offers "Remove style", which writes an override; album and artist pages show their profiles (see Three levels). Cards carry no source badges.
 
-API: `GET /api/browse/genres`, `GET /api/browse/genres/:genre`, `GET /api/browse/styles/:id` (members, neighbours, facets), `GET /api/browse/search?q=` and `GET /api/browse/unsorted`. All read fused, member rows of `track_styles` and `style_centroids`; nothing loads the full library.
+API (built in phase 2, on API v1 like every listener feature): `GET /api/v1/browse/genres`, `/browse/genres/:genre`, `/browse/styles/:id`, `/browse/tracks` (filtered, strongest first, for lists and Play), `/browse/albums`, `/browse/artists`, `/browse/search?q=`, `/browse/unsorted`, `/albums/:id/styles` and `/artists/:id/styles` (the profiles); `/tracks/:id/rays` follows with the view. Neighbours ("Sounds close to") join in phase 3; energy and acoustic facets follow the decade facet. All read fused, member rows of `track_styles`, `album_styles`, `artist_styles` and `style_centroids`; nothing loads the full library.
 
 ## Migration and rollout
 
+Deploy and migration steps for prod live in one runbook, [genre-engine-upgrade.md](./genre-engine-upgrade.md); every phase adds its steps there when it is built.
+
 Ship in four phases: tags and taxonomy → usable Browse → measured ML enrichment → recommendation changes. Browse ships on tags alone and never waits for a full-library audio backfill. The analysis-window test runs first, alongside phase 1, because it also changes today's engine.
 
-0. **Analysis window (parallel to phase 1).** The blind A/B round favoured the mean of 20 / 50 / 80 % (13–7, see Analysis window). Change the extractor to decode the three windows in one ffmpeg call, bump `FEATURE_VERSION` and re-analyse once, writing the new embeddings and the `genre_discogs400` scores in the same pass.
+0. **Analysis window (parallel to phase 1).** The blind A/B round favoured the mean of 20 / 50 / 80 % (13–7, see Analysis window). Implemented as feature version 3: one ffmpeg call per track, EffNet plus classifiers (MusiCNN removed), `genre_discogs400` scores in `track_style_scores`. Any scan that finds a new file re-analyses every outdated track, so time the prod deploy. Prod steps (venv rebuild, models, re-analysis, verification) are in [genre-engine-upgrade.md](./genre-engine-upgrade.md).
 1. **Taxonomy and tag mapping.** Seed `taxonomy_genre` and `style` from the versioned JSON with validation. Split Last.fm and MusicBrainz artist tags into per-provider rows with normalised weights (the scale-mixing fix). Copy every original tag from `tracks.genres` into `track_tags`, and carry accepted duplicate-review merges into `tag_map` as aliases. Map tags exact → alias → MusicBrainz alias → MusicBrainz parent → LLM; ambiguous duplicate style names and low-reliability mappings go to an admin review screen. The LLM step is optional, like all AI in Aurora: without a configured LLM, tags left after the MusicBrainz steps go straight to the review screen and stay visible under Unsorted. Seed the snapshot (see MusicBrainz genre data) in this phase. On dev, exact names alone map 77.5 % of tagged tracks, and 21 aliases for the most common misses (Dance → Electronic, Drum & Bass → Drum n Bass, Rap → Hip Hop, R&B → Rhythm & Blues, Metal → Heavy Metal, Film → Soundtrack…) raise that to 95.6 %. Junk tags ("None", "Other") map to `tag_ignored`. Gate: mapping coverage (share of tagged tracks with at least one mapping) and mapping correctness (share right in the reviewed sample) are reported separately, and both meet a target you set.
-2. **Browse on tags, plus untagged tracks.** Fusion with tag evidence, and the untagged-track rule so tracks with no genre tag do not wait for phase 3. Where artist tags are already stored (prod), they set the genre of untagged tracks immediately; without them the audio-only rule applies. Fusion is tested both with and without artist tags (dev has none), and both runs must leave every track either in a genre or in Unsorted. Their scores come from an early genre backfill limited to untagged, non-simulated tracks, using the `genre_discogs400` head on fresh per-patch embeddings (it fits the current extractor wrapper). The stored `embedding_vector` cannot be reused: it is an L2-normalised mean, not the per-patch input the head was trained on. These rows carry their own `genre_version`, so if phase 0 changes the windows they are simply rescored. The new Browse ships behind a setting, then becomes the default, with Unsorted tags live from day one.
-3. **Measured ML enrichment.** Run the genre backfill (unless phase 0's re-analysis already wrote the scores). ML, KNN and Last.fm evidence for tagged tracks switch on only where the reviewed sample shows they help; Last.fm descriptors start feeding AI playlist prompts and facets; centroids and "Sounds close to" follow. Disputed-tag flags start once centroids exist.
-4. **Recommendation changes.** Style overlap replaces the hop-cost penalty in candidate scoring and is compared side by side against the old engine, which stays selectable. Then `tracks.genre_id` and `track_genres` are derived from fused genres and styles, and the remaining Genre Matrix pieces are retired or re-pointed (see What happens to the Genre Matrix), including `subgenre_mappings`.
+2. **Browse on tags, plus untagged tracks.** Fusion built (fusion version 1, `services/genreTaxonomy/fusion.ts`): on dev, 29,416 tracks take their genre from tags, 1,191 from artist tags, 82 from the sound, 57 stay unsorted, and 24,138 (78 %) have a style, up from 15,025 by tags alone; a full run takes about 10 s. Fusion with tag evidence, and the untagged-track rule so tracks with no genre tag do not wait for phase 3. Where artist tags are already stored (prod), they set the genre of untagged tracks immediately; without them the audio-only rule applies. Fusion is tested both with and without artist tags (dev has none), and both runs must leave every track either in a genre or in Unsorted. Their scores come from an early genre backfill limited to untagged, non-simulated tracks, using the `genre_discogs400` head on fresh per-patch embeddings (it fits the current extractor wrapper). The stored `embedding_vector` cannot be reused: it is an L2-normalised mean, not the per-patch input the head was trained on. These rows carry their own `genre_version`, so if phase 0 changes the windows they are simply rescored. The new Browse ships behind a setting, then becomes the default, with Unsorted tags live from day one. Tags mapped to a genre alone get styles from audio within that genre in the same step. Album and artist profiles (see Three levels) and "Aurora rays from {title}" ship here too, without "Sounds close to". Built so far (2026-11-06): fusion, the Browse API on v1, and Browse behind a per-user switch (Settings → Appearance → Genre and style browse): genre cards (3:2, in one of the Hub's cover gradients picked per name (Daylist's times of day, On repeat, Rewind, Wrapped), name in the display font, one line: track count and biggest style; no hover effects), genre pages (6 style cards, an index of every style, tracks without a style, albums, artists, Shuffle by genre or decade), style pages and Unsorted. Shuffle plays a mix (`/browse/mix`): a quarter of the genre or style, 15 to 30 tracks (all of a small one), drawn at random from its 300 strongest, at most 2 per artist, artists spread out; Infinity mode continues. Play on a genre or style card does the same. "Aurora rays from {title}" is built (`/library/rays/:trackId`, `GET /api/v1/tracks/:id/rays`, from the track menu while the preview is on), with Add and Remove for admins (`POST /api/library/track-styles/:trackId`, track overrides, re-fused at once), and album and artist pages show their profiles as chips linking to Browse. Not yet: "Sounds close to" (phase 3). Layout as built: Credits (a rail like the Hub's radio cards), In context (a rail of double-width two-column cards: artwork left; name, what it is, the track's place in it, genres and styles, listener tags right; the album and the artist lead; then every other billed artist, featured artist and remixer in the library, as narrower cards of the same height led by a round portrait), Sound and style (a Sound card; a Styles card with the two charts; the track's genres and styles, with their sources and the admin editor, sit behind Advanced at the foot of the card; the model's style scores are told in words (Strong ≥ 0.5, Clear ≥ 0.3, Noticeable ≥ 0.15, A hint ≥ 0.05, else Faint; bands from the dev library, where a track's strongest style has a median of 0.29), the exact score in the tooltip; admins add or take off a style by selecting its bar in "Styles the audio model hears", listeners' bars open the style), Also on. Style search is not on the Browse page: styles and tags join the app's main search index later (the `/browse/search` endpoint is ready for it).
+3. **Measured ML enrichment.** Run the genre backfill (unless phase 0's re-analysis already wrote the scores). ML, KNN and Last.fm evidence for tagged tracks switch on only where the reviewed sample shows they help; Last.fm descriptors start feeding AI playlist prompts and facets; centroids and "Sounds close to" follow, in Browse and in "Aurora rays from {title}". Disputed-tag flags start once centroids exist. Built so far (2026-11-10): the genre backfill came with phase 0's re-analysis (30,713 of 30,746 dev tracks scored). Style centroids (`style_centroids`, `services/genreTaxonomy/centroids.ts`): the mean EffNet embedding of each style's tag and hand-set members (never inferred ones, so a centroid can't grow on its own guesses; never simulated tracks), for styles with at least 8 such tracks by 3 artists (dev: 57 of 297 styles in use), with the 90th-percentile member distance stored for the disputed-tag check; rebuilt at the end of every fusion run (about 0.2 s), and once at startup when fusion is already current. On dev the nearest centroids read right (Trance → Progressive Trance, Progressive House; Soul → Funk, Contemporary R&B; Disco → New Wave; the metal styles together); one mapping smell surfaced: the tag "Psychedelic" maps to Funk / Soul › Psychedelic, but its tracks sit next to Psy-Trance. "Sounds close to" is live on style pages (6 nearest styles, any genre, each card naming its genre) and in "Aurora rays from {title}" (6 compact style cards nearest the track's embedding, its own styles left out, and 12 nearest tracks: none from its album or recording, one version per song, at most two per artist; they play as a list from the one picked). Fusion version 2 ("trust, then verify", decided 2026-11-10 instead of waiting for a reviewed sample): tagged tracks take up to 3 styles the sound hears clearly, at a raw score of 0.3 inside a genre that already has a tagged style, or 0.5 in another genre the sound is trusted on (which brings that genre too); on dev 10 of 12 random 0.3–0.4 additions read right (Pop Rock → Alternative Rock, Pop Punk → Punk), and every 0.5+ cross-genre one did (pop remixes → House, a disco classic tagged Progressive Metal → Disco). A tagged style is disputed when its raw score is under 0.01 and the track sits beyond the style's 90th-percentile centroid distance, in a trusted genre: on dev 476 styles on 469 tracks (1.5 % of tagged styles with a centroid), mostly intros, interludes, acoustic tracks on metal albums, and pop under a rock tag. Artist tags don't veto a dispute (decided 2026-11-10): they describe the career, not the track, and would have hidden 398 of the 476, interludes included; a dispute only asks. Admins answer on Unsorted (Disputed tags, one row per track: Play, Keep, Remove, Undo); Keep is an add override (never disputed again), Remove an exclude. Fusion runs 11.4 s on dev (version 1: about 10 s). Next: descriptors (moods, places, eras from artist tags, kept out of the genre taxonomy); places need one name across languages ("danish", "dansk", "denmark", "danmark" are one place). KNN evidence stays off: the sound already speaks through ML, and the two share EffNet's errors.
+
+**Places and languages (built 2026-11-10).** Andreas's use: a datapoint for filtering and for dynamic and AI playlists ("Dansk rap fra 90'erne"), not a genre and not display. Every track gets one ISO country and one ISO language in `track_origin`, with the source (`services/trackOrigin.service.ts`). Country, first found: the primary artist's MusicBrainz country (`artists.country`, stored from now on with each lookup, and filled from the stored area where it names a country, including England, Scotland, Wales and Northern Ireland as GB); else the artist's strongest place tag on Last.fm or MusicBrainz (weight 0.2 or more); else the file's release country (Picard's, except Europe and Worldwide). Language: the file's lyrics language (TLAN / LANGUAGE), "no lyrics" (zxx) counting as none. Tag spellings collapse through CLDR (`shared/places.ts`): country and language names in about 30 languages, so "danish", "dansk", "Denmark", "danmark", "Dänemark" and "danois" are all DK, plus an English demonym list CLDR lacks ("american", "british"); a tag that maps to a genre never counts, and "indie" (India in one locale), "georgia" (Atlanta rappers) and "jersey" never do. The scanner now reads the release country and lyrics language; files scanned before are read once in the background (dev: about 45 files a second, 11 minutes for 30,000). On dev: 27,160 of 30,746 tracks have a country (24,728 from MusicBrainz, 1,210 from place tags, 1,222 from the release), 6,068 a language (5,947 English, 50 Danish); Danish 90s hip hop is Humleridderne, Østkyst Hustlers, Clemens, Hvid Sjokolade, Malk De Koijn, Suspekt and Rent Mel, three of them found only through Last.fm. Used by: AI playlists (the model returns `countries`, `languages`, `year_from`, `year_to` only when asked; they are hard filters through every relaxation step, a track matching a country or a language), and Browse (Shuffle on genre and style pages narrows by decade and country together: "Shuffle Hip Hop · Denmark · 1990s"). **Moods, eras and vocals (built 2026-11-10).** Measured on dev first: vocals are the strongest descriptor ("female vocalists" on 630 artists, "male vocalists" on 423 but weighted low by Last.fm), artist-level moods are sparse (chillout 154 artists, atmospheric 31, party 25), and only 435 of 30,746 tracks lack a year, while 1.8 % of a 500-file sample sit in another decade by their original year (remasters and reissues: Metallica's 2021 "Nothing Else Matters"). So era is fixed at the source: `track_origin` gets an effective year and decade from the file's original year (Picard's ORIGINALDATE, now read by the scanner; older files are read once more in the background), else its year, else the artist's era tag ("80s", "1980s", "eighties", "80'erne") for a track without one. Vocals (female, male) and moods (chill, party, uplifting, melancholic, dark, atmospheric, romantic, energetic, funky) come from the artist's tags in English and the Scandinavian, German and Dutch spellings (`shared/descriptors.ts`), with weights from 0.05 (vocals) and 0.1 (moods); they describe the artist, not the one track. Place tags also understand combined tags ("dansk rap", "Deutschrap", "nederhop", "Nederlandstalig"). Used by: Browse (Shuffle narrows by decade, country, vocals and mood together) and AI playlists (years by the effective year, vocals a hard filter, moods only lean: a track by an artist tagged with a requested mood ranks 0.1 closer, while the target sound still decides). Mood words never become genres, and moods from the sound itself (energy, acousticness, danceability) stay with the target vector.
+
+**Without providers (verified 2026-11-10).** `server/database/__tests__/noProviders.pg.test.ts` runs the whole chain on a library with no Last.fm or MusicBrainz data (provider calls fail the test): fusion names genres from tags and trusted audio, untagged tracks included; centroids, Sounds close to and disputes need only audio; places, languages and years come from the files; Browse offers country and decade but no empty vocals or mood rows; Rays shows no listener tags. AI playlists skip a hard filter the library has no data for at all (vocals and moods without artist tags; places with neither MusicBrainz nor release-country tags) and log it, so a request never filters everything away.
+4. **Recommendation changes.** Style overlap replaces the hop-cost penalty in candidate scoring and is compared side by side against the old engine, which stays selectable. Then `tracks.genre_id` and `track_genres` are derived from fused genres and styles, and the remaining Genre Matrix pieces are retired or re-pointed (see What happens to the Genre Matrix), including `subgenre_mappings`. Step 1 built (2026-11-10): a per-user setting `recommendationEngine` (`classic` | `styles`, Settings → Playback → Infinity, default classic until the comparison) picks the engine for Infinity and for Hub and AI playlists (`server/services/styleOverlap.service.ts`). Styles: d′ = d − β·cos(v_t, v_seed), v from `track_styles` (styles at their strength, genre rows at half, L2-normalised, built on the fly for the seed and the over-fetched pool, no new table), the seed blended over the queue tail with Infinity's λ = 0.8; β = genre strictness × 0.2 (0.1 at the default 50). Measured on dev before choosing: the 10th-nearest candidate is a median 0.066 further than the nearest, a third of the 100 nearest share no style with the seed, and β = 0.1 brings about 3 of the 10 nearest in from a little further down (the old engine at default strictness pushed about 4 out). No genre penalty and no root enforcement; banned genres stay a hard veto (old paths until step 2). Infinity's weighted pick uses 1 / (d + β·(1 − cos)) so a full style match can't take every draw. Hub references: AI playlists map the concept's genres through `tag_map`; Up Next and the Vault use the recent or top tracks themselves. The side-by-side comparison is a blind A/B like phase 0's window test: dev playlist "Engine test · blind A/B", 20 seeds each followed by the two engines' top Infinity picks in random order (seeds where they agree, or where a pick was another version of the seed song, skipped; that happened twice in 20, the duplicate-recording gap noted under Engine). Rated 2026-11-10: Styles 9, classic 8, no difference 3, a tie (option 1 won 13 of 17, an order effect; artist amnesia 0 let classic pick the seed's own artist 6 times and Styles twice). Decided: Styles, as good and needing only the data Aurora keeps. Step 2a built (2026-11-10): Styles is the only engine (the setting, `genrePenaltyCurve` and the classic code are gone; hop cost and root enforcement no longer run). Genre paths come from the fused results (`server/services/genreTaxonomy/paths.ts`): "electronic" for a genre, "electronic.house" for a style, one per `track_styles` membership, the strongest first, so the AI pools' prefix filters, artist radio (the artist's profile: strongest style, the next three, its genre) and the candidate pools keep their logic on the new taxonomy. Names resolve through the taxonomy first (a style name in two genres gives both), then `tag_map`. Banned names are a hard veto on any of a track's memberships: a genre name bans the genre, any other name the styles of that name or ending in it ("metal": Heavy, Death, Doom … Metal), and a tag mapped only to a genre never bans the whole genre. Library genre health counts each analysed track under its genre and each of its styles. AI adjacent paths: the primary style's genre siblings and its 6 nearest centroids from any genre. The AI vocabulary is the library's genres and styles by track count (≤ 300). Step 2b built (2026-11-10; decided with Andreas: the fused genres and styles, not the file tags): `track_genres` and `tracks.genre_id` are derived from `track_styles` by every fusion run and once at startup (`server/services/genreTaxonomy/trackGenres.ts`): per track its memberships at strength ≥ 0.5, strongest first, a style before its genre on a tie, position 0 = `genre_id` (a track with only weaker ones keeps its strongest genre; weak sound guesses stay out, fixed 2026-11-11 after 28 % of dev tracks had a guess under 0.5 as their main genre); one `genres` row per name (a style name in two genres is one row; a row named like a genre or style leaves its spelling group). So Subsonic apps, the API's genres and the filters show Aurora's taxonomy. The scanner no longer writes them; tags stay in `track_tags` and spelling rows in `genres` for the review, which now counts tracks by tag. Step 2c built (2026-11-10): the Genre Matrix is retired. `genreMatrix.service` (categorizer, hop cost, vocabulary), `mbdb.service` (the 4 GB import) and their routes and Settings tabs are deleted; nothing creates or reads `subgenre_mappings` or `genre_tree_paths` (the runbook drops them optionally); the MusicBrainz tables stay for the snapshot. `/api/genres/taxonomy` answers Genre › Style paths from the new taxonomy for the old genre view and filter. Phase 4 is done except the later work below.
 
 **Reviewed sample.** A fixed, hand-labelled set of tracks every gate is checked against. It covers common styles, rare styles, ambiguous tags (the 16 duplicate style names), untagged tracks, and compilations and soundtracks. Round 1 (20 neighbour pairs, see Appendix) is done.
 
@@ -453,8 +667,10 @@ Rollback: phases 1–3 add tables and leave `tracks.genres`, `track_genres` and 
 
 | Question | Default |
 | --- | --- |
+| AI playlists: pools or one score? | One score over a bounded candidate set (see AI playlists); designed 2026-11-11, for review. |
+| How many AI playlists, and special lists? | 2, 3, 6 or 9 per Hub refresh, of which up to 1, 1, 2 or 3 are special lists, only when the library supports them; same rail, no badge (decided 2026-11-11). Must work from 500 to 100,000 tracks. |
 | Write styles back to file tags? | No. Inferred styles stay in Aurora's database; writing to files is a separate, explicit action. |
-| Build on `track_genres` or replace it? | Build alongside until phase 4, then derive `track_genres` and `tracks.genre_id` from fused results. Existing duplicate-review merges become `tag_map` aliases. |
+| Build on `track_genres` or replace it? | Build alongside until phase 4, then derive `track_genres` and `tracks.genre_id` from fused results (built 2026-11-10, step 2b). Spelling groups (`genres.merged_into`) stay as the tag mapping's merge aliases. |
 | Keep the MBDB import? | No. Keep its 2.2 MB of genre data as a shipped snapshot used for alias and parent mapping; drop the 4 GB download. |
 | Is Last.fm (or MusicBrainz) required? | No. File tags and audio are the baseline for Browse, fusion and the engine; artist tags only improve confidence and the genre of untagged tracks. |
 | Can audio remove a wrong tag? | No. It can only mark the membership disputed for review; Keep and Remove are manual overrides. |
@@ -465,11 +681,15 @@ Rollback: phases 1–3 add tables and leave `tracks.genres`, `track_genres` and 
 | GPU (ROCm) for analysis? | No. Analysis is decode-bound, the prod VM has no GPU, and other self-hosters need the CPU path. |
 | MAEST-30s instead of more windows? | No. It is still one region of the track, so it does not fix the round 1 misses, and it replaces Infinity's embedding space. Revisit only if style accuracy for Pop and Jazz matters after phase 3. |
 | Genre penalty in the engine? | Removed in phase 4; style overlap is a bonus only. Banned genres remain a hard veto. |
+| LLM step in tag mapping | Deferred (decided 2026-11-06). Exact names, hand aliases and MusicBrainz aliases and parents reach about 97 % of Picard tag uses; leftovers go to the review screen. |
+| Where does the mapping review live? | Settings → Library Entities → Genres. Adding it includes reworking that whole sub-tab to the standard of the Artists sub-tab (previews, undo, clearer actions). Built (1b, 2026-11-06): one queue with kinds No genre, Two genres, Guessed, Several in one and Spellings (the old duplicate detector, still grouping `genres.merged_into` until phase 4); name matches accepted in bulk from a list; coverage meter and count as the header; every answer undoable for 30 days. The Artists and Genres tabs share one queue component (`ReviewQueue`, `ReviewPanel`, `useReviewQueue`). Each question shows the audio (each track counted under its top style) and the artists' tags, and starts from a suggestion when they agree (or when one source is clear alone: most artists, or 70 % of tracks); a style the tag itself names is kept unless under 20 % of the tracks have it among their 5 closest styles (the tag is then loosely used: "Electro" on Radiohead remixes, ODESZA, Netsky and a Chicane compilation, 16 of 102), and a tag that names no style gets one only when at least half the tracks have it as their top style, otherwise the genre alone. Top style alone undersells every style, so named styles are judged by the 5 closest: on dev, tracks tagged Hard Rock / House / Disco / Pop Rock have that style among their 5 closest for 77 / 72 / 54–66 / 46 % (top style 44 / 34 / 18–27 / 13 %), against 25 % for Rock › New Wave and 16 % for Electro. On dev, 77 of 100 questions get a suggestion. |
+| Genres and styles for albums and artists? | Yes, as summaries of their tracks, never assigned on their own (decided 2026-11-06). An artist's profile counts each album once, not each track. |
+| Name of the per-track view | "Aurora rays from {title}" (decided 2026-11-06), not "DNA". |
 | Tuning weights and thresholds | Tuned against reviewed labels. Loves and skips personalise recommendations only, never shared genre truth. |
 
 Still open:
 
-- [ ] Size of the reviewed sample and the coverage and correctness targets for the phase 1 gate.
+- [x] Phase 1 gate (decided 2026-11-06): at least 95 % of tagged tracks have a mapping, and every mapping is reviewed in the review screen. Dev has 261 distinct Picard genre tags (the top 100 cover 96 % of uses), so a full review replaces sampling.
 - [x] Phase 0: blind A/B round, 35 % window vs mean of 20 / 50 / 80 % (mean won 13–7).
 - [ ] Optional: a second blind round of 20 to firm up the window result before re-analysing.
 

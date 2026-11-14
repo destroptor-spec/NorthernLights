@@ -20,7 +20,7 @@ class PythonChild extends EventEmitter {
     this.stdout.emit('data', JSON.stringify({ id, audioFeatures: features }) + '\n');
   }
 }
-const features = () => ({ bpm: 120, acoustic_vector: Array(8).fill(.5), embedding_vector: [1, ...Array(1279).fill(0)], is_simulated: false, feature_version: 2 });
+const features = () => ({ bpm: 120, acoustic_vector: Array(8).fill(.5), embedding_vector: [1, ...Array(1279).fill(0)], style_scores: Array(400).fill(0.01), analysis_windows: '3x15s@20/50/80%', is_simulated: false, feature_version: 3 });
 let children: PythonChild[] = [];
 beforeEach(() => {
   children = [];
@@ -38,17 +38,33 @@ afterEach(() => {
 test('valid vectors are returned, malformed or non-finite vectors become explicit fallbacks', async () => {
   const valid = extractAudioFeatures('valid.wav');
   children[0].reply(features());
-  await expect(valid).resolves.toMatchObject({ is_simulated: false, feature_version: 2 });
+  await expect(valid).resolves.toMatchObject({ is_simulated: false, feature_version: 3, style_scores: expect.any(Array) });
   for (const invalid of [
     { ...features(), acoustic_vector: [1] },
     { ...features(), embedding_vector: Array(1280).fill(0) },
     { ...features(), bpm: NaN },
-    { ...features(), feature_version: 1 },
+    { ...features(), feature_version: 2 },
+    { ...features(), style_scores: undefined },
+    { ...features(), style_scores: Array(399).fill(0.1) },
+    { ...features(), style_scores: [1.5, ...Array(399).fill(0.1)] },
   ]) {
     const result = extractAudioFeatures('bad.wav');
     children[0].reply(invalid);
-    await expect(result).resolves.toMatchObject({ is_simulated: true, feature_version: 2 });
+    await expect(result).resolves.toMatchObject({ is_simulated: true, feature_version: 3, style_scores: null });
   }
+});
+
+test('the stored duration reaches the Python job so it can skip ffprobe; the worker gets the models folder', async () => {
+  const withDuration = extractAudioFeatures('long.flac', { trackId: 't1', durationSeconds: 241.5 });
+  expect(JSON.parse(children[0].stdin.write.mock.calls.at(-1)![0])).toMatchObject({ filePath: 'long.flac', durationSeconds: 241.5 });
+  children[0].reply(features());
+  await withDuration;
+  const withoutDuration = extractAudioFeatures('unknown.flac', { trackId: 't2', durationSeconds: null });
+  expect(JSON.parse(children[0].stdin.write.mock.calls.at(-1)![0])).not.toHaveProperty('durationSeconds');
+  children[0].reply(features());
+  await withoutDuration;
+  const args = jest.mocked(spawn).mock.calls[0][1] as string[];
+  expect(args.slice(-2)).toEqual(['--worker', expect.stringMatching(/server[\\/]models$/)]);
 });
 
 test('input error fails pending work and a delayed exit cannot clobber the replacement worker', async () => {

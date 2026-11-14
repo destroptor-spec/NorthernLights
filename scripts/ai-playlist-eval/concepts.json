@@ -1,0 +1,400 @@
+[
+  {
+    "prompt": "Euphoric, melodic trance with progressive structures and soaring synthesizers",
+    "concept": {
+      "section": "Custom",
+      "title": "Euphoric Melodic Trance",
+      "description": "Bright, uplifting trance with progressive builds and soaring synths.",
+      "target_genres": [
+        "Progressive Trance",
+        "Tech Trance",
+        "Psy-Trance"
+      ],
+      "banned_genres": [
+        "Downtempo",
+        "Ambient",
+        "Classical",
+        "Country",
+        "Jazz"
+      ],
+      "focus": 0.8,
+      "sound_moods": {
+        "happy": 0.9,
+        "party": 0.7,
+        "instrumental": 0.8
+      },
+      "target_vector": [
+        0.8,
+        0.9,
+        0.7,
+        0.9,
+        0.8,
+        0,
+        0.8,
+        0.55
+      ],
+      "moods": [
+        "uplifting",
+        "energetic"
+      ]
+    }
+  },
+  {
+    "prompt": "Dansk rap fra 90'erne",
+    "concept": {
+      "section": "Custom",
+      "title": "Dansk Rap fra 90'erne",
+      "description": "Klart og energisk dansk rap fra nittenities.",
+      "target_genres": [
+        "Hip Hop",
+        "Pop Rap"
+      ],
+      "banned_genres": [
+        "Electronic",
+        "Dance-pop",
+        "House",
+        "Trance"
+      ],
+      "focus": 0.9,
+      "sound_moods": {
+        "aggressive": 0.7,
+        "party": 0.6
+      },
+      "target_vector": [
+        0.6,
+        0.4,
+        0.75,
+        0.65,
+        0.1,
+        0.05,
+        0.6,
+        0.35
+      ],
+      "countries": [
+        "DK"
+      ],
+      "languages": [
+        "da"
+      ],
+      "year_from": 1990,
+      "year_to": 1999,
+      "moods": []
+    }
+  },
+  {
+    "prompt": "Music for code: focused, steady, mostly instrumental",
+    "concept": {
+      "section": "Custom",
+      "title": "Steady Focus Flow",
+      "description": "Focused, steady instrumental music for deep coding.",
+      "target_genres": [
+        "Ambient",
+        "Deep House",
+        "Minimal Techno"
+      ],
+      "banned_genres": [
+        "Hardstyle",
+        "Dubstep",
+        "Speed Metal",
+        "Pop Rap"
+      ],
+      "focus": 0.2,
+      "sound_moods": {
+        "relaxed": 0.7,
+        "instrumental": 0.95,
+        "aggressive": 0.1,
+        "party": 0.1
+      },
+      "target_vector": [
+        0.35,
+        0.5,
+        0.45,
+        0.65,
+        0.92,
+        0.1,
+        0.35,
+        0.5
+      ],
+      "moods": [
+        "atmospheric"
+      ]
+    }
+  },
+  {
+    "prompt": "Velvet Shadows: dark, sultry late-night grooves",
+    "concept": {
+      "section": "Custom",
+      "title": "Velvet Shadows",
+      "description": "Dark, sultry late-night grooves.",
+      "target_genres": [
+        "Deep House",
+        "Tech House",
+        "Dub Techno",
+        "Funk / Soul"
+      ],
+      "banned_genres": [
+        "Pop",
+        "Dance-pop",
+        "Eurodance",
+        "Happy Hardcore",
+        "Country"
+      ],
+      "focus": 0.5,
+      "sound_moods": {
+        "instrumental": 0.85,
+        "relaxed": 0.6,
+        "party": 0.45
+      },
+      "target_vector": [
+        0.45,
+        0.2,
+        0.6,
+        0.45,
+        0.8,
+        0.1,
+        0.75,
+        0.55
+      ],
+      "moods": [
+        "dark",
+        "atmospheric",
+        "romantic"
+      ]
+    }
+  },
+  {
+    "prompt": "90s Eurodance party",
+    "concept": {
+      "section": "Custom",
+      "title": "90s Eurodance Party",
+      "description": "High-energy 90s Eurodance bangers for the dancefloor.",
+      "target_genres": [
+        "Eurodance",
+        "Hands Up",
+        "Hi NRG"
+      ],
+      "banned_genres": [
+        "Classical",
+        "Country",
+        "Folk",
+        "Reggae",
+        "Downtempo"
+      ],
+      "focus": 0.9,
+      "sound_moods": {
+        "party": 0.9,
+        "happy": 0.7,
+        "acoustic": 0.1
+      },
+      "target_vector": [
+        0.85,
+        0.75,
+        0.85,
+        0.7,
+        0.3,
+        0,
+        0.95,
+        0.6
+      ],
+      "year_from": 1990,
+      "year_to": 1999,
+      "moods": [
+        "party",
+        "energetic"
+      ]
+    }
+  },
+  {
+    "prompt": "Acoustic Sunday morning with coffee",
+    "concept": {
+      "section": "Custom",
+      "title": "Acoustic Sunday Coffee",
+      "description": "Soft, relaxed acoustic sounds for a slow coffee morning.",
+      "target_genres": [
+        "Smooth Jazz",
+        "Easy Listening"
+      ],
+      "banned_genres": [
+        "House",
+        "Trance",
+        "Techno",
+        "Hardstyle"
+      ],
+      "focus": 0.4,
+      "sound_moods": {
+        "relaxed": 0.9,
+        "happy": 0.6,
+        "acoustic": 0.9
+      },
+      "target_vector": [
+        0.3,
+        0.6,
+        0.2,
+        0.8,
+        0.4,
+        0.9,
+        0.1,
+        0.3
+      ],
+      "moods": [
+        "chill"
+      ]
+    }
+  },
+  {
+    "prompt": "Heavy metal for the gym",
+    "concept": {
+      "section": "Custom",
+      "title": "Gym Metal",
+      "description": "Aggressive heavy metal to fuel the workout.",
+      "target_genres": [
+        "Thrash",
+        "Speed Metal",
+        "Power Metal"
+      ],
+      "banned_genres": [
+        "Pop",
+        "Classical",
+        "Ambient",
+        "Downtempo",
+        "Electronic"
+      ],
+      "focus": 0.75,
+      "sound_moods": {
+        "aggressive": 0.95,
+        "relaxed": 0.1
+      },
+      "target_vector": [
+        1,
+        0.2,
+        0.9,
+        0.4,
+        0.5,
+        0,
+        0.1,
+        0.85
+      ],
+      "moods": [
+        "energetic"
+      ]
+    }
+  },
+  {
+    "prompt": "Deep house for a warm summer evening",
+    "concept": {
+      "section": "Custom",
+      "title": "Deep House Summer Evening",
+      "description": "Smooth, warm deep house for a relaxed summer night.",
+      "target_genres": [
+        "Deep House",
+        "Tropical House"
+      ],
+      "banned_genres": [
+        "Hardstyle",
+        "Tech Trance",
+        "Happy Hardcore",
+        "Gabber"
+      ],
+      "focus": 0.8,
+      "sound_moods": {
+        "relaxed": 0.8,
+        "instrumental": 0.8,
+        "party": 0.4
+      },
+      "target_vector": [
+        0.4,
+        0.5,
+        0.6,
+        0.7,
+        0.8,
+        0.1,
+        0.7,
+        0.5
+      ],
+      "moods": [
+        "chill",
+        "atmospheric"
+      ]
+    }
+  },
+  {
+    "prompt": "Melancholic indie rock for a rainy day",
+    "concept": {
+      "section": "Custom",
+      "title": "Rainy Day Indie Rock",
+      "description": "Slow, wistful indie rock for grey skies.",
+      "target_genres": [
+        "Indie Rock",
+        "Shoegaze",
+        "Dream Pop"
+      ],
+      "banned_genres": [
+        "Dance-pop",
+        "Euro House",
+        "Trance",
+        "Europop"
+      ],
+      "focus": 0.4,
+      "sound_moods": {
+        "sad": 0.8,
+        "relaxed": 0.8,
+        "party": 0.1
+      },
+      "target_vector": [
+        0.35,
+        0.3,
+        0.4,
+        0.8,
+        0.6,
+        0.5,
+        0.1,
+        0.3
+      ],
+      "moods": [
+        "melancholic",
+        "atmospheric"
+      ]
+    }
+  },
+  {
+    "prompt": "Jazz for a dinner party",
+    "concept": {
+      "section": "Custom",
+      "title": "Smooth Jazz Dinner Party",
+      "description": "Relaxed, sophisticated jazz for an elegant dinner gathering.",
+      "target_genres": [
+        "Smooth Jazz",
+        "Swing",
+        "Big Band"
+      ],
+      "banned_genres": [
+        "House",
+        "Techno",
+        "Trap",
+        "Hard Rock",
+        "Country"
+      ],
+      "focus": 0.7,
+      "sound_moods": {
+        "relaxed": 0.9,
+        "acoustic": 0.9,
+        "instrumental": 0.7,
+        "party": 0.2
+      },
+      "target_vector": [
+        0.35,
+        0.6,
+        0.35,
+        0.85,
+        0.7,
+        0.9,
+        0.25,
+        0.35
+      ],
+      "moods": [
+        "romantic",
+        "chill"
+      ]
+    }
+  }
+]

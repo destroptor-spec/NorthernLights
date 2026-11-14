@@ -25,6 +25,12 @@
   --color-text-primary: #1C1C1E; /* Almost black */
   --color-text-secondary: #3a3a48;
   --color-text-muted: #3a3a48;
+  /* Charts (emphasis form): the highlighted series, and the context around it.
+     Validated with the dataviz palette script against this theme's background:
+     distinct under colour-blind simulation (ΔE 13) and normal vision (ΔE 19);
+     the context grey is under 3:1, so every bar carries a visible label. */
+  --chart-emphasis: var(--color-primary);
+  --chart-context: #a3abb6;
   --color-border: rgba(0, 0, 0, 0.05); /* Soft glass borders */
   --color-accent: #E11D48; /* Rose 600 */
   --color-error: #FF3B30;
@@ -176,6 +182,7 @@
   --color-text-primary: #d8d8e8;
   --color-text-secondary: #c6c6da;
   --color-text-muted: #c6c6da;
+  --chart-context: #6c7182; /* ΔE 21 colour-blind, 26 normal vs emerald; 3:1 on the void */
   --color-border: rgba(34, 201, 131, 0.08);
   --color-accent: #f43f5e; /* Rose 500 */
   --color-error: #f87171;
@@ -385,8 +392,6 @@ html.share-page #root {
   outline: 1px solid rgba(34, 201, 131, 0.4);
   outline-offset: 2px;
 }
-
-
 
 /* Tailwind handles the main layout now */
 
@@ -1396,6 +1401,1426 @@ a:focus-visible > .genre-card .genre-card__label {
   .genre-card:hover,
   a:focus-visible > .genre-card {
     transform: none;
+  }
+}
+
+/* ── Browse: Genre → Style (genre redesign, phase 2) ─────────────────────── */
+.browse-home__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  margin-top: 2rem;
+}
+
+.browse-empty {
+  color: var(--color-text-secondary);
+  font-size: 0.95rem;
+}
+
+.browse-error {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  color: var(--color-text-secondary);
+}
+
+.browse-error p {
+  margin: 0;
+}
+
+/* Genre and style cards: a 3:2 card in one of the Hub's cover gradients
+   (AuroraCard.tsx picks one per name), the name in the display font and one
+   line of metadata. Cover art is theme-stable, so the text is light on a
+   fixed dark shade in both themes, as on the Hub covers. No hover effects;
+   focus shows a ring. */
+.browse-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+@media (min-width: 640px) {
+  .browse-card-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+}
+
+@media (min-width: 768px) {
+  .browse-card-grid { gap: 1.5rem; }
+}
+
+@media (min-width: 1280px) {
+  .browse-card-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+/* The card and its Play button side by side (a button can't sit in a link). */
+.browse-card-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+/* Play, as on the Hub cards: hidden on touch (no hover, and an invisible
+   button would still catch taps); with hover it rises in on hover or focus,
+   and stays while its tracks load. */
+.browse-card__play {
+  display: none;
+}
+
+@media (hover: hover) {
+  .browse-card__play {
+    position: absolute;
+    right: 0.875rem;
+    bottom: 0.875rem;
+    z-index: 2;
+    display: inline-flex;
+    width: 2.5rem;
+    height: 2.5rem;
+    opacity: 0;
+    transform: translateY(0.5rem);
+    transition:
+      opacity 200ms cubic-bezier(0.22, 1, 0.36, 1),
+      transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
+      background-color var(--transition-fast);
+  }
+
+  .browse-card-wrap:hover .browse-card__play,
+  .browse-card-wrap:focus-within .browse-card__play,
+  .browse-card-wrap[data-busy='true'] .browse-card__play {
+    opacity: 1;
+    transform: none;
+  }
+
+  /* Room for the button, so a long meta line never runs under it. */
+  .browse-card {
+    padding-right: 4rem;
+  }
+}
+
+@media (hover: hover) and (prefers-reduced-motion: reduce) {
+  .browse-card__play {
+    transform: none;
+    transition: opacity 120ms linear;
+  }
+}
+
+.browse-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 0.25rem;
+  aspect-ratio: 3 / 2;
+  min-width: 0;
+  padding: 1rem 1.125rem;
+  border-radius: var(--radius);
+  overflow: hidden;
+  isolation: isolate;
+  color: rgb(255 255 255 / 0.96);
+  text-decoration: none;
+  box-shadow: var(--shadow-sm);
+}
+
+.browse-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(to top, rgb(0 0 0 / 0.42), transparent 64%);
+}
+
+.browse-card:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.browse-card__title {
+  font-family: var(--font-display);
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+  font-weight: 400;
+  font-size: clamp(1.15rem, 1rem + 0.6vw, 1.5rem);
+  line-height: 1.1;
+  letter-spacing: 0.05em;
+  overflow-wrap: anywhere;
+}
+
+.browse-card__meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgb(255 255 255 / 0.82);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.browse-card--skeleton {
+  background: var(--color-surface-variant);
+}
+
+/* Genre and style page header. */
+.browse-hero {
+  margin-bottom: 2.5rem;
+}
+
+.browse-hero__eyebrow {
+  display: inline-block;
+  margin-bottom: 0.5rem;
+  color: var(--color-text-secondary);
+  font-size: 0.9rem;
+  letter-spacing: 0.05em;
+  text-decoration: none;
+}
+
+.browse-hero__eyebrow:hover,
+.browse-hero__eyebrow:focus-visible {
+  color: var(--color-primary);
+}
+
+.browse-hero__title {
+  margin: 0 0 0.5rem;
+  font-size: clamp(2.25rem, 6vw, 4.5rem);
+  line-height: 1.02;
+  color: var(--color-primary);
+  overflow-wrap: anywhere;
+}
+
+.browse-hero__meta {
+  margin: 0 0 1.25rem;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.browse-hero__lede {
+  max-width: 62ch;
+  margin: 0;
+  color: var(--color-text-secondary);
+  line-height: 1.55;
+}
+
+.browse-hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1.25rem;
+}
+
+.browse-decades {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.browse-decades__label {
+  min-width: 4rem;
+  margin-right: 0.25rem;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+/* Decade and country toggles under Shuffle; Shuffle says what it's narrowed to. */
+.browse-filters {
+  display: grid;
+  gap: 0.5rem;
+  flex-basis: 100%;
+}
+
+.browse-shuffle__narrow {
+  font-weight: 400;
+  opacity: 0.85;
+}
+
+/* A row: its label in a column of its own, so wrapped toggles line up. On a
+   phone the label sits above its toggles. */
+.browse-filter {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.375rem;
+}
+
+.browse-filter .browse-decades__label {
+  min-width: 0;
+  margin: 0;
+}
+
+.browse-filter__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+
+@media (max-width: 639px) {
+  .browse-filter { grid-template-columns: minmax(0, 1fr); }
+}
+
+.browse-section {
+  margin-bottom: 2.75rem;
+}
+
+.browse-section__title {
+  margin: 0 0 1rem;
+  font-size: 1.25rem;
+  color: var(--color-text-secondary);
+}
+
+.browse-more {
+  margin-top: 1.25rem;
+}
+
+/* Every style of a genre: an index in columns, scanned rather than browsed
+   as covers. Each row is a small "jump back in" tile (Hub): glass, hairline
+   border, the hover glass on hover. Counts sit right so a column reads at a
+   glance. */
+.browse-index {
+  columns: 1;
+  column-gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (min-width: 640px) {
+  .browse-index { columns: 2; }
+}
+
+@media (min-width: 1024px) {
+  .browse-index { columns: 3; }
+}
+
+.browse-index--single {
+  columns: 1 !important;
+  max-width: 40rem;
+}
+
+.browse-index li {
+  break-inside: avoid;
+  padding-bottom: 0.5rem;
+}
+
+.browse-index__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  width: 100%;
+  min-height: 48px;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  color: var(--color-text-primary);
+  text-align: left;
+  text-decoration: none;
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 140ms ease-out, color 140ms ease-out;
+}
+
+.browse-index__row:hover,
+.browse-index__row:focus-visible {
+  background: var(--glass-bg-hover);
+  color: var(--color-primary);
+  outline: none;
+}
+
+.browse-index__row:focus-visible {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-primary) 60%, transparent);
+}
+
+.browse-index__row:disabled {
+  cursor: progress;
+}
+
+.browse-index__row--plain .browse-index__name {
+  color: var(--color-text-secondary);
+}
+
+.browse-index__name {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.browse-index__count {
+  flex: none;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Artist cards: round image, name, how much of their music is here. */
+.browse-artist {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+  color: var(--color-text-primary);
+  border-radius: var(--radius);
+  outline: none;
+}
+
+.browse-artist__image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  margin-bottom: 0.375rem;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  box-shadow: var(--shadow-sm);
+  transition: border-color 200ms ease-out, box-shadow 200ms ease-out;
+}
+
+.browse-artist__image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.browse-artist:hover .browse-artist__image,
+.browse-artist:focus-visible .browse-artist__image {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-md);
+}
+
+.browse-artist__name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.browse-artist:hover .browse-artist__name,
+.browse-artist:focus-visible .browse-artist__name {
+  color: var(--color-primary);
+}
+
+.browse-artist__meta {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+/* "Aurora rays from {title}": the album cover beside the heading, the
+   artist's banner faded behind (as on the artist page), portraits and covers
+   wherever a person or album is named. */
+.rays-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  margin-bottom: 3rem;
+  text-align: center;
+}
+
+@media (min-width: 768px) {
+  .rays-hero {
+    flex-direction: row;
+    align-items: flex-end;
+    gap: 2.25rem;
+    text-align: left;
+  }
+}
+
+/* The cover lights its own page: a soft glow in the cover's colour
+   (useDominantColor) spills from behind it. Static atmosphere, faded in
+   once; kept tight so it never sits under the title. */
+.rays-hero__art {
+  position: relative;
+  flex: none;
+  isolation: isolate;
+}
+
+.rays-hero__glow {
+  position: absolute;
+  inset: -18%;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(closest-side,
+    color-mix(in srgb, var(--rays-glow, var(--color-primary)) 70%, transparent),
+    transparent 100%);
+  filter: blur(28px);
+  opacity: 0.5;
+  pointer-events: none;
+  animation: rays-glow-in 1400ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.dark .rays-hero__glow {
+  opacity: 0.6;
+}
+
+@keyframes rays-glow-in {
+  from { opacity: 0; }
+}
+
+.rays-hero__cover {
+  position: relative;
+  z-index: 0;
+  flex: none;
+  width: min(60vw, 13rem);
+  aspect-ratio: 1 / 1;
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow-md);
+}
+
+@media (min-width: 1024px) {
+  .rays-hero__cover { width: 15rem; }
+}
+
+.rays-hero__text {
+  display: grid;
+  gap: 0.75rem;
+  justify-items: center;
+  min-width: 0;
+}
+
+@media (min-width: 768px) {
+  .rays-hero__text { justify-items: start; }
+}
+
+.rays-title {
+  margin: 0;
+  max-width: 22ch;
+  font-size: clamp(2rem, 1.4rem + 3vw, 4rem);
+  line-height: 1.05;
+  color: var(--color-primary);
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+.rays-title__lead {
+  color: var(--color-text-secondary);
+}
+
+.rays-hero__meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 1rem;
+}
+
+@media (min-width: 768px) {
+  .rays-hero__meta { justify-content: flex-start; }
+}
+
+.rays-hero__artist {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.rays-avatar {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--color-surface-variant);
+  border: 1px solid var(--glass-border);
+}
+
+.rays-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.rays-avatar--sm { width: 1.75rem; height: 1.75rem; }
+.rays-avatar--lg { width: 3.5rem; height: 3.5rem; }
+
+
+.rays-avatar__initial {
+  color: var(--color-primary);
+  font-size: 0.8em;
+  line-height: 1;
+}
+
+.rays-avatar--sm .rays-avatar__initial { font-size: 0.8rem; }
+.rays-avatar--lg .rays-avatar__initial { font-size: 1.35rem; }
+
+
+.rays-cover {
+  display: inline-block;
+  flex: none;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-variant);
+}
+
+.rays-cover { width: 2rem; height: 2rem; border-radius: 0.375rem; }
+
+.rays-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.rays-link:hover,
+.rays-link:focus-visible {
+  color: var(--color-primary);
+}
+
+.rays-muted {
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+}
+
+.browse-section__lede {
+  margin: -0.5rem 0 1rem;
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+}
+
+.rays-subtitle {
+  margin: 2rem 0 0.875rem;
+  font-size: 1rem;
+  color: var(--color-text-secondary);
+}
+
+.browse-section__title + .rays-subtitle {
+  margin-top: 0.25rem;
+}
+
+/* Charts of the raw analysis: ranked horizontal bars on the full 0-to-1 scale,
+   every bar labelled (name, value). The bars are the Sound card's meters:
+   a glass pill track, filled with the play gradient for the track's own
+   styles (plus a check) and the genre mix, --chart-context for the rest. */
+.rays-chart {
+  display: grid;
+  align-content: start;
+  gap: 0.75rem;
+  min-width: 0;
+  margin: 0;
+}
+
+.rays-chart__head {
+  display: grid;
+  gap: 0.25rem;
+}
+
+
+
+.rays-chart__note {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+.rays-chart__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin-top: 0.25rem;
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+}
+
+.rays-chart__legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.rays-swatch {
+  width: 0.75rem;
+  height: 0.5rem;
+  border-radius: var(--radius-pill);
+}
+
+.rays-swatch--emphasis { background: var(--aurora-play-gradient); }
+.rays-swatch--context { background: var(--chart-context); }
+
+.rays-bars {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rays-bar {
+  display: grid;
+  grid-template-columns: minmax(7rem, 11rem) minmax(0, 1fr) 2.75rem;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 2rem;
+  padding: 0 0.5rem;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  text-decoration: none;
+  font-size: 0.85rem;
+}
+
+/* Admins toggle a style on the track from its bar. */
+button.rays-bar {
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.rays-bar:disabled { cursor: progress; }
+
+a.rays-bar:hover,
+a.rays-bar:focus-visible,
+button.rays-bar:hover:not(:disabled),
+button.rays-bar:focus-visible {
+  background: var(--glass-bg-hover);
+  outline: none;
+}
+
+a.rays-bar:focus-visible,
+button.rays-bar:focus-visible {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-primary) 60%, transparent);
+}
+
+.rays-bar__label {
+  display: flex;
+  align-items: baseline;
+  gap: 0.375rem;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.rays-bar__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rays-bar__genre {
+  flex: none;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+}
+
+.rays-bar__check {
+  flex: none;
+  align-self: center;
+  color: var(--chart-emphasis);
+}
+
+.rays-bar__track {
+  height: 0.5rem;
+  border-radius: var(--radius-pill);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  overflow: hidden;
+}
+
+.rays-bar__fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--chart-context);
+}
+
+.rays-bar[data-member='true'] .rays-bar__fill,
+.rays-bar__fill--single {
+  background: var(--aurora-play-gradient);
+}
+
+.rays-bar__value {
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* The style chart reads its scores in words ("Noticeable" the longest). */
+.rays-bars--words .rays-bar {
+  grid-template-columns: minmax(7rem, 11rem) minmax(0, 1fr) 5.25rem;
+}
+
+@media (max-width: 520px) {
+  .rays-bar { grid-template-columns: minmax(6rem, 8.5rem) minmax(0, 1fr) 2.5rem; gap: 0.5rem; }
+  .rays-bars--words .rays-bar { grid-template-columns: minmax(5.5rem, 8rem) minmax(0, 1fr) 4.5rem; }
+  .rays-bars--words .rays-bar__value { font-size: 0.75rem; }
+}
+
+/* In context: double-width cards in a rail, two columns: the artwork on
+   the left (the size of a credit card's cover), the name, what it is, and
+   its genres and styles on the right. */
+.rays-context-card {
+  /* The lead cards' width; on a phone the rail sizes them (.hub-scroll-mobile). */
+  --rays-lead-w: 25rem;
+  display: grid;
+  grid-template-columns: 47.5% minmax(0, 1fr);
+  align-self: flex-start;
+  flex: 0 0 auto;
+  width: var(--rays-lead-w);
+  overflow: hidden;
+  scroll-snap-align: start;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  background: var(--glass-bg);
+  box-shadow: var(--shadow-sm);
+}
+
+.rays-context-card__art {
+  position: relative;
+  align-self: start;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+}
+
+.rays-context-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  min-width: 0;
+  padding: 0.875rem 1rem;
+  overflow: hidden;
+  /* The body takes no height of its own: the square artwork sets the card's. */
+  contain: size;
+}
+
+.rays-context-card__body > * {
+  flex: none;
+}
+
+.rays-context-card__title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-weight: 600;
+  line-height: 1.25;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.rays-context-card__title:hover,
+.rays-context-card__title:focus-visible {
+  color: var(--color-primary);
+}
+
+.rays-context-card__info {
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+}
+
+.rays-context-card__line {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+/* Chips: whole ones only, at most two rows. */
+.rays-context-card .rays-chips {
+  max-height: calc(2 * 1.75rem + 0.375rem);
+  overflow: hidden;
+}
+
+.rays-context-card__tags {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+/* The other people on the track (billed, featured, remixers) support the
+   album and the artist: narrower cards, as tall as theirs so the rail stays
+   one even line, led by a round portrait instead of a cover square. */
+.rays-context-card--person {
+  grid-template-columns: minmax(0, 1fr);
+  width: 16rem;
+  /* The lead cards' height: their square artwork, 47.5 % of their width inside the border. */
+  height: calc((var(--rays-lead-w) - 2px) * 0.475 + 2px);
+}
+
+.rays-context-card--person .rays-context-card__body {
+  gap: 0.5rem;
+  padding: 1rem;
+}
+
+.rays-context-card__person {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.rays-context-card__portrait {
+  flex: none;
+  border-radius: 50%;
+}
+
+.rays-context-card__who {
+  display: grid;
+  gap: 0.125rem;
+  min-width: 0;
+}
+
+.rays-context-card--person .rays-context-card__tags {
+  -webkit-line-clamp: 1;
+}
+
+/* On a phone the cover is about 157 px: one chip row, and no listener-tags line. */
+@media (max-width: 639px) {
+  .rays-context-card { --rays-lead-w: min(85vw, 320px); }
+  .hub-scroll-mobile > .rays-context-card--person { flex: 0 0 min(62vw, 15rem); max-width: 15rem; }
+  .rays-context-card--person .rays-context-card__body { padding: 0.75rem 0.875rem; }
+  .rays-context-card .rays-chips { max-height: 1.75rem; }
+  .rays-context-card__tags { display: none; }
+  .rays-context-card__body { padding: 0.75rem 0.875rem; }
+}
+
+/* On a card the chips can't wear the card's own glass, or they vanish into
+   it: a neutral lift mixed from the text colour, the same in both themes. */
+.rays-context-card .rays-chips .rays-chip {
+  min-height: 1.75rem;
+  padding: 0.2rem 0.6rem;
+  border-color: color-mix(in srgb, var(--color-text-primary) 16%, transparent);
+  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+  font-size: 0.78rem;
+}
+
+.rays-context-card .rays-chips a.rays-chip:hover,
+.rays-context-card .rays-chips a.rays-chip:focus-visible {
+  border-color: color-mix(in srgb, var(--color-primary) 55%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+}
+
+.rays-context-card .rays-chip__share {
+  color: var(--color-text-secondary);
+}
+
+.rays-chip {
+  white-space: nowrap;
+}
+
+/* Sound and style: two cards, stacked. Rows inside a card drop their own
+   tile surface, so no card sits in a card. */
+.rays-cards {
+  display: grid;
+  gap: 1rem;
+  max-width: 72rem;
+}
+
+.rays-card {
+  min-width: 0;
+  padding: 1.25rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  background: var(--glass-bg);
+}
+
+@media (min-width: 768px) {
+  .rays-card { padding: 1.5rem 1.75rem; }
+}
+
+.rays-card__title {
+  margin: 0 0 0.25rem;
+  font-size: 1.2rem;
+  color: var(--color-text-primary);
+}
+
+/* Styles card: the evidence (the model's style scores) on the left, the
+   genre mix on the right; one column below 1024px, in the same order. The
+   track's genres and styles, with their sources and the manual editor, wait
+   behind Advanced at the foot of the card and extend it when opened. */
+.rays-styles {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2.5rem;
+  margin-top: 1.25rem;
+}
+
+@media (min-width: 1024px) {
+  .rays-styles {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    align-items: start;
+    column-gap: 3rem;
+  }
+}
+
+.rays-styles__summary {
+  display: grid;
+  gap: 2.5rem;
+  min-width: 0;
+}
+
+.rays-card__lede {
+  margin: 0 0 1.25rem;
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+}
+
+.rays-card__subtitle {
+  margin: 0 0 0.75rem;
+}
+
+/* One subhead level inside a card: the chart titles and Genres and styles,
+   both in the heading face (DESIGN.md: h1-h4 in Cal Sans, regular, 0.05em). */
+.rays-card__subtitle,
+.rays-chart__title {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  color: var(--color-text-primary);
+}
+
+/* The meters fill the Sound card: one column on a phone, two, then three. */
+.rays-card .rays-sound {
+  max-width: none;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 640px) {
+  .rays-card .rays-sound { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (min-width: 1024px) {
+  .rays-card .rays-sound { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+.rays-card .browse-index__row {
+  /* One left edge: the rows line up with the chart labels above. */
+  padding-inline: 0.5rem;
+  border-color: transparent;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.rays-card .browse-index__row:hover,
+.rays-card .browse-index__row:focus-visible {
+  background: var(--glass-bg-hover);
+}
+
+.rays-card .browse-index li {
+  padding-bottom: 0.125rem;
+}
+
+.rays-album-row .browse-index__name {
+  gap: 0.75rem;
+}
+
+/* Disputed tags (Unsorted, admins): one row per track with tagged styles
+   the sound disputes: Play, cover, track, then the tags with Keep and Remove. */
+.disputed {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 60rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.disputed__count {
+  margin: 0 0 0.75rem;
+  color: var(--color-text-secondary);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.disputed__row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 56px;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--glass-bg);
+}
+
+.disputed__what {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.disputed__title {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.disputed__title:hover,
+.disputed__title:focus-visible {
+  color: var(--color-primary);
+}
+
+.disputed__meta {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.disputed__answer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.disputed__style {
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.85rem;
+  text-align: right;
+}
+
+.disputed__style strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.disputed__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.disputed__more {
+  margin-top: 1rem;
+}
+
+/* On a phone the tags and the answers get their own line under the track. */
+@media (max-width: 639px) {
+  .disputed__row {
+    grid-template-columns: auto auto minmax(0, 1fr);
+    row-gap: 0.5rem;
+  }
+  .disputed__answer {
+    grid-column: 1 / -1;
+    justify-content: space-between;
+  }
+  .disputed__style { text-align: left; }
+}
+
+/* Sounds close to: the tracks under the style cards, two columns at most so
+   each row has room for its title and artist. */
+.rays-near-tracks {
+  max-width: 72rem;
+}
+
+.browse-card-grid + .rays-near-tracks {
+  margin-top: 1.5rem;
+}
+
+@media (min-width: 1024px) {
+  .rays-near-tracks { columns: 2; }
+}
+
+.rays-near-track {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.rays-near-track__title,
+.rays-near-track__artist {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rays-near-track__artist {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+.browse-index__row:hover .rays-near-track__artist,
+.browse-index__row:focus-visible .rays-near-track__artist {
+  color: var(--color-text-secondary);
+}
+
+/* Compact Browse cards: one row of smaller cards where the styles support
+   the page rather than lead it. */
+.browse-card-grid--compact {
+  grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr));
+  gap: 0.75rem;
+}
+
+.browse-card-grid--compact .browse-card {
+  padding: 0.75rem 0.875rem;
+}
+
+.browse-card-grid--compact .browse-card__title {
+  font-size: 1.05rem;
+}
+
+@media (hover: hover) {
+  .browse-card-grid--compact .browse-card { padding-right: 3.25rem; }
+  .browse-card-grid--compact .browse-card__play { right: 0.625rem; bottom: 0.625rem; width: 2.25rem; height: 2.25rem; }
+}
+
+@media (max-width: 639px) {
+  .browse-card-grid--compact { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* A genre or style row: the link fills the tile; Remove (admins) sits beside it. */
+.rays-style {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+
+.rays-style__row {
+  flex: 1;
+  min-width: 0;
+}
+
+.rays-style__name {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rays-style__remove {
+  align-self: center;
+  flex: none;
+}
+
+.rays-advanced {
+  display: grid;
+  gap: 1.25rem;
+  margin-top: 1.75rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--glass-border);
+}
+
+.rays-advanced__toggle {
+  justify-self: start;
+}
+
+.rays-advanced__chevron {
+  transition: transform var(--transition-normal);
+}
+
+.rays-advanced__toggle[aria-expanded='true'] .rays-advanced__chevron {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rays-advanced__chevron { transition: none; }
+}
+
+.rays-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.5rem;
+  max-width: 40rem;
+  margin-top: 0.75rem;
+}
+
+.rays-add .genre-picker {
+  flex: 1 1 18rem;
+}
+
+.rays-sound {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 1rem 2rem;
+  max-width: 56rem;
+}
+
+.rays-meter {
+  display: grid;
+  gap: 0.375rem;
+}
+
+.rays-meter__label {
+  color: var(--color-text-secondary);
+  font-size: 0.85rem;
+}
+
+.rays-meter__bar {
+  height: 0.5rem;
+  border-radius: var(--radius-pill);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  overflow: hidden;
+}
+
+.rays-meter__bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--aurora-play-gradient);
+}
+
+/* The one authored moment: when the readings come into view they rise
+   into place like light coming up, staggered by --i (RiseOnView); once,
+   never repeated. With reduced motion (the OS setting or the app's own)
+   they are simply there. */
+.rays-meter__bar > span,
+.rays-bar__fill {
+  transform-origin: left center;
+}
+
+.rays-rise .rays-meter__bar > span,
+.rays-rise .rays-bar__fill {
+  transform: scaleX(0);
+}
+
+.rays-rise.is-risen .rays-meter__bar > span,
+.rays-rise.is-risen .rays-bar__fill {
+  transform: none;
+  animation: rays-rise 900ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: calc(var(--i, 0) * 55ms);
+}
+
+@keyframes rays-rise {
+  from { transform: scaleX(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rays-rise .rays-meter__bar > span,
+  .rays-rise .rays-bar__fill {
+    transform: none;
+    animation: none;
+  }
+  .rays-hero__glow { animation: none; }
+}
+
+html.reduced-motion .rays-rise .rays-meter__bar > span,
+html.reduced-motion .rays-rise .rays-bar__fill {
+  transform: none;
+}
+
+.rays-meter__ends {
+  display: flex;
+  justify-content: space-between;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+.rays-fact {
+  margin: 1.25rem 0 0;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.rays-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rays-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.375rem;
+  min-height: 32px;
+  align-content: center;
+  padding: 0.3rem 0.75rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-pill);
+  background: var(--glass-bg);
+  color: var(--color-text-primary);
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+
+a.rays-chip:hover,
+a.rays-chip:focus-visible {
+  border-color: var(--glass-border-hover);
+  color: var(--color-primary);
+  outline: none;
+}
+
+.rays-chip__share {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* An album's or artist's genres and styles on its page (StyleProfileChips). */
+.style-profile {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem 0.625rem;
+}
+
+.style-profile__label {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+/* Unsorted, at the foot of the genres. */
+.browse-row-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex: 1 1 18rem;
+  max-width: 28rem;
+  min-height: 44px;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  transition: border-color 160ms ease-out, color 160ms ease-out;
+}
+
+.browse-row-link:hover,
+.browse-row-link:focus-visible {
+  border-color: var(--glass-border-hover);
+  color: var(--color-primary);
+  outline: none;
+}
+
+.browse-row-link > span {
+  display: grid;
+  gap: 2px;
+}
+
+.browse-row-link__title {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.browse-row-link__meta {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .browse-index__row,
+  .browse-artist__image,
+  .browse-row-link {
+    transition: none;
   }
 }
 
@@ -3101,315 +4526,6 @@ a:focus-visible > .genre-card .genre-card__label {
   gap: 5px;
 }
 
-.artist-entities-settings {
-  display: grid;
-  gap: var(--spacing-lg);
-  margin-bottom: 0;
-  container-type: inline-size;
-}
-
-.genre-manual-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--spacing-md);
-}
-
-.genre-candidate-list,
-.genre-compact-list {
-  display: grid;
-  gap: var(--spacing-sm);
-}
-
-.genre-candidate {
-  display: grid;
-  gap: var(--spacing-md);
-  padding: var(--spacing-md);
-  border: 1px solid color-mix(in srgb, var(--glass-border) 76%, transparent);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--color-bg-primary) 34%, transparent);
-  content-visibility: auto;
-  contain-intrinsic-size: 240px;
-}
-
-.genre-candidate__head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--spacing-md);
-}
-
-.genre-candidate__head > div:first-child {
-  display: grid;
-  gap: 2px;
-  min-width: 90px;
-}
-
-.genre-candidate__head strong {
-  font-size: 1.4rem;
-  line-height: 1;
-  color: var(--color-text-primary);
-  font-variant-numeric: tabular-nums;
-}
-
-.genre-candidate__head > div:first-child span {
-  color: var(--color-text-muted);
-  font-size: 0.72rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.055em;
-}
-
-.genre-candidate__evidence {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 6px;
-}
-
-.genre-candidate__evidence span {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  padding: 3px 9px;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-pill);
-  color: var(--color-text-secondary);
-  background: color-mix(in srgb, var(--color-surface) 78%, transparent);
-  font-size: 0.72rem;
-  font-weight: 650;
-}
-
-.genre-choice-list {
-  display: grid;
-  gap: 6px;
-}
-
-.genre-choice-list label {
-  display: grid;
-  grid-template-columns: auto minmax(120px, 1fr) auto minmax(120px, 0.9fr);
-  align-items: center;
-  gap: var(--spacing-sm);
-  min-height: 48px;
-  padding: 8px 10px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-xs);
-  color: var(--color-text-muted);
-  cursor: pointer;
-  transition: background-color 180ms ease-out, border-color 180ms ease-out;
-}
-
-.genre-choice-list label:hover,
-.genre-choice-list label.selected {
-  border-color: var(--glass-border);
-  background: color-mix(in srgb, var(--color-surface-variant) 72%, transparent);
-}
-
-.genre-choice-list input {
-  accent-color: var(--color-primary);
-}
-
-.genre-choice-list span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.78rem;
-}
-
-.genre-choice-list .genre-choice__name {
-  color: var(--color-text-primary);
-  font-size: 0.88rem;
-  font-weight: 750;
-}
-
-.genre-candidate__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--spacing-sm);
-}
-
-.genre-compact-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--spacing-sm);
-  min-height: 58px;
-  padding: 10px 12px;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-xs);
-  background: color-mix(in srgb, var(--color-bg-primary) 30%, transparent);
-}
-
-.genre-compact-row > svg {
-  color: var(--color-primary);
-}
-
-.genre-compact-row > div {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.genre-compact-row strong,
-.genre-compact-row span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.genre-compact-row strong {
-  color: var(--color-text-primary);
-  font-size: 0.86rem;
-}
-
-.genre-compact-row span {
-  color: var(--color-text-muted);
-  font-size: 0.75rem;
-}
-
-@media (max-width: 639px) {
-  .genre-manual-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .genre-candidate__head {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .genre-candidate__evidence {
-    justify-content: flex-start;
-  }
-
-  .genre-choice-list label {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-  }
-
-  .genre-choice-list label span:last-child {
-    grid-column: 2 / -1;
-  }
-
-  .genre-candidate__actions,
-  .genre-candidate__actions .btn {
-    width: 100%;
-  }
-
-  .genre-candidate__actions .btn {
-    justify-content: center;
-  }
-
-  .genre-compact-row {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-
-  .genre-compact-row .btn {
-    grid-column: 1 / -1;
-    justify-content: center;
-  }
-}
-
-.artist-entities-settings__header {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--spacing-lg);
-}
-
-.artist-entities-settings__header h3 {
-  margin: 0;
-  color: var(--color-text-primary);
-  font-size: 1.45rem;
-  line-height: 1.15;
-  font-weight: 750;
-}
-
-.artist-entities-settings__header p:last-child {
-  max-width: 58ch;
-  margin: var(--spacing-xs) 0 0;
-  color: var(--color-text-muted);
-  font-size: 0.9rem;
-  line-height: 1.5;
-}
-
-.artist-entities-settings__eyebrow {
-  margin: 0 0 var(--spacing-xs);
-  color: var(--color-text-muted);
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.artist-entities-overview {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--spacing-sm);
-}
-
-.artist-entities-overview__item {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--color-surface) 86%, transparent);
-  padding: 14px var(--spacing-md);
-}
-
-.artist-entities-overview__item span {
-  color: var(--color-text-muted);
-  font-size: 0.72rem;
-  font-weight: 750;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.artist-entities-overview__item strong {
-  color: var(--color-text-primary);
-  font-size: 1.25rem;
-  line-height: 1.1;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-}
-
-.artist-entities-guide,
-.artist-entities-queue,
-.artist-entities-manual {
-  display: grid;
-  gap: var(--spacing-md);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--color-surface) 92%, transparent);
-  padding: var(--spacing-lg);
-  box-shadow: 0 18px 44px color-mix(in srgb, var(--color-bg-primary) 40%, transparent);
-}
-
-.artist-entities-manual__head {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: var(--spacing-sm);
-  align-items: start;
-}
-
-.artist-entities-manual__head svg {
-  margin-top: 3px;
-  color: var(--color-text-muted);
-}
-
-.artist-entities-manual__head h4 {
-  margin: 0 0 4px;
-  color: var(--color-text-primary);
-  font-size: 0.98rem;
-  line-height: 1.25;
-  font-weight: 750;
-}
-
-.artist-entities-manual__head p {
-  margin: 0;
-  color: var(--color-text-muted);
-  font-size: 0.85rem;
-  line-height: 1.55;
-}
-
 .artist-entities-manual__grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
@@ -3440,7 +4556,8 @@ a:focus-visible > .genre-card .genre-card__label {
   text-transform: uppercase;
 }
 
-.artist-entities-manual__field input {
+.artist-entities-manual__field input,
+.entity-review-input {
   width: 100%;
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
@@ -3452,17 +4569,20 @@ a:focus-visible > .genre-card .genre-card__label {
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
-.artist-entities-manual__field input:focus-visible {
+.artist-entities-manual__field input:focus-visible,
+.entity-review-input:focus-visible {
   outline: none;
   border-color: color-mix(in srgb, var(--color-accent) 70%, var(--glass-border));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 25%, transparent);
 }
 
-.artist-entities-manual__field input[aria-invalid="true"] {
+.artist-entities-manual__field input[aria-invalid="true"],
+.entity-review-input[aria-invalid="true"] {
   border-color: color-mix(in srgb, var(--color-error) 60%, var(--glass-border));
 }
 
-.artist-entities-manual__field input:disabled {
+.artist-entities-manual__field input:disabled,
+.entity-review-input:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
@@ -3491,13 +4611,6 @@ a:focus-visible > .genre-card .genre-card__label {
 .artist-entities-manual__swap:disabled {
   opacity: 0.45;
   cursor: not-allowed;
-}
-
-.artist-entities-manual__hint {
-  margin: 0;
-  color: color-mix(in srgb, var(--color-error) 75%, var(--color-text-muted));
-  font-size: 0.78rem;
-  line-height: 1.4;
 }
 
 .artist-entities-manual__footer {
@@ -3659,104 +4772,23 @@ a:focus-visible > .genre-card .genre-card__label {
   line-height: 1.55;
 }
 
-.artist-entities-guide__item {
-  display: grid;
-  grid-template-columns: 128px minmax(0, 1fr);
-  gap: var(--spacing-md);
-  align-items: start;
-  padding-bottom: var(--spacing-md);
-  border-bottom: 1px solid var(--glass-border);
-}
-
-.artist-entities-guide__item h4,
-.artist-entities-queue__header h4 {
-  margin: 0;
-  color: var(--color-text-primary);
-  font-size: 0.98rem;
-  line-height: 1.25;
-  font-weight: 750;
-}
-
-.artist-entities-guide__item p,
-.artist-entities-guide__note p,
-.artist-entities-queue__header p {
-  margin: 0;
-  color: var(--color-text-muted);
-  font-size: 0.85rem;
-  line-height: 1.55;
-}
-
-.artist-entities-guide__item > div {
-  display: grid;
-  gap: 5px;
-}
-
-.artist-entities-guide code {
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--color-bg-primary) 54%, transparent);
-  padding: 2px 7px;
-  color: var(--color-text-secondary);
-  font-size: 0.76em;
-  font-weight: 650;
-}
-
-.artist-entities-guide__note {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: var(--spacing-sm);
-  align-items: start;
-}
-
-.artist-entities-guide__note svg {
-  margin-top: 3px;
-  color: var(--color-text-muted);
-}
-
-.artist-entities-queue__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--spacing-md);
-}
-
-.artist-entities-queue__header > div {
-  display: grid;
-  gap: 5px;
-}
-
-.artist-entities-empty {
-  min-height: 76px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--spacing-sm);
-  border: 1px dashed var(--glass-border);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--glass-bg) 74%, transparent);
-  color: var(--color-text-muted);
-  font-size: 0.86rem;
-  font-weight: 650;
-  text-align: center;
-}
-
 /* Settings → Library entities → Artists: the review queue. Each entry is a
    row; the open one shows its outcomes side by side with artist page previews. */
-.artist-review {
+.entity-review {
   display: grid;
   gap: var(--spacing-md);
   margin-bottom: 0;
   container-type: inline-size;
 }
 
-.artist-review__header {
+.entity-review__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--spacing-md);
 }
 
-.artist-review__count {
+.entity-review__count {
   margin: 0;
   color: var(--color-text-primary);
   font-size: 1.05rem;
@@ -3765,18 +4797,25 @@ a:focus-visible > .genre-card .genre-card__label {
   font-variant-numeric: tabular-nums;
 }
 
-.artist-review__filters {
+.entity-review__summary {
+  min-width: 0;
+  display: grid;
+  gap: var(--spacing-sm);
+  flex: 1;
+}
+
+.entity-review__filters {
   display: flex;
   flex-wrap: wrap;
   gap: var(--spacing-xs);
 }
 
-.artist-review__filters .tabular-nums {
+.entity-review__filters .tabular-nums {
   margin-left: 4px;
   opacity: 0.7;
 }
 
-.artist-review__empty {
+.entity-review__empty {
   max-width: 60ch;
   margin: 0;
   padding: var(--spacing-sm) 0;
@@ -3785,7 +4824,7 @@ a:focus-visible > .genre-card .genre-card__label {
   line-height: 1.55;
 }
 
-.artist-review-queue {
+.entity-review-queue {
   display: grid;
   gap: var(--spacing-sm);
   margin: 0;
@@ -3793,19 +4832,19 @@ a:focus-visible > .genre-card .genre-card__label {
   list-style: none;
 }
 
-.artist-review-entry {
+.entity-review-entry {
   border: 1px solid color-mix(in srgb, var(--glass-border) 76%, transparent);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--color-bg-primary) 34%, transparent);
   transition: border-color var(--transition-fast), background-color var(--transition-fast);
 }
 
-.artist-review-entry[data-open="true"] {
+.entity-review-entry[data-open="true"] {
   border-color: var(--glass-border-hover);
   background: color-mix(in srgb, var(--color-bg-primary) 52%, transparent);
 }
 
-.artist-review-entry__row {
+.entity-review-entry__row {
   width: 100%;
   min-height: 44px;
   display: grid;
@@ -3825,19 +4864,19 @@ a:focus-visible > .genre-card .genre-card__label {
   cursor: pointer;
 }
 
-.artist-review-entry__row:focus-visible {
+.entity-review-entry__row:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
 
-.artist-review-entry__question {
+.entity-review-entry__question {
   grid-area: question;
   color: var(--color-text-muted);
   font-size: 0.74rem;
   font-weight: 650;
 }
 
-.artist-review-entry__subject {
+.entity-review-entry__subject {
   grid-area: subject;
   color: var(--color-text-primary);
   font-size: 0.98rem;
@@ -3846,36 +4885,36 @@ a:focus-visible > .genre-card .genre-card__label {
   overflow-wrap: anywhere;
 }
 
-.artist-review-entry__meta {
+.entity-review-entry__meta {
   grid-area: meta;
   color: var(--color-text-muted);
   font-size: 0.78rem;
   white-space: nowrap;
 }
 
-.artist-review-entry__chevron {
+.entity-review-entry__chevron {
   grid-area: chevron;
   color: var(--color-text-muted);
   transition: transform var(--transition-fast);
 }
 
-.artist-review-entry[data-open="true"] .artist-review-entry__chevron {
+.entity-review-entry[data-open="true"] .entity-review-entry__chevron {
   transform: rotate(180deg);
 }
 
-.artist-review-entry__panel {
+.entity-review-entry__panel {
   display: grid;
   gap: var(--spacing-md);
   padding: 0 var(--spacing-md) var(--spacing-md);
 }
 
-.artist-review-evidence {
+.entity-review-evidence {
   display: flex;
   flex-wrap: wrap;
   gap: 6px var(--spacing-md);
 }
 
-.artist-review-evidence__artist {
+.entity-review-evidence__artist {
   min-width: 0;
   display: inline-flex;
   align-items: center;
@@ -3883,13 +4922,13 @@ a:focus-visible > .genre-card .genre-card__label {
   font-size: 0.8rem;
 }
 
-.artist-review-evidence__name {
+.entity-review-evidence__name {
   color: var(--color-text-secondary);
   font-weight: 650;
   overflow-wrap: anywhere;
 }
 
-.artist-review-evidence__meta {
+.entity-review-evidence__meta {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -3897,7 +4936,7 @@ a:focus-visible > .genre-card .genre-card__label {
   font-variant-numeric: tabular-nums;
 }
 
-.artist-review-evidence__meta code {
+.entity-review-evidence__meta code {
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-pill);
   padding: 1px 7px;
@@ -3905,7 +4944,7 @@ a:focus-visible > .genre-card .genre-card__label {
   font-size: 0.72rem;
 }
 
-.artist-review-avatar {
+.entity-review-avatar {
   width: 24px;
   height: 24px;
   flex: none;
@@ -3919,13 +4958,13 @@ a:focus-visible > .genre-card .genre-card__label {
   font-weight: 700;
 }
 
-.artist-review-avatar img {
+.entity-review-avatar img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-.artist-review-outcomes {
+.entity-review-outcomes {
   min-width: 0;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -3935,7 +4974,7 @@ a:focus-visible > .genre-card .genre-card__label {
   border: 0;
 }
 
-.artist-review-outcome {
+.entity-review-outcome {
   min-width: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -3949,21 +4988,21 @@ a:focus-visible > .genre-card .genre-card__label {
   transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
-.artist-review-outcome:hover {
+.entity-review-outcome:hover {
   border-color: var(--glass-border-hover);
 }
 
-.artist-review-outcome[data-selected="true"] {
+.entity-review-outcome[data-selected="true"] {
   border-color: color-mix(in srgb, var(--color-primary) 58%, var(--glass-border));
   background: color-mix(in srgb, var(--color-primary) 8%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-primary) 14%, transparent);
 }
 
-.artist-review-outcome:focus-within {
+.entity-review-outcome:focus-within {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 22%, transparent);
 }
 
-.artist-review-outcome__label {
+.entity-review-outcome__label {
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
@@ -3973,8 +5012,31 @@ a:focus-visible > .genre-card .genre-card__label {
   line-height: 1.3;
 }
 
+.entity-review-outcome__body {
+  min-width: 0;
+}
+
+.entity-review-outcome__text {
+  min-width: 0;
+  flex: 1;
+}
+
+/* Shortcut digits; touch screens have no keys to press. */
+.entity-review-key {
+  flex: none;
+  opacity: 0.8;
+}
+
+@media (hover: none) {
+  .entity-review-key { display: none; }
+}
+
+.entity-review-entry__panel:focus {
+  outline: none;
+}
+
 /* The radio itself is visually hidden; this ring shows the choice. */
-.artist-review-outcome__label::before {
+.entity-review-outcome__label::before {
   content: '';
   width: 14px;
   height: 14px;
@@ -3984,37 +5046,37 @@ a:focus-visible > .genre-card .genre-card__label {
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
-.artist-review-outcome[data-selected="true"] .artist-review-outcome__label::before {
+.entity-review-outcome[data-selected="true"] .entity-review-outcome__label::before {
   border-color: var(--color-primary);
   box-shadow: inset 0 0 0 3px var(--color-bg-primary), inset 0 0 0 7px var(--color-primary);
 }
 
-.artist-review-outcome--skeleton {
+.entity-review-outcome--skeleton {
   min-height: 150px;
   cursor: default;
 }
 
-.artist-review-outcome--skeleton span,
-.artist-review-entry--skeleton span {
+.entity-review-outcome--skeleton span,
+.entity-review-entry--skeleton span {
   height: 10px;
   border-radius: 6px;
   background: color-mix(in srgb, var(--color-text-muted) 14%, transparent);
 }
 
-.artist-review-outcome--skeleton span:nth-child(1) { width: 45%; }
-.artist-review-outcome--skeleton span:nth-child(2) { width: 75%; }
-.artist-review-outcome--skeleton span:nth-child(3) { width: 60%; }
+.entity-review-outcome--skeleton span:nth-child(1) { width: 45%; }
+.entity-review-outcome--skeleton span:nth-child(2) { width: 75%; }
+.entity-review-outcome--skeleton span:nth-child(3) { width: 60%; }
 
-.artist-review-entry--skeleton {
+.entity-review-entry--skeleton {
   display: grid;
   gap: var(--spacing-sm);
   padding: 14px var(--spacing-md);
 }
 
-.artist-review-entry--skeleton span:nth-child(1) { width: 22%; }
-.artist-review-entry--skeleton span:nth-child(2) { width: 48%; height: 12px; }
+.entity-review-entry--skeleton span:nth-child(1) { width: 22%; }
+.entity-review-entry--skeleton span:nth-child(2) { width: 48%; height: 12px; }
 
-.artist-review-pages {
+.entity-review-pages {
   min-width: 0;
   display: grid;
   gap: 10px;
@@ -4023,18 +5085,18 @@ a:focus-visible > .genre-card .genre-card__label {
   list-style: none;
 }
 
-.artist-review-page {
+.entity-review-page {
   min-width: 0;
 }
 
-.artist-review-page__head {
+.entity-review-page__head {
   min-width: 0;
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
 }
 
-.artist-review-page__name {
+.entity-review-page__name {
   min-width: 0;
   flex: 1;
   overflow: hidden;
@@ -4045,12 +5107,12 @@ a:focus-visible > .genre-card .genre-card__label {
   white-space: nowrap;
 }
 
-.artist-review-page[data-status="removed"] .artist-review-page__name {
+.entity-review-page[data-status="removed"] .entity-review-page__name {
   color: var(--color-text-muted);
   text-decoration: line-through;
 }
 
-.artist-review-tag {
+.entity-review-tag {
   flex: none;
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-pill);
@@ -4061,32 +5123,32 @@ a:focus-visible > .genre-card .genre-card__label {
   white-space: nowrap;
 }
 
-.artist-review-page[data-status="changed"] .artist-review-page__head .artist-review-tag,
-.artist-review-tag--added {
+.entity-review-page[data-status="changed"] .entity-review-page__head .entity-review-tag,
+.entity-review-tag--added {
   border-color: color-mix(in srgb, var(--color-primary) 40%, var(--glass-border));
   color: var(--color-primary);
 }
 
-.artist-review-page__body {
+.entity-review-page__body {
   display: grid;
   gap: var(--spacing-sm);
   padding-left: 32px;
 }
 
-.artist-review-page__tracks {
+.entity-review-page__tracks {
   margin: 0;
   color: var(--color-text-secondary);
   font-size: 0.78rem;
 }
 
-.artist-review-releases {
+.entity-review-releases {
   min-width: 0;
   display: grid;
   gap: 3px;
   font-size: 0.78rem;
 }
 
-.artist-review-releases__label {
+.entity-review-releases__label {
   color: var(--color-text-muted);
   font-size: 0.68rem;
   font-weight: 700;
@@ -4094,7 +5156,7 @@ a:focus-visible > .genre-card .genre-card__label {
   text-transform: uppercase;
 }
 
-.artist-review-releases ul {
+.entity-review-releases ul {
   display: grid;
   gap: 2px;
   margin: 0;
@@ -4102,7 +5164,7 @@ a:focus-visible > .genre-card .genre-card__label {
   list-style: none;
 }
 
-.artist-review-releases li {
+.entity-review-releases li {
   min-width: 0;
   display: flex;
   align-items: baseline;
@@ -4110,51 +5172,51 @@ a:focus-visible > .genre-card .genre-card__label {
   color: var(--color-text-secondary);
 }
 
-.artist-review-releases__title {
+.entity-review-releases__title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.artist-review-releases li[data-change="removed"] .artist-review-releases__title {
+.entity-review-releases li[data-change="removed"] .entity-review-releases__title {
   color: var(--color-text-muted);
   text-decoration: line-through;
 }
 
-.artist-review-releases__count {
+.entity-review-releases__count {
   flex: none;
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
 }
 
-.artist-review-releases__more {
+.entity-review-releases__more {
   color: var(--color-text-muted);
   font-size: 0.74rem;
 }
 
-.artist-review-entry__actions {
+.entity-review-entry__actions {
   display: flex;
   justify-content: flex-end;
   gap: var(--spacing-sm);
 }
 
-.artist-review-error {
+.entity-review-error {
   margin: 0;
   color: var(--color-error);
   font-size: 0.84rem;
 }
 
-.artist-review-section {
+.entity-review-section {
   border: 1px solid color-mix(in srgb, var(--glass-border) 76%, transparent);
   border-radius: var(--radius-sm);
 }
 
-.artist-review-section[open] {
+.entity-review-section[open] {
   padding-bottom: var(--spacing-md);
 }
 
-.artist-review-section > summary {
+.entity-review-section > summary {
   min-height: 44px;
   display: flex;
   align-items: center;
@@ -4168,36 +5230,36 @@ a:focus-visible > .genre-card .genre-card__label {
   cursor: pointer;
 }
 
-.artist-review-section > summary::-webkit-details-marker {
+.entity-review-section > summary::-webkit-details-marker {
   display: none;
 }
 
-.artist-review-section > summary:focus-visible {
+.entity-review-section > summary:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
 
-.artist-review-section > summary svg {
+.entity-review-section > summary svg {
   margin-left: auto;
   color: var(--color-text-muted);
   transition: transform var(--transition-fast);
 }
 
-.artist-review-section[open] > summary svg {
+.entity-review-section[open] > summary svg {
   transform: rotate(180deg);
 }
 
-.artist-review-section > :not(summary) {
+.entity-review-section > :not(summary) {
   margin-inline: var(--spacing-md);
 }
 
-.artist-review-section__count {
+.entity-review-section__count {
   color: var(--color-text-muted);
   font-weight: 650;
 }
 
-.artist-review-section__hint,
-.artist-review-tool__hint {
+.entity-review-section__hint,
+.entity-review-tool__hint {
   margin-top: 0;
   margin-bottom: var(--spacing-sm);
   color: var(--color-text-muted);
@@ -4205,7 +5267,7 @@ a:focus-visible > .genre-card .genre-card__label {
   line-height: 1.5;
 }
 
-.artist-review-decisions {
+.entity-review-decisions {
   display: grid;
   gap: 2px;
   margin-top: 0;
@@ -4214,7 +5276,7 @@ a:focus-visible > .genre-card .genre-card__label {
   list-style: none;
 }
 
-.artist-review-decisions li {
+.entity-review-decisions li {
   min-height: 40px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -4223,24 +5285,202 @@ a:focus-visible > .genre-card .genre-card__label {
   font-size: 0.84rem;
 }
 
-.artist-review-decisions__what {
+.entity-review-decisions__what {
   color: var(--color-text-secondary);
   overflow-wrap: anywhere;
 }
 
-.artist-review-decisions__when {
+.entity-review-decisions__when {
   color: var(--color-text-muted);
   font-size: 0.76rem;
   white-space: nowrap;
 }
 
-.artist-review-tool {
+/* Genres: the style picker, outcome effects, evidence lines. */
+.genre-picker {
+  display: grid;
+  gap: var(--spacing-sm);
+  cursor: default;
+}
+
+.genre-picker__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.genre-picker__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 2px 1px 9px;
+  color: var(--color-text-primary);
+  font-size: 0.76rem;
+}
+
+.genre-picker__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.genre-picker__remove:hover,
+.genre-picker__remove:focus-visible {
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-text-muted) 14%, transparent);
+}
+
+.genre-picker__hint {
+  color: var(--color-error);
+  font-size: 0.76rem;
+}
+
+.genre-review-effect {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.genre-review-evidence {
+  display: grid;
+  gap: var(--spacing-sm);
+}
+
+.genre-review-evidence__note {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.84rem;
+}
+
+/* Evidence sources in the genre review: a heading, a line saying where the
+   data comes from, then the data. Sound takes more room (two lists). */
+.genre-review-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-md) var(--spacing-lg);
+  border-top: 1px solid var(--glass-border);
+  padding-top: var(--spacing-md);
+}
+
+.genre-review-source {
+  flex: 3 1 320px;
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+
+.genre-review-source + .genre-review-source {
+  flex: 2 1 220px;
+}
+
+.genre-review-source__title {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.84rem;
+  font-weight: 650;
+}
+
+.genre-review-source__desc {
+  margin: 0;
+  max-width: 62ch;
+  color: var(--color-text-muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.genre-review-source__lists {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--spacing-md);
+  margin-top: 4px;
+}
+
+/* Counts right-aligned so the column scans; kept narrow so they stay near the names. */
+.genre-review-counts {
+  align-content: start;
+}
+
+.genre-review-counts ul {
+  max-width: 280px;
+}
+
+@media (max-width: 520px) {
+  .genre-review-source__lists {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.genre-review-counts li {
+  justify-content: space-between;
+}
+
+.genre-review-source__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.genre-review-source__fact {
+  margin: 4px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+}
+
+.genre-review-why {
+  margin: var(--spacing-sm) 0 0;
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.genre-review-hint {
+  margin: var(--spacing-xs) 0 0;
+  color: var(--color-warning);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.genre-review-evidence__line {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.genre-review-matches {
+  max-height: 320px;
+  margin-bottom: var(--spacing-sm);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.genre-review-meter {
+  max-width: 560px;
+}
+
+.entity-review-tool {
   display: grid;
   gap: var(--spacing-md);
 }
 
 @container (max-width: 520px) {
-  .artist-review-entry__row {
+  .entity-review-entry__row {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
       "question chevron"
@@ -4248,13 +5488,13 @@ a:focus-visible > .genre-card .genre-card__label {
       "meta chevron";
   }
 
-  .artist-review-decisions li {
+  .entity-review-decisions li {
     grid-template-columns: minmax(0, 1fr) auto;
     row-gap: 0;
     padding-block: 4px;
   }
 
-  .artist-review-decisions__when {
+  .entity-review-decisions__when {
     grid-row: 2;
   }
 }
@@ -5005,21 +6245,6 @@ a:focus-visible > .genre-card .genre-card__label {
     gap: 2px;
   }
 
-  .artist-entities-settings__header,
-  .artist-entities-guide__item {
-    display: grid;
-    align-items: stretch;
-    grid-template-columns: 1fr;
-  }
-
-  .artist-entities-settings__header > .btn {
-    justify-self: start;
-  }
-
-  .artist-entities-overview {
-    grid-template-columns: 1fr;
-  }
-
   .live-music-settings__header,
   .live-music-hero,
   .live-music-location-card,
@@ -5148,8 +6373,6 @@ a:focus-visible > .genre-card .genre-card__label {
   align-items: center;
   gap: var(--spacing-sm);
 }
-
-
 
 @keyframes fade-in {
   from {
@@ -5621,7 +6844,7 @@ a:focus-visible > .genre-card .genre-card__label {
 }
 
 .setup-wizard__model-row strong,
-.setup-wizard__model-row code {
+.setup-wizard__model-row small {
   display: block;
 }
 
@@ -5630,13 +6853,13 @@ a:focus-visible > .genre-card .genre-card__label {
   font-size: 0.875rem;
 }
 
-.setup-wizard__model-row code,
+.setup-wizard__model-row small,
 .setup-wizard__model-row > span:last-child {
   color: var(--color-text-muted);
   font-size: 0.72rem;
 }
 
-.setup-wizard__model-row code {
+.setup-wizard__model-row small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7950,7 +9173,6 @@ a:focus-visible > .genre-card .genre-card__label {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
 
 .mobile-now-playing-content {
   flex: 1;

@@ -1,9 +1,11 @@
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
+import { MOOD_SCORE_VERSION, type AudioMood } from '../../shared/audioMoods';
 import { databaseHost } from './dbHost';
 import path from 'path';
 import fs from 'fs';
 import { ARTWORK_EXTRACTION_VERSION } from '../services/artworkVersion';
-import { AUDIO_FEATURE_VERSION, PENDING_AUDIO_FEATURES_SQL } from '../services/audioFeatureVersion';
+import { AUDIO_FEATURE_VERSION, PENDING_AUDIO_FEATURES_SQL, STYLE_SCORE_COUNT, STYLE_SCORE_MODEL, STYLE_SCORE_VERSION } from '../services/audioFeatureVersion';
+import { replaceTrackTags } from '../services/genreTaxonomy/trackTags';
 import type { LibraryDirectoryStats } from '../../shared/libraryStats';
 import { normalizeGenreIdentity } from '../utils/genreIdentity';
 import { artistImageSql } from '../utils/artistImage';
@@ -297,6 +299,37 @@ export async function initDB(): Promise<Pool> {
         -- with the corrected extractor, including explicitly simulated failures.
         ALTER TABLE track_features ADD COLUMN IF NOT EXISTS feature_version INTEGER NOT NULL DEFAULT 1;
 
+        -- genre_discogs400 style scores (400 sigmoid values in model order),
+        -- written with feature_version 3 analysis. Own version column so a
+        -- scoring change can be backfilled without touching the embeddings.
+        -- PostgreSQL ignores declared array sizes, hence the CHECK.
+        -- Moods from the sound (shared/audioMoods.ts): five yes/no mood
+        -- probabilities and the 56 MTG-Jamendo mood/theme scores. 'analysis'
+        -- rows come from per-patch scoring during analysis, 'embedding' rows
+        -- from the stored embedding (the backfill; within 0.04 of analysis).
+        CREATE TABLE IF NOT EXISTS track_moods (
+          track_id     TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+          happy        REAL NOT NULL CHECK (happy BETWEEN 0 AND 1),
+          sad          REAL NOT NULL CHECK (sad BETWEEN 0 AND 1),
+          relaxed      REAL NOT NULL CHECK (relaxed BETWEEN 0 AND 1),
+          aggressive   REAL NOT NULL CHECK (aggressive BETWEEN 0 AND 1),
+          party        REAL NOT NULL CHECK (party BETWEEN 0 AND 1),
+          themes       REAL[] CHECK (themes IS NULL OR (array_ndims(themes) = 1 AND cardinality(themes) = 56)),
+          method       TEXT NOT NULL CHECK (method IN ('analysis', 'embedding')),
+          mood_version INTEGER NOT NULL,
+          scored_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS track_style_scores (
+          track_id      TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+          scores        REAL[] NOT NULL
+                        CHECK (array_ndims(scores) = 1 AND cardinality(scores) = 400),
+          model         TEXT NOT NULL,
+          windows       TEXT NOT NULL,
+          genre_version INTEGER NOT NULL,
+          analyzed_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
         -- Migration: Loudness normalization (EBU R128). loudness_measured_at is a
         -- sentinel: set on every attempt (success OR failure) so a track that can't
         -- be measured isn't retried forever. Success also fills lufs + true peak;
@@ -426,11 +459,6 @@ export async function initDB(): Promise<Pool> {
           WHEN OTHERS THEN null;
         END $$;
 
-        CREATE TABLE IF NOT EXISTS subgenre_mappings (
-          sub_genre TEXT PRIMARY KEY,
-          path TEXT NOT NULL
-        );
-
         DROP TABLE IF EXISTS macro_matrix_cache CASCADE;
 
         CREATE TABLE IF NOT EXISTS genre (
@@ -476,76 +504,13 @@ export async function initDB(): Promise<Pool> {
           entity1_credit TEXT
         );
 
-        -- Indexes for l_genre_genre to speed up materialized view refresh
+        -- MusicBrainz genre data, loaded from the shipped snapshot for tag mapping
+        -- (mb_alias, mb_parent). The old genre_tree_paths view and the MBDB
+        -- import were retired in phase 4 of the genre redesign.
         CREATE INDEX IF NOT EXISTS l_genre_genre_entity0_idx ON l_genre_genre (entity0);
         CREATE INDEX IF NOT EXISTS l_genre_genre_entity1_idx ON l_genre_genre (entity1);
         CREATE INDEX IF NOT EXISTS l_genre_genre_link_idx ON l_genre_genre (link);
         CREATE INDEX IF NOT EXISTS l_genre_genre_link_subgenre_idx ON l_genre_genre (entity0, entity1) WHERE link = 944810;
-
-        -- Note: We can only create the materialized view after l_genre_genre and genre are created.
-        -- We will recreate it inside a DO block to catch if tables are empty.
-        -- Auto-migrate the materialized view if the old schema exists
-        DO $$ 
-        BEGIN
-            IF EXISTS (
-                SELECT 1 FROM pg_class c 
-                JOIN pg_namespace n ON n.oid = c.relnamespace 
-                WHERE c.relname = 'genre_tree_paths' AND c.relkind = 'm'
-            ) AND NOT EXISTS (
-                SELECT 1 FROM pg_attribute a 
-                JOIN pg_class c ON a.attrelid = c.oid 
-                WHERE c.relname = 'genre_tree_paths' AND a.attname = 'genre_name'
-            ) THEN
-                DROP MATERIALIZED VIEW genre_tree_paths CASCADE;
-            END IF;
-        END $$;
-
-        DO $$ 
-        BEGIN 
-            CREATE MATERIALIZED VIEW IF NOT EXISTS genre_tree_paths AS
-            WITH RECURSIVE genre_tree AS (
-                -- Base cases: top-level genres (genres that have no parents)
-                -- In the MBDB link data, entity0 is the broader genre and entity1 is the specific subgenre
-                SELECT 
-                    g.id AS genre_id, 
-                    g.name::TEXT AS genre_name,
-                    g.name::TEXT AS path,
-                    1 AS level,
-                    ARRAY[g.id] AS visited
-                FROM genre g
-                WHERE EXISTS (SELECT 1 FROM l_genre_genre lgg WHERE lgg.link = 944810 AND lgg.entity0 = g.id)
-                AND NOT EXISTS (SELECT 1 FROM l_genre_genre lgg WHERE lgg.link = 944810 AND lgg.entity1 = g.id)
-                
-                UNION ALL
-                
-                -- Recursive step: traverse entity0 (broad) → entity1 (specific)
-                SELECT 
-                    child.entity1, -- The specific subgenre
-                    g.name::TEXT AS genre_name,
-                    (parent.path || '.' || g.name)::TEXT,
-                    parent.level + 1,
-                    parent.visited || child.entity1
-                FROM l_genre_genre child
-                JOIN genre_tree parent ON child.entity0 = parent.genre_id
-                JOIN genre g ON child.entity1 = g.id
-                WHERE child.link = 944810
-                AND child.entity1 != ALL(parent.visited)  -- cycle protection
-                AND parent.level < 20                     -- max depth guard
-            )
-            SELECT genre_id, genre_name, path, level FROM genre_tree;
-        EXCEPTION 
-            WHEN OTHERS THEN 
-                RAISE NOTICE 'Materialized view creation failed (tables might be empty): %', SQLERRM;
-        END $$;
-
-        -- Enhance lookups on the materialized view
-        CREATE INDEX IF NOT EXISTS genre_tree_paths_name_idx ON genre_tree_paths (LOWER(genre_name));
-        CREATE INDEX IF NOT EXISTS genre_tree_paths_name_trgm_idx ON genre_tree_paths USING gin (LOWER(genre_name) gin_trgm_ops);
-        DO $$ 
-        BEGIN 
-            CREATE UNIQUE INDEX IF NOT EXISTS genre_tree_paths_genre_path_idx ON genre_tree_paths (genre_id, path);
-        EXCEPTION WHEN OTHERS THEN null; 
-        END $$;
 
         -- Entity tables for UUID-based navigation
         CREATE EXTENSION IF NOT EXISTS "pgcrypto";
@@ -640,6 +605,8 @@ export async function initDB(): Promise<Pool> {
         BEGIN
           ALTER TABLE artists ADD COLUMN IF NOT EXISTS disambiguation TEXT;
           ALTER TABLE artists ADD COLUMN IF NOT EXISTS area TEXT;
+          -- ISO 3166-1 alpha-2: MusicBrainz's artist country, or the area when it names a country.
+          ALTER TABLE artists ADD COLUMN IF NOT EXISTS country TEXT;
           ALTER TABLE artists ADD COLUMN IF NOT EXISTS artist_type TEXT;
           ALTER TABLE artists ADD COLUMN IF NOT EXISTS lifespan_begin TEXT;
           ALTER TABLE artists ADD COLUMN IF NOT EXISTS lifespan_end TEXT;
@@ -733,6 +700,30 @@ export async function initDB(): Promise<Pool> {
           ON track_artist_credits(artist_id, role);
         CREATE INDEX IF NOT EXISTS track_artist_credits_track_idx
           ON track_artist_credits(track_id);
+        -- Credit imports (services/creditsEnrichment.service.ts): one lookup
+        -- per track and provider, with the key it used and what it found, so
+        -- the automatic import never asks a free API the same thing twice.
+        CREATE TABLE IF NOT EXISTS track_credit_lookups (
+          track_id     TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+          source       TEXT NOT NULL CHECK (source IN ('musicbrainz', 'genius')),
+          lookup_key   TEXT NOT NULL,
+          outcome      TEXT NOT NULL CHECK (outcome IN ('found', 'none', 'failed')),
+          credits      INTEGER NOT NULL DEFAULT 0,
+          looked_up_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (track_id, source)
+        );
+        -- Tracks imported by hand before the log existed count as looked up.
+        INSERT INTO track_credit_lookups (track_id, source, lookup_key, outcome, credits)
+        SELECT tac.track_id, tac.source,
+               CASE tac.source WHEN 'musicbrainz' THEN t.mb_recording_id
+                    ELSE lower(btrim(t.title)) || '|' || lower(btrim(COALESCE(t.artist, t.album_artist))) END,
+               'found', COUNT(*)
+        FROM track_artist_credits tac JOIN tracks t ON t.id = tac.track_id
+        WHERE tac.source IN ('musicbrainz', 'genius')
+          AND (tac.source <> 'musicbrainz' OR t.mb_recording_id IS NOT NULL)
+          AND (tac.source <> 'genius' OR (t.title IS NOT NULL AND COALESCE(t.artist, t.album_artist) IS NOT NULL))
+        GROUP BY tac.track_id, tac.source, t.mb_recording_id, t.title, t.artist, t.album_artist
+        ON CONFLICT (track_id, source) DO NOTHING;
 
         -- ==========================================
         -- MULTI-USER TABLES
@@ -804,6 +795,202 @@ export async function initDB(): Promise<Pool> {
           ON genre_duplicate_reviews(candidate_key, signature, created_at DESC);
         CREATE INDEX IF NOT EXISTS genre_duplicate_reviews_canonical_idx
           ON genre_duplicate_reviews(canonical_genre_id, created_at DESC);
+
+        -- ── Genre & style taxonomy (docs/Aurora genre and style redesign.md) ──
+        -- Seeded at startup from server/data/genre-taxonomy/discogs400-labels.json.
+        CREATE TABLE IF NOT EXISTS taxonomy_genre (
+          name             TEXT PRIMARY KEY,
+          hidden           BOOLEAN NOT NULL DEFAULT FALSE,
+          taxonomy_version INTEGER NOT NULL
+        );
+        -- A style is the full 'Genre---Style' label: 16 style names repeat
+        -- across genres. A new taxonomy version updates rows in place.
+        CREATE TABLE IF NOT EXISTS style (
+          id               SERIAL PRIMARY KEY,
+          label            TEXT UNIQUE NOT NULL,
+          genre            TEXT NOT NULL REFERENCES taxonomy_genre(name),
+          name             TEXT NOT NULL,
+          model_index      SMALLINT UNIQUE,
+          source           TEXT NOT NULL DEFAULT 'discogs' CHECK (source IN ('discogs', 'local')),
+          taxonomy_version INTEGER NOT NULL,
+          UNIQUE (id, genre)
+        );
+        -- Every original genre tag, verbatim, split from tracks.genres.
+        CREATE TABLE IF NOT EXISTS track_tags (
+          track_id TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+          tag      TEXT NOT NULL,
+          tag_key  TEXT NOT NULL,
+          position SMALLINT NOT NULL,
+          PRIMARY KEY (track_id, tag)
+        );
+        CREATE INDEX IF NOT EXISTS track_tags_tag_key_idx ON track_tags (tag_key);
+        -- Normalised tag -> genre, or genre + style. Manual rows survive remaps.
+        CREATE TABLE IF NOT EXISTS tag_map (
+          id              SERIAL PRIMARY KEY,
+          tag             TEXT NOT NULL,
+          genre           TEXT NOT NULL REFERENCES taxonomy_genre(name),
+          style_id        INTEGER,
+          method          TEXT NOT NULL CHECK (method IN ('exact', 'alias', 'merge', 'mb_alias', 'mb_parent', 'compound', 'llm', 'manual')),
+          reliability     REAL NOT NULL CHECK (reliability BETWEEN 0 AND 1),
+          mapping_version INTEGER NOT NULL,
+          detail          TEXT,
+          reviewed_at     TIMESTAMPTZ,
+          reviewed_by     UUID REFERENCES users(id) ON DELETE SET NULL,
+          FOREIGN KEY (style_id, genre) REFERENCES style(id, genre),
+          UNIQUE NULLS NOT DISTINCT (tag, genre, style_id)
+        );
+        CREATE INDEX IF NOT EXISTS tag_map_tag_idx ON tag_map (tag);
+        -- Tags deliberately left unmapped ("Other", "None", noise).
+        CREATE TABLE IF NOT EXISTS tag_ignored (
+          tag         TEXT PRIMARY KEY,
+          reason      TEXT,
+          source      TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('seed', 'manual')),
+          reviewed_at TIMESTAMPTZ,
+          reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL
+        );
+        -- Answers in the genre review queue (Settings -> Library entities ->
+        -- Genres), with the tags' rows before the answer, for 30-day undo.
+        CREATE TABLE IF NOT EXISTS genre_review_decisions (
+          id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          entry_key  TEXT NOT NULL,
+          decision   TEXT NOT NULL CHECK (decision IN ('accepted', 'mapped', 'ignored', 'restored', 'grouped', 'kept-apart', 'accepted-exact')),
+          summary    TEXT NOT NULL,
+          tags       TEXT[] NOT NULL DEFAULT '{}',
+          before     JSONB NOT NULL DEFAULT '{}'::jsonb,
+          detail     JSONB,
+          decided_by UUID REFERENCES users(id) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS genre_review_decisions_created_idx ON genre_review_decisions (created_at DESC);
+        CREATE INDEX IF NOT EXISTS genre_review_decisions_tags_idx ON genre_review_decisions USING GIN (tags);
+        -- Community artist tags, one row per provider; weights are normalised
+        -- per artist and provider, never summed across providers.
+        CREATE TABLE IF NOT EXISTS artist_tags (
+          artist_id  UUID NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+          provider   TEXT NOT NULL CHECK (provider IN ('lastfm', 'musicbrainz')),
+          tag        TEXT NOT NULL,
+          tag_key    TEXT NOT NULL,
+          raw_count  INTEGER NOT NULL,
+          weight     REAL NOT NULL CHECK (weight BETWEEN 0 AND 1),
+          fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (artist_id, provider, tag)
+        );
+        CREATE INDEX IF NOT EXISTS artist_tags_tag_key_idx ON artist_tags (tag_key);
+        -- One row per artist and provider fetch, including "no tags", so the
+        -- backfill can resume and never refetches an artist it already asked.
+        CREATE TABLE IF NOT EXISTS artist_tag_fetches (
+          artist_id  UUID NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+          provider   TEXT NOT NULL CHECK (provider IN ('lastfm', 'musicbrainz')),
+          fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          tag_count  INTEGER NOT NULL DEFAULT 0,
+          error      TEXT,
+          PRIMARY KEY (artist_id, provider)
+        );
+        -- Fused genres and styles per track (phase 2 of the genre redesign):
+        -- one row per membership, saying where it came from. Rebuilt by
+        -- services/genreTaxonomy/fusion.ts; model scores stay in
+        -- track_style_scores. Browse reads only this table and the profiles.
+        CREATE TABLE IF NOT EXISTS track_styles (
+          track_id       TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+          genre          TEXT NOT NULL REFERENCES taxonomy_genre(name),
+          style_id       INTEGER,
+          source         TEXT NOT NULL CHECK (source IN ('tag', 'audio', 'artist', 'override')),
+          strength       REAL NOT NULL CHECK (strength BETWEEN 0 AND 1),
+          confidence     REAL NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+          disputed       BOOLEAN NOT NULL DEFAULT false,
+          fusion_version INTEGER NOT NULL,
+          FOREIGN KEY (style_id, genre) REFERENCES style(id, genre),
+          UNIQUE NULLS NOT DISTINCT (track_id, genre, style_id)
+        );
+        CREATE INDEX IF NOT EXISTS track_styles_style_idx ON track_styles (style_id, strength DESC) WHERE style_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS track_styles_genre_idx ON track_styles (genre, strength DESC) WHERE style_id IS NULL;
+        -- Hand corrections, applied after fusion on every run.
+        CREATE TABLE IF NOT EXISTS track_style_overrides (
+          track_id   TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+          genre      TEXT NOT NULL REFERENCES taxonomy_genre(name),
+          style_id   INTEGER,
+          action     TEXT NOT NULL CHECK (action IN ('add', 'exclude')),
+          user_id    UUID REFERENCES users(id) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          FOREIGN KEY (style_id, genre) REFERENCES style(id, genre),
+          UNIQUE NULLS NOT DISTINCT (track_id, genre, style_id)
+        );
+        -- Album and artist profiles: summaries of their tracks' rows above,
+        -- rebuilt with them. An artist's profile counts each album once.
+        CREATE TABLE IF NOT EXISTS album_styles (
+          album_id       UUID NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+          genre          TEXT NOT NULL REFERENCES taxonomy_genre(name),
+          style_id       INTEGER,
+          share          REAL NOT NULL,
+          strength       REAL NOT NULL,
+          tracks         INTEGER NOT NULL,
+          fusion_version INTEGER NOT NULL,
+          FOREIGN KEY (style_id, genre) REFERENCES style(id, genre),
+          UNIQUE NULLS NOT DISTINCT (album_id, genre, style_id)
+        );
+        CREATE INDEX IF NOT EXISTS album_styles_style_idx ON album_styles (style_id, share DESC) WHERE style_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS album_styles_genre_idx ON album_styles (genre, share DESC) WHERE style_id IS NULL;
+        CREATE TABLE IF NOT EXISTS artist_styles (
+          artist_id      UUID NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+          genre          TEXT NOT NULL REFERENCES taxonomy_genre(name),
+          style_id       INTEGER,
+          share          REAL NOT NULL,
+          albums         INTEGER NOT NULL,
+          tracks         INTEGER NOT NULL,
+          fusion_version INTEGER NOT NULL,
+          FOREIGN KEY (style_id, genre) REFERENCES style(id, genre),
+          UNIQUE NULLS NOT DISTINCT (artist_id, genre, style_id)
+        );
+        CREATE INDEX IF NOT EXISTS artist_styles_style_idx ON artist_styles (style_id, share DESC) WHERE style_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS artist_styles_genre_idx ON artist_styles (genre, share DESC) WHERE style_id IS NULL;
+        -- Style centroids (phase 3): the mean EffNet embedding of each style's
+        -- tag and hand-set members, for "Sounds close to" and disputed tags.
+        -- Rebuilt with fusion (services/genreTaxonomy/centroids.ts).
+        -- Where a track is from and what language it's sung in, for filters
+        -- and playlists ("Dansk rap fra 90'erne"). Raw values from the file
+        -- (release country, lyrics language) live on tracks; origin_read_at
+        -- marks files whose extra tags have been read (the backfill's cursor).
+        ALTER TABLE tracks ADD COLUMN IF NOT EXISTS release_country TEXT;
+        ALTER TABLE tracks ADD COLUMN IF NOT EXISTS lyrics_language TEXT;
+        ALTER TABLE tracks ADD COLUMN IF NOT EXISTS origin_read_at TIMESTAMPTZ;
+        -- The original release year (Picard's ORIGINALDATE): a 2021 remaster of
+        -- a 1991 song is 1991. origin_read_version: which extra tags were read
+        -- (1: country and language; 2: also the original year).
+        ALTER TABLE tracks ADD COLUMN IF NOT EXISTS original_year INTEGER;
+        ALTER TABLE tracks ADD COLUMN IF NOT EXISTS origin_read_version SMALLINT;
+        -- Derived (services/trackOrigin.service.ts): country from the artist's
+        -- MusicBrainz country, else the artist's place tags, else the release
+        -- country; language from the file.
+        CREATE TABLE IF NOT EXISTS track_origin (
+          track_id         TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+          country          TEXT,
+          country_source   TEXT CHECK (country_source IN ('artist', 'artist-tags', 'release')),
+          language         TEXT,
+          language_source  TEXT CHECK (language_source IN ('file'))
+        );
+        -- When, and how it sounds by its artist's tags: the effective year and
+        -- decade (original year, else the file's year, else the artist's era
+        -- tag), and the artist's vocals and moods.
+        ALTER TABLE track_origin ADD COLUMN IF NOT EXISTS year INTEGER;
+        ALTER TABLE track_origin ADD COLUMN IF NOT EXISTS decade INTEGER;
+        ALTER TABLE track_origin ADD COLUMN IF NOT EXISTS year_source TEXT CHECK (year_source IN ('original', 'file', 'artist-tags'));
+        ALTER TABLE track_origin ADD COLUMN IF NOT EXISTS vocals TEXT[];
+        ALTER TABLE track_origin ADD COLUMN IF NOT EXISTS moods TEXT[];
+        CREATE INDEX IF NOT EXISTS track_origin_decade_idx ON track_origin (decade) WHERE decade IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS track_origin_vocals_idx ON track_origin USING gin (vocals);
+        CREATE INDEX IF NOT EXISTS track_origin_moods_idx ON track_origin USING gin (moods);
+        CREATE INDEX IF NOT EXISTS track_origin_country_idx ON track_origin (country) WHERE country IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS track_origin_language_idx ON track_origin (language) WHERE language IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS style_centroids (
+          style_id       INTEGER PRIMARY KEY,
+          genre          TEXT NOT NULL REFERENCES taxonomy_genre(name),
+          centroid       VECTOR(1280) NOT NULL,
+          tracks         INTEGER NOT NULL,
+          artists        INTEGER NOT NULL,
+          p90_distance   REAL,
+          fusion_version INTEGER NOT NULL,
+          FOREIGN KEY (style_id, genre) REFERENCES style(id, genre) ON DELETE CASCADE
+        );
 
         CREATE TABLE IF NOT EXISTS user_playback_stats (
           user_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -1398,7 +1585,12 @@ const SNAKE_DUP_COLUMNS = [
   'play_count', 'last_played_at', 'file_size', 'artist_id', 'album_id', 'genre_id',
   'mb_recording_id', 'mb_track_id', 'mb_album_id', 'mb_artist_id', 'mb_album_artist_id',
   'mb_release_group_id', 'mb_work_id', 'art_hash', 'artwork_version', 'playlist_added_at', 'is_loved', 'raw_urls', 'canonical_genre',
+  // Read by trackOrigin.service only; no track payload needs them.
+  'release_country', 'lyrics_language', 'origin_read_at', 'original_year', 'origin_read_version',
 ];
+
+/** Which extra tags a scan reads (trackOrigin.service re-reads older files): 2 adds the original year. */
+export const ORIGIN_READ_VERSION = 2;
 
 function mapTrackRow(row: any) {
   const mapped: any = {
@@ -2007,8 +2199,8 @@ export async function addTrack(track: any) {
   const sanitizeArray = (arr: any) => Array.isArray(arr) ? arr.map(sanitizeString) : arr;
 
   await db.query(`
-    INSERT INTO tracks (id, title, artist, album_artist, artists, album, genre, duration, track_number, disc_number, year, release_type, is_compilation, path, bitrate, format, artist_id, album_id, genre_id, genres, isrc, mb_recording_id, mb_track_id, mb_album_id, mb_artist_id, mb_album_artist_id, mb_release_group_id, mb_work_id, raw_urls, art_hash, artwork_version, file_mtime, file_size, decoded_path, lossless)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, decode($14, 'base64'), $34)
+    INSERT INTO tracks (id, title, artist, album_artist, artists, album, genre, duration, track_number, disc_number, year, release_type, is_compilation, path, bitrate, format, artist_id, album_id, genre_id, genres, isrc, mb_recording_id, mb_track_id, mb_album_id, mb_artist_id, mb_album_artist_id, mb_release_group_id, mb_work_id, raw_urls, art_hash, artwork_version, file_mtime, file_size, decoded_path, lossless, release_country, lyrics_language, origin_read_at, original_year, origin_read_version)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, decode($14, 'base64'), $34, $35, $36, CASE WHEN $37::boolean THEN NOW() END, $38, CASE WHEN $37::boolean THEN $39::smallint END)
     ON CONFLICT (id) DO UPDATE SET
       title = EXCLUDED.title,
       artist = EXCLUDED.artist,
@@ -2027,7 +2219,6 @@ export async function addTrack(track: any) {
       format = EXCLUDED.format,
       artist_id = EXCLUDED.artist_id,
       album_id = EXCLUDED.album_id,
-      genre_id = EXCLUDED.genre_id,
       genres = EXCLUDED.genres,
       isrc = EXCLUDED.isrc,
       mb_recording_id = EXCLUDED.mb_recording_id,
@@ -2046,7 +2237,14 @@ export async function addTrack(track: any) {
       file_size = COALESCE(EXCLUDED.file_size, tracks.file_size),
       decoded_path = EXCLUDED.decoded_path,
       -- COALESCE so a null (unknown) never wipes a known lossless flag.
-      lossless = COALESCE(EXCLUDED.lossless, tracks.lossless)
+      lossless = COALESCE(EXCLUDED.lossless, tracks.lossless),
+      -- A scan that read the extra tags replaces them (a removed tag clears);
+      -- one that didn't (a parse failure) leaves them.
+      release_country = CASE WHEN EXCLUDED.origin_read_at IS NOT NULL THEN EXCLUDED.release_country ELSE tracks.release_country END,
+      lyrics_language = CASE WHEN EXCLUDED.origin_read_at IS NOT NULL THEN EXCLUDED.lyrics_language ELSE tracks.lyrics_language END,
+      origin_read_at = COALESCE(EXCLUDED.origin_read_at, tracks.origin_read_at),
+      original_year = CASE WHEN EXCLUDED.origin_read_at IS NOT NULL THEN EXCLUDED.original_year ELSE tracks.original_year END,
+      origin_read_version = COALESCE(EXCLUDED.origin_read_version, tracks.origin_read_version)
     WHERE
       tracks.title IS DISTINCT FROM EXCLUDED.title OR
       tracks.artist IS DISTINCT FROM EXCLUDED.artist OR
@@ -2065,7 +2263,6 @@ export async function addTrack(track: any) {
       tracks.format IS DISTINCT FROM EXCLUDED.format OR
       tracks.artist_id IS DISTINCT FROM EXCLUDED.artist_id OR
       tracks.album_id IS DISTINCT FROM EXCLUDED.album_id OR
-      tracks.genre_id IS DISTINCT FROM EXCLUDED.genre_id OR
       tracks.genres IS DISTINCT FROM EXCLUDED.genres OR
       tracks.isrc IS DISTINCT FROM EXCLUDED.isrc OR
       tracks.mb_recording_id IS DISTINCT FROM EXCLUDED.mb_recording_id OR
@@ -2083,7 +2280,12 @@ export async function addTrack(track: any) {
       (EXCLUDED.artwork_version IS NOT NULL AND tracks.artwork_version IS DISTINCT FROM EXCLUDED.artwork_version) OR
       (EXCLUDED.file_mtime IS NOT NULL AND tracks.file_mtime IS DISTINCT FROM EXCLUDED.file_mtime) OR
       (EXCLUDED.file_size IS NOT NULL AND tracks.file_size IS DISTINCT FROM EXCLUDED.file_size) OR
-      (EXCLUDED.lossless IS NOT NULL AND tracks.lossless IS DISTINCT FROM EXCLUDED.lossless)
+      (EXCLUDED.lossless IS NOT NULL AND tracks.lossless IS DISTINCT FROM EXCLUDED.lossless) OR
+      (EXCLUDED.origin_read_at IS NOT NULL AND (tracks.origin_read_at IS NULL
+        OR tracks.release_country IS DISTINCT FROM EXCLUDED.release_country
+        OR tracks.lyrics_language IS DISTINCT FROM EXCLUDED.lyrics_language
+        OR tracks.original_year IS DISTINCT FROM EXCLUDED.original_year
+        OR tracks.origin_read_version IS DISTINCT FROM EXCLUDED.origin_read_version))
   `, [
     id,
     sanitizeString(track.title) || path.basename(track.path),
@@ -2103,7 +2305,8 @@ export async function addTrack(track: any) {
     track.format || null,
     track.artistId || null,
     track.albumId || null,
-    track.genreId || null,
+    // genre_id comes from the fused genres and styles (genreTaxonomy/trackGenres.ts).
+    null,
     track.genres ? JSON.stringify(sanitizeArray(track.genres)) : null,
     track.isrc || null,
     track.mbRecordingId || null,
@@ -2119,6 +2322,12 @@ export async function addTrack(track: any) {
     track.fileMtime ?? null,
     track.fileSize ?? null,
     typeof track.lossless === 'boolean' ? track.lossless : null,
+    // Raw file values, kept as tagged (normalised in trackOrigin.service).
+    track.originRead ? sanitizeString(track.releaseCountry) || null : null,
+    track.originRead ? sanitizeString(track.lyricsLanguage) || null : null,
+    track.originRead === true,
+    track.originRead && Number(track.originalYear) > 0 ? Math.round(Number(track.originalYear)) : null,
+    ORIGIN_READ_VERSION,
   ]);
 
   const associationNames = Array.isArray(track.genres) && track.genres.length > 0
@@ -2170,24 +2379,89 @@ export async function backfillTrackFileSizes(): Promise<number> {
   return updated;
 }
 
-export async function addTrackFeatures(trackId: string, audioFeatures: { bpm: number; acoustic_vector: number[]; embedding_vector?: number[]; is_simulated?: boolean; feature_version?: number }) {
+export async function addTrackFeatures(trackId: string, audioFeatures: {
+  bpm: number;
+  acoustic_vector: number[];
+  embedding_vector?: number[];
+  style_scores?: number[] | null;
+  analysis_windows?: string;
+  is_simulated?: boolean;
+  feature_version?: number;
+  moods?: Record<AudioMood, number> | null;
+  mood_themes?: number[] | null;
+}) {
   const db = await initDB();
   const vector8dStr = `[${audioFeatures.acoustic_vector.slice(0, 8).join(',')}]`;
   const simulated = audioFeatures.is_simulated ?? false;
   const embStr = audioFeatures.embedding_vector && audioFeatures.embedding_vector.length > 0
     ? `[${audioFeatures.embedding_vector.join(',')}]`
     : null;
+  // Simulated features never carry style scores; a stale row from an earlier
+  // real analysis must not outlive the features it came from.
+  const styleScores = !simulated && Array.isArray(audioFeatures.style_scores)
+    && audioFeatures.style_scores.length === STYLE_SCORE_COUNT
+    ? audioFeatures.style_scores
+    : null;
 
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`
+      INSERT INTO track_features (track_id, bpm, acoustic_vector_8d, embedding_vector, is_simulated, feature_version)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (track_id) DO UPDATE SET
+        bpm = EXCLUDED.bpm,
+        acoustic_vector_8d = EXCLUDED.acoustic_vector_8d,
+        embedding_vector = EXCLUDED.embedding_vector,
+        is_simulated = EXCLUDED.is_simulated,
+        feature_version = EXCLUDED.feature_version
+    `, [trackId, audioFeatures.bpm, vector8dStr, embStr, simulated, audioFeatures.feature_version ?? 1]);
+    if (styleScores) {
+      await client.query(`
+        INSERT INTO track_style_scores (track_id, scores, model, windows, genre_version, analyzed_at)
+        VALUES ($1, $2::real[], $3, $4, $5, NOW())
+        ON CONFLICT (track_id) DO UPDATE SET
+          scores = EXCLUDED.scores,
+          model = EXCLUDED.model,
+          windows = EXCLUDED.windows,
+          genre_version = EXCLUDED.genre_version,
+          analyzed_at = EXCLUDED.analyzed_at
+      `, [trackId, styleScores, STYLE_SCORE_MODEL, audioFeatures.analysis_windows || 'unknown', STYLE_SCORE_VERSION]);
+    } else {
+      await client.query('DELETE FROM track_style_scores WHERE track_id = $1', [trackId]);
+    }
+    if (!simulated && audioFeatures.moods) {
+      await upsertTrackMoods(client, trackId, { moods: audioFeatures.moods, mood_themes: audioFeatures.mood_themes ?? null }, 'analysis');
+    } else if (simulated) {
+      await client.query('DELETE FROM track_moods WHERE track_id = $1', [trackId]);
+    }
+    await client.query('COMMIT');
+    // New style scores feed fusion (debounced; at most every 10 minutes during a run).
+    void import('../services/genreTaxonomy').then(m => m.scheduleFusion()).catch(() => {});
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/** Writes a track's moods (shared/audioMoods.ts). */
+export async function upsertTrackMoods(
+  db: Pool | PoolClient,
+  trackId: string,
+  scores: { moods: Record<AudioMood, number>; mood_themes: number[] | null },
+  method: 'analysis' | 'embedding',
+) {
+  const m = scores.moods;
   await db.query(`
-    INSERT INTO track_features (track_id, bpm, acoustic_vector_8d, embedding_vector, is_simulated, feature_version)
-    VALUES ($1, $2, $3, $4, $5, $6)
+    INSERT INTO track_moods (track_id, happy, sad, relaxed, aggressive, party, themes, method, mood_version, scored_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7::real[], $8, $9, NOW())
     ON CONFLICT (track_id) DO UPDATE SET
-      bpm = EXCLUDED.bpm,
-      acoustic_vector_8d = EXCLUDED.acoustic_vector_8d,
-      embedding_vector = EXCLUDED.embedding_vector,
-      is_simulated = EXCLUDED.is_simulated,
-      feature_version = EXCLUDED.feature_version
-  `, [trackId, audioFeatures.bpm, vector8dStr, embStr, simulated, audioFeatures.feature_version ?? 1]);
+      happy = EXCLUDED.happy, sad = EXCLUDED.sad, relaxed = EXCLUDED.relaxed,
+      aggressive = EXCLUDED.aggressive, party = EXCLUDED.party, themes = EXCLUDED.themes,
+      method = EXCLUDED.method, mood_version = EXCLUDED.mood_version, scored_at = EXCLUDED.scored_at`,
+  [trackId, m.happy, m.sad, m.relaxed, m.aggressive, m.party, scores.mood_themes, method, MOOD_SCORE_VERSION]);
 }
 
 // ─── Loudness (EBU R128) ──────────────────────────────────────────────
@@ -2335,10 +2609,10 @@ export async function getLibraryDirectoryStats(): Promise<LibraryDirectoryStats[
   });
 }
 
-export async function getTracksWithoutFeatures(): Promise<{ id: string; filePath: Buffer; title: string; artist: string | null }[]> {
+export async function getTracksWithoutFeatures(): Promise<{ id: string; filePath: Buffer; title: string; artist: string | null; duration: number | null }[]> {
   const db = await initDB();
   const res = await db.query(`
-    SELECT t.id, t.path, t.title, t.artist
+    SELECT t.id, t.path, t.title, t.artist, t.duration
     FROM tracks t
     LEFT JOIN track_features tf ON t.id = tf.track_id
     -- Key on the acoustic vector, not row presence: loudness measurement can
@@ -2352,13 +2626,14 @@ export async function getTracksWithoutFeatures(): Promise<{ id: string; filePath
     filePath: Buffer.from(r.path, 'base64'),
     title: r.title,
     artist: r.artist || null,
+    duration: r.duration ?? null,
   }));
 }
 
-export async function getTracksWithSimulatedFeatures(): Promise<{ id: string; filePath: Buffer; title: string; artist: string | null }[]> {
+export async function getTracksWithSimulatedFeatures(): Promise<{ id: string; filePath: Buffer; title: string; artist: string | null; duration: number | null }[]> {
   const db = await initDB();
   const res = await db.query(`
-    SELECT t.id, t.path, t.title, t.artist
+    SELECT t.id, t.path, t.title, t.artist, t.duration
     FROM tracks t
     JOIN track_features tf ON t.id = tf.track_id
     WHERE tf.is_simulated = TRUE
@@ -2369,6 +2644,7 @@ export async function getTracksWithSimulatedFeatures(): Promise<{ id: string; fi
     filePath: Buffer.from(r.path, 'base64'),
     title: r.title,
     artist: r.artist || null,
+    duration: r.duration ?? null,
   }));
 }
 
@@ -2582,6 +2858,8 @@ export async function purgeOrphanedEntities(): Promise<{ albums: number; artists
         AND NOT EXISTS (SELECT 1 FROM tracks t WHERE t.genre_id = g.id)
         AND NOT EXISTS (SELECT 1 FROM track_genres tg WHERE tg.genre_id = g.id)
         AND NOT EXISTS (SELECT 1 FROM genres alias WHERE alias.merged_into = g.id)
+        -- A file tag's spelling row stays for the spelling review.
+        AND NOT EXISTS (SELECT 1 FROM track_tags tt WHERE lower(tt.tag) = lower(g.name))
       RETURNING id
     `),
   ]);
@@ -3069,21 +3347,11 @@ async function replaceTrackGenreAssociations(
   for (const name of names) genreIds.push(await getOrCreateGenre(name));
   const uniqueIds = Array.from(new Set(genreIds));
 
-  await db.query('DELETE FROM track_genres WHERE track_id = $1', [trackId]);
-  if (uniqueIds.length > 0) {
-    const params: Array<string | number> = [];
-    const values = uniqueIds.map((genreId, index) => {
-      params.push(trackId, genreId, index);
-      const offset = index * 3;
-      return `($${offset + 1}, $${offset + 2}, $${offset + 3})`;
-    });
-    await db.query(
-      `INSERT INTO track_genres (track_id, genre_id, position)
-       VALUES ${values.join(', ')}
-       ON CONFLICT (track_id, genre_id) DO UPDATE SET position = EXCLUDED.position`,
-      params,
-    );
-  }
+  // The genre & style taxonomy keeps every original tag verbatim (track_tags);
+  // the "Unknown Genre" placeholder for untagged tracks is not a tag. Each
+  // tag also keeps a `genres` row, for the spelling review; track_genres and
+  // genre_id come from the fused genres and styles (genreTaxonomy/trackGenres.ts).
+  await replaceTrackTags(db, trackId, names.filter(name => name !== UNKNOWN_GENRE));
   return uniqueIds;
 }
 
@@ -3268,84 +3536,6 @@ export async function setEnrichedTrackCredits(
 export async function setTrackGeniusSongId(trackId: string, geniusSongId: string | null): Promise<void> {
   const db = await initDB();
   await db.query(`UPDATE tracks SET genius_song_id = $2 WHERE id = $1`, [trackId, geniusSongId]);
-}
-
-// Counts of credit rows by source so the settings UI can show "73 rows
-// from tags, 18 from MusicBrainz, 5 from Genius" — a passive progress
-// indicator since the import job is admin-triggered, not scheduled.
-export async function getCreditsStatus(): Promise<{ total: number; bySource: Record<string, number>; tracksWithCredits: number; eligibleMusicbrainz: number; eligibleGenius: number; alreadyMusicbrainz: number; alreadyGenius: number }> {
-  const db = await initDB();
-  const [byRole, eligibleMb, eligibleGenius, distinctTracks, alreadyMb, alreadyGenius] = await Promise.all([
-    db.query(`SELECT source, COUNT(*)::int AS c FROM track_artist_credits GROUP BY source`),
-    db.query(`SELECT COUNT(*)::int AS c FROM tracks WHERE mb_recording_id IS NOT NULL`),
-    db.query(`SELECT COUNT(*)::int AS c FROM tracks WHERE COALESCE(title, '') <> '' AND COALESCE(artist, album_artist, '') <> ''`),
-    db.query(`SELECT COUNT(DISTINCT track_id)::int AS c FROM track_artist_credits`),
-    db.query(`SELECT COUNT(DISTINCT track_id)::int AS c FROM track_artist_credits WHERE source = 'musicbrainz'`),
-    db.query(`SELECT COUNT(DISTINCT track_id)::int AS c FROM track_artist_credits WHERE source = 'genius'`),
-  ]);
-  const bySource: Record<string, number> = {};
-  let total = 0;
-  for (const row of byRole.rows as any[]) {
-    bySource[row.source] = row.c;
-    total += row.c;
-  }
-  return {
-    total,
-    bySource,
-    tracksWithCredits: distinctTracks.rows[0]?.c || 0,
-    eligibleMusicbrainz: eligibleMb.rows[0]?.c || 0,
-    eligibleGenius: eligibleGenius.rows[0]?.c || 0,
-    alreadyMusicbrainz: alreadyMb.rows[0]?.c || 0,
-    alreadyGenius: alreadyGenius.rows[0]?.c || 0,
-  };
-}
-
-// Full work-list for the MB credit-enrichment job: every track with an
-// mb_recording_id but no MusicBrainz credits yet, capped to keep the in-memory
-// list bounded on very large libraries. The job iterates this list once, so a
-// recording MB has no credits for is attempted exactly once per run — progress
-// is measured by tracks *attempted*, not credited, so the bar can reach 100%.
-export async function listTracksNeedingMbCredits(max = 100000): Promise<Array<{ id: string; mb_recording_id: string; title: string; artist: string }>> {
-  const db = await initDB();
-  const res = await db.query(
-    `SELECT t.id, t.mb_recording_id, t.title, COALESCE(t.artist, t.album_artist) AS artist
-     FROM tracks t
-     WHERE t.mb_recording_id IS NOT NULL
-       AND NOT EXISTS (
-         SELECT 1 FROM track_artist_credits tac
-         WHERE tac.track_id = t.id AND tac.source = 'musicbrainz'
-       )
-     LIMIT $1`,
-    [Math.max(1, Math.min(500000, max))]
-  );
-  return res.rows as any[];
-}
-
-
-// Returns up to `limit` tracks that don't yet have Genius credits.
-// Prefers tracks with a cached genius_song_id so they skip the search
-// round-trip; falls back to (title, artist) for new tracks.
-// Full work-list for the Genius credit-enrichment job (every track with a
-// title + artist and no Genius credits yet), capped to keep the list bounded.
-// Tracks whose Genius song id is already resolved come first so the second
-// pass skips the search step. See listTracksNeedingMbCredits for why the job
-// iterates a single snapshot rather than re-querying per batch.
-export async function listTracksNeedingGeniusCredits(max = 100000): Promise<Array<{ id: string; title: string; artist: string; genius_song_id: string | null }>> {
-  const db = await initDB();
-  const res = await db.query(
-    `SELECT t.id, t.title, COALESCE(t.artist, t.album_artist) AS artist, t.genius_song_id
-     FROM tracks t
-     WHERE COALESCE(t.title, '') <> ''
-       AND COALESCE(t.artist, t.album_artist, '') <> ''
-       AND NOT EXISTS (
-         SELECT 1 FROM track_artist_credits tac
-         WHERE tac.track_id = t.id AND tac.source = 'genius'
-       )
-     ORDER BY (t.genius_song_id IS NOT NULL) DESC
-     LIMIT $1`,
-    [Math.max(1, Math.min(500000, max))]
-  );
-  return res.rows as any[];
 }
 
 // Aggregated role list for an artist: roles ordered by frequency, plus
@@ -3782,25 +3972,9 @@ export async function getAllAlbums() {
   return res.rows;
 }
 
-export async function getAlbumsPage(options: EntityListPageOptions) {
-  const db = await initDB();
-  const limit = Math.max(1, Math.min(201, Math.trunc(options.limit)));
-  const after = options.after || null;
-  const res = await db.query(`
-    WITH page_albums AS (
-      SELECT a.*
-      FROM albums a
-      WHERE $1::text IS NULL OR (a.title, a.id::text) > ($1::text, $2::text)
-      ORDER BY a.title ASC, a.id::text ASC
-      LIMIT $3
-    )
-    SELECT a.*,
-      COALESCE(agg.track_count, 0) AS track_count,
-      agg.derived_year,
-      agg.derived_genres,
-      agg.art_hash,
-      COALESCE(agg.derived_release_type, 'Album') AS derived_release_type
-    FROM page_albums a
+// Track-derived fields of an album card (year, genres, art, release type),
+// shared by the album list and the bulk loader.
+const ALBUM_CARD_AGGREGATE = `
     LEFT JOIN LATERAL (
       SELECT
         COUNT(*)::int AS track_count,
@@ -3816,9 +3990,53 @@ export async function getAlbumsPage(options: EntityListPageOptions) {
       FROM tracks t
       LEFT JOIN genres canonical_genre ON canonical_genre.id = t.genre_id
       WHERE t.album_id = a.id
-    ) agg ON TRUE
+    ) agg ON TRUE`;
+const ALBUM_CARD_COLUMNS = `a.*,
+      COALESCE(agg.track_count, 0) AS track_count,
+      agg.derived_year,
+      agg.derived_genres,
+      agg.art_hash,
+      COALESCE(agg.derived_release_type, 'Album') AS derived_release_type`;
+
+export async function getAlbumsPage(options: EntityListPageOptions) {
+  const db = await initDB();
+  const limit = Math.max(1, Math.min(201, Math.trunc(options.limit)));
+  const after = options.after || null;
+  const res = await db.query(`
+    WITH page_albums AS (
+      SELECT a.*
+      FROM albums a
+      WHERE $1::text IS NULL OR (a.title, a.id::text) > ($1::text, $2::text)
+      ORDER BY a.title ASC, a.id::text ASC
+      LIMIT $3
+    )
+    SELECT ${ALBUM_CARD_COLUMNS}
+    FROM page_albums a
+    ${ALBUM_CARD_AGGREGATE}
     ORDER BY a.title ASC, a.id ASC
   `, [after?.sort || null, after?.id || null, limit]);
+  return res.rows;
+}
+
+/** Album card rows (same shape as getAlbumsPage) for the given ids, in no particular order. */
+export async function getAlbumCardsByIds(ids: string[]) {
+  if (ids.length === 0) return [];
+  const db = await initDB();
+  const res = await db.query(`
+    SELECT ${ALBUM_CARD_COLUMNS}
+    FROM albums a
+    ${ALBUM_CARD_AGGREGATE}
+    WHERE a.id = ANY($1::uuid[])`, [ids]);
+  return res.rows;
+}
+
+/** Artist card rows (same shape as getArtistsPage) for the given ids, in no particular order. */
+export async function getArtistCardsByIds(ids: string[]) {
+  if (ids.length === 0) return [];
+  const db = await initDB();
+  const res = await db.query(
+    `SELECT id, name, image_url, artwork_url, genres, community_tags, artist_type, area, lifespan_begin
+       FROM artists WHERE id = ANY($1::uuid[])`, [ids]);
   return res.rows;
 }
 
@@ -3833,6 +4051,7 @@ export async function getAllGenres() {
     LEFT JOIN genres alias ON alias.merged_into = g.id
     WHERE g.merged_into IS NULL
     GROUP BY g.id
+    HAVING COUNT(DISTINCT tg.track_id) > 0
     ORDER BY g.name ASC
   `);
   return res.rows;
@@ -3847,6 +4066,7 @@ export async function getGenresPage(options: EntityListPageOptions) {
       SELECT g.*
       FROM genres g
       WHERE g.merged_into IS NULL
+        AND EXISTS (SELECT 1 FROM track_genres tg WHERE tg.genre_id = g.id)
         AND ($1::text IS NULL OR (g.name, g.id::text) > ($1::text, $2::text))
       ORDER BY g.name ASC, g.id::text ASC
       LIMIT $3
@@ -3866,58 +4086,38 @@ export async function getGenresPage(options: EntityListPageOptions) {
 }
 
 /**
- * Resolve every distinct library genre to its MusicBrainz hierarchy path
- * (e.g. "alternative rock" → "Rock.Alternative Rock"), so the client can group
- * subgenres under their parent. The path source is the `genre_tree_paths`
- * materialized view, which is empty until an MBDB taxonomy import has run —
- * that emptiness is how we report `available: false` and let the UI fall back
- * to a flat genre grid.
- *
- * Match priority per genre: exact MBDB genre name → MBDB alias → a path the
- * genre-matrix categorizer previously stored in `subgenre_mappings`.
+ * The genre and style hierarchy of the library's genres, so the old genre
+ * view and the genre filter can group styles under their genre: a genre is
+ * its own path ("Rock"), a style "Genre.Style" ("Rock.Grunge"; a dot in a
+ * name becomes a space). A style name in two genres goes under the one with
+ * more of its tracks. Unavailable until the taxonomy is seeded.
  */
 export async function getGenreTaxonomyPaths(): Promise<{ available: boolean; paths: Record<string, string> }> {
   const db = await initDB();
-
-  // genre_tree_paths exists from init (IF NOT EXISTS) but holds zero rows until
-  // an import populates the MBDB base tables. A missing view (older DBs) throws
-  // and is likewise treated as "no taxonomy available".
-  try {
-    const countRes = await db.query('SELECT COUNT(*)::int AS n FROM genre_tree_paths');
-    if (!countRes.rows[0] || countRes.rows[0].n === 0) {
-      return { available: false, paths: {} };
-    }
-  } catch {
-    return { available: false, paths: {} };
-  }
-
+  const seeded = (await db.query('SELECT 1 FROM style LIMIT 1')).rowCount;
+  if (!seeded) return { available: false, paths: {} };
   const res = await db.query(`
     WITH lib AS (
-      SELECT DISTINCT lower(trim(g.name)) AS g
+      SELECT DISTINCT g.name
       FROM track_genres tg
       JOIN genres g ON g.id = tg.genre_id
       WHERE g.merged_into IS NULL AND trim(g.name) <> ''
     )
-    SELECT lib.g AS name,
-           COALESCE(direct.path, alias.path, sm.path) AS path
+    SELECT lower(lib.name) AS name,
+           COALESCE(replace(tgn.name, '.', ' '), sp.path) AS path
     FROM lib
+    LEFT JOIN taxonomy_genre tgn ON tgn.name = lib.name
     LEFT JOIN LATERAL (
-      SELECT path FROM genre_tree_paths WHERE lower(genre_name) = lib.g LIMIT 1
-    ) direct ON true
-    LEFT JOIN LATERAL (
-      SELECT gtp.path FROM genre_tree_paths gtp
-      JOIN genre_alias ga ON gtp.genre_id = ga.genre
-      WHERE lower(ga.name) = lib.g LIMIT 1
-    ) alias ON true
-    LEFT JOIN subgenre_mappings sm
-      ON sm.sub_genre = regexp_replace(lib.g, '[^\\w\\s-]', '', 'g')
-    WHERE COALESCE(direct.path, alias.path, sm.path) IS NOT NULL
+      SELECT replace(s.genre, '.', ' ') || '.' || replace(s.name, '.', ' ') AS path
+      FROM style s
+      WHERE s.name = lib.name
+      ORDER BY (SELECT COUNT(*) FROM track_styles ts WHERE ts.style_id = s.id) DESC, s.genre
+      LIMIT 1
+    ) sp ON true
+    WHERE COALESCE(tgn.name, sp.path) IS NOT NULL
   `);
-
   const paths: Record<string, string> = {};
-  for (const row of res.rows) {
-    paths[row.name] = row.path;
-  }
+  for (const row of res.rows) paths[row.name] = row.path;
   return { available: true, paths };
 }
 
@@ -4869,10 +5069,7 @@ async function backfillTrackGenreAssociations(db: Pool): Promise<void> {
     const parsed = parseStringArrayField(row.genres);
     const rawGenres = parsed.length > 0 ? parsed : splitGenreNames(row.genre);
     const names = rawGenres.length > 0 ? rawGenres : [UNKNOWN_GENRE];
-    const genreIds = await replaceTrackGenreAssociations(db, row.id, names);
-    if (genreIds[0]) {
-      await db.query('UPDATE tracks SET genre_id = $1 WHERE id = $2 AND genre_id IS DISTINCT FROM $1', [genreIds[0], row.id]);
-    }
+    await replaceTrackGenreAssociations(db, row.id, names);
     updated++;
   }
   await setSystemSetting(TRACK_GENRE_ASSOCIATION_BACKFILL_SETTING, true);
@@ -4940,7 +5137,6 @@ export async function migrateEntityIds() {
     FROM tracks
     WHERE artist_id IS NULL
       OR album_id IS NULL
-      OR genre_id IS NULL
       OR genres IS NULL
       OR artists IS NULL
       ${legacyFeatureCreditPredicate}
@@ -5003,7 +5199,8 @@ export async function migrateEntityIds() {
       releaseType: (row as any).release_type || null,
       isCompilation: (row as any).is_compilation || false,
     });
-    const genreId = await getOrCreateGenre(primaryGenreName);
+    // The tag's spelling row (genre_id itself comes from fusion).
+    if (primaryGenreName) await getOrCreateGenre(primaryGenreName);
 
     // Create/update entities for all individual artists to ensure they exist for 'Also appears on'
     for (const person of trackArtists.people) {
@@ -5015,8 +5212,8 @@ export async function migrateEntityIds() {
     const tracksArtistsJson = JSON.stringify(rawArtistsArray);
 
     await db.query(
-      'UPDATE tracks SET artist_id = $1, album_id = $2, genre_id = $3, genres = $4, artists = $5 WHERE id = $6',
-      [artistId, albumId, genreId, tracksGenresJson, tracksArtistsJson, trackId]
+      'UPDATE tracks SET artist_id = $1, album_id = $2, genres = $3, artists = $4 WHERE id = $5',
+      [artistId, albumId, tracksGenresJson, tracksArtistsJson, trackId]
     );
     count++;
   }
@@ -5787,12 +5984,9 @@ export async function updateGenreMatrixCache(matrix: any) {
 const systemSettingCache = new Map<string, { value: any; expires: number }>();
 const SYSTEM_SETTING_TTL_MS = 30_000;
 
-// Keys written out-of-band (raw SQL in genreMatrix.service, etc.) and polled
-// for live progress — caching them would serve stale values to progress UIs.
-const UNCACHED_SYSTEM_SETTINGS = new Set([
-  'genreMatrixProgress',
-  'genreMatrixCheckpoint',
-]);
+// Keys written out-of-band and polled for live progress — caching them would
+// serve stale values to progress UIs.
+const UNCACHED_SYSTEM_SETTINGS = new Set<string>([]);
 
 export async function getSystemSetting(key: string) {
   const cacheable = !UNCACHED_SYSTEM_SETTINGS.has(key);
@@ -5811,91 +6005,6 @@ export async function getSystemSetting(key: string) {
   if (cacheable) systemSettingCache.set(key, { value, expires: now + SYSTEM_SETTING_TTL_MS });
   return value;
 }
-export async function upsertSubGenreMapping(subGenre: string, path: string) {
-  const db = await initDB();
-  const sanitized = subGenre.toLowerCase().trim().replace(/[^\w\s-]/g, '');
-  if (!sanitized) return;
-  await db.query(`
-    INSERT INTO subgenre_mappings (sub_genre, path)
-    VALUES ($1, $2)
-    ON CONFLICT (sub_genre) DO UPDATE SET path = EXCLUDED.path
-  `, [sanitized, path]);
-}
-
-export async function clearSubGenreMappings() {
-  const db = await initDB();
-  await db.query('DELETE FROM subgenre_mappings');
-}
-
-export async function getSubGenreMappings(): Promise<Record<string, string>> {
-  const db = await initDB();
-  const res = await db.query('SELECT * FROM subgenre_mappings');
-  const mappings: Record<string, string> = {};
-  res.rows.forEach((row: any) => {
-    mappings[row.sub_genre] = row.path;
-  });
-  return mappings;
-}
-
-export async function getGenrePathFromKNN(acoustic8D: number[], embedding?: number[]): Promise<string | null> {
-  if (acoustic8D.some(v => !isFinite(v))) return null;
-  if (embedding && (embedding.length !== 1280 || embedding.some(v => !isFinite(v)))) embedding = undefined;
-
-  const db = await initDB();
-  const acousticStr = `[${acoustic8D.join(',')}]`;
-  const embeddingStr = embedding ? `[${embedding.join(',')}]` : null;
-  
-  // Tier 3: KNN audio fallback.
-  // Finds the most common hierarchical path among the 10 mathematically 
-  // closest matches using MusiCNN 8D + EffNet 1280D, or 8D distance fallback.
-  const query = embeddingStr
-    ? `
-    WITH neighbors AS (
-      SELECT sm.path
-      FROM tracks t
-      JOIN track_features tf ON t.id = tf.track_id
-      JOIN genres g ON g.id = t.genre_id
-      JOIN subgenre_mappings sm
-        ON regexp_replace(lower(trim(g.name)), '[^[:alnum:]_[:space:]-]', '', 'g') = sm.sub_genre
-      WHERE tf.acoustic_vector_8d IS NOT NULL 
-        AND tf.embedding_vector IS NOT NULL
-      ORDER BY (tf.acoustic_vector_8d <-> $1::vector) + (tf.embedding_vector <=> $2::vector) ASC
-      LIMIT 10
-    )
-    SELECT path, COUNT(*) as frequency
-    FROM neighbors
-    GROUP BY path
-    ORDER BY frequency DESC
-    LIMIT 1
-  `
-    : `
-    WITH neighbors AS (
-      SELECT sm.path
-      FROM tracks t
-      JOIN track_features tf ON t.id = tf.track_id
-      JOIN genres g ON g.id = t.genre_id
-      JOIN subgenre_mappings sm
-        ON regexp_replace(lower(trim(g.name)), '[^[:alnum:]_[:space:]-]', '', 'g') = sm.sub_genre
-      WHERE tf.acoustic_vector_8d IS NOT NULL 
-      ORDER BY tf.acoustic_vector_8d <-> $1::vector ASC
-      LIMIT 10
-    )
-    SELECT path, COUNT(*) as frequency
-    FROM neighbors
-    GROUP BY path
-    ORDER BY frequency DESC
-    LIMIT 1
-  `;
-
-  const params = embeddingStr ? [acousticStr, embeddingStr] : [acousticStr];
-  const res = await db.query(query, params);
-
-  if (res.rows.length > 0) {
-    return (res.rows[0] as any).path;
-  }
-  return null;
-}
-
 export async function setSystemSetting(key: string, value: any) {
   const db = await initDB();
   // JSON.stringify(undefined) returns undefined (not a string), which pg then

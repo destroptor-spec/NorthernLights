@@ -23,7 +23,6 @@ const LibraryTab = React.lazy(() => import('./settings/LibraryTab').then(module 
 const PlaybackTab = React.lazy(() => import('./settings/PlaybackTab').then(module => ({ default: module.PlaybackTab })));
 const SystemTab = React.lazy(() => import('./settings/SystemTab').then(module => ({ default: module.SystemTab })));
 const GenAiTab = React.lazy(() => import('./settings/GenAiTab').then(module => ({ default: module.GenAiTab })));
-const GenreMatrixTab = React.lazy(() => import('./settings/GenreMatrixTab').then(module => ({ default: module.GenreMatrixTab })));
 const DatabaseTab = React.lazy(() => import('./settings/DatabaseTab').then(module => ({ default: module.DatabaseTab })));
 const MetadataTab = React.lazy(() => import('./settings/MetadataTab').then(module => ({ default: module.MetadataTab })));
 const LiveMusicTab = React.lazy(() => import('./settings/LiveMusicTab').then(module => ({ default: module.LiveMusicTab })));
@@ -137,7 +136,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         ...(isAdmin ? ([
             { id: 'System', label: 'System', category: 'Server Settings' },
             { id: 'GenAI', label: 'GenAI', category: 'Server Settings' },
-            { id: 'Genre Matrix', label: 'Genre Matrix', category: 'Server Settings' },
             { id: 'Database', label: 'Database', category: 'Server Settings' },
             { id: 'Users', label: 'Users', category: 'Admin' },
         ] satisfies SettingsTab[]) : []),
@@ -159,7 +157,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         if (tab.id === 'Playback') return 'infinity discovery genre repeat protection artist amnesia matrix llm playlist diversity blend tracks wander played threshold scrobble count percent listened sleep timer quality streaming'.includes(query);
         if (tab.id === 'System') return 'cpu audio analysis hub schedule auto-start opensubsonic subsonic api rest security captcha turnstile cloudflare sign-in login protection'.includes(query);
         if (tab.id === 'GenAI') return 'llm api host model key'.includes(query);
-        if (tab.id === 'Genre Matrix') return 'genre matrix transition hop cost mapping'.includes(query);
         if (tab.id === 'Database') return 'database postgres container podman start stop status'.includes(query);
         if (tab.id === 'Users') return 'admin users invites manage'.includes(query);
         
@@ -196,7 +193,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     const getTabDataAttribute = (tabId: string) => {
         if (tabId === 'GenAI') return 'genai';
         if (tabId === 'Database') return 'database';
-        if (tabId === 'Genre Matrix') return 'genre-matrix';
         return undefined;
     };
 
@@ -391,7 +387,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                                         <>
                                             {activeTab === 'System' && <SystemTab />}
                                             {activeTab === 'GenAI' && <GenAiTab />}
-                                            {activeTab === 'Genre Matrix' && <GenreMatrixTab />}
                                             {activeTab === 'Database' && <DatabaseTab />}
                                             {activeTab === 'Users' && <AdminDashboard />}
                                         </>

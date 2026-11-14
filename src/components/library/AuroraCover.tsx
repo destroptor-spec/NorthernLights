@@ -7,12 +7,14 @@ import React, { useId } from 'react';
 //
 //   wrapped     — a horizontal wave horizon: seasonal sky over a wave-split
 //                 field, soft bloom along the crest, big period label.
-//   favourites  — vertical aurora curtains (green/teal): light pillars over a
-//                 night base, genre label. Genre heavy-rotation mixes.
-//   rediscover  — echo arcs (violet/rose): a low glow with soft concentric
-//                 rings radiating out, genre label. Genre rediscovery mixes.
-//   decade      — a sweeping aurora ribbon with the decade numeral printed
-//                 into the art, always readable. Decade / decade-genre mixes.
+//   favourites  — vertical aurora curtains (green/teal): light pillars across
+//                 a glowing night sky, genre label. Heavy-rotation mixes.
+//   rediscover  — echo arcs (violet/rose): rings radiating from a lit corner
+//                 across the cover, genre label. Rediscovery mixes.
+//   decade      — 2–3 sweeping aurora ribbons with the decade numeral printed
+//                 into the art, always readable. Decade / decade-genre mixes;
+//                 a decade-genre mix also prints its style under the numeral
+//                 ("2010" over "House"), so it never reads as the plain decade.
 //
 // Everything is deterministic from `seed` (playlist id/title): same playlist
 // always gets the same cover, different playlists spread across variants.
@@ -92,6 +94,36 @@ export function systemDecadeCoverLabel(title: string | null | undefined): string
   return t.replace(/\s+Mix$/i, '').trim();
 }
 
+/** Style for the cover from a decade-genre title: "House from the 2010's" → "House". */
+export function systemDecadeGenreCoverLabel(title: string | null | undefined): string | undefined {
+  const m = /^(.+?)\s+from the\s+(?:(?:19|20)\d0|\d0)'?s$/i.exec((title || '').trim());
+  return m ? m[1].trim() : undefined;
+}
+
+/** The Aurora cover of a Discover (engine) playlist. */
+export interface SystemPlaylistCover {
+  variant: AuroraCoverVariant;
+  /** Seeded by title, as the Hub always has, so the shape is the same on every surface. */
+  seed: string;
+  label?: string;
+  sublabel?: string;
+}
+
+/**
+ * The cover a Discover playlist has wherever it shows (the Hub, the
+ * Playlists view, the playlist page), from its engine id and title; null
+ * for every other playlist.
+ */
+export function systemPlaylistCover(id: string | null | undefined, title: string | null | undefined): SystemPlaylistCover | null {
+  const key = id || '';
+  const t = title || '';
+  if (key.startsWith('engine_genre-most')) return { variant: 'favourites', seed: t, label: systemGenreCoverLabel(t) };
+  if (key.startsWith('engine_genre-stale')) return { variant: 'rediscover', seed: t, label: systemGenreCoverLabel(t) };
+  if (key.startsWith('engine_decade-genre')) return { variant: 'decade', seed: t, label: systemDecadeCoverLabel(t), sublabel: systemDecadeGenreCoverLabel(t) };
+  if (key.startsWith('engine_decade')) return { variant: 'decade', seed: t, label: systemDecadeCoverLabel(t) };
+  return null;
+}
+
 // ─── Wrapped: wave horizon ─────────────────────────────────────────────
 // Hand-tuned field shapes (200×200 box, gentle 1–1.5 undulation crests). The
 // crest path is reused via <use> for the bloom layers, so it lives in <defs>
@@ -103,80 +135,119 @@ const WAVE_PATHS = [
 ];
 
 // ─── Favourites: aurora curtains (generated) ───────────────────────────
-// 2–4 gently swaying full-height bands; the vertical gradient does the fading
-// so the path stays simple. Positions/widths/sway/peak all seeded per cover.
-// Bands roam freely (they may overlap — overlaps blend like layered light) and
-// range from slim streaks to broad sheets; the wider the band, the softer its
-// peak so fat overlaps never go blocky.
-interface Curtain { x: number; w: number; sway: number; peak: number; peakAt: number }
+// 2–4 broad, swaying sheets of light spread across the width (one per slot,
+// jittered, so they never all clump on one side), each leaning so its foot
+// sits off its head: abstract aurora, not stripes. The vertical gradient
+// does the fading; the sheets blend with `screen`, so overlaps brighten like
+// layered light. Positions/widths/lean/sway/peak all seeded per cover.
+interface Curtain { x: number; w: number; sway: number; lean: number; peak: number; peakAt: number }
 
 function genCurtains(rnd: () => number): Curtain[] {
   const count = 2 + Math.floor(rnd() * 3); // 2–4
-  return Array.from({ length: count }, () => {
-    const w = lerp(rnd, 18, 90);
-    const x = lerp(rnd, -12, 210 - w); // slight offscreen bleed allowed
-    const sway = (rnd() < 0.5 ? -1 : 1) * lerp(rnd, 6, 16);
-    const peak = lerp(rnd, 0.38, 0.6) * (1 - ((w - 18) / 72) * 0.3);
-    return { x, w, sway, peak, peakAt: lerp(rnd, 0.2, 0.45) };
+  const slot = 220 / count;
+  return Array.from({ length: count }, (_, i) => {
+    const w = lerp(rnd, 46, 120);
+    const centre = -10 + slot * (i + 0.5) + lerp(rnd, -slot * 0.3, slot * 0.3);
+    const sway = (rnd() < 0.5 ? -1 : 1) * lerp(rnd, 14, 38);
+    const lean = lerp(rnd, -40, 40);
+    // Broad sheets a little softer, so wide overlaps stay luminous, not blocky.
+    const peak = lerp(rnd, 0.58, 0.82) * (1 - ((w - 46) / 74) * 0.3);
+    return { x: centre - w / 2, w, sway, lean, peak, peakAt: lerp(rnd, 0.14, 0.42) };
   });
 }
 
-function curtainPath({ x, w, sway }: Curtain): string {
+function curtainPath({ x, w, sway, lean }: Curtain): string {
   const r = x + w;
-  return `M${x} 0 C ${x + sway} 60, ${x - sway} 130, ${x} 200 L ${r} 200 C ${r - sway} 130, ${r + sway} 60, ${r} 0 Z`;
+  return `M${x} 0 C ${x + sway} 60, ${x + lean - sway} 130, ${x + lean} 200 L ${r + lean} 200 C ${r + lean - sway} 130, ${r + sway} 60, ${r} 0 Z`;
 }
 
 // ─── Rediscover: echo arcs (generated) ─────────────────────────────────
-// A glow with 1–5 concentric rings radiating out — light returning. Origin,
-// ring count, spacing, stroke widths and opacities all seeded per cover.
-// Fewer rings → thicker bands: 1–2 rings target the decade ribbon's 38–58u
-// scale, and each extra ring steps the range down toward fine lines.
-const RING_WIDTH_RANGES: Array<[number, number]> = [
-  [38, 58], // 1 ring
-  [18, 32], // 2 rings
-  [8, 16],  // 3 rings
-  [4, 9],   // 4 rings
-  [1.6, 4], // 5 rings
+// Light returning: concentric rings radiating from a source at or just past
+// one corner (never the bottom-left, where the label sits), wide enough that
+// the arcs sweep across the whole cover. A broad glow sits at the source and
+// a softer wash of the second tint fills the far side. Corner, ring count,
+// spacing, stroke widths and opacities all seeded per cover.
+const ECHO_SOURCES: Array<{ x: [number, number]; y: [number, number] }> = [
+  { x: [150, 215], y: [-20, 40] },  // top right
+  { x: [-15, 50], y: [-20, 30] },   // top left
+  { x: [160, 220], y: [120, 190] }, // bottom right
+  { x: [175, 225], y: [50, 110] },  // right
 ];
 
 interface EchoRing { r: number; sw: number; op: number }
 
 function genEcho(rnd: () => number): { cx: number; cy: number; glowR: number; rings: EchoRing[] } {
-  const cx = lerp(rnd, 48, 152);
-  const cy = lerp(rnd, 66, 152);
-  const count = 1 + Math.floor(rnd() * 5); // 1–5
-  const [wMin, wMax] = RING_WIDTH_RANGES[count - 1];
+  const source = ECHO_SOURCES[Math.floor(rnd() * ECHO_SOURCES.length)];
+  const cx = lerp(rnd, source.x[0], source.x[1]);
+  const cy = lerp(rnd, source.y[0], source.y[1]);
+  // Reach the far corner, so the outer arcs cross the whole square.
+  const reach = Math.hypot(Math.max(cx, 200 - cx), Math.max(cy, 200 - cy));
+  const count = 3 + Math.floor(rnd() * 5); // 3–7
   const rings: EchoRing[] = [];
-  // Track the outer edge of the previous ring so fat bands never overlap.
-  let edge = lerp(rnd, 10, 26);
+  let edge = lerp(rnd, 12, 30);
+  const step = (reach - edge) / count;
+  // Widths vary widely within a cover: hairlines beside broad bands, and
+  // rings may overlap. One ring is always broad, so no cover is all fine lines.
+  const broadAt = Math.floor(rnd() * count);
   for (let i = 0; i < count; i++) {
-    const sw = lerp(rnd, wMin, wMax);
+    const broad = i === broadAt || rnd() < 0.35;
+    const sw = broad ? lerp(rnd, step * 0.55, step * 1.05) : lerp(rnd, 1.5, Math.max(2, step * 0.22));
     const r = edge + sw / 2;
-    rings.push({ r, sw, op: Math.max(0.1, lerp(rnd, 0.34, 0.5) - i * 0.07) });
-    edge = r + sw / 2 + lerp(rnd, 10, 24);
+    // Thin lines need more opacity to read; broad bands less, to stay soft.
+    const op = broad ? lerp(rnd, 0.38, 0.6) : lerp(rnd, 0.55, 0.85);
+    rings.push({ r, sw, op: Math.max(0.22, op - i * 0.03) });
+    // About a third of rings overlap the last (screen blend brightens the
+    // overlap); the radius still always grows outward.
+    const gap = rnd() < 0.35 ? -lerp(rnd, step * 0.1, step * 0.6) : lerp(rnd, step * 0.12, step * 0.55);
+    edge = Math.max(r + 2, r + sw / 2 + gap);
   }
-  return { cx, cy, glowR: lerp(rnd, 48, 78), rings };
+  // Overlaps and broad bands change how far the set reaches: scale it so
+  // the outer ring always crosses the cover to (about) the far corner.
+  const last = rings[rings.length - 1];
+  const scale = (reach * lerp(rnd, 0.88, 1.05)) / (last.r + last.sw / 2);
+  for (const ring of rings) { ring.r *= scale; ring.sw = Math.max(1.5, ring.sw * scale); }
+  return { cx, cy, glowR: lerp(rnd, 95, 140), rings };
 }
 
-// ─── Decade: aurora ribbon (generated) ─────────────────────────────────
-// The sweeping band's waveform and thickness are seeded per cover; thickness
-// never drops below the original hand-tuned 38 units so the ribbon stays
-// substantial. The numeral stays fixed and readable.
-function genRibbon(rnd: () => number): { main: string; cross: string } {
-  const t = lerp(rnd, 38, 58);
-  const y0 = lerp(rnd, 118, 168);           // left anchor
-  const y1 = lerp(rnd, 72, 126);            // right anchor
-  const c1y = y0 - lerp(rnd, 28, 66);       // first control: rise
-  const c2y = y1 + lerp(rnd, 30, 84);       // second control: dip
-  const main = `M-10 ${y0} C 44 ${c1y}, 118 ${c2y}, 210 ${y1} L 210 ${y1 + t} C 118 ${c2y + t}, 44 ${c1y + t}, -10 ${y0 + t} Z`;
-  // Thin counter-band recrossing the glyph at low opacity.
-  const ct = lerp(rnd, 12, 20);
-  const cy0 = lerp(rnd, 100, 128);
-  const cy1 = lerp(rnd, 112, 146);
-  const cc1 = cy0 + lerp(rnd, 24, 48);
-  const cc2 = cy1 - lerp(rnd, 28, 52);
-  const cross = `M-10 ${cy0} C 52 ${cc1}, 128 ${cc2}, 210 ${cy1} L 210 ${cy1 + ct} C 128 ${cc2 + ct}, 52 ${cc1 + ct}, -10 ${cy0 + ct} Z`;
-  return { main, cross };
+// ─── Decade: aurora ribbons (generated) ────────────────────────────────
+// 2–3 sweeping ribbons whose width and curve vary widely: one broad band
+// (it can be wider than the cover is tall, washing most of it) and one or
+// two narrower ones, from hairline streaks to wide bands. Each may taper,
+// wider at one end, and arcs gently or steeply. A thin one may recross the
+// numeral at low opacity, so the numeral sits *in* the aurora; the rest lie
+// under it. All seeded per cover; the numeral stays fixed and readable.
+interface Ribbon { d: string; broad: boolean; over: boolean }
+
+function ribbonPath(rnd: () => number, t0: number, t1: number): string {
+  const y0 = lerp(rnd, -30, 200 - t0 * 0.4);  // left anchor (top edge)
+  const y1 = lerp(rnd, -30, 200 - t1 * 0.4);  // right anchor
+  const bend = lerp(rnd, 20, 150);            // how far the curve swings
+  const c1x = lerp(rnd, 20, 90);
+  const c2x = lerp(rnd, 110, 180);
+  const c1y = y0 - bend * lerp(rnd, 0.3, 1);
+  const c2y = y1 + bend * lerp(rnd, 0.3, 1) * (rnd() < 0.5 ? 1 : -0.4);
+  const b0 = t0, b1 = t1;
+  const bc1 = t0 * 0.7 + t1 * 0.3, bc2 = t0 * 0.3 + t1 * 0.7;
+  return `M-10 ${y0} C ${c1x} ${c1y}, ${c2x} ${c2y}, 210 ${y1} `
+    + `L 210 ${y1 + b1} C ${c2x} ${c2y + bc2}, ${c1x} ${c1y + bc1}, -10 ${y0 + b0} Z`;
+}
+
+function genRibbons(rnd: () => number): Ribbon[] {
+  const count = 2 + Math.floor(rnd() * 2); // 2–3
+  const broadAt = Math.floor(rnd() * count);
+  const ribbons: Ribbon[] = [];
+  for (let i = 0; i < count; i++) {
+    const broad = i === broadAt;
+    const width = () => (broad ? lerp(rnd, 60, 240) : rnd() < 0.5 ? lerp(rnd, 4, 22) : lerp(rnd, 22, 80));
+    const t0 = width();
+    const t1 = rnd() < 0.5 ? t0 : width(); // half of them taper
+    ribbons.push({ d: ribbonPath(rnd, t0, t1), broad, over: false });
+  }
+  // The narrowest ribbon may cross over the numeral, faintly.
+  const thin = ribbons.filter(r => !r.broad);
+  if (thin.length && rnd() < 0.6) thin[thin.length - 1].over = true;
+  // Broad first, so narrower ribbons read on top of it.
+  return [...ribbons.filter(r => r.broad), ...ribbons.filter(r => !r.broad)];
 }
 
 interface AuroraCoverProps {
@@ -190,10 +261,38 @@ interface AuroraCoverProps {
    * the numeral printed into the art (e.g. "10's").
    */
   label?: string;
+  /** Decade only: a smaller line under the numeral (a decade-genre mix's style). */
+  sublabel?: string;
+}
+
+/** Widest a line of cover text may run (of 200). */
+const SUBLABEL_MAX_WIDTH = 168;
+/** Rough glyph width of the cover font at 800 weight, as a share of the font size. */
+const GLYPH_WIDTH = 0.54;
+const fitSize = (text: string, max: number) => Math.min(max, SUBLABEL_MAX_WIDTH / (Math.max(1, text.length) * GLYPH_WIDTH));
+
+/**
+ * How the style line under a decade numeral is set: one line at 22, smaller
+ * down to 17 when it is long ("Progressive House"), else two lines split at
+ * the space nearest the middle ("Contemporary Jazz Fusion"). Never squeezed.
+ */
+export function sublabelLayout(text: string): { lines: string[]; fontSize: number } {
+  const one = fitSize(text, 22);
+  const words = text.split(/\s+/).filter(Boolean);
+  if (one >= 17 || words.length < 2) return { lines: [text], fontSize: Math.round(Math.max(one, 12) * 10) / 10 };
+  let best: string[] = [text];
+  let bestLongest = Infinity;
+  for (let i = 1; i < words.length; i++) {
+    const lines = [words.slice(0, i).join(' '), words.slice(i).join(' ')];
+    const longest = Math.max(...lines.map(l => l.length));
+    if (longest < bestLongest) { best = lines; bestLongest = longest; }
+  }
+  const size = Math.min(...best.map(l => fitSize(l, 19)));
+  return { lines: best, fontSize: Math.round(Math.max(size, 12) * 10) / 10 };
 }
 
 /** Absolute-fill cover; parent supplies the rounded, clipped square. */
-export const AuroraCover: React.FC<AuroraCoverProps> = ({ variant, seed, title, label }) => {
+export const AuroraCover: React.FC<AuroraCoverProps> = ({ variant, seed, title, label, sublabel }) => {
   const uid = useId();
   const hash = hashSeed(seed || title || '');
   const flip = (hash & 0x8) !== 0;
@@ -239,18 +338,27 @@ export const AuroraCover: React.FC<AuroraCoverProps> = ({ variant, seed, title, 
             <stop offset="0" stopColor="var(--aurora-cover-night-a)" />
             <stop offset="1" stopColor="var(--aurora-cover-night-b)" />
           </linearGradient>
+          <radialGradient id={`${uid}-sky`} cx="0.5" cy="0.22" r="0.85">
+            <stop offset="0" stopColor={tintB} stopOpacity="0.28" />
+            <stop offset="0.55" stopColor={tintA} stopOpacity="0.12" />
+            <stop offset="1" stopColor={tintA} stopOpacity="0" />
+          </radialGradient>
           {curtains.map((c, i) => (
             <linearGradient key={i} id={`${uid}-c${i}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0" stopColor={i % 2 === 1 ? tintB : tintA} stopOpacity="0.08" />
+              <stop offset="0" stopColor={i % 2 === 1 ? tintB : tintA} stopOpacity="0.16" />
               <stop offset={c.peakAt} stopColor={i % 2 === 1 ? tintB : tintA} stopOpacity={c.peak} />
               <stop offset="1" stopColor={i % 2 === 1 ? tintB : tintA} stopOpacity="0" />
             </linearGradient>
           ))}
         </defs>
         <rect width="200" height="200" fill={`url(#${uid}-night)`} />
-        {curtains.map((c, i) => (
-          <path key={i} d={curtainPath(c)} fill={`url(#${uid}-c${i})`} />
-        ))}
+        {/* The sky the curtains hang in: a soft glow of the tint behind them. */}
+        <rect width="200" height="200" fill={`url(#${uid}-sky)`} />
+        <g style={{ mixBlendMode: 'screen' }}>
+          {curtains.map((c, i) => (
+            <path key={i} d={curtainPath(c)} fill={`url(#${uid}-c${i})`} />
+          ))}
+        </g>
       </>
     );
   } else if (variant === 'rediscover') {
@@ -267,12 +375,18 @@ export const AuroraCover: React.FC<AuroraCoverProps> = ({ variant, seed, title, 
             <stop offset="1" stopColor="var(--aurora-cover-night-b)" />
           </linearGradient>
           <radialGradient id={`${uid}-glow`}>
-            <stop offset="0" stopColor={tintA} stopOpacity="0.55" />
-            <stop offset="0.6" stopColor={tintA} stopOpacity="0.18" />
+            <stop offset="0" stopColor={tintA} stopOpacity="0.8" />
+            <stop offset="0.45" stopColor={tintA} stopOpacity="0.32" />
             <stop offset="1" stopColor={tintA} stopOpacity="0" />
+          </radialGradient>
+          {/* The far side: a soft wash of the second tint, so the cover is lit edge to edge. */}
+          <radialGradient id={`${uid}-wash`} cx={`${(200 - echo.cx) / 200}`} cy={`${(200 - echo.cy) / 200}`} r="0.9">
+            <stop offset="0" stopColor={tintB} stopOpacity="0.26" />
+            <stop offset="1" stopColor={tintB} stopOpacity="0" />
           </radialGradient>
         </defs>
         <rect width="200" height="200" fill={`url(#${uid}-night)`} />
+        <rect width="200" height="200" fill={`url(#${uid}-wash)`} />
         <circle cx={echo.cx} cy={echo.cy} r={echo.glowR} fill={`url(#${uid}-glow)`} />
         {echo.rings.map((ring, i) => (
           <circle
@@ -284,18 +398,19 @@ export const AuroraCover: React.FC<AuroraCoverProps> = ({ variant, seed, title, 
             stroke={i % 2 === 0 ? tintA : tintB}
             strokeWidth={ring.sw}
             opacity={ring.op}
+            style={{ mixBlendMode: 'screen' }}
           />
         ))}
       </>
     );
   } else {
-    // decade — a sweeping ribbon with the numeral printed into the art. One
-    // thin band recrosses the glyph at low opacity so it sits *in* the aurora
+    // decade — 2–3 sweeping ribbons with the numeral printed into the art. A
+    // thin one may recross the glyph at low opacity so it sits *in* the aurora
     // while staying easily readable.
     const p = (auroraSeedVariant(seed, 4) + 1) as 1 | 2 | 3 | 4;
     const tintA = `var(--aurora-cover-disc-${p}a)`;
     const tintB = `var(--aurora-cover-disc-${p}b)`;
-    const ribbon = genRibbon(mulberry32(hash));
+    const ribbons = genRibbons(mulberry32(hash));
     svgBody = (
       <>
         <defs>
@@ -307,24 +422,55 @@ export const AuroraCover: React.FC<AuroraCoverProps> = ({ variant, seed, title, 
             <stop offset="0" stopColor={tintA} stopOpacity="0.5" />
             <stop offset="1" stopColor={tintB} stopOpacity="0.2" />
           </linearGradient>
+          <linearGradient id={`${uid}-band`} x1="1" y1="0" x2="0" y2="0.6">
+            <stop offset="0" stopColor={tintB} stopOpacity="0.62" />
+            <stop offset="1" stopColor={tintA} stopOpacity="0.3" />
+          </linearGradient>
         </defs>
         <rect width="200" height="200" fill={`url(#${uid}-night)`} />
-        <path d={ribbon.main} fill={`url(#${uid}-ribbon)`} />
+        <g style={{ mixBlendMode: 'screen' }}>
+          {ribbons.filter(r => !r.over).map((r, i) => (
+            // The broad band softer, so it washes the cover without drowning the numeral.
+            <path key={i} d={r.d} fill={`url(#${uid}-${r.broad ? 'ribbon' : 'band'})`} opacity={r.broad ? 0.85 : 1} />
+          ))}
+        </g>
         {label && (
           <text
             x="100"
-            y="124"
+            y={sublabel ? (sublabelLayout(sublabel).lines.length > 1 ? 98 : 110) : 124}
             textAnchor="middle"
             fontSize="66"
-            fontWeight="900"
+            // Cal Sans has one weight: 400, never a synthetic bold.
+            fontWeight="400"
             fill="#ffffff"
-            opacity="0.96"
-            style={{ fontFamily: 'inherit', letterSpacing: '-0.02em' }}
+            opacity="0.8"
+            style={{ fontFamily: 'var(--font-display)', letterSpacing: '0.02em' }}
           >
             {label}
           </text>
         )}
-        <path d={ribbon.cross} fill={tintB} opacity="0.16" />
+        {sublabel && (() => {
+          const { lines, fontSize } = sublabelLayout(sublabel);
+          const firstY = lines.length > 1 ? 132 : 150;
+          return (
+            <text
+              x="100"
+              textAnchor="middle"
+              fontSize={fontSize}
+              fontWeight="800"
+              fill="#ffffff"
+              opacity="0.92"
+              style={{ fontFamily: 'inherit' }}
+            >
+              {lines.map((line, i) => (
+                <tspan key={i} x="100" y={firstY + i * fontSize * 1.15}>{line}</tspan>
+              ))}
+            </text>
+          );
+        })()}
+        {ribbons.filter(r => r.over).map((r, i) => (
+          <path key={i} d={r.d} fill={tintB} opacity="0.18" />
+        ))}
       </>
     );
   }
@@ -336,7 +482,8 @@ export const AuroraCover: React.FC<AuroraCoverProps> = ({ variant, seed, title, 
         preserveAspectRatio="none"
         className="absolute inset-0 h-full w-full"
       >
-        <g transform={flip && variant !== 'decade' ? 'scale(-1,1) translate(-200,0)' : undefined}>
+        {/* Mirrored for variety; not the echo arcs, whose source must stay out of the label's corner. */}
+        <g transform={flip && (variant === 'wrapped' || variant === 'favourites') ? 'scale(-1,1) translate(-200,0)' : undefined}>
           {svgBody}
         </g>
       </svg>

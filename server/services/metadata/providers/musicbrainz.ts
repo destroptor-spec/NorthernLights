@@ -4,6 +4,8 @@ import { ProviderError, messageWithCause } from '../errors';
 export interface MbArtist {
   disambiguation?: string;
   area?: { name: string };
+  /** ISO 3166-1 alpha-2 of the artist's country, when MusicBrainz knows it. */
+  country?: string;
   type?: string;
   'life-span'?: { begin?: string; end?: string; ended?: boolean };
   relations?: Array<{

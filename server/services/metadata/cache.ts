@@ -25,6 +25,8 @@ export interface ArtistCacheExtras {
   communityTags?: string | null; // JSON
   listeners?: string | null;
   members?: string | null; // JSON
+  /** ISO 3166-1 alpha-2 (MusicBrainz country, or the area when it is one). */
+  country?: string | null;
 }
 
 // An artist's MusicBrainz id comes from the files (the scanner). Provider
@@ -43,8 +45,8 @@ export async function upsertArtistCache(
   const now = Math.floor(Date.now() / 1000);
   if (updateLastUpdated) {
     await db.query(
-      `INSERT INTO artists (id, name, image_url, artwork_url, bio, mbid, last_updated, disambiguation, area, artist_type, lifespan_begin, lifespan_end, links, genres, community_tags, listeners, members)
-       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      `INSERT INTO artists (id, name, image_url, artwork_url, bio, mbid, last_updated, disambiguation, area, artist_type, lifespan_begin, lifespan_end, links, genres, community_tags, listeners, members, country)
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
        ON CONFLICT (name) DO UPDATE SET
          image_url = COALESCE($2, artists.image_url),
          artwork_url = COALESCE($3, artists.artwork_url),
@@ -60,7 +62,8 @@ export async function upsertArtistCache(
          genres = COALESCE($13, artists.genres),
          community_tags = COALESCE($14, artists.community_tags),
          listeners = COALESCE($15, artists.listeners),
-         members = COALESCE($16, artists.members)`,
+         members = COALESCE($16, artists.members),
+         country = COALESCE($17, artists.country)`,
       [name, imageUrl, extras.artworkUrl ?? null, bio, mbid, now,
        extras.disambiguation ?? null,
        extras.area ?? null,
@@ -71,7 +74,8 @@ export async function upsertArtistCache(
        extras.genres ?? null,
        extras.communityTags ?? null,
        extras.listeners ?? null,
-       extras.members ?? null]
+       extras.members ?? null,
+       extras.country ?? null]
     );
   } else {
     await db.query(

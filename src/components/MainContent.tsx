@@ -7,6 +7,18 @@ import { ListenLink } from './ListenLink';
 import { AlbumDetail, ArtistDetail, PlaylistDetail, LibraryHome, Hub, Playlists, SearchResultsPage } from '../utils/routePrefetch';
 
 const GenreDetail = React.lazy(() => import('./library/GenreDetail').then(module => ({ default: module.GenreDetail })));
+// Genre & style browse (preview; Settings → Appearance).
+const BrowseHome = React.lazy(() => import('./browse/BrowseHome').then(module => ({ default: module.BrowseHome })));
+const BrowseGenrePage = React.lazy(() => import('./browse/BrowseGenrePage').then(module => ({ default: module.BrowseGenrePage })));
+const BrowseStylePage = React.lazy(() => import('./browse/BrowseStylePage').then(module => ({ default: module.BrowseStylePage })));
+const BrowseUnsorted = React.lazy(() => import('./browse/BrowseUnsorted').then(module => ({ default: module.BrowseUnsorted })));
+const TrackRays = React.lazy(() => import('./browse/TrackRays').then(module => ({ default: module.TrackRays })));
+
+/** Library → Genres: Aurora's genres and styles when the preview is on, else the old genre list. */
+const GenresRoute: React.FC = () => {
+  const newBrowse = usePlayerStore(s => s.newBrowseEnabled);
+  return newBrowse ? <BrowseHome /> : <LibraryHome section="genres" />;
+};
 // Exported so App's logged-out invite gate and the routes below share one chunk.
 export const InviteRegister = React.lazy(() => import('./InviteRegister').then(module => ({ default: module.InviteRegister })));
 
@@ -112,8 +124,12 @@ export const MainContent: React.FC = () => {
               <Route path="/library/artist/:artistId" element={<ArtistDetail />} />
               <Route path="/library/albums" element={<LibraryHome section="albums" />} />
               <Route path="/library/album/:albumId" element={<AlbumDetail />} />
-              <Route path="/library/genres" element={<LibraryHome section="genres" />} />
+              <Route path="/library/genres" element={<GenresRoute />} />
               <Route path="/library/genre/:genreId" element={<GenreDetail />} />
+              <Route path="/library/browse/genre/:genre" element={<BrowseGenrePage />} />
+              <Route path="/library/browse/style/:styleId" element={<BrowseStylePage />} />
+              <Route path="/library/browse/unsorted" element={<BrowseUnsorted />} />
+              <Route path="/library/rays/:trackId" element={<TrackRays />} />
               <Route path="/search" element={<SearchResultsPage />} />
               <Route path="/playlists" element={<Playlists />} />
               <Route path="/playlists/:playlistId" element={<PlaylistDetail />} />

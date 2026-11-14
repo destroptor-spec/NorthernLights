@@ -3,12 +3,14 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { usePlayerStore } from '../../store';
 import type { TrackCredit } from '../../store';
+import { CREDIT_ROLE_ORDER } from '../../../shared/trackCredits';
 import {
     Play, Plus, ListPlus, Check,
     ChevronRight, ChevronLeft,
     Search, X, Disc3, Mic2, ListMinus,
-    Heart, Users, ListX,
+    Heart, Users, ListX, Sparkles,
 } from 'lucide-react';
+import { raysPath } from '../../api/browse';
 import {
     ContextMenuButton,
     ContextMenuDivider,
@@ -155,10 +157,7 @@ const FilterableListPanel: React.FC<FilterableListPanelProps> = ({
 // shell as FilterableListPanel but no filter input — credit lists are
 // short by nature and grouping matters more than search.
 
-const CREDITS_ROLE_ORDER = [
-    'performer', 'composer', 'conductor', 'lyricist', 'producer', 'remixer',
-    'arranger', 'engineer', 'mixer', 'dj-mixer', 'writer', 'original-artist',
-] as const;
+const CREDITS_ROLE_ORDER = CREDIT_ROLE_ORDER;
 
 interface CreditsPanelProps {
     isActive: boolean;
@@ -254,6 +253,7 @@ export const TrackContextMenu: React.FC = () => {
     } = usePlayerStore();
 
     const navigate  = useNavigate();
+    const newBrowseEnabled = usePlayerStore(s => s.newBrowseEnabled);
     const menuRef   = useRef<HTMLDivElement>(null);
     const isMobile  = useIsMobile();
     const nav       = useMenuNav();
@@ -481,6 +481,15 @@ export const TrackContextMenu: React.FC = () => {
                             onClick={() => nav.push('credits')}
                             trailingIcon={<ChevronRight size={15} />}
                         />
+
+                        {/* Everything Aurora knows about the track (genre & style preview). */}
+                        {newBrowseEnabled && (
+                            <ContextMenuButton
+                                icon={<Sparkles size={15} />}
+                                label="Aurora rays"
+                                onClick={() => { navigate(raysPath(track.id)); closeContextMenu(); }}
+                            />
+                        )}
 
                         {/* Add to Playlist */}
                         {playlists.length > 0 && (

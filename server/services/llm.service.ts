@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
-import { getSystemSetting } from '../database';
-import { getGenreVocabulary } from './genreMatrix.service';
+import { getSystemSetting, initDB } from '../database';
+import { getStyleVocabulary } from './genreTaxonomy/paths';
+import { MOOD_NAMES } from '../../shared/descriptors';
 
 export async function getLlmConfig() {
   const apiKey = (await getSystemSetting('llmApiKey')) || process.env.LLM_API_KEY || 'dummy-key';
@@ -43,13 +44,42 @@ export interface HubCollection {
   target_genres?: string[];
   banned_genres?: string[];
   target_genre?: string; // Legacy singular field
+  /** Custom playlists only, when asked for: ISO 3166-1 alpha-2 countries the artists are from. */
+  countries?: string[];
+  /** ISO 639-1 languages the songs are sung in. */
+  languages?: string[];
+  /** Release years, inclusive. */
+  year_from?: number;
+  year_to?: number;
+  /** "female" or "male": by the artists' tags. */
+  vocals?: string;
+  /** Moods from MOOD_NAMES (shared/descriptors.ts): a preference, not a filter. */
+  moods?: string[];
+  /** 0 = about a mood, activity or feeling; 1 = about a genre or style. Sets how strictly the playlist keeps to target_genres. */
+  focus?: number;
+  /** How the music should sound, 0–1, on any of the five moods from the sound (shared/audioMoods.ts). */
+  sound_moods?: Partial<Record<'happy' | 'sad' | 'relaxed' | 'aggressive' | 'party' | 'acoustic' | 'instrumental', number>>;
+}
+
+/**
+ * The default OpenAI address with the placeholder key: no AI is set up, so
+ * nothing is asked. Compares the URL's host (a substring check would also
+ * match "api.openai.com.example.net").
+ */
+export function isPlaceholderOpenAi(baseUrl: string, apiKey: string): boolean {
+  if (apiKey !== 'dummy-key') return false;
+  try {
+    return new URL(baseUrl).hostname === 'api.openai.com';
+  } catch {
+    return false;
+  }
 }
 
 export async function generateHubConcepts(
   context: { timeOfDay: string, historySummary: string, count?: number }
 ): Promise<HubCollection[]> {
   const { apiKey, baseUrl, modelName } = await getLlmConfig();
-  if (baseUrl.includes('api.openai.com') && apiKey === 'dummy-key') return [];
+  if (isPlaceholderOpenAi(baseUrl, apiKey)) return [];
 
   const openai = new OpenAI({
     baseURL: baseUrl,
@@ -58,10 +88,10 @@ export async function generateHubConcepts(
 
   const conceptCount = context.count ?? 3;
 
-  // Fetch MBDB vocabulary to constrain LLM genre choices
-  const vocabulary = await getGenreVocabulary();
+  // The library's own genres and styles, so the AI's choices map onto tracks.
+  const vocabulary = await getStyleVocabulary(await initDB());
   const vocabStr = vocabulary.length > 0
-    ? `\nYou MUST only use genre names from this vocabulary for "target_genres" and "banned_genres":\n${vocabulary.join(', ')}\nPrefer specific library-supported genres from the vocabulary over broad root genres. Use broad roots only when no specific vocabulary term fits.\n`
+    ? `\nYou MUST only use names from this list of the listener's genres and styles (most common first) for "target_genres" and "banned_genres":\n${vocabulary.join(', ')}\nPrefer specific styles over the broad genres at the start of the list. Use a broad genre only when no style fits.\n`
     : '';
 
   const prompt = `
@@ -75,6 +105,8 @@ The vector array must precisely match this order: [energy, brightness, percussiv
 - tempo: normalized BPM where 0.0 = 60 BPM (slow), 0.5 = 120 BPM (moderate), 1.0 = 200+ BPM (fast)
 You must also include "target_genres": an array of 2-4 genre names that best match the playlist's mood and concept. Prefer specific, library-supported genre names so the recommendation engine can anchor the playlist locally.
 You must also include "banned_genres": an array of 2-5 genre names that should be ABSOLUTELY EXCLUDED from this playlist. These are genres that clash with the playlist's mood (e.g., a "Club Fever" playlist should ban "rock", "country", "classical").
+You must also include "focus": a number from 0 to 1 for what the playlist is mainly about. 1 = a genre or style ("90s Eurodance" 0.9, "Danish rap" 0.9, "Dinner jazz" 0.7); 0 = a mood, an activity or a feeling, whatever the genre ("Music for coding" 0.1, "Rainy day" 0.2). Both count in "Melancholic indie rock for a rainy day" (0.6). When the request names a genre or style, focus is at least 0.5: the mood then chooses within it. A low focus lets close-sounding music from neighbouring genres in; a high one keeps to the genres.
+You must also include "sound_moods": how the music should sound, on these scales from 0 to 1; include only the ones that matter for this playlist. happy = bright and cheerful; sad = slow, soft, tender or wistful (whatever the lyrics are about; a tender love ballad counts); relaxed = calm and unhurried; aggressive = hard, loud and intense; party = danceable and festive; acoustic = played on real instruments rather than produced electronically (a rock band counts as well as an unplugged guitar; low for electronic music); instrumental = without vocals. Examples: a rainy day {"sad": 0.8, "relaxed": 0.8, "party": 0.1}; music for coding {"relaxed": 0.8, "instrumental": 0.8, "aggressive": 0.1, "party": 0.1}; an acoustic Sunday morning {"relaxed": 0.9, "happy": 0.6, "acoustic": 0.9}; gym metal {"aggressive": 0.9, "relaxed": 0.1}; a 90s dance party {"party": 0.9, "happy": 0.7, "acoustic": 0.1}.
 Only output valid JSON matching this schema:
 {
   "hub_collections": [
@@ -82,8 +114,10 @@ Only output valid JSON matching this schema:
       "section": "Time-of-Day",
       "title": "Deep Work Coding",
       "description": "Driving electronic beats with zero vocals.",
-      "target_genres": ["electronic", "ambient", "techno"],
-      "banned_genres": ["rock", "metal", "country", "classical"],
+      "target_genres": ["Ambient", "Techno", "Downtempo"],
+      "banned_genres": ["Rock", "Heavy Metal", "Country", "Classical"],
+      "focus": 0.2,
+      "sound_moods": { "relaxed": 0.7, "aggressive": 0.1, "party": 0.2 },
       "target_vector": [0.6, 0.3, 0.8, 0.5, 0.9, 0.1, 0.8, 0.7] 
     }
   ]
@@ -111,91 +145,16 @@ Only output valid JSON matching this schema:
   }
 }
 
-export async function categorizeSubGenres(inputs: { subGenre?: string, artist?: string }[], vocabulary?: string[]): Promise<Record<string, string[]>> {
-  const { apiKey, baseUrl, modelName } = await getLlmConfig();
-  if (baseUrl.includes('api.openai.com') && apiKey === 'dummy-key') return {};
-
-  const openai = new OpenAI({
-    baseURL: baseUrl,
-    apiKey: apiKey,
-  });
-
-  const hasVocabulary = vocabulary && vocabulary.length > 0;
-  const vocabularyStr = hasVocabulary
-    ? `\nYou MUST ONLY return genre names from the following vocabulary list. Pick the closest 2-3 matches for each input. Do not invent genre names outside this list.\nVocabulary:\n${vocabulary.join(', ')}\n`
-    : '';
-
-  const prompt = `
-Act as an expert musicologist. I am building a genre ontology and need to map specific artists or obscure sub-genres to genres in my database.
-${vocabularyStr}
-Inputs to categorize:
-${inputs.map((inp, i) => `${i + 1}. ${inp.subGenre ? `Sub-Genre: ${inp.subGenre}` : `Artist: ${inp.artist}`}`).join('\n')}
-
-Rules:
-1. Return ONLY a JSON object where each key is the original input string (the sub-genre or artist name).
-2. The value for each key MUST be an array of EXACTLY 2 OR 3 genre keywords that best encompass the input.
-${hasVocabulary ? `3. You MUST NOT return genre names that do not appear in the vocabulary above. If no exact match exists, return the closest vocabulary terms.\n4. Order the array from most relevant to least relevant.` : `3. Order the array from most relevant to least relevant.`}
-
-Return ONLY valid JSON exactly matching this schema:
-{
-  "mappings": {
-    "swedish melodic death metal": ["metal", "death metal", "rock"],
-    "daft punk": ["electronic", "house", "pop"]
-  }
-}
-`;
-
-  try {
-    const response = await openai.chat.completions.create({
-      model: modelName,
-      messages: [{ role: 'user', content: prompt }]
-    }, { timeout: 120000 }); // 120 second timeout (local LLMs need more time with vocabulary)
-
-    const content = response.choices[0].message.content;
-    if (!content) {
-      console.warn('[LLM Categorization] Empty response received from OpenAI.');
-      return {};
-    }
-
-    const parsed = extractJson(content);
-    if (!parsed || !parsed.mappings) {
-       console.warn('[LLM Categorization] Invalid JSON returned from LLM. Expected {"mappings": {}}', content.slice(0, 200));
-       return {};
-    }
-
-    // Validate that values are arrays of 2-3 strings
-    const validatedMappings: Record<string, string[]> = {};
-    for (const [key, val] of Object.entries(parsed.mappings)) {
-      if (Array.isArray(val) && val.length > 0) {
-        validatedMappings[key] = val.map(String).slice(0, 3);
-      } else {
-        console.warn(`[LLM Categorization] Dropped key "${key}" due to invalid mapping value:`, val);
-      }
-    }
-
-    return validatedMappings;
-  } catch (e: any) {
-    if (e.name === 'AbortError' || e.message?.includes('timeout')) {
-      console.error('[LLM Categorization] Request timed out explicitly.');
-    } else {
-      console.error('[LLM Categorization] Fetching categorization failed', e.message);
-    }
-    return {};
-  }
-}
-
-// Generate a single custom playlist concept based on a free-form user prompt.
-// Returns a single HubCollection that can be passed straight to getHubCollections().
 export async function generateCustomPlaylist(userPrompt: string): Promise<HubCollection | null> {
   const { apiKey, baseUrl, modelName } = await getLlmConfig();
-  if (baseUrl.includes('api.openai.com') && apiKey === 'dummy-key') return null;
+  if (isPlaceholderOpenAi(baseUrl, apiKey)) return null;
 
   const openai = new OpenAI({ baseURL: baseUrl, apiKey });
 
-  // Fetch MBDB vocabulary to constrain LLM genre choices
-  const vocabulary = await getGenreVocabulary();
+  // The library's own genres and styles, so the AI's choices map onto tracks.
+  const vocabulary = await getStyleVocabulary(await initDB());
   const vocabStr = vocabulary.length > 0
-    ? `\nYou MUST only use genre names from this vocabulary for "target_genres" and "banned_genres":\n${vocabulary.join(', ')}\nPrefer specific library-supported genres from the vocabulary over broad root genres. Use broad roots only when no specific vocabulary term fits.\n`
+    ? `\nYou MUST only use names from this list of the listener's genres and styles (most common first) for "target_genres" and "banned_genres":\n${vocabulary.join(', ')}\nPrefer specific styles over the broad genres at the start of the list. Use a broad genre only when no style fits.\n`
     : '';
 
   const prompt = `
@@ -219,14 +178,32 @@ For example: "chill" or "wind-down" → low energy (0.1-0.3), high acousticness 
 You must also include "target_genres": an array of 2-4 genre names that best match the user's request. Prefer specific, library-supported genre names so the recommendation engine can anchor the playlist locally.
 You must also include "banned_genres": an array of 2-5 genre names that should be ABSOLUTELY EXCLUDED from this playlist. These are genres that clash with the playlist's mood.
 
-Only output valid JSON matching this schema exactly:
+The description may be written in any language (for example Danish: "Dansk rap fra 90'erne" means Danish rap from the 1990s). Write the title and description in the language the user wrote in.
+Only when the user asks for where the music is from, the language it is sung in, or when it was released, also include these hard filters (leave them out otherwise; every track must match them):
+- "countries": ISO 3166-1 alpha-2 codes of the countries the artists come from. "Dansk rap", "Danish rap" → ["DK"]; "Nordic pop" → ["DK", "SE", "NO", "FI", "IS"].
+- "languages": ISO 639-1 codes of the languages the songs are sung in. "på dansk", "sung in Danish" → ["da"]. For a nationality ("Dansk rap") give both the country and its language: a track matches either.
+- "year_from" and "year_to": release years, inclusive. "fra 90'erne", "from the 90s" → 1990 and 1999; "after 2010" → year_from 2010 only.
+- "vocals": "female" or "male", only when the user asks for the singer's voice ("med kvindelig vokal", "female singers").
+Also include "moods" when the description has a mood: 1-3 of ${MOOD_NAMES.join(', ')}. They gently favour artists known for that mood; the target_vector still sets the sound.
+You must also include "focus": a number from 0 to 1 for what the playlist is mainly about. 1 = a genre or style ("90s Eurodance" 0.9, "Danish rap" 0.9, "Dinner jazz" 0.7); 0 = a mood, an activity or a feeling, whatever the genre ("Music for coding" 0.1, "Rainy day" 0.2). Both count in "Melancholic indie rock for a rainy day" (0.6). When the request names a genre or style, focus is at least 0.5: the mood then chooses within it. A low focus lets close-sounding music from neighbouring genres in; a high one keeps to the genres.
+You must also include "sound_moods": how the music should sound, on these scales from 0 to 1; include only the ones that matter for this playlist. happy = bright and cheerful; sad = slow, soft, tender or wistful (whatever the lyrics are about; a tender love ballad counts); relaxed = calm and unhurried; aggressive = hard, loud and intense; party = danceable and festive; acoustic = played on real instruments rather than produced electronically (a rock band counts as well as an unplugged guitar; low for electronic music); instrumental = without vocals. Examples: a rainy day {"sad": 0.8, "relaxed": 0.8, "party": 0.1}; music for coding {"relaxed": 0.8, "instrumental": 0.8, "aggressive": 0.1, "party": 0.1}; an acoustic Sunday morning {"relaxed": 0.9, "happy": 0.6, "acoustic": 0.9}; gym metal {"aggressive": 0.9, "relaxed": 0.1}; a 90s dance party {"party": 0.9, "happy": 0.7, "acoustic": 0.1}.
+
+Only output valid JSON matching this schema exactly (countries, languages, year_from, year_to and vocals only when asked for):
 {
   "section": "Custom",
   "title": "A short, catchy title for the playlist",
   "description": "A very short description matching the mood.",
-  "target_genres": ["rock", "indie", "alternative"],
-  "banned_genres": ["classical", "opera", "country"],
-  "target_vector": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+  "target_genres": ["Indie Rock", "Alternative Rock", "Shoegaze"],
+  "banned_genres": ["Classical", "Opera", "Country"],
+  "focus": 0.6,
+  "sound_moods": { "sad": 0.6, "relaxed": 0.7 },
+  "target_vector": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
+  "countries": ["DK"],
+  "languages": ["da"],
+  "year_from": 1990,
+  "year_to": 1999,
+  "vocals": "female",
+  "moods": ["chill"]
 }
 `;
 
@@ -253,5 +230,55 @@ Only output valid JSON matching this schema exactly:
   } catch (err) {
     console.error('LLM Custom Playlist Generation error', err);
     return null;
+  }
+}
+
+/** A theme as the AI sees it in the special-list menu. */
+export interface SpecialMenuEntry { key: string; label: string; kind: string; songs: number; artists: number; describe?: string }
+/** The AI's pick for a special list: a theme from the menu, named. */
+export interface SpecialPick { theme: string; title: string; description: string; target_vector: number[] }
+
+/**
+ * Special lists: the AI picks `count` themes from the menu (by key, all
+ * different, varied in kind) and names each one; the library has already
+ * decided what each theme is and that it can carry it.
+ */
+export async function generateSpecialPicks(
+  menu: SpecialMenuEntry[],
+  count: number,
+  context: { timeOfDay?: string; historySummary?: string } = {},
+): Promise<SpecialPick[]> {
+  if (!menu.length || count <= 0) return [];
+  const { apiKey, baseUrl, modelName } = await getLlmConfig();
+  if (isPlaceholderOpenAi(baseUrl, apiKey)) return [];
+  const openai = new OpenAI({ baseURL: baseUrl, apiKey });
+  const lines = menu.map(m => `- ${m.key} | ${m.label}${m.describe ? ` (${m.describe})` : ''} | ${m.kind} | ${m.songs} songs, ${m.artists} artists`).join('\n');
+  const prompt = `
+You are a Creative Director for a music application. These are themes the listener's own library can carry (key | theme | kind | size):
+${lines}
+${context.timeOfDay ? `The listener's time of day is ${context.timeOfDay}.` : ''}${context.historySummary ? ` Recently played: ${context.historySummary}.` : ''}
+
+Pick exactly ${count} different themes from the list (prefer different kinds, and themes that suit the listener now) and name each as a special playlist: a short, specific, inviting title (e.g. "Trance Horizon", "Danish Rap Commute", "Music for Code") and a one-line description. Do not invent themes; use the keys exactly as written.
+Also give "target_vector", the sound of the playlist as 8 numbers from 0 to 1: [energy, brightness, percussiveness, chromagram, instrumentalness, acousticness, danceability, tempo] (tempo 0 = 60 BPM, 0.5 = 120 BPM, 1 = 200 BPM).
+
+Only output valid JSON:
+{
+  "special_lists": [
+    { "theme": "style:123", "title": "Trance Horizon", "description": "Euphoric, melodic trance for the long way home.", "target_vector": [0.8, 0.7, 0.6, 0.8, 0.6, 0.1, 0.8, 0.6] }
+  ]
+}
+`;
+  try {
+    const response = await openai.chat.completions.create({ model: modelName, messages: [{ role: 'user', content: prompt }] });
+    const parsed = extractJson(response.choices[0].message.content || '');
+    const keys = new Set(menu.map(m => m.key));
+    const seen = new Set<string>();
+    return (Array.isArray(parsed?.special_lists) ? parsed.special_lists : [])
+      .filter((p: any) => p && keys.has(p.theme) && !seen.has(p.theme) && seen.add(p.theme)
+        && typeof p.title === 'string' && Array.isArray(p.target_vector) && p.target_vector.length === 8)
+      .slice(0, count);
+  } catch (err) {
+    console.error('LLM special list error', err);
+    return [];
   }
 }

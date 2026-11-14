@@ -10,6 +10,7 @@ import { useKnownArtistKeys } from '../../hooks/useKnownArtistKeys';
 import { formatDuration, formatTime } from '../../utils/formatTime';
 import { scrollToAlbumTrackTarget } from '../../utils/albumTrackFocus';
 import { buildArtistLinkMap } from '../../utils/artistLinks';
+import { StyleProfileChips } from '../browse/StyleProfileChips';
 import { BackButton } from './BackButton';
 import { useAlbumData } from '../../hooks/useAlbumData';
 import { LoveButton } from '../LoveButton';
@@ -981,6 +982,8 @@ export const AlbumDetail: React.FC = () => {
                             </>
                         )}
                     </div>
+
+                    <StyleProfileChips kind="album" id={albumId} className="mb-3 justify-center md:justify-start" />
 
                     <div className="mt-2 flex flex-wrap justify-center md:justify-start gap-3 w-full md:w-auto">
                         <button

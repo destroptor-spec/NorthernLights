@@ -4,9 +4,13 @@ import {
   getSystemSetting,
   getUserRecentTracks,
   getUserSetting,
+  initDB,
 } from '../database';
-import { generateCustomPlaylist, generateHubConcepts, HubCollection } from './llm.service';
+import { generateCustomPlaylist, generateHubConcepts, generateSpecialPicks, HubCollection } from './llm.service';
+import { buildThemeMenu, conceptForTheme, menuForAi, recentSpecialThemes, rememberSpecialThemes } from './specialLists.service';
+import { normalizeHubPlaylistCount, specialListCount } from '../../shared/hubPlaylists';
 import { getHubCollections } from './recommendation.service';
+import { ThinRequestError } from './aiPlaylistSupport';
 import { publishApiV1Event } from './apiV1Events.service';
 
 type LlmVetoMode = 'hard' | 'adaptive';
@@ -43,7 +47,6 @@ export async function getLlmPlaylistSettings(userId: string): Promise<{
   llmGenreCohesion: number;
   llmDiscoveryBias: number;
   llmArtistSpread: number;
-  genrePenaltyCurve: number;
   llmRecoveryStrength: number;
   llmAdjacentReach: number;
   llmTracksPerPlaylist: number;
@@ -54,7 +57,6 @@ export async function getLlmPlaylistSettings(userId: string): Promise<{
   const legacyGenreBlendRaw = genreCohesionRaw === null ? await getUserSetting(userId, 'genreBlendWeight') : null;
   const discoveryBiasRaw = await getUserSetting(userId, 'llmDiscoveryBias');
   const artistSpreadRaw = await getUserSetting(userId, 'llmArtistSpread');
-  const penaltyCurveRaw = await getUserSetting(userId, 'genrePenaltyCurve');
   const recoveryStrengthRaw = await getUserSetting(userId, 'llmRecoveryStrength');
   const adjacentReachRaw = await getUserSetting(userId, 'llmAdjacentReach');
   const tracksPerRaw = await getUserSetting(userId, 'llmTracksPerPlaylist');
@@ -65,7 +67,6 @@ export async function getLlmPlaylistSettings(userId: string): Promise<{
     llmGenreCohesion: genreCohesionRaw !== null ? Number(genreCohesionRaw) : (legacyGenreBlendRaw !== null ? Number(legacyGenreBlendRaw) : 50),
     llmDiscoveryBias: discoveryBiasRaw !== null ? Number(discoveryBiasRaw) : 45,
     llmArtistSpread: artistSpreadRaw !== null ? Number(artistSpreadRaw) : 70,
-    genrePenaltyCurve: penaltyCurveRaw !== null ? Number(penaltyCurveRaw) : 50,
     llmRecoveryStrength: recoveryStrengthRaw !== null ? Number(recoveryStrengthRaw) : 50,
     llmAdjacentReach: adjacentReachRaw !== null ? Number(adjacentReachRaw) : 50,
     llmTracksPerPlaylist: tracksPerRaw !== null ? Number(tracksPerRaw) : 10,
@@ -108,8 +109,8 @@ export async function runLlmHubRegeneration(
       return { skipped: true, reason: 'Hub generation schedule is Manual Only' };
     }
 
-    const llmPlaylistCountRaw = await getUserSetting(userId, 'llmPlaylistCount');
-    const llmPlaylistCount = llmPlaylistCountRaw ? Number(llmPlaylistCountRaw) : 3;
+    // 2, 3, 6 or 9 playlists, of which up to 1, 1, 2 or 3 are special lists.
+    const llmPlaylistCount = normalizeHubPlaylistCount(await getUserSetting(userId, 'llmPlaylistCount') ?? 3);
 
     if (!opts.force && intervalMs !== null) {
       const hubStats = getHubPlaylistStats(await getPlaylists(userId));
@@ -122,11 +123,9 @@ export async function runLlmHubRegeneration(
       }
     }
 
-    const cleanupAgeMs = opts.force ? 0 : (intervalMs ?? 0);
-    const deletedCount = await deleteOldLlmPlaylists(cleanupAgeMs, userId);
-    if (deletedCount && deletedCount > 0) {
-      console.log(`[LLM Hub] ${opts.force ? 'Reset' : 'Cleaned up'} ${deletedCount} transient hub playlist(s) for user ${userId}`);
-    }
+    // The old Hub playlists go once new ones are made: when the AI does not
+    // answer, the rail keeps what it had instead of going empty.
+    const startedAt = Date.now();
 
     const recentTracks = await getUserRecentTracks(userId, 10);
     const historySummary = recentTracks.map((track: any) => `${track.title} by ${track.artist}`).join(', ');
@@ -137,6 +136,35 @@ export async function runLlmHubRegeneration(
     let validConcepts: HubCollection[] = [];
     let attempts = 0;
     const maxAttempts = 3;
+
+    // Special lists first: themes this library can carry, picked and named by
+    // the AI. A pick that fails its dry run gives way to a spare pick; slots
+    // no special list fills go to general playlists.
+    const specialsWanted = specialListCount(llmPlaylistCount);
+    const specialConcepts = await pickSpecialConcepts(userId, specialsWanted, hubSettings.llmTracksPerPlaylist, { timeOfDay, historySummary });
+    const generalWanted = llmPlaylistCount - Math.min(specialsWanted, specialConcepts.length);
+    const generalFirst = generalWanted > 0 ? await generateHubConcepts({ timeOfDay, historySummary, count: generalWanted }) : [];
+    // One rail: general and special lists alternate.
+    const firstSpecials = specialConcepts.slice(0, specialsWanted);
+    const spares = specialConcepts.slice(specialsWanted);
+    const mixed: HubCollection[] = [];
+    for (let i = 0; i < Math.max(generalFirst.length, firstSpecials.length); i++) {
+      if (generalFirst[i]) mixed.push(generalFirst[i]);
+      if (firstSpecials[i]) mixed.push(firstSpecials[i]);
+    }
+    if (mixed.length > 0) {
+      await getHubCollections(mixed, userId, { ...hubSettings, llmGenerationSource: 'hub' });
+      validConcepts.push(...mixed.filter((concept) => !(concept as any).dropped));
+    }
+    // Specials that were not made: spare picks, one at a time.
+    let specialsMade = validConcepts.filter((c) => (c as any).special).length;
+    for (const spare of spares) {
+      if (specialsMade >= Math.min(specialsWanted, firstSpecials.length)) break;
+      await getHubCollections([spare], userId, { ...hubSettings, llmGenerationSource: 'hub' });
+      if (!(spare as any).dropped) { validConcepts.push(spare); specialsMade++; }
+    }
+    await rememberSpecialThemes(userId, validConcepts.map((c) => (c as any).special?.key).filter(Boolean));
+    attempts = 1;
 
     while (validConcepts.length < llmPlaylistCount && attempts < maxAttempts) {
       const needed = llmPlaylistCount - validConcepts.length;
@@ -160,12 +188,58 @@ export async function runLlmHubRegeneration(
     }
 
     console.log(`[LLM Hub] Generated and saved ${validConcepts.length} playlist(s) for user ${userId} (${opts.source || 'manual'}, ${schedule})`);
-    if (validConcepts.length > 0 || (deletedCount || 0) > 0) {
+    let deletedCount = 0;
+    if (validConcepts.length > 0) {
+      // Forced: every Hub playlist from before this refresh; scheduled: the stale ones.
+      const cleanupAgeMs = opts.force ? Date.now() - startedAt : (intervalMs ?? 0);
+      deletedCount = (await deleteOldLlmPlaylists(cleanupAgeMs, userId)) || 0;
+      if (deletedCount > 0) {
+        console.log(`[LLM Hub] ${opts.force ? 'Reset' : 'Cleaned up'} ${deletedCount} transient hub playlist(s) for user ${userId}`);
+      }
+    } else {
+      console.warn(`[LLM Hub] Nothing made; keeping the existing Hub playlists for user ${userId}.`);
+    }
+    if (validConcepts.length > 0 || deletedCount > 0) {
       publishApiV1Event(userId, 'playlist.changed', { action: 'hubRegenerated', source: opts.source || 'manual' });
     }
     return { generated: validConcepts.length, schedule };
   } finally {
     runningRefreshes.delete(userId);
+  }
+}
+
+/** Spare picks asked for beyond the special lists wanted, for picks that fail their dry run. */
+const SPECIAL_SPARES = 2;
+
+/**
+ * Special-list concepts for the Hub: the menu of themes this library can
+ * carry (without those made in the last 14 days), the AI's picks from it
+ * (the ones wanted plus spares), each as a concept the engine builds only
+ * from the theme's tracks. Empty without themes or an AI answer.
+ */
+async function pickSpecialConcepts(
+  userId: string,
+  wanted: number,
+  playlistLength: number,
+  context: { timeOfDay: string; historySummary: string },
+) {
+  if (wanted <= 0) return [] as HubCollection[];
+  try {
+    const db = await initDB();
+    const recent = await recentSpecialThemes(userId);
+    // Recent themes stay off the menu while enough others remain; newest first.
+    const recentKeys = [...recent].sort((a, b) => b.at - a.at).map((e) => e.theme);
+    const menu = await buildThemeMenu(db, { userId, playlistLength, recentKeys, keepAtLeast: wanted });
+    if (!menu.length) {
+      console.log(`[LLM Hub] No special lists: no theme in this library has ${playlistLength * 2} strong songs from ${Math.ceil(playlistLength / 2)} artists (or all were made recently).`);
+      return [] as HubCollection[];
+    }
+    const picks = await generateSpecialPicks(menuForAi(menu), Math.min(menu.length, wanted + SPECIAL_SPARES), context);
+    // generateSpecialPicks keeps only picks with 8 numbers in target_vector.
+    return picks.map((pick) => conceptForTheme(menu.find((t) => t.key === pick.theme)!, pick) as unknown as HubCollection);
+  } catch (error: any) {
+    console.warn(`[LLM Hub] Special lists skipped: ${error?.message || error}`);
+    return [] as HubCollection[];
   }
 }
 
@@ -175,7 +249,9 @@ const CUSTOM_PLAYLIST_ATTEMPTS = 3;
  * Turn a listener's prompt into a saved custom playlist. The LLM's concept can
  * fail outright or name genres the library can't match (the matcher marks it
  * `dropped`), so this retries up to three times with a short backoff. Returns
- * the newly saved collection, or null when every attempt failed.
+ * the newly saved collection, or null when every attempt failed. Throws
+ * ThinRequestError when the request names a theme the library has too little
+ * of ("Your library has 6 Hip Hop tracks from Denmark from the 1990s…").
  */
 export async function generateCustomHubPlaylist(
   userId: string,
@@ -194,6 +270,8 @@ export async function generateCustomHubPlaylist(
         ...(opts.tracksPerPlaylist ? { llmTracksPerPlaylist: opts.tracksPerPlaylist } : {}),
         llmGenerationSource: 'custom',
       });
+      // The library can't carry what was asked for: say so, don't retry.
+      if ((concept as any).dropReason === 'too-thin' && (concept as any).support) throw new ThinRequestError((concept as any).support);
       const playlist = saved.find((candidate: any) => candidate.isLlmGenerated && candidate.id && !existingIds.has(candidate.id));
       if (playlist && !(concept as any).dropped) return playlist;
       console.warn(`[LLM Hub] Custom concept failed/dropped on attempt ${attempt}. Retrying...`);

@@ -104,3 +104,39 @@ test('a late response from an earlier tab visit cannot replace the latest quota'
   expect(screen.queryByText('12')).toBeNull();
   expect(screen.getByText('25')).toBeTruthy();
 });
+
+const creditStatus = (over: Record<string, unknown>) => ({
+  state: 'running', eligible: 30000, lookedUp: 12345, withCredits: 8021, withoutCredits: 4000, failed: 324,
+  creditRows: 40210, remaining: 17655, resumesAt: null, pauseReason: null, lastFinishedAt: null, ...over,
+});
+
+test('the Genius tab only shows the server-side credit import: progress while it runs, no button to start it', async () => {
+  usePlayerStore.setState({ geniusApiKey: 'genius-key' } as never);
+  fetchMock.mockImplementation(async url => url === '/api/library/credits/import/genius'
+    ? response(creditStatus({})) : response({}));
+  render(<MetadataTab />);
+  fireEvent.click(screen.getByRole('button', { name: 'Genius' }));
+  await screen.findByText(/Importing in the background\. 12,345 of 30,000 tracks looked up · 8,021 with credits/);
+  expect(screen.getByRole('progressbar', { name: 'Producer and writer credits: tracks looked up' }).getAttribute('aria-valuenow')).toBe('41');
+  expect(screen.getByText(/17,655 to go/)).toBeTruthy();
+  expect(screen.queryByRole('button', { name: /Import credits/ })).toBeNull();
+  // It only ever reads the import; nothing is started from here.
+  expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'POST')).toBe(false);
+});
+
+test('a paused or finished MusicBrainz import says so in words', async () => {
+  usePlayerStore.setState({ musicBrainzEnabled: true, musicBrainzConnected: true } as never);
+  let status = creditStatus({ state: 'paused', pauseReason: 'rate-limit', resumesAt: new Date(2026, 10, 10, 14, 30).getTime() });
+  fetchMock.mockImplementation(async url => url === '/api/library/credits/import/musicbrainz' ? response(status) : response({}));
+  const { unmount } = render(<MetadataTab />);
+  fireEvent.click(screen.getByRole('button', { name: 'MusicBrainz' }));
+  const at = new Date(Number(status.resumesAt)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  await screen.findByText(new RegExp(`Paused: MusicBrainz asked Aurora to slow down\\. Carries on at ${at}\\.`));
+  unmount();
+
+  status = creditStatus({ state: 'idle', lookedUp: 30000, withCredits: 9100, remaining: 0 });
+  render(<MetadataTab />);
+  fireEvent.click(screen.getByRole('button', { name: 'MusicBrainz' }));
+  await screen.findByText(/Every track is looked up: 9,100 of 30,000 have credits \(40,210 credit rows\)\. New tracks are looked up as they arrive\./);
+  expect(screen.queryByRole('progressbar', { name: /Role credits/ })).toBeNull();
+});

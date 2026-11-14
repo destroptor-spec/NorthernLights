@@ -1,5 +1,6 @@
 import { PlaybackLoggingSettings } from './PlaybackLoggingSettings';
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState } from 'react';
+import { HUB_PLAYLIST_COUNTS, specialListCount } from '../../../shared/hubPlaylists';
 import { usePlayerStore, type PrebufferPolicy } from '../../store/index';
 import { useNetworkInfo } from '../../hooks/useNetworkInfo';
 import { Speaker } from 'lucide-react';
@@ -41,7 +42,6 @@ export const PlaybackTab: React.FC = () => {
     const llmGenreCohesion = usePlayerStore(state => state.llmGenreCohesion);
     const llmDiscoveryBias = usePlayerStore(state => state.llmDiscoveryBias);
     const llmArtistSpread = usePlayerStore(state => state.llmArtistSpread);
-    const genrePenaltyCurve = usePlayerStore(state => state.genrePenaltyCurve);
     const llmRecoveryStrength = usePlayerStore(state => state.llmRecoveryStrength);
     const llmAdjacentReach = usePlayerStore(state => state.llmAdjacentReach);
     const llmTracksPerPlaylist = usePlayerStore(state => state.llmTracksPerPlaylist);
@@ -104,19 +104,6 @@ export const PlaybackTab: React.FC = () => {
     const sleepRemainingMs = sleepTimerEndsAt ? Math.max(0, sleepTimerEndsAt - sleepNow) : 0;
     const sleepRemainingLabel = `${Math.floor(sleepRemainingMs / 60000)}:${String(Math.floor((sleepRemainingMs % 60000) / 1000)).padStart(2, '0')}`;
     const SLEEP_PRESETS = [15, 30, 45, 60];
-
-    // Live penalty preview computed from current slider values
-    const penaltyPreview = useMemo(() => {
-        const curve = 0.5 + (genrePenaltyCurve / 100) * 1.5;
-        const weight = llmGenreCohesion / 100;
-        const format = (hop: number) => Math.pow(1 + hop, weight * curve).toFixed(2);
-        return {
-            deep: format(0.05),
-            cousin: format(0.20),
-            shareRoot: format(0.50),
-            alien: format(2.0),
-        };
-    }, [genrePenaltyCurve, llmGenreCohesion]);
 
     return (
         <div className="settings-section mb-8">
@@ -578,7 +565,7 @@ export const PlaybackTab: React.FC = () => {
             {playbackTab === 'infinity' && (
                 <div>
                     <p className="text-sm text-[var(--color-text-muted)] mb-6">
-                        These settings control how Infinity Mode picks the next track. They're applied in order: first recent tracks are blocked, then candidates are found by sound similarity, and finally genre distance is penalized.
+                        These settings control how Infinity Mode picks the next track. They're applied in order: first recent tracks are blocked, then candidates are found by sound similarity, and finally tracks that share styles with your queue move up a little.
                     </p>
                     
                     <div className="mb-6">
@@ -609,11 +596,13 @@ export const PlaybackTab: React.FC = () => {
 
                     <div className="mb-6">
                         <label className="flex justify-between text-sm font-medium text-[var(--color-text-primary)] mb-2">
-                            <span>Genre Strictness</span>
+                            <span>Style match</span>
                             <span>{genreStrictness}%</span>
                         </label>
-                        <input type="range" min="0" max="100" value={genreStrictness} onChange={e => setSettings({ genreStrictness: Number(e.target.value) })} className="w-full accent-[var(--color-primary)]" />
-                        <p className="text-xs text-[var(--color-text-muted)] mt-1.5"><strong>Step 3:</strong> Re-ranks the closest-sounding tracks by genre distance from the end of your queue. 0% ignores genre; 100% favors the same genre family. Has no effect when that track has no genre tag.</p>
+                        <input type="range" min="0" max="100" value={genreStrictness} onChange={e => setSettings({ genreStrictness: Number(e.target.value) })} className="w-full accent-[var(--color-primary)]" aria-label="Style match" />
+                        <p className="text-xs text-[var(--color-text-muted)] mt-1.5">
+                            <strong>Step 3:</strong> How much sharing styles with the end of your queue lifts a close-sounding track. 0% ranks by sound alone; 100% lets a track that shares the queue&rsquo;s styles move up past several closer-sounding ones. Changing genre never counts against a track.
+                        </p>
                     </div>
                 </div>
             )}
@@ -631,11 +620,11 @@ export const PlaybackTab: React.FC = () => {
                             onChange={e => setSettings({ llmPlaylistCount: Number(e.target.value) })}
                             className="w-full p-2 rounded-lg border border-[var(--glass-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] focus:outline-none"
                         >
-                            <option value={2}>2 playlists</option>
-                            <option value={3}>3 playlists</option>
-                            <option value={5}>5 playlists</option>
+                            {HUB_PLAYLIST_COUNTS.map(count => (
+                                <option key={count} value={count}>{count} playlists</option>
+                            ))}
                         </select>
-                        <p className="text-xs text-[var(--color-text-muted)] mt-1.5"><strong>Step 1:</strong> How many separate playlists the AI creates. Each has its own theme (e.g., "Evening Chill", "Morning Energy").</p>
+                        <p className="text-xs text-[var(--color-text-muted)] mt-1.5"><strong>Step 1:</strong> How many separate playlists the AI creates. Each has its own theme (e.g., "Evening Chill", "Morning Energy"). Up to {specialListCount(llmPlaylistCount)} of them {specialListCount(llmPlaylistCount) === 1 ? 'is a special list' : 'are special lists'}: a tight theme your library has plenty of, like a style, a style from one country, or a decade, made only when your library can carry it.</p>
                     </div>
 
                     <div className="mb-6">
@@ -659,7 +648,7 @@ export const PlaybackTab: React.FC = () => {
                             <span>{llmGenreCohesion}%</span>
                         </label>
                         <input type="range" min="0" max="100" value={llmGenreCohesion} onChange={e => setSettings({ llmGenreCohesion: Number(e.target.value) })} className="w-full accent-[var(--color-primary)]" />
-                        <p className="text-xs text-[var(--color-text-muted)] mt-1.5"><strong>Step 3:</strong> How tightly playlists stay near the compiled genre path. Low values lean on sound similarity; high values stay closer to the concept's genre family.</p>
+                        <p className="text-xs text-[var(--color-text-muted)] mt-1.5"><strong>Step 3:</strong> How much the playlist's genres and styles count. Low values lean on sound similarity; high values favour tracks that share the concept's styles.</p>
                     </div>
 
                     <div className="mb-6">
@@ -707,7 +696,7 @@ export const PlaybackTab: React.FC = () => {
                             <div>
                                 <p className="text-sm font-medium text-[var(--color-text-primary)]">Advanced Tuning</p>
                                 <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                                    Recovery aggressiveness, adjacent-genre expansion, and raw genre penalty behavior.
+                                    Recovery aggressiveness and adjacent-style expansion.
                                 </p>
                             </div>
                             <button
@@ -730,45 +719,15 @@ export const PlaybackTab: React.FC = () => {
                                     <p className="text-xs text-[var(--color-text-muted)] mt-1.5">How aggressively the engine widens non-genre pools when the concept is weak in your local library.</p>
                                 </div>
 
-                                <div className="mb-6">
+                                <div className="mb-0">
                                     <label className="flex justify-between text-sm font-medium text-[var(--color-text-primary)] mb-2">
                                         <span>Adjacent Reach</span>
                                         <span>{llmAdjacentReach}%</span>
                                     </label>
                                     <input type="range" min="0" max="100" value={llmAdjacentReach} onChange={e => setSettings({ llmAdjacentReach: Number(e.target.value) })} className="w-full accent-[var(--color-primary)]" />
-                                    <p className="text-xs text-[var(--color-text-muted)] mt-1.5">How far the concept compiler may expand into adjacent genres when the exact path is thin.</p>
+                                    <p className="text-xs text-[var(--color-text-muted)] mt-1.5">How far a playlist may reach into neighbouring styles (same genre, or the styles that sound closest) when its own styles are thin in your library.</p>
                                 </div>
 
-                                <div className="mb-0">
-                                    <label className="flex justify-between text-sm font-medium text-[var(--color-text-primary)] mb-2">
-                                        <span>Genre Penalty Curve</span>
-                                        <span>{genrePenaltyCurve}%</span>
-                                    </label>
-                                    <input type="range" min="0" max="100" value={genrePenaltyCurve} onChange={e => setSettings({ genrePenaltyCurve: Number(e.target.value) })} className="w-full accent-[var(--color-primary)]" />
-                                    <p className="text-xs text-[var(--color-text-muted)] mt-1.5">How harshly distant genres are penalized once genre anchoring is active.</p>
-
-                                    <div className="mt-3 p-3 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--glass-border)]">
-                                        <p className="text-xs font-medium text-[var(--color-text-muted)] mb-2">Penalty Preview</p>
-                                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                                            <div className="flex justify-between">
-                                                <span className="text-[var(--color-text-muted)]">Same subgenre</span>
-                                                <span className="font-mono text-[var(--color-text-primary)]">{penaltyPreview.deep}&times;</span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                                <span className="text-[var(--color-text-muted)]">Cousin genre</span>
-                                                <span className="font-mono text-[var(--color-text-primary)]">{penaltyPreview.cousin}&times;</span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                                <span className="text-[var(--color-text-muted)]">Same root genre</span>
-                                                <span className="font-mono text-[var(--color-text-primary)]">{penaltyPreview.shareRoot}&times;</span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                                <span className="text-[var(--color-text-muted)]">Completely different</span>
-                                                <span className="font-mono text-[var(--color-text-primary)]">{penaltyPreview.alien}&times;</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
                             </div>
                         )}
                     </div>

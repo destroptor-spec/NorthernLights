@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
+import { StyleProfileChips } from '../browse/StyleProfileChips';
 import { usePlayerStore } from '../../store/index';
 import { TrackInfo } from '../../utils/fileSystem';
 import { normalizeArtistIdentityKey, parseArtistsForDisplay, trackMatchesArtist } from '../../utils/artistUtils';
@@ -1058,6 +1059,8 @@ export const ArtistDetail: React.FC = () => {
                                 <div className="h-4 w-2/3 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
                             </div>
                         )}
+
+                        <StyleProfileChips kind="artist" id={artistId} className="mt-4" />
 
                         {mergedTags.length > 0 && (
                             <div className="mt-4 flex flex-wrap gap-1.5">

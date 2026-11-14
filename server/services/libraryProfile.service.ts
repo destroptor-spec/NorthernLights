@@ -6,22 +6,12 @@ export interface VectorDimensionProfile {
   p90: number;
 }
 
-export interface GenreHealth {
-  path: string;
-  root: string;
-  trackCount: number;
-  artistCount: number;
-  songCount: number;
-  health: number;
-}
-
 export interface LibraryProfile {
   totalTracks: number;
   analyzedTracks: number;
   artistCount: number;
   artistEntropy: number;
   vector: VectorDimensionProfile[];
-  genreHealth: Map<string, GenreHealth>;
 }
 
 const PROFILE_TTL_MS = 5 * 60 * 1000;
@@ -34,17 +24,6 @@ function clamp01(value: number): number {
 function normalizeVectorText(value: unknown): number {
   const n = Number(value);
   return Number.isFinite(n) ? clamp01(n) : 0.5;
-}
-
-function scoreHealth(trackCount: number, artistCount: number, songCount: number): number {
-  const trackScore = Math.min(1, trackCount / 80);
-  const artistScore = Math.min(1, artistCount / 12);
-  const songScore = Math.min(1, songCount / 40);
-  return (trackScore * 0.35) + (artistScore * 0.45) + (songScore * 0.20);
-}
-
-function normalizePath(path: string): string {
-  return path.toLowerCase().trim();
 }
 
 export function adaptVectorToLibrary(vector: number[], profile: LibraryProfile): number[] {
@@ -61,62 +40,36 @@ export function adaptVectorToLibrary(vector: number[], profile: LibraryProfile):
   });
 }
 
-export function getGenreHealth(profile: LibraryProfile, path: string): GenreHealth | null {
-  const normalized = normalizePath(path);
-  return profile.genreHealth.get(normalized) ?? null;
-}
-
-export function getGenreHealthForPrefix(profile: LibraryProfile, path: string): GenreHealth {
-  const normalized = normalizePath(path);
-  const direct = getGenreHealth(profile, normalized);
-  if (direct) return direct;
-
-  let trackCount = 0;
-  const artists = new Set<string>();
-  let songCount = 0;
-  let root = normalized.split('.')[0] || normalized;
-
-  for (const [candidatePath, health] of profile.genreHealth) {
-    if (!candidatePath.startsWith(normalized)) continue;
-    root = health.root || root;
-    trackCount += health.trackCount;
-    songCount += health.songCount;
-    // Artist count is already distinct inside each path. Use a conservative additive cap.
-    for (let i = 0; i < health.artistCount; i++) artists.add(`${candidatePath}:${i}`);
-  }
-
-  const artistCount = artists.size;
-  return {
-    path: normalized,
-    root,
-    trackCount,
-    artistCount,
-    songCount,
-    health: scoreHealth(trackCount, artistCount, songCount),
-  };
-}
-
-export function adaptGenreBlendForHealth(requestedBlend: number, health: GenreHealth | null): number {
-  if (!health) return Math.min(requestedBlend, 0.35);
-  if (health.health >= 0.85) return requestedBlend;
-  if (health.health >= 0.55) return Math.min(requestedBlend, 0.65);
-  if (health.health >= 0.30) return Math.min(requestedBlend, 0.45);
-  return Math.min(requestedBlend, 0.25);
-}
-
 export function clearLibraryProfileCache() {
   cachedProfile = null;
 }
 
+let refreshing: Promise<LibraryProfile> | null = null;
+
+/**
+ * The library profile, cached for 5 minutes. Past that the cached one still
+ * answers at once while a fresh one is computed behind it: on a 95,000-track
+ * test library the profile takes about 7 s, which every AI playlist after a
+ * quiet spell used to wait for (most of it the genre health that only the
+ * pool-era compiler read; gone with it).
+ */
 export async function getLibraryProfile(): Promise<LibraryProfile> {
-  const now = Date.now();
-  if (cachedProfile && cachedProfile.expiresAt > now) {
+  if (cachedProfile) {
+    if (cachedProfile.expiresAt <= Date.now() && !refreshing) {
+      const stale = cachedProfile.value;
+      refreshing = computeLibraryProfile()
+        .catch((error) => { console.warn('[LibraryProfile] refresh failed:', error?.message || error); return stale; })
+        .finally(() => { refreshing = null; });
+    }
     return cachedProfile.value;
   }
+  refreshing ??= computeLibraryProfile().finally(() => { refreshing = null; });
+  return refreshing;
+}
 
-  const genreKeySql = `regexp_replace(lower(trim(COALESCE(canonical_genre.name, t.genre))), '[^[:alnum:]_[:space:]-]', '', 'g')`;
-
-  const [summaryRes, vectorRes, genreRes] = await Promise.all([
+async function computeLibraryProfile(): Promise<LibraryProfile> {
+  const now = Date.now();
+  const [summaryRes, vectorRes] = await Promise.all([
     queryWithRetry(`
       SELECT
         COUNT(*)::int AS total_tracks,
@@ -139,35 +92,6 @@ export async function getLibraryProfile(): Promise<LibraryProfile> {
       FROM track_features
       WHERE acoustic_vector_8d IS NOT NULL
     `),
-    queryWithRetry(`
-      WITH resolved AS (
-        SELECT
-          COALESCE(sm.path, gm.path) AS path,
-          lower(trim(COALESCE(t.artist, 'unknown-artist'))) AS artist_key,
-          COALESCE(NULLIF(t.mb_recording_id, ''), lower(trim(COALESCE(t.artist, ''))) || ':' || lower(trim(COALESCE(t.title, '')))) AS song_key
-        FROM tracks t
-        JOIN track_features tf ON t.id = tf.track_id AND tf.acoustic_vector_8d IS NOT NULL
-        LEFT JOIN genres canonical_genre ON canonical_genre.id = t.genre_id
-        LEFT JOIN subgenre_mappings sm ON ${genreKeySql} = sm.sub_genre
-        LEFT JOIN LATERAL (
-          (SELECT path FROM genre_tree_paths WHERE LOWER(genre_name) = ${genreKeySql} LIMIT 1)
-          UNION ALL
-          (SELECT gtp.path FROM genre_tree_paths gtp
-           JOIN genre_alias ga ON gtp.genre_id = ga.genre
-           WHERE LOWER(ga.name) = ${genreKeySql} LIMIT 1)
-          LIMIT 1
-        ) gm ON true
-        WHERE COALESCE(sm.path, gm.path) IS NOT NULL
-      )
-      SELECT
-        lower(path) AS path,
-        split_part(lower(path), '.', 1) AS root,
-        COUNT(*)::int AS track_count,
-        COUNT(DISTINCT artist_key)::int AS artist_count,
-        COUNT(DISTINCT song_key)::int AS song_count
-      FROM resolved
-      GROUP BY lower(path), split_part(lower(path), '.', 1)
-    `),
   ]);
 
   const summary = summaryRes.rows[0] ?? {};
@@ -181,22 +105,6 @@ export async function getLibraryProfile(): Promise<LibraryProfile> {
     };
   });
 
-  const genreHealth = new Map<string, GenreHealth>();
-  for (const row of genreRes.rows) {
-    const trackCount = Number(row.track_count) || 0;
-    const artistCount = Number(row.artist_count) || 0;
-    const songCount = Number(row.song_count) || 0;
-    const path = normalizePath(row.path);
-    genreHealth.set(path, {
-      path,
-      root: normalizePath(row.root || path.split('.')[0] || path),
-      trackCount,
-      artistCount,
-      songCount,
-      health: scoreHealth(trackCount, artistCount, songCount),
-    });
-  }
-
   const totalTracks = Number(summary.total_tracks) || 0;
   const artistCount = Number(summary.artist_count) || 0;
   const artistEntropy = totalTracks > 0 && artistCount > 0
@@ -209,7 +117,6 @@ export async function getLibraryProfile(): Promise<LibraryProfile> {
     artistCount,
     artistEntropy,
     vector,
-    genreHealth,
   };
 
   cachedProfile = { value: profile, expiresAt: now + PROFILE_TTL_MS };
