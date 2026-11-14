@@ -4,13 +4,14 @@ Every step needed to take branch `genre-engine-next` to prod, in one place. Each
 
 | Phase | What it changes on prod | Status |
 | --- | --- | --- |
-| 0 | Python 3.14 venv, new analysis models, `track_style_scores`, full re-analysis | Built (`038e736`), not deployed |
-| 1 | Genre list, MusicBrainz genre snapshot, tag mapping, artist-tag split, Last.fm backfill, genre review | Built (1a: taxonomy, snapshot, tag mapping, artist tags, backfill; 1b: review queue), not deployed |
-| 2 | Fusion (genres and styles per track, album and artist profiles), new Browse behind a setting, "Aurora rays from {title}" | In progress: fusion, Browse API and Browse (preview switch) built, not deployed |
-| 3 | Audio, KNN and Last.fm evidence; style centroids | Not built |
-| 4 | Engine scoring; Genre Matrix and MBDB import retired | Not built |
+| 0 | Python 3.14 venv, new analysis models (Discogs-EffNet and its classifiers), `track_style_scores`, full re-analysis | Built, not deployed |
+| 1 | Genre list, MusicBrainz genre snapshot, tag mapping, artist-tag split, artist-tag backfill, genre review | Built, not deployed |
+| 2 | Fusion (genres and styles per track, album and artist profiles), new Browse behind a setting, "Aurora rays from {title}" | Built, not deployed |
+| 3 | Style centroids, fusion v2, places, languages, eras, vocals and moods (`track_origin`); automatic credit imports | Built, not deployed |
+| 4 | The styles engine for everyone; track genres from the fused genres and styles; Genre Matrix and MBDB import retired | Built, not deployed |
+| 5 | AI playlists on one score, moods from the sound (`track_moods`), special lists, the support check, the Discover rail by style and original year, artist radio on the score, large-library fixes | Built, not deployed (the daylist and mood-led requests stay off: issues #233, #234) |
 
-Prod facts these steps rely on: host `10.10.0.12`, app in `~/NorthernLights`, deployed with `scripts/deploy-prod.sh` (leaves the checkout detached, keeps `dist-prev` for `--rollback`, and exports the database first whenever a deploy changes the schema).
+Prod facts these steps rely on: the prod host (`<prod-user>@<prod-host>` below; see your own deploy notes), app in `~/NorthernLights`, deployed with `scripts/deploy-prod.sh` (leaves the checkout detached, keeps `dist-prev` for `--rollback`, and exports the database first whenever a deploy changes the schema).
 
 ## Before deploying
 
@@ -25,7 +26,7 @@ Prod facts these steps rely on: host `10.10.0.12`, app in `~/NorthernLights`, de
 `deploy-prod.sh` does not manage `.venv`. The current Essentia build needs Python 3.14. The old analysis code also runs on it (outputs verified identical), so this step is safe ahead of the deploy. Do not run it while an analysis is in progress, since analysis workers use `.venv`.
 
 ```bash
-ssh andreas@10.10.0.12 'cd ~/NorthernLights && export PATH="$HOME/.local/bin:$PATH" \
+ssh <prod-user>@<prod-host> 'cd ~/NorthernLights && export PATH="$HOME/.local/bin:$PATH" \
   && uv venv --clear --python 3.14 .venv \
   && uv pip install --python .venv/bin/python "essentia-tensorflow==2.1b6.dev1438" \
   && .venv/bin/python -c "import sys, importlib.metadata as m; print(sys.version.split()[0], m.version(\"essentia-tensorflow\"))"'
@@ -36,7 +37,7 @@ Expected output: `3.14.x 2.1b6.dev1438`.
 ### 2. Deploy
 
 ```bash
-ssh andreas@10.10.0.12 'bash -s -- main' < scripts/deploy-prod.sh
+ssh <prod-user>@<prod-host> 'bash -s -- main' < scripts/deploy-prod.sh
 ```
 
 The deploy adds the `track_style_scores` table at startup (`CREATE TABLE IF NOT EXISTS`), so the script exports the database first (label `pre-<commit>`).
@@ -59,7 +60,7 @@ On dev, 30,700 tracks take about 1.5 h at 6 workers; prod depends on its CPU. Wh
 ### 5. Verify
 
 ```bash
-ssh andreas@10.10.0.12 'cd ~/NorthernLights && eval "$(grep -E "^(DB_USER|DB_NAME|DB_CONTAINER_NAME)=" .env)" \
+ssh <prod-user>@<prod-host> 'cd ~/NorthernLights && eval "$(grep -E "^(DB_USER|DB_NAME|DB_CONTAINER_NAME)=" .env)" \
   && podman exec -i "${DB_CONTAINER_NAME:-music-postgres}" psql -U "$DB_USER" -d "$DB_NAME"' <<'SQL'
 SELECT feature_version, is_simulated, count(*) FROM track_features GROUP BY 1, 2 ORDER BY 1, 2;
 SELECT count(*) AS style_rows, min(analyzed_at), max(analyzed_at) FROM track_style_scores;
@@ -76,7 +77,7 @@ SQL
 
 ### Rollback
 
-`ssh andreas@10.10.0.12 'bash -s -- --rollback' < scripts/deploy-prod.sh` restores the previous build. No database restore is needed: the old code treats version-3 rows as analysed, its Infinity keeps versions apart, it ignores `track_style_scores`, and it runs on the Python 3.14 venv. Rolling forward again resumes the re-analysis where it stopped.
+`ssh <prod-user>@<prod-host> 'bash -s -- --rollback' < scripts/deploy-prod.sh` restores the previous build. No database restore is needed: the old code treats version-3 rows as analysed, its Infinity keeps versions apart, it ignores `track_style_scores`, and it runs on the Python 3.14 venv. Rolling forward again resumes the re-analysis where it stopped.
 
 ## Phase 1: genre list and tag mapping
 
