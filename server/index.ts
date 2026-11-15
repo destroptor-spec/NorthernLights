@@ -8,6 +8,9 @@
 // LOG_HLS, LOG_FFMPEG and ART_CACHE_DIR from .env unread
 // (prod 2026-11-02: every auth.log line showed the proxy's IP).
 import 'dotenv/config';
+// Right after .env (it reads LOG_DIR and the limits): the console is also
+// recorded in Aurora's rotating log files from here on.
+import './logging.install';
 
 import express from 'express';
 import cors from 'cors';

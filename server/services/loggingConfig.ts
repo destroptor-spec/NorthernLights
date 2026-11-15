@@ -1,4 +1,5 @@
-import { SERVER_LOGGING_SETTINGS, type ProcessingLogChannel, type ServerLoggingSetting } from '../../shared/logging';
+import { isLogLevel, SERVER_LOGGING_SETTINGS, type ProcessingLogChannel, type ServerLoggingSetting } from '../../shared/logging';
+import { logChannelDetail, setLogLevel } from './logger';
 import { redactLogSecrets } from '../../shared/logRedaction';
 
 // Persisted admin settings override environment defaults at runtime.
@@ -28,10 +29,12 @@ export function applyLoggingSettings(settings: Record<string, unknown>) {
   for (const [key, channel] of Object.entries(SERVER_LOGGING_SETTINGS)) {
     if (typeof settings[key] === 'boolean') loggingFlags[channel] = settings[key];
   }
+  if (isLogLevel(settings.logLevel)) setLogLevel(settings.logLevel);
 }
 
+/** An area's detail line, when that area's switch is on (console, production.log and its own file). */
 export function logProcessing(channel: ProcessingLogChannel, ...args: unknown[]) {
-  if (loggingFlags[channel]) console.log(...args);
+  if (loggingFlags[channel]) logChannelDetail(channel, ...args);
 }
 
 export const logScanner = (...args: unknown[]) => logProcessing('scanner', ...args);
@@ -67,7 +70,7 @@ export function logFfmpeg(...args: unknown[]) {
 export async function loadLoggingSettingsFromDB() {
   try {
     const { getSystemSetting } = await import('../database');
-    const entries = await Promise.all(Object.keys(SERVER_LOGGING_SETTINGS).map(async key => [key, await getSystemSetting(key)]));
+    const entries = await Promise.all([...Object.keys(SERVER_LOGGING_SETTINGS), 'logLevel'].map(async key => [key, await getSystemSetting(key)]));
     applyLoggingSettings(Object.fromEntries(entries));
   } catch {
     // ignore — env defaults stand

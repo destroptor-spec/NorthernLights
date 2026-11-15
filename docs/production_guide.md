@@ -380,12 +380,37 @@ To undo a switch, stop Aurora and rename `<name>_prev_<time>` back to
 - MusicBrainz import needs temporary disk space and can take a while.
 - If scans fail on unusual filenames, check FFmpeg availability and `logs/`.
 
+## Logs
+
+Aurora writes and rotates its own logs, whether it runs under PM2, systemd, Docker or a terminal. The console output is unchanged (PM2 or journald still capture it); Aurora also records it in files under `logs/`:
+
+| File | What |
+| --- | --- |
+| `production.log` | Everything the server records, timestamped, with its level |
+| `scanner.log`, `analyzer.log`, `loudness.log` | Each area's errors and warnings, always; its detail when that area's switch is on |
+| `hls-server.log`, `hls-sessions/` | Streaming diagnostics |
+| `cast-receiver.log`, `auth.log`, `subsonic-api.log` | Cast receiver, sign-ins, Subsonic requests |
+
+**Levels.** Errors and warnings are recorded at every level. Settings → System → Logging → Log level sets the rest: Warnings and errors, Info (the default) or Debug. The switches below it add an area's detail (scanner, analyzer, loudness, HLS, FFmpeg).
+
+**Rotation and expiry.** Each file rotates at 50 MB and keeps 5 files (the current one included); files not written for 30 days are deleted at start and hourly. Only Aurora's own files are touched: anything else you keep in `logs/` stays. Change it in `.env`:
+
+```bash
+LOG_MAX_FILE_MB=50
+LOG_KEEP_FILES=5
+LOG_RETENTION_DAYS=30
+LOG_DIR=./logs        # where the files live
+LOG_LEVEL=info        # the default level until it is set in Settings
+```
+
+**The process manager's own copy.** PM2 keeps every line the console prints in `~/.pm2/logs/` without limit unless it rotates them itself; journald applies its own limits. With Aurora's files in place you can keep that copy small: empty it now and then with `pm2 flush`, or let PM2 rotate it (`pm2 install pm2-logrotate`). Under systemd nothing is needed.
+
 ## Troubleshooting
 
 Check service logs:
 
 ```bash
-pm2 logs aurora
+tail -f logs/production.log     # or: pm2 logs aurora / journalctl --user -u aurora
 ```
 
 Check database container:
