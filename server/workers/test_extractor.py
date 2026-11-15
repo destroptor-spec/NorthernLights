@@ -150,6 +150,66 @@ class FeatureTests(unittest.TestCase):
         self.assertIsNone(clips)
         self.assertEqual(len(windows[0]), 4410)
 
+    def test_joined_decode_renumbers_timestamps_per_branch(self):
+        hi, lo = int(ex.ANALYSIS_DURATION_SECONDS * 44100), int(ex.ANALYSIS_DURATION_SECONDS * 16000)
+        stream = np.ones(3 * (hi + lo), dtype='<f4')
+        with patch.object(ex.subprocess, 'run', return_value=Mock(stdout=stream.tobytes())) as run:
+            ex.decode_audio_windows('x.mp3', [20.0, 50.0, 80.0])
+        graph = run.call_args.args[0][run.call_args.args[0].index('-filter_complex') + 1]
+        # Each input, and each branch before concat, starts its timestamps at zero.
+        self.assertEqual(graph.count('asetpts=N/SR/TB'), 9)
+
+    def test_padded_tail_measures_exact_zeros(self):
+        window = np.ones(44100 * 3, dtype='float32')
+        self.assertEqual(ex.padded_tail_seconds(window), 0)
+        window[-44100 * 2:] = 0
+        self.assertAlmostEqual(ex.padded_tail_seconds(window), 2)
+        self.assertAlmostEqual(ex.padded_tail_seconds(np.zeros(44100)), 1)
+
+    def test_wrong_stored_length_is_measured_and_windows_redone(self):
+        # Stored as 1214 s (a misstated MP3 header), really 250 s: the later
+        # windows decode as padding, so the length is measured and the
+        # windows chosen again from it.
+        hi = int(ex.ANALYSIS_DURATION_SECONDS * 44100)
+        padded = ([np.ones(hi, dtype='float32')] + [np.zeros(hi, dtype='float32')] * 2, ['c'] * 3)
+        good = ([np.ones(hi, dtype='float32')] * 3, ['c'] * 3)
+        timings = {}
+        with patch.object(ex, 'decode_audio_windows', side_effect=[padded, good]) as decode, \
+                patch.object(ex, 'measure_duration', return_value=250.0):
+            starts, windows, clips = ex.decode_windows_checked('t.mp3', 1214.5, timings)
+        self.assertEqual(starts, [50.0, 125.0, 200.0])
+        self.assertEqual(decode.call_args_list[1].args, ('t.mp3', [50.0, 125.0, 200.0]))
+        self.assertEqual(timings['measured_duration_seconds'], 250.0)
+        self.assertIs(windows, good[0])
+
+    def test_good_decode_is_not_measured(self):
+        hi = int(ex.ANALYSIS_DURATION_SECONDS * 44100)
+        good = ([np.ones(hi, dtype='float32')] * 3, ['c'] * 3)
+        with patch.object(ex, 'decode_audio_windows', return_value=good), \
+                patch.object(ex, 'measure_duration') as measure:
+            starts, _, _ = ex.decode_windows_checked('t.flac', 100.0, {})
+        measure.assert_not_called()
+        self.assertEqual(starts, [20.0, 50.0, 80.0])
+
+    def test_failed_joined_decode_falls_back_to_one_decode_per_window(self):
+        timings = {}
+        with patch.object(ex, 'decode_audio_windows', side_effect=RuntimeError('Invalid data found')), \
+                patch.object(ex, 'measure_duration', return_value=None), \
+                patch.object(ex, 'decode_audio_window', return_value=np.ones(4410, dtype='float32')) as single:
+            starts, windows, clips = ex.decode_windows_checked('t.mp3', 100.0, timings)
+        self.assertEqual([c.args for c in single.call_args_list], [('t.mp3', 44100, s) for s in (20.0, 50.0, 80.0)])
+        self.assertIsNone(clips)
+        self.assertEqual(timings['decode_fallback'], 'per-window')
+
+    def test_measure_duration_reads_the_last_progress_time(self):
+        out = 'out_time_us=1000000\nprogress=continue\nout_time_us=249782857\nprogress=end\n'
+        with patch.object(ex.subprocess, 'run', return_value=Mock(stdout=out)):
+            self.assertAlmostEqual(ex.measure_duration('t.mp3'), 249.782857)
+        with patch.object(ex.subprocess, 'run', return_value=Mock(stdout='out_time_us=N/A\n')):
+            self.assertIsNone(ex.measure_duration('t.mp3'))
+        with patch.object(ex.subprocess, 'run', side_effect=ex.subprocess.CalledProcessError(1, 'ffmpeg')):
+            self.assertIsNone(ex.measure_duration('t.mp3'))
+
     def test_windows_stay_inside_file(self):
         self.assertEqual(ex.choose_analysis_starts(None), [0.0])
         self.assertEqual(ex.choose_analysis_starts(1), [0.0])

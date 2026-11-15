@@ -214,13 +214,12 @@ class PersistentExtractor:
             started = time.perf_counter()
             duration = probe_duration(file_path)
             mark("duration_probe", started)
-        starts = choose_analysis_starts(duration)
         timings["source_duration_seconds"] = round(duration, 3) if duration is not None else None
-        timings["analysis_starts_seconds"] = [round(s, 3) for s in starts]
 
         # One ffmpeg call decodes every window at both the DSP and the model rate.
         started = time.perf_counter()
-        windows_44k, clips_16k = decode_audio_windows(file_path, starts)
+        starts, windows_44k, clips_16k = decode_windows_checked(file_path, duration, timings)
+        timings["analysis_starts_seconds"] = [round(s, 3) for s in starts]
         mark("decode", started)
         if clips_16k is None:  # single unpadded window: resample in memory
             started = time.perf_counter()
@@ -320,6 +319,62 @@ def probe_duration(file_path):
     except Exception:
         return None
 
+def measure_duration(file_path):
+    """The real length, by reading every audio frame without decoding it
+    (about 0.1 s for a 5-minute MP3). Some MP3s carry a header that misstates
+    the frame count, so ffprobe and the stored length can be minutes off."""
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-nostdin", "-v", "error", "-i", file_path,
+             "-map", "0:a:0", "-c", "copy", "-f", "null", "-", "-progress", "pipe:1"],
+            check=True, capture_output=True, text=True, timeout=FFMPEG_TIMEOUT_SECONDS,
+        )
+        times = [line.split("=", 1)[1] for line in proc.stdout.splitlines() if line.startswith("out_time_us=")]
+        value = int(times[-1]) / 1_000_000 if times and times[-1].strip().lstrip("-").isdigit() else None
+        return value if value is not None and value > 0 else None
+    except Exception:
+        return None
+
+PADDING_SECONDS_SUSPECT = 1.0
+
+def padded_tail_seconds(window):
+    """Seconds of exact zeros at the end of a window: the decode's padding
+    when a window starts past the real end of the file."""
+    nonzero = np.flatnonzero(window)
+    tail = len(window) if nonzero.size == 0 else len(window) - 1 - int(nonzero[-1])
+    return tail / DSP_SAMPLE_RATE
+
+def decode_windows_checked(file_path, duration, timings):
+    """Decode the windows, recovering from a wrong stored length.
+
+    A window that ends in padding, or a joined decode that fails, usually
+    means the length was wrong and windows fell past the end: measure the
+    real length and decode again. If the joined decode still fails, decode
+    each window on its own (the path used before the joined decode).
+    Returns (starts, windows at 44.1 kHz, clips at 16 kHz or None).
+    """
+    starts = choose_analysis_starts(duration)
+    decoded = None
+    try:
+        decoded = decode_audio_windows(file_path, starts)
+        if not any(padded_tail_seconds(w) > PADDING_SECONDS_SUSPECT for w in decoded[0]):
+            return (starts, *decoded)
+    except RuntimeError as error:
+        timings["joined_decode_error"] = str(error)[:300]
+
+    measured = measure_duration(file_path)
+    timings["measured_duration_seconds"] = round(measured, 3) if measured is not None else None
+    if measured is not None:
+        starts = choose_analysis_starts(measured)
+    elif decoded is not None:
+        return (starts, *decoded)  # can't do better than what we have
+    try:
+        return (starts, *decode_audio_windows(file_path, starts))
+    except RuntimeError as error:
+        timings["joined_decode_error"] = str(error)[:300]
+        timings["decode_fallback"] = "per-window"
+        return starts, [decode_audio_window(file_path, DSP_SAMPLE_RATE, s) for s in starts], None
+
 def choose_analysis_starts(duration):
     """Window start times. Tracks no longer than one window are analysed whole."""
     if duration is None or duration <= ANALYSIS_DURATION_SECONDS:
@@ -369,6 +424,9 @@ def decode_audio_windows(file_path, starts):
     splits back by sample count. The 16 kHz branches are relabelled (asetrate)
     only so concat accepts them; their samples stay at 16 kHz. ffmpeg's
     resampler replaces a separate in-process resample (about 150 ms per track).
+    Every branch's timestamps are renumbered from zero (asetpts): a seek into
+    some MP3s, or past their end, yields frames with broken timestamps, and
+    concat then fails with "Invalid data found when processing input".
 
     A single window (tracks no longer than one window) is decoded unpadded at
     44.1 kHz and returns None for the clips, so the caller resamples it.
@@ -384,10 +442,10 @@ def decode_audio_windows(file_path, starts):
     graph = ""
     for i in range(n):
         graph += (
-            f"[{i}:a]aformat=sample_fmts=flt:channel_layouts=mono,asplit=2[s{i}h][s{i}l];"
-            f"[s{i}h]aresample={DSP_SAMPLE_RATE},apad=whole_len={hi},atrim=end_sample={hi}[h{i}];"
+            f"[{i}:a]asetpts=N/SR/TB,aformat=sample_fmts=flt:channel_layouts=mono,asplit=2[s{i}h][s{i}l];"
+            f"[s{i}h]aresample={DSP_SAMPLE_RATE},apad=whole_len={hi},atrim=end_sample={hi},asetpts=N/SR/TB[h{i}];"
             f"[s{i}l]aresample={MODEL_SAMPLE_RATE}:filter_size=64:phase_shift=10:cutoff=0.97,"
-            f"apad=whole_len={lo},atrim=end_sample={lo},asetrate={DSP_SAMPLE_RATE}[l{i}];"
+            f"apad=whole_len={lo},atrim=end_sample={lo},asetrate={DSP_SAMPLE_RATE},asetpts=N/SR/TB[l{i}];"
         )
     graph += "".join(f"[h{i}]" for i in range(n)) + "".join(f"[l{i}]" for i in range(n))
     graph += f"concat=n={2 * n}:v=0:a=1[out]"
