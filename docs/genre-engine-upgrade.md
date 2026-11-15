@@ -69,6 +69,7 @@ SQL
 
 - [ ] All non-simulated rows are at `feature_version` 3.
 - [ ] `style_rows` equals the number of non-simulated version-3 rows.
+- [ ] Simulated rows are few (dev: 33 of 31,868). Before the fix for MP3s whose header misstates their length (`fix/analysis-wrong-length`), tracks stored minutes too long all came out simulated, so a run started on an older build: deploy the fix, then Settings → Library → Re-analyze Fallbacks. It also stores their real length (new column `tracks.header_duration`, created on start; the log says `[Analysis] Corrected length …`).
 - [ ] Settings → Library shows no outdated analysis.
 
 ### 6. Optional cleanup

@@ -112,6 +112,41 @@ describeDb('database read queries', () => {
     }
   });
 
+  it('stores a measured length and keeps it while the file header claims the same wrong one', async () => {
+    // Tracks keep their path base64-encoded, and their id is that, encoded again.
+    const filePath = Buffer.from('/music/T.I. - Paper Trail/06 - Whatever You Like.mp3').toString('base64');
+    const id = Buffer.from(filePath).toString('base64');
+    const features = { bpm: 120, acoustic_vector: Array(8).fill(0.5), embedding_vector: [1, ...Array(1279).fill(0)], feature_version: AUDIO_FEATURE_VERSION };
+    const lengthOf = async () => (await pool.query('SELECT duration, header_duration FROM tracks WHERE id = $1', [id])).rows[0];
+    try {
+      await db.addTrack({ path: filePath, title: 'Whatever You Like', artist: 'T.I.', duration: 1214.5 } as never);
+      // A normal analysis (nothing measured) leaves the length alone.
+      expect(await db.addTrackFeatures(id, features)).toEqual({ correctedDuration: null });
+      expect(await lengthOf()).toEqual({ duration: 1214.5, header_duration: null });
+
+      expect(await db.addTrackFeatures(id, { ...features, measured_duration: 249.783 }))
+        .toEqual({ correctedDuration: { from: 1214.5, to: 249.783 } });
+      expect(await lengthOf()).toMatchObject({ header_duration: 1214.5 });
+      expect((await lengthOf()).duration).toBeCloseTo(249.783, 2);
+      // Measured again (re-analysis): already right, the header's claim kept.
+      expect(await db.addTrackFeatures(id, { ...features, measured_duration: 249.8 })).toEqual({ correctedDuration: null });
+      expect(await lengthOf()).toMatchObject({ header_duration: 1214.5 });
+
+      // A rescan reading the same claim keeps the measured length…
+      await db.addTrack({ path: filePath, title: 'Whatever You Like (retagged)', artist: 'T.I.', duration: 1214.5 } as never);
+      expect((await lengthOf()).duration).toBeCloseTo(249.783, 2);
+      // …and a new claim (the file was replaced) is taken as it is.
+      await db.addTrack({ path: filePath, title: 'Whatever You Like', artist: 'T.I.', duration: 250.1 } as never);
+      expect(await lengthOf()).toEqual({ duration: 250.1, header_duration: null });
+
+      // Simulated features never touch the length.
+      expect(await db.addTrackFeatures(id, { ...features, is_simulated: true, measured_duration: 100 })).toEqual({ correctedDuration: null });
+      expect((await lengthOf()).duration).toBe(250.1);
+    } finally {
+      await pool.query('DELETE FROM tracks WHERE id = $1', [id]);
+    }
+  });
+
   it('returns stored artist artwork in Jump back in without waiting for client entity pages', async () => {
     const { computeJumpBackIn } = await import('../../services/smartHub.service');
     await pool.query(`INSERT INTO user_playback_stats (user_id, track_id, play_count, last_played_at)

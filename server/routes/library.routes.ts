@@ -783,8 +783,12 @@ async function processAnalysisBatch(tracks: { id: string; filePath: Buffer; titl
 
           if (result.audioFeatures) {
             try {
-              await addTrackFeatures(result.id, result.audioFeatures);
+              const { correctedDuration } = await addTrackFeatures(result.id, result.audioFeatures);
               featuresWritten++;
+              if (correctedDuration) {
+                const from = correctedDuration.from == null ? 'none' : `${correctedDuration.from.toFixed(1)} s`;
+                console.log(`[Analysis] Corrected length trackId=${track.id} title="${track.title}" from=${from} to=${correctedDuration.to.toFixed(1)} s (the file's header misstates it)`);
+              }
               if (result.audioFeatures.is_simulated) {
                 const decodedPath = track.filePath.toString('utf8');
                 console.warn(`[Analysis] Stored simulated features trackId=${track.id} title="${track.title}" artist="${track.artist || ''}" filePath="${decodedPath}"`);

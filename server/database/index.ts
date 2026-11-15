@@ -958,6 +958,11 @@ export async function initDB(): Promise<Pool> {
         -- (1: country and language; 2: also the original year).
         ALTER TABLE tracks ADD COLUMN IF NOT EXISTS original_year INTEGER;
         ALTER TABLE tracks ADD COLUMN IF NOT EXISTS origin_read_version SMALLINT;
+        -- Some MP3s carry a header that misstates their length (a 4-minute song
+        -- read as 20). The analysis measures the real length and stores it as
+        -- duration; header_duration keeps what the header claims, so a rescan
+        -- that reads the same claim keeps the measured length.
+        ALTER TABLE tracks ADD COLUMN IF NOT EXISTS header_duration REAL;
         -- Derived (services/trackOrigin.service.ts): country from the artist's
         -- MusicBrainz country, else the artist's place tags, else the release
         -- country; language from the file.
@@ -1587,6 +1592,7 @@ const SNAKE_DUP_COLUMNS = [
   'mb_release_group_id', 'mb_work_id', 'art_hash', 'artwork_version', 'playlist_added_at', 'is_loved', 'raw_urls', 'canonical_genre',
   // Read by trackOrigin.service only; no track payload needs them.
   'release_country', 'lyrics_language', 'origin_read_at', 'original_year', 'origin_read_version',
+  'header_duration',
 ];
 
 /** Which extra tags a scan reads (trackOrigin.service re-reads older files): 2 adds the original year. */
@@ -2208,7 +2214,10 @@ export async function addTrack(track: any) {
       artists = EXCLUDED.artists,
       album = EXCLUDED.album,
       genre = EXCLUDED.genre,
-      duration = EXCLUDED.duration,
+      -- A measured length (header_duration set) stays while the file's header
+      -- still claims the same wrong length; a new claim means a new file.
+      duration = CASE WHEN abs(EXCLUDED.duration - tracks.header_duration) < 0.5 THEN tracks.duration ELSE EXCLUDED.duration END,
+      header_duration = CASE WHEN abs(EXCLUDED.duration - tracks.header_duration) < 0.5 THEN tracks.header_duration END,
       track_number = EXCLUDED.track_number,
       disc_number = EXCLUDED.disc_number,
       year = EXCLUDED.year,
@@ -2389,7 +2398,9 @@ export async function addTrackFeatures(trackId: string, audioFeatures: {
   feature_version?: number;
   moods?: Record<AudioMood, number> | null;
   mood_themes?: number[] | null;
-}) {
+  /** The real length, when the analysis had to measure it (see header_duration). */
+  measured_duration?: number | null;
+}): Promise<{ correctedDuration: { from: number | null; to: number } | null }> {
   const db = await initDB();
   const vector8dStr = `[${audioFeatures.acoustic_vector.slice(0, 8).join(',')}]`;
   const simulated = audioFeatures.is_simulated ?? false;
@@ -2435,9 +2446,24 @@ export async function addTrackFeatures(trackId: string, audioFeatures: {
     } else if (simulated) {
       await client.query('DELETE FROM track_moods WHERE track_id = $1', [trackId]);
     }
+    let correctedDuration: { from: number | null; to: number } | null = null;
+    const measured = audioFeatures.measured_duration;
+    if (!simulated && typeof measured === 'number' && Number.isFinite(measured) && measured > 0) {
+      // The stored length came from a header that misstates it: keep the claim
+      // in header_duration (the first one, if measured before) and store the
+      // real length.
+      const res = await client.query(`
+        UPDATE tracks t SET header_duration = COALESCE(t.header_duration, t.duration), duration = $2
+        FROM (SELECT duration FROM tracks WHERE id = $1) old
+        WHERE t.id = $1 AND (t.duration IS NULL OR abs(t.duration - $2) > 1)
+        RETURNING old.duration AS previous
+      `, [trackId, measured]);
+      if (res.rowCount) correctedDuration = { from: res.rows[0].previous ?? null, to: measured };
+    }
     await client.query('COMMIT');
     // New style scores feed fusion (debounced; at most every 10 minutes during a run).
     void import('../services/genreTaxonomy').then(m => m.scheduleFusion()).catch(() => {});
+    return { correctedDuration };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     throw error;
