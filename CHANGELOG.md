@@ -21,7 +21,7 @@
 - **Python 3.14:** The analysis environment moves to Python 3.14 with a pinned Essentia build. Existing installs rebuild `.venv` once (see the production guide; the full upgrade checklist is in `docs/genre-engine-upgrade.md`).
 
 ### Bug fixes
-- **Analysis of MP3s with a wrong length:** some MP3s carry a header that claims the file is several times longer than it is (a 4-minute song read as 20 minutes). The new three-point analysis then looked past the end of the song, failed, and stored stand-in values for it. Aurora now notices, measures the real length and analyses the right three points. Settings → Library → Re-analyze Fallbacks redoes tracks that were affected.
+- **Analysis of MP3s with a wrong length:** some MP3s carry a header that claims the file is several times longer than it is (a 4-minute song read as 20 minutes). The new three-point analysis then looked past the end of the song, failed, and stored stand-in values for it. Aurora now notices, measures the real length and analyses the right three points, and stores the real length, so the player, Subsonic apps and playlists show it too (a rescan keeps it while the file still claims the same wrong length). Settings → Library → Re-analyze Fallbacks redoes tracks that were affected.
 
 ## [v1.0.0-rc.7] - 2026-11-06
 

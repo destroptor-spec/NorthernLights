@@ -294,7 +294,9 @@ class PersistentExtractor:
                 "style_scores": [round(float(v), 6) for v in style_scores],
                 "analysis_windows": ANALYSIS_WINDOWS_LABEL if len(starts) > 1 else "1x15s@0%",
                 "is_simulated": False,
-                "feature_version": FEATURE_VERSION
+                "feature_version": FEATURE_VERSION,
+                # Set only when the stored length proved wrong and was measured.
+                "measured_duration": timings.get("measured_duration_seconds"),
             },
             "timings": timings
         }

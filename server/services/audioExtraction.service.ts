@@ -32,6 +32,8 @@ export interface AudioFeatures {
   mood_themes?: number[] | null;
   is_simulated: boolean;
   feature_version: number;
+  /** The real length in seconds, when the stored one proved wrong and the extractor measured it. */
+  measured_duration?: number | null;
 }
 
 export interface AudioExtractionContext {
@@ -242,6 +244,10 @@ export async function extractAudioFeatures(filePath: string, context?: AudioExtr
       || !Array.isArray(features.style_scores) || features.style_scores.length !== STYLE_SCORE_COUNT
       || features.style_scores.some(value => !Number.isFinite(value) || value < 0 || value > 1)) {
       throw new Error('Python analyzer returned invalid audio features');
+    }
+    if (features.measured_duration != null
+      && !(typeof features.measured_duration === 'number' && Number.isFinite(features.measured_duration) && features.measured_duration > 0)) {
+      features.measured_duration = null;
     }
     // Moods are optional: invalid ones are dropped, never the analysis.
     if (!validMoodScores({ moods: features.moods as any, mood_themes: features.mood_themes ?? null })) {
