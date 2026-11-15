@@ -113,10 +113,6 @@ function logLastFmOAuth(line: string) {
   } catch {}
 }
 
-function isPositiveIntegerString(value: unknown): value is string {
-  return typeof value === 'string' && /^[1-9]\d*$/.test(value);
-}
-
 function isAllowedProxyImageUrl(parsed: URL): boolean {
   if (parsed.protocol !== 'https:' || parsed.username || parsed.password) {
     return false;
@@ -461,55 +457,6 @@ router.get('/providers/musicbrainz/status', async (req, res) => {
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
-  }
-});
-
-// Genius API proxy — avoids CORS issues in browser
-router.post('/providers/genius/search', async (req, res) => {
-  try {
-    const { query } = req.body;
-    if (!query) return res.status(400).json({ error: 'Missing query' });
-
-    const apiKey = req.body.apiKey || await getSystemSetting('geniusApiKey');
-    if (!apiKey) return res.status(400).json({ error: 'Genius API key not configured' });
-
-    const geniusRes = await fetch(`https://api.genius.com/search?q=${encodeURIComponent(query)}`, {
-      headers: { 'Authorization': `Bearer ${apiKey}` }
-    });
-
-    if (!geniusRes.ok) {
-      return res.status(geniusRes.status).json({ error: `Genius API returned ${geniusRes.status}` });
-    }
-    const json = await geniusRes.json();
-    res.status(geniusRes.status).json(json);
-  } catch (err: any) {
-    console.error('[Genius Proxy] search error:', err.message);
-    res.status(502).json({ error: 'Genius API request failed' });
-  }
-});
-
-router.post('/providers/genius/artist/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    if (!isPositiveIntegerString(id)) {
-      return res.status(400).json({ error: 'Invalid artist id' });
-    }
-
-    const apiKey = req.body.apiKey || await getSystemSetting('geniusApiKey');
-    if (!apiKey) return res.status(400).json({ error: 'Genius API key not configured' });
-
-    const geniusRes = await fetch(`https://api.genius.com/artists/${encodeURIComponent(id)}`, {
-      headers: { 'Authorization': `Bearer ${apiKey}` }
-    });
-
-    if (!geniusRes.ok) {
-      return res.status(geniusRes.status).json({ error: `Genius API returned ${geniusRes.status}` });
-    }
-    const json = await geniusRes.json();
-    res.status(geniusRes.status).json(json);
-  } catch (err: any) {
-    console.error('[Genius Proxy] artist error:', err.message);
-    res.status(502).json({ error: 'Genius API request failed' });
   }
 });
 

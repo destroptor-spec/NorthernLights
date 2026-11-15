@@ -1517,12 +1517,6 @@ Update now-playing status.
 
 ### Genius
 
-### [POST] `/api/providers/genius/search`
-Proxy search query.
-
-### [POST] `/api/providers/genius/artist/:id`
-Proxy artist details.
-
 ### [POST] `/api/providers/genius/test`
 Test credentials.
 
