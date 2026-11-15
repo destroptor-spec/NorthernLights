@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Improvements
+- **Aurora keeps its own logs:** the server now writes and rotates its logs itself, however it runs (PM2, systemd, Docker): everything in `logs/production.log`, and each area's errors in its own file (scanner, analyzer, loudness) even when that area's detailed logging is off. Files rotate at 50 MB, keep 5, and expire after 30 days, all adjustable in `.env`. A new Log level in Settings → System → Logging chooses Warnings and errors, Info or Debug; errors and warnings are always recorded. Logs that used to grow forever (Cast receiver, sign-ins, Subsonic requests) are now bounded too, and a harmless Essentia message that filled the error log during analysis is no longer logged.
 - **First-run setup:** the analysis step describes how Aurora listens today (one network and its classifiers for styles, sound and moods), shows them as two rows instead of a list of files, and downloads only the models that are missing.
 - **Large libraries:** the genre and style rebuild no longer fails on very large libraries (it stopped on a time limit at around 95,000 tracks), and AI playlists no longer pause for several seconds on a large library after a quiet spell.
 - **Better artist radio:** an artist radio now keeps to the artist's sound and styles (a hip hop radio stays hip hop, a trance radio stays trance) and plays music only: no skits, interludes, a cappella versions, drum solos, hidden tracks or hour-long recordings, and only one version of each song, however many remixes you have. A blind listening test preferred it 3 to 2.

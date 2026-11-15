@@ -1,6 +1,6 @@
 import { resolveLoggingPreferences } from '../utils/loggingPreferences';
 import { normalizeHubPlaylistCount } from '../../shared/hubPlaylists';
-import type { ServerLoggingSetting } from '../../shared/logging';
+import { DEFAULT_LOG_LEVEL, isLogLevel, type LogLevel, type ServerLoggingSetting } from '../../shared/logging';
 import { create, StateCreator } from 'zustand';
 import { persist, PersistOptions } from 'zustand/middleware';
 import { buildTrackUrls } from '../utils/trackUrls';
@@ -790,6 +790,8 @@ export interface PlayerState {
   scannerLoggingEnabled: boolean;
   analyzerLoggingEnabled: boolean;
   loudnessLoggingEnabled: boolean;
+  /** The server's log level (Settings → System → Logging): warn, info or debug. */
+  logLevel: LogLevel;
   openSubsonicEnabled: boolean;
   // Loudness normalization (EBU R128). User-scoped so the server can gate
   // background measurement on the user's opt-in.
@@ -840,6 +842,7 @@ export interface PlayerState {
   loadSettings: () => Promise<void>;
   saveSettings: () => Promise<void>;
   setServerLogging: (key: ServerLoggingSetting, enabled: boolean) => Promise<void>;
+  setServerLogLevel: (level: LogLevel) => Promise<void>;
   
   isInfinityMode: boolean;
   isFetchingInfinity: boolean;
@@ -1580,6 +1583,7 @@ export const usePlayerStore = create<PlayerState>()(
         scannerLoggingEnabled: false,
         analyzerLoggingEnabled: false,
         loudnessLoggingEnabled: false,
+        logLevel: DEFAULT_LOG_LEVEL,
         openSubsonicEnabled: true,
         loudnessNormEnabled: false as boolean,
         loudnessTargetLufs: -18,
@@ -2014,6 +2018,7 @@ export const usePlayerStore = create<PlayerState>()(
                 scannerLoggingEnabled: data.scannerLoggingEnabled === true,
                 analyzerLoggingEnabled: data.analyzerLoggingEnabled === true,
                 loudnessLoggingEnabled: data.loudnessLoggingEnabled === true,
+                logLevel: isLogLevel(data.logLevel) ? data.logLevel : DEFAULT_LOG_LEVEL,
                 openSubsonicEnabled: data.openSubsonicEnabled !== false,
                 ...playbackSyncFrom(data.playbackSyncMode, data.playbackSyncEnabled),
                 newBrowseEnabled: data.newBrowseEnabled === true,
@@ -2100,6 +2105,19 @@ export const usePlayerStore = create<PlayerState>()(
             throw new Error(data?.error || 'Could not save logging setting');
           }
           set({ [key]: enabled });
+        },
+
+        setServerLogLevel: async (level) => {
+          const res = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...get().getAuthHeader() },
+            body: JSON.stringify({ logLevel: level }),
+          });
+          if (!res.ok) {
+            const data = await res.json().catch(() => null);
+            throw new Error(data?.error || 'Could not save the log level');
+          }
+          set({ logLevel: level });
         },
 
         saveSettings: async () => {

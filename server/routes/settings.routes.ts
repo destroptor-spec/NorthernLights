@@ -1,4 +1,4 @@
-import { SERVER_LOGGING_SETTINGS } from '../../shared/logging';
+import { isLogLevel, LOG_LEVELS, SERVER_LOGGING_SETTINGS } from '../../shared/logging';
 import { applyLoggingSettings, getLoggingSettings } from '../services/loggingConfig';
 import { Router } from 'express';
 import { getSystemSetting, setSystemSetting, getUserSetting, setUserSetting } from '../database';
@@ -10,7 +10,7 @@ import { PLAYBACK_SYNC_MODES } from '../../shared/playbackSync';
 const router = Router();
 
 const userKeys = new Set(['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'playedThresholdPercent', 'llmPlaylistDiversity', 'llmVetoMode', 'llmGenreCohesion', 'llmDiscoveryBias', 'llmArtistSpread', 'llmRecoveryStrength', 'llmAdjacentReach', 'llmTracksPerPlaylist', 'llmPlaylistCount', 'lastFmScrobbleEnabled', 'listenBrainzScrobbleEnabled', 'subsonicProviderScrobbleEnabled', 'subsonicProviderLoveSyncEnabled', 'concertsEnabled', 'concertsLat', 'concertsLng', 'concertsLocationLabel', 'concertsRadiusKm', 'concertsAutoAddEnabled', 'loudnessNormEnabled', 'loudnessTargetLufs', 'loudnessPreampDb', 'loudnessMode', 'playbackSyncEnabled', 'newBrowseEnabled']);
-const serverKeys = new Set(['llmBaseUrl', 'llmApiKey', 'llmModelName', 'hubGenerationSchedule', 'systemPlaylistConfig', 'audioAnalysisCpu', 'scannerConcurrency', 'loudnessComputeMode', 'geniusApiKey', 'lastFmApiKey', 'lastFmSharedSecret', 'musicBrainzEnabled', 'musicBrainzClientId', 'musicBrainzClientSecret', 'musicBrainzRedirectUri', 'providerArtistImage', 'providerArtistArtwork', 'providerArtistBio', 'providerAlbumArt', 'autoFolderWalk', 'jambaseEnabled', 'jambaseMaxSubscriptionsPerUser', 'jambaseCacheTtlDays', 'jambaseMonthlyCap', 'jambaseHardStop', 'youtubeEnabled', 'youtubeApiKey', 'youtubeCacheTtlDays', 'youtubeDailyQuotaCap', 'youtubeHardStop', ...Object.keys(SERVER_LOGGING_SETTINGS), 'openSubsonicEnabled', 'turnstileEnabled', 'turnstileSiteKey', 'turnstileSecretKey', 'playbackSyncMode']);
+const serverKeys = new Set(['llmBaseUrl', 'llmApiKey', 'llmModelName', 'hubGenerationSchedule', 'systemPlaylistConfig', 'audioAnalysisCpu', 'scannerConcurrency', 'loudnessComputeMode', 'geniusApiKey', 'lastFmApiKey', 'lastFmSharedSecret', 'musicBrainzEnabled', 'musicBrainzClientId', 'musicBrainzClientSecret', 'musicBrainzRedirectUri', 'providerArtistImage', 'providerArtistArtwork', 'providerArtistBio', 'providerAlbumArt', 'autoFolderWalk', 'jambaseEnabled', 'jambaseMaxSubscriptionsPerUser', 'jambaseCacheTtlDays', 'jambaseMonthlyCap', 'jambaseHardStop', 'youtubeEnabled', 'youtubeApiKey', 'youtubeCacheTtlDays', 'youtubeDailyQuotaCap', 'youtubeHardStop', ...Object.keys(SERVER_LOGGING_SETTINGS), 'logLevel', 'openSubsonicEnabled', 'turnstileEnabled', 'turnstileSiteKey', 'turnstileSecretKey', 'playbackSyncMode']);
 const secretServerKeys = new Set(['llmApiKey', 'geniusApiKey', 'lastFmApiKey', 'lastFmSharedSecret', 'musicBrainzClientSecret', 'youtubeApiKey', 'turnstileSecretKey']);
 const nonAdminReadableServerKeys = new Set(['hubGenerationSchedule', 'systemPlaylistConfig', 'providerArtistImage', 'providerArtistArtwork', 'providerArtistBio', 'providerAlbumArt', 'musicBrainzEnabled', 'musicBrainzConnected', 'openSubsonicEnabled', 'youtubeEnabled', 'playbackSyncMode']);
 // Keys that are written by OAuth2/connect flows server-side, not exposed to frontend
@@ -23,7 +23,7 @@ router.get('/settings', async (req, res) => {
     const isAdmin = req.user?.role === 'admin';
 
     // System-level (server-wide) settings
-    const serverKeys = ['audioAnalysisCpu', 'scannerConcurrency', 'loudnessComputeMode', 'hubGenerationSchedule', 'systemPlaylistConfig', 'llmBaseUrl', 'llmApiKey', 'llmModelName', 'geniusApiKey', 'lastFmApiKey', 'lastFmSharedSecret', 'musicBrainzEnabled', 'musicBrainzClientId', 'musicBrainzClientSecret', 'musicBrainzConnected', 'musicBrainzRedirectUri', 'providerArtistImage', 'providerArtistArtwork', 'providerArtistBio', 'providerAlbumArt', 'autoFolderWalk', 'jambaseEnabled', 'jambaseMaxSubscriptionsPerUser', 'jambaseCacheTtlDays', 'jambaseMonthlyCap', 'jambaseHardStop', 'youtubeEnabled', 'youtubeApiKey', 'youtubeCacheTtlDays', 'youtubeDailyQuotaCap', 'youtubeHardStop', ...Object.keys(SERVER_LOGGING_SETTINGS), 'openSubsonicEnabled', 'turnstileEnabled', 'turnstileSiteKey', 'turnstileSecretKey', 'playbackSyncMode'];
+    const serverKeys = ['audioAnalysisCpu', 'scannerConcurrency', 'loudnessComputeMode', 'hubGenerationSchedule', 'systemPlaylistConfig', 'llmBaseUrl', 'llmApiKey', 'llmModelName', 'geniusApiKey', 'lastFmApiKey', 'lastFmSharedSecret', 'musicBrainzEnabled', 'musicBrainzClientId', 'musicBrainzClientSecret', 'musicBrainzConnected', 'musicBrainzRedirectUri', 'providerArtistImage', 'providerArtistArtwork', 'providerArtistBio', 'providerAlbumArt', 'autoFolderWalk', 'jambaseEnabled', 'jambaseMaxSubscriptionsPerUser', 'jambaseCacheTtlDays', 'jambaseMonthlyCap', 'jambaseHardStop', 'youtubeEnabled', 'youtubeApiKey', 'youtubeCacheTtlDays', 'youtubeDailyQuotaCap', 'youtubeHardStop', ...Object.keys(SERVER_LOGGING_SETTINGS), 'logLevel', 'openSubsonicEnabled', 'turnstileEnabled', 'turnstileSiteKey', 'turnstileSecretKey', 'playbackSyncMode'];
     const settings: Record<string, any> = {};
     const loggingSettings: Record<string, boolean> = getLoggingSettings();
     for (const k of serverKeys) {
@@ -116,6 +116,9 @@ router.post('/settings', async (req, res) => {
       .filter(key => Object.hasOwn(settings, key) && typeof settings[key] !== 'boolean');
     if (invalidLoggingKeys.length) {
       return res.status(400).json({ error: 'Logging settings must be booleans', keys: invalidLoggingKeys });
+    }
+    if (Object.hasOwn(settings, 'logLevel') && !isLogLevel(settings.logLevel)) {
+      return res.status(400).json({ error: `logLevel must be one of ${LOG_LEVELS.join(', ')}`, keys: ['logLevel'] });
     }
 
     for (const [k, v] of Object.entries(settings)) {

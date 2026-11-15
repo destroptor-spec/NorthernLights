@@ -6,6 +6,18 @@ import { MODELS_DIR } from './downloadModels';
 import { AUDIO_FEATURE_VERSION, STYLE_SCORE_COUNT } from './audioFeatureVersion';
 import { AUDIO_MOODS, MOOD_THEMES, type AudioMood } from '../../shared/audioMoods';
 
+/**
+ * Essentia prints "No network created, or last created network has been
+ * deleted" each time a model or rhythm extractor is torn down: harmless, and
+ * several lines per track. It made up most of prod's 1.6 GB error log during
+ * analysis, so it is dropped before logging.
+ */
+const HARMLESS_PYTHON_LINE = /No network created, or last created network has been deleted/;
+
+export function dropHarmlessPythonLines(chunk: string): string {
+  return chunk.split('\n').filter(line => line.trim() && !HARMLESS_PYTHON_LINE.test(line)).join('\n');
+}
+
 export interface AudioFeatures {
   bpm: number;
   acoustic_vector: number[];
@@ -98,7 +110,8 @@ class PersistentPythonAnalyzer {
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => {
       stderrTail = (stderrTail + chunk).slice(-8192);
-      workerLog('debug', `[AudioExtract:python] ${chunk}`);
+      const useful = dropHarmlessPythonLines(chunk);
+      if (useful) workerLog('debug', `[AudioExtract:python] ${useful}`);
     });
 
     const rejectPending = (message: string) => {

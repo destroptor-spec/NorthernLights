@@ -77,3 +77,12 @@ test('input error fails pending work and a delayed exit cannot clobber the repla
   children[1].reply(features());
   await expect(second).resolves.toMatchObject({ is_simulated: false });
 });
+
+describe('Python output before logging', () => {
+  it('drops Essentia\'s harmless network warning and keeps the rest', () => {
+    const { dropHarmlessPythonLines } = jest.requireActual('./audioExtraction.service');
+    const chunk = '[ WARNING  ] No network created, or last created network has been deleted...\nTraceback: real problem\n\n';
+    expect(dropHarmlessPythonLines(chunk)).toBe('Traceback: real problem');
+    expect(dropHarmlessPythonLines('[ WARNING  ] No network created, or last created network has been deleted...\n')).toBe('');
+  });
+});

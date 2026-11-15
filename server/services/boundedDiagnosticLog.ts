@@ -11,7 +11,7 @@ export class BoundedDiagnosticLog {
   private nextPruneAt = 0;
 
   constructor(private readonly root: string, private readonly fileBytes = HLS_LOG_FILE_BYTES,
-    private readonly sessionBytes = HLS_SESSION_LOG_BYTES) {}
+    private readonly sessionBytes = HLS_SESSION_LOG_BYTES, private readonly retentionMs = HLS_LOG_RETENTION_MS) {}
 
   append(name: string, message: string, now = Date.now()) {
     try {
@@ -51,7 +51,7 @@ export class BoundedDiagnosticLog {
       }).sort((a, b) => a.modified - b.modified);
     let total = files.reduce((sum, file) => sum + file.size, 0);
     for (const file of files) {
-      if (now - file.modified > HLS_LOG_RETENTION_MS || total > this.sessionBytes) {
+      if (now - file.modified > this.retentionMs || total > this.sessionBytes) {
         fs.rmSync(file.file, { force: true });
         total -= file.size;
       }

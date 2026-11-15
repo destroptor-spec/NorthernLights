@@ -3,9 +3,12 @@ import path from 'path';
 import { redactLogSecrets } from '../../shared/logRedaction';
 import { isHlsLoggingEnabled, isFfmpegLoggingEnabled } from './loggingConfig';
 import { BoundedDiagnosticLog } from './boundedDiagnosticLog';
+import { logFile, logPolicy } from './logFiles';
 
-const LOGS_DIR = path.join(__dirname, '../../logs');
-const hlsLog = new BoundedDiagnosticLog(LOGS_DIR);
+// The log folder and retention come from the log policy (LOG_DIR, LOG_RETENTION_DAYS);
+// HLS session files keep their own size limits (one file per session, 100 MB in all).
+const LOGS_DIR = logPolicy.dir;
+const hlsLog = new BoundedDiagnosticLog(LOGS_DIR, undefined, undefined, logPolicy.retentionMs);
 export type HlsLogDetail = 'normal' | 'detailed' | 'ffmpeg';
 
 function enabled(detail: HlsLogDetail) {
@@ -26,9 +29,10 @@ function sanitizeSegment(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 80) || 'unknown';
 }
 
-function appendLine(filePath: string, line: string) {
-  ensureDir(path.dirname(filePath));
-  fs.appendFileSync(filePath, `[${timestamp()}] ${redactLogSecrets(line)}\n`, 'utf8');
+/** One line in one of Aurora's rotating log files (logFiles.ts), redacted and on one line. */
+function appendLine(name: string, line: string) {
+  const clean = redactLogSecrets(line).replace(/[\r\n]+/g, ' ').slice(0, 16384);
+  logFile(name).write(`[${timestamp()}] ${clean}`);
 }
 
 export function getLogFilePath(name: string): string {
@@ -37,15 +41,15 @@ export function getLogFilePath(name: string): string {
 }
 
 export function writeDebugLog(name: string, line: string) {
-  appendLine(getLogFilePath(name), line);
+  appendLine(name, line);
 }
 
 export function writeHlsServerLog(line: string, detail: HlsLogDetail = 'normal') {
-  if (enabled(detail)) hlsLog.append('hls-server.log', line);
+  if (enabled(detail)) appendLine('hls-server.log', line);
 }
 
 export function writeCastReceiverLog(line: string) {
-  appendLine(getLogFilePath('cast-receiver.log'), line);
+  appendLine('cast-receiver.log', line);
 }
 
 export function writeHlsSessionLog(trackId: string, quality: string, codec: string, line: string, detail: HlsLogDetail = 'normal') {
