@@ -1385,8 +1385,16 @@ export async function initDB(): Promise<Pool> {
         -- scans these few-thousand rows. Refreshed after audio analysis
         -- completes (refreshArtistAudioProfiles()).
         -- ==========================================
+        -- Tracks with stand-in (simulated) features sit at the centre of the
+        -- sound space and would pull every profile towards it, so they're left
+        -- out. A view built before that rule is dropped and rebuilt once.
         DO $$
         BEGIN
+            IF EXISTS (SELECT 1 FROM pg_matviews
+                       WHERE matviewname = 'artist_audio_profiles'
+                         AND definition NOT LIKE '%is_simulated%') THEN
+                DROP MATERIALIZED VIEW artist_audio_profiles;
+            END IF;
             CREATE MATERIALIZED VIEW IF NOT EXISTS artist_audio_profiles AS
                 SELECT
                     a.id AS artist_id,
@@ -1399,6 +1407,7 @@ export async function initDB(): Promise<Pool> {
                 JOIN tracks t ON t.artist_id = a.id
                 JOIN track_features tf ON tf.track_id = t.id
                 WHERE tf.acoustic_vector_8d IS NOT NULL
+                    AND tf.is_simulated = FALSE
                     AND COALESCE(a.is_va_pseudo, FALSE) = FALSE
                     AND LOWER(TRIM(a.name)) NOT IN ('unknown artist', '???')
                 GROUP BY a.id
@@ -4262,6 +4271,7 @@ export async function getSimilarArtistsByAudioProfile(artistId: string, limit: n
       JOIN track_features tf ON tf.track_id = t.id
       WHERE t.artist_id = $1
         AND tf.acoustic_vector_8d IS NOT NULL
+        AND tf.is_simulated = FALSE
         AND LOWER(TRIM(COALESCE(t.album_artist, t.artist, ''))) NOT IN ('unknown artist', '???')
     ),
     scored AS (
