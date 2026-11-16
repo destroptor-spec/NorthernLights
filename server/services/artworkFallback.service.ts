@@ -48,7 +48,3 @@ export async function resolveProviderArtworkUrl(context: ArtworkProviderContext)
 export function providerArtworkProxyPath(externalUrl: string): string {
   return `/api/providers/external/proxy-image?url=${encodeURIComponent(externalUrl)}`;
 }
-
-export function clearProviderArtworkLookupCache(): void {
-  lookups.clear();
-}

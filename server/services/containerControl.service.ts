@@ -401,32 +401,6 @@ export async function recreateContainer(config: ContainerConfig): Promise<Create
   }
 }
 
-export async function listContainers(): Promise<ContainerListItem[]> {
-  try {
-    const output = await runContainer(['ps', '-a', '--format', 'json']);
-    
-    // Extract the JSON array from potential stdout noise/warnings
-    const jsonMatch = output.match(/\[[\s\S]*\]/);
-    const jsonStr = jsonMatch ? jsonMatch[0] : (output.trim() || '[]');
-    
-    const containers = JSON.parse(jsonStr);
-    if (!Array.isArray(containers)) return [];
-
-    return containers.map(container => {
-      return { 
-        name: (container.Names && container.Names[0]) || 'unknown', 
-        status: container.Status || 'unknown', 
-        image: container.Image || 'unknown', 
-        ports: container.Ports ? container.Ports.map((p: any) => `${p.hostPort}:${p.containerPort}`).join(', ') : '', 
-        created: container.Created ? new Date(container.Created * 1000).toISOString() : '' 
-      };
-    });
-  } catch (error: any) {
-    console.error('[ContainerControl] Failed to list containers:', error.message);
-    return [];
-  }
-}
-
 export function getConfiguredDatabaseInfo() {
   const port = getDefaultPort();
   const dataDir = getDataDir();
@@ -440,18 +414,6 @@ export function getConfiguredDatabaseInfo() {
   };
 }
 
-export async function getPortInUse(): Promise<string | null> {
-  const port = getDefaultPort();
-  try {
-    const containerName = process.env.DB_CONTAINER_NAME || 'music-postgres';
-    await runContainer(['port', containerName, port]);
-    return port;
-  } catch {
-    return null;
-  }
-}
-
-let monitoringInterval: NodeJS.Timeout | null = null;
 let isMonitoring = false;
 
 export function startHealthMonitoring(intervalMs = 30000) {
@@ -483,15 +445,7 @@ export function startHealthMonitoring(intervalMs = 30000) {
     }
   };
 
-  monitoringInterval = setInterval(check, intervalMs);
+  setInterval(check, intervalMs);
   // Run initial check immediately
   check();
-}
-
-export function stopHealthMonitoring() {
-  if (monitoringInterval) {
-    clearInterval(monitoringInterval);
-    monitoringInterval = null;
-  }
-  isMonitoring = false;
 }

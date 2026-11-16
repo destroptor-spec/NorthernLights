@@ -52,14 +52,6 @@ export function useBrowsePlayer() {
   return { busy, playFilter, playAlbum };
 }
 
-/** The primary action of a genre or style page. */
-export const ShuffleButton: React.FC<{ busy: boolean; onClick: () => void; label: string }> = ({ busy, onClick, label }) => (
-  <button type="button" className="btn btn-primary" onClick={onClick} disabled={busy} aria-label={label}>
-    {busy ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Shuffle size={16} aria-hidden="true" />}
-    Shuffle
-  </button>
-);
-
 /** One row of narrowing toggles: one pick at a time, again to clear. */
 const FilterRow: React.FC<{
   label: string; name: string; options: Array<{ value: string; label: string; trackCount: number }>;

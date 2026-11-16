@@ -41,14 +41,6 @@ export const logScanner = (...args: unknown[]) => logProcessing('scanner', ...ar
 export const logAnalyzer = (...args: unknown[]) => logProcessing('analyzer', ...args);
 export const logLoudness = (...args: unknown[]) => logProcessing('loudness', ...args);
 
-export function setHlsLogging(enabled: boolean) {
-  loggingFlags.hls = !!enabled;
-}
-
-export function setFfmpegLogging(enabled: boolean) {
-  loggingFlags.ffmpeg = !!enabled;
-}
-
 export function isHlsLoggingEnabled(): boolean {
   return loggingFlags.hls;
 }

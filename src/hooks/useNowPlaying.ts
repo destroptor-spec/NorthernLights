@@ -5,12 +5,6 @@ import { selectDisplayedPlaybackState } from '../utils/sessionFollow';
 
 export type NowPlayingState = 'playing' | 'paused' | 'stopped';
 
-export function useCurrentTrack(): TrackInfo | null {
-  return usePlayerStore((s) =>
-    s.currentIndex !== null ? s.playlist[s.currentIndex] ?? null : null,
-  );
-}
-
 /** This device's state, or the controlled device's when it controls one. */
 export function useNowPlayingState(): NowPlayingState {
   return usePlayerStore(selectDisplayedPlaybackState);

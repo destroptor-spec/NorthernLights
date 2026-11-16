@@ -32,10 +32,6 @@ export function setLogLevel(level: LogLevel) {
   threshold = level;
 }
 
-export function getLogLevel(): LogLevel {
-  return threshold;
-}
-
 /** Errors and warnings always; info and debug from the threshold. */
 export function isRecorded(level: Recorded, at: LogLevel = threshold): boolean {
   return RANK[level] <= Math.max(RANK.warn, RANK[at]);
