@@ -202,6 +202,52 @@ describeDb('database read queries', () => {
     }
   });
 
+  it('leaves tracks with stand-in features out of similar artists, on both sides', async () => {
+    const real = (await pool.query("INSERT INTO artists (name) VALUES ('Real Neighbour') RETURNING id")).rows[0].id;
+    const standIn = (await pool.query("INSERT INTO artists (name) VALUES ('Stand-in Neighbour') RETURNING id")).rows[0].id;
+    const ownIds = [`${TRACK_ID}0`, `${TRACK_ID}1`, `${TRACK_ID}2`];
+    const realIds = ['cmVhbDA=', 'cmVhbDE='];
+    const standInIds = ['c3RhbmRpbjA=', 'c3RhbmRpbjE='];
+    const sound = (value: number, axis: number) => ({
+      bpm: 120,
+      acoustic_vector: Array(8).fill(value),
+      embedding_vector: Array.from({ length: 1280 }, (_, i) => (i === axis ? 1 : 0)),
+      feature_version: AUDIO_FEATURE_VERSION,
+    });
+    try {
+      for (const [artistId, ids] of [[real, realIds], [standIn, standInIds]] as const) {
+        for (const [i, id] of ids.entries()) {
+          await pool.query(
+            `INSERT INTO tracks (id, title, artist, album, path, artist_id, album_id, duration)
+             VALUES ($1, $2, 'Neighbour', 'Test Album', $3, $4, $5, 180)`,
+            [id, `Neighbour Track ${id}`, `${id}path`, artistId, seeded.albumId],
+          );
+        }
+      }
+      // The artist's two real tracks and the real neighbour share a sound; the
+      // artist's third track is a stand-in at the centre of the space.
+      await db.addTrackFeatures(ownIds[0], sound(0.9, 0));
+      await db.addTrackFeatures(ownIds[1], sound(0.9, 0));
+      await db.addTrackFeatures(ownIds[2], { ...sound(0.5, 1), is_simulated: true });
+      for (const id of realIds) await db.addTrackFeatures(id, sound(0.9, 0));
+      for (const id of standInIds) await db.addTrackFeatures(id, { ...sound(0.5, 1), is_simulated: true });
+      await db.refreshArtistAudioProfiles();
+
+      const similar = await db.getSimilarArtistsByAudioProfile(seeded.artistId);
+      expect(similar.map(a => a.id)).not.toContain(standIn);
+      const match = similar.find(a => a.id === real);
+      // Without the stand-in in the target, the two profiles are identical.
+      expect(match?.matchScore).toBe(100);
+      const profiled = await pool.query('SELECT artist_id FROM artist_audio_profiles WHERE artist_id = $1', [standIn]);
+      expect(profiled.rowCount).toBe(0);
+    } finally {
+      await pool.query('DELETE FROM track_features WHERE track_id = ANY($1::text[])', [[...ownIds, ...realIds, ...standInIds]]);
+      await pool.query('DELETE FROM tracks WHERE id = ANY($1::text[])', [[...realIds, ...standInIds]]);
+      await pool.query('DELETE FROM artists WHERE id = ANY($1::uuid[])', [[real, standIn]]);
+      await db.refreshArtistAudioProfiles();
+    }
+  });
+
   it('returns stored artist artwork in search, subscriptions, auto-add and concerts', async () => {
     const trackId = `${TRACK_ID}0`;
     const artistId = seeded.artistId;
