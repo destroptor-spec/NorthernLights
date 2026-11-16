@@ -23,6 +23,7 @@
 ### Bug fixes
 - **Analysis of MP3s with a wrong length:** some MP3s carry a header that claims the file is several times longer than it is (a 4-minute song read as 20 minutes). The new three-point analysis then looked past the end of the song, failed, and stored stand-in values for it. Aurora now notices, measures the real length and analyses the right three points, and stores the real length, so the player, Subsonic apps and playlists show it too (a rescan keeps it while the file still claims the same wrong length). Settings → Library → Re-analyze Fallbacks redoes tracks that were affected.
 - **Unused Genius proxy removed:** `POST /api/providers/genius/search` and `/api/providers/genius/artist/:id` are gone. Nothing in Aurora has called them since metadata moved to the server, but any signed-in user could use them to spend the server's Genius API quota. Testing the Genius key (`/api/providers/genius/test`) is unchanged.
+- **Unused MusicBrainz proxy routes removed:** the seven `/api/providers/musicbrainz/…` lookup, search and token-refresh routes had no caller, and any signed-in user could use them to spend the server's shared MusicBrainz rate limit. Connecting, testing and disconnecting MusicBrainz are unchanged. Other routes nothing called (the old artist-duplicates tool, which the artist review replaced, and three status routes) and the unused `essentia.js` package are gone too.
 
 ## [v1.0.0-rc.7] - 2026-11-06
 
