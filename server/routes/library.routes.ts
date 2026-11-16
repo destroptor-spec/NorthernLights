@@ -8,7 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import { ChildProcessPool } from '../workers/processPool';
 import * as mm from 'music-metadata';
-import { addDirectory, addTrack, addTrackFeatures, getTracksWithoutFeatures, getTracksWithSimulatedFeatures, getSimulatedFeatureTracks, getTrackCountWithFeatures, getAllTracks, getDirectories, removeDirectory, removeTracksByDirectory, getOrCreateArtist, getOrCreateAlbum, getOrCreateGenre, getAllArtists, getAllAlbums, getAllGenres, getPathsWithMeta, countTracksByArtHash, deleteTracksByPaths, purgeOrphanedEntities, recordUnparsedTrack, purgeOrphanedTracks, getSystemSetting, getPrimaryArtistName, setTrackCredits, alignArtistMbidsWithTracks, runArtistCreditSplitInBackground, setTrackLoudness, getTracksWithoutLoudness, getTracksWithFailedLoudness } from '../database';
+import { addDirectory, addTrack, addTrackFeatures, getTracksWithoutFeatures, getTracksWithSimulatedFeatures, getSimulatedFeatureTracks, getAllTracks, getDirectories, removeDirectory, removeTracksByDirectory, getOrCreateArtist, getOrCreateAlbum, getOrCreateGenre, getAllArtists, getAllAlbums, getAllGenres, getPathsWithMeta, countTracksByArtHash, deleteTracksByPaths, purgeOrphanedEntities, recordUnparsedTrack, purgeOrphanedTracks, getSystemSetting, getPrimaryArtistName, setTrackCredits, alignArtistMbidsWithTracks, runArtistCreditSplitInBackground, setTrackLoudness, getTracksWithoutLoudness, getTracksWithFailedLoudness } from '../database';
 import { measureLoudness } from '../services/loudness.service';
 import { cleanupOrphanArt } from '../services/artCache';
 import { scanStatus, scanClients, broadcastScanStatus } from '../state';
@@ -56,60 +56,6 @@ router.get('/scan/status', (req, res) => {
     clearInterval(heartbeat);
     scanClients.delete(res);
   });
-});
-
-router.get('/artist-duplicates', requireAdmin, async (_req, res) => {
-  try {
-    const { getArtistDuplicateCandidates } = await import('../database');
-    const candidates = await getArtistDuplicateCandidates();
-    res.json({ candidates });
-  } catch (error: any) {
-    console.error('[ArtistDuplicates] list error:', error);
-    res.status(500).json({ error: error.message || 'Failed to load artist duplicate candidates' });
-  }
-});
-
-router.post('/artist-duplicates/dismiss', requireAdmin, async (req, res) => {
-  try {
-    const { candidateKey, signature, artistIds } = req.body || {};
-    if (!candidateKey || !signature || !Array.isArray(artistIds) || artistIds.length < 2) {
-      return res.status(400).json({ error: 'candidateKey, signature, and artistIds are required' });
-    }
-    const { dismissArtistDuplicateCandidate } = await import('../database');
-    await dismissArtistDuplicateCandidate({
-      candidateKey,
-      signature,
-      artistIds: artistIds.map(String),
-      userId: req.user?.userId || null,
-    });
-    res.json({ status: 'dismissed' });
-  } catch (error: any) {
-    console.error('[ArtistDuplicates] dismiss error:', error);
-    res.status(500).json({ error: error.message || 'Failed to dismiss artist duplicate candidate' });
-  }
-});
-
-router.post('/artist-duplicates/merge', requireAdmin, async (req, res) => {
-  try {
-    const { candidateKey, signature, canonicalArtistId, duplicateArtistIds } = req.body || {};
-    if (!candidateKey || !signature || !canonicalArtistId || !Array.isArray(duplicateArtistIds) || duplicateArtistIds.length < 1) {
-      return res.status(400).json({ error: 'candidateKey, signature, canonicalArtistId, and duplicateArtistIds are required' });
-    }
-    const { mergeArtistDuplicateCandidate, purgeOrphanedEntities } = await import('../database');
-    await mergeArtistDuplicateCandidate({
-      candidateKey,
-      signature,
-      canonicalArtistId: String(canonicalArtistId),
-      duplicateArtistIds: duplicateArtistIds.map(String),
-      userId: req.user?.userId || null,
-    });
-    await purgeOrphanedEntities();
-    void runArtistCreditSplitInBackground();
-    res.json({ status: 'merged' });
-  } catch (error: any) {
-    console.error('[ArtistDuplicates] merge error:', error);
-    res.status(500).json({ error: error.message || 'Failed to merge artist duplicate candidate' });
-  }
 });
 
 // Manual merge — used when the auto-detector doesn't cluster two rows
@@ -1466,15 +1412,6 @@ router.post('/analyze/loudness', async (req, res) => {
 });
 
 // Get analysis status (how many tracks have features vs total)
-router.get('/analyze/status', async (req, res) => {
-  try {
-    const counts = await getTrackCountWithFeatures();
-    res.json(counts);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to get analysis status' });
-  }
-});
-
 // Remove a mapped folder
 router.post('/remove', requireAdmin, async (req, res) => {
   const { path: dirPath } = req.body;

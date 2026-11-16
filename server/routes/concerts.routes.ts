@@ -98,15 +98,6 @@ router.post('/providers/jambase/test', requireAdmin, async (_req, res) => {
   }
 });
 
-router.get('/providers/jambase/usage', requireAdmin, async (_req, res) => {
-  try {
-    const usage = await getCurrentMonthUsage();
-    res.json(usage);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // ─── User: subscriptions ─────────────────────────────────────────────
 
 router.get('/concerts/subscriptions', requireAuth, async (req, res) => {
@@ -180,17 +171,6 @@ router.post('/concerts/auto-add/refresh', requireAuth, async (req, res) => {
     const userId = req.user!.userId;
     const result = await runAutoAddForUser(userId);
     res.json({ status: 'ok', ...result });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-router.get('/concerts/auto-add/candidates', requireAuth, async (req, res) => {
-  try {
-    const userId = req.user!.userId;
-    const limit = Math.min(parseInt((req.query.limit as string) || '10', 10) || 10, 30);
-    const candidates = await getAutoAddCandidates(userId, limit);
-    res.json({ candidates });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

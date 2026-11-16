@@ -2704,19 +2704,6 @@ export async function getSimulatedFeatureTracks(limit = 50): Promise<Array<{
   });
 }
 
-export async function getTrackCountWithFeatures(): Promise<{ withFeatures: number; total: number }> {
-  const db = await initDB();
-  const res = await db.query(`
-    SELECT
-      COUNT(*) as total,
-      COUNT(tf.acoustic_vector_8d) as with_features
-    FROM tracks t
-    LEFT JOIN track_features tf ON t.id = tf.track_id
-  `);
-  const row = res.rows[0];
-  return { withFeatures: parseInt(row.with_features), total: parseInt(row.total) };
-}
-
 export async function addDirectory(dirPath: string) {
   const db = await initDB();
   const id = Buffer.from(dirPath).toString('base64');

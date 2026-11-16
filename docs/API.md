@@ -803,13 +803,6 @@ Run audio analysis on tracks without features.
   { "status": "completed", "message": "Analyzed 150 tracks", "count": 150 }
   ```
 
-### [GET] `/api/library/analyze/status`
-Get analysis coverage statistics.
-- **Example Response**:
-  ```json
-  { "totalTracks": 1000, "analyzedTracks": 850, "pendingTracks": 150 }
-  ```
-
 ### [GET] `/api/library/stats`
 Get per-directory statistics.
 - **Example Response**:
@@ -841,47 +834,6 @@ Toggle loved status of a track for the current user, optionally syncing to Last.
       { "provider": "lastfm", "status": "ok" },
       { "provider": "musicbrainz", "status": "skipped", "reason": "not_connected_or_missing_recording_mbid" }
     ]
-  }
-  ```
-
-### [GET] `/api/library/artist-duplicates`
-Retrieve potential duplicate artists based on fuzzy names (Admin only).
-- **Example Response**:
-  ```json
-  {
-    "candidates": [
-      {
-        "candidateKey": "t_dj_tiesto",
-        "signature": "tiesto",
-        "artists": [
-          { "id": "id1", "name": "Tiësto", "trackCount": 15 },
-          { "id": "id2", "name": "DJ Tiësto", "trackCount": 2 }
-        ]
-      }
-    ]
-  }
-  ```
-
-### [POST] `/api/library/artist-duplicates/dismiss`
-Dismiss a duplicate artist candidate cluster (Admin only).
-- **Example Request**:
-  ```json
-  {
-    "candidateKey": "t_dj_tiesto",
-    "signature": "tiesto",
-    "artistIds": ["id1", "id2"]
-  }
-  ```
-
-### [POST] `/api/library/artist-duplicates/merge`
-Merge duplicate artist candidate records under a single canonical ID (Admin only).
-- **Example Request**:
-  ```json
-  {
-    "candidateKey": "t_dj_tiesto",
-    "signature": "tiesto",
-    "canonicalArtistId": "id1",
-    "duplicateArtistIds": ["id2"]
   }
   ```
 
@@ -1282,9 +1234,6 @@ Check JamBase key configuration and API monthly usage limits (Admin only).
 ### [POST] `/api/providers/jambase/test`
 Test key connectivity (Admin only).
 
-### [GET] `/api/providers/jambase/usage`
-Get raw JamBase budget usage logs (Admin only).
-
 ### Subscriptions & Auto-Add
 
 ### [GET] `/api/concerts/subscriptions`
@@ -1299,9 +1248,6 @@ Unsubscribe from an artist's tour alerts.
 
 ### [POST] `/api/concerts/auto-add/refresh`
 Trigger auto-subscribing open slots with top played artists.
-
-### [GET] `/api/concerts/auto-add/candidates`
-Get candidates for subscription based on play history.
 
 ### [GET] `/api/concerts/auto-add/dismissed`
 Get dismissed auto-add candidates.
@@ -1437,29 +1383,8 @@ OAuth2 callback redirect handler.
 ### [GET] `/api/providers/musicbrainz/status`
 Check connection status.
 
-### [POST] `/api/providers/musicbrainz/refresh`
-Refresh access tokens.
-
 ### [POST] `/api/providers/musicbrainz/disconnect`
 Disconnect integration.
-
-### [GET] `/api/providers/musicbrainz/artist/:mbid`
-Proxy request to MB artist metadata.
-
-### [GET] `/api/providers/musicbrainz/release-group/:mbid`
-Proxy release-group data.
-
-### [GET] `/api/providers/musicbrainz/recording/:mbid`
-Proxy recording data.
-
-### [GET] `/api/providers/musicbrainz/isrc/:isrc`
-Lookup recording by ISRC.
-
-### [GET] `/api/providers/musicbrainz/search/artist`
-Search artist registry.
-
-### [GET] `/api/providers/musicbrainz/search/release-group`
-Search release-groups.
 
 ### [GET] `/api/providers/musicbrainz/test`
 Test connection.
