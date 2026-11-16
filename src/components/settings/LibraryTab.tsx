@@ -578,7 +578,7 @@ export const LibraryTab: React.FC = () => {
                         }
                     </button>
                 </div>
-                <p className="library-panel__description">Discogs-EffNet and MusiCNN files used by the Python extractor.</p>
+                <p className="library-panel__description">Discogs-EffNet and its classifiers, used by the Python extractor.</p>
 
                 <ul className="library-model-list">
                     {modelStatus.length === 0 ? (

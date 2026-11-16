@@ -2,7 +2,7 @@ import React, { useEffect, useCallback, useRef } from 'react';
 import { usePlayerStore } from '../../store/index';
 import { useLlmConnectionTest } from '../../hooks/useLlmConnectionTest';
 import { DependencyBadge, DependencyGroup, DependencyInfoBox } from '../DependencyBadge';
-import { Sparkles, Palette, Brain, ListMusic, Info } from 'lucide-react';
+import { Sparkles, Palette, ListMusic, Info } from 'lucide-react';
 
 // Simple debounce helper
 function debounce<T extends (...args: any[]) => any>(fn: T, delay: number) {
@@ -114,11 +114,6 @@ export const GenAiTab: React.FC = () => {
                         title="Custom Playlists"
                         description="Create playlists from natural language prompts like 'moody acoustic songs for studying'"
                         icon={<ListMusic size={16} />}
-                    />
-                    <DependencyInfoBox
-                        title="Genre Matrix Categorization"
-                        description="AI mapping of unknown local genres to MusicBrainz taxonomy"
-                        icon={<Brain size={16} />}
                     />
                 </div>
             </div>

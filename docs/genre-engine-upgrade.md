@@ -245,6 +245,7 @@ Nothing to run. The code no longer creates, refreshes or reads `subgenre_mapping
   ```sql
   DROP MATERIALIZED VIEW IF EXISTS genre_tree_paths;
   DROP TABLE IF EXISTS subgenre_mappings;
+  DROP TABLE IF EXISTS genre_matrix_cache;  -- no longer created or read (dead-code cleanup)
   DELETE FROM system_settings WHERE key IN ('genreMatrixLastRun', 'genreMatrixLastResult', 'genreMatrixProgress', 'genreMatrixCheckpoint', 'recommendationEngine', 'genrePenaltyCurve');
   DELETE FROM user_settings WHERE key IN ('recommendationEngine', 'genrePenaltyCurve');
   ```

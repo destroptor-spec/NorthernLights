@@ -1357,7 +1357,7 @@ router.post('/analyze', async (req, res) => {
   if (!await areAnalysisModelsReady()) {
     return res.status(409).json({
       error: 'Audio analysis models are not ready.',
-      detail: 'Download MusiCNN and Discogs-EffNet before starting analysis.',
+      detail: 'Download the analysis models (Settings → Library) before starting analysis.',
     });
   }
 

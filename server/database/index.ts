@@ -399,11 +399,6 @@ export async function initDB(): Promise<Pool> {
           path TEXT UNIQUE
         );
 
-        CREATE TABLE IF NOT EXISTS genre_matrix_cache (
-          id TEXT PRIMARY KEY,
-          matrix TEXT
-        );
-
         CREATE TABLE IF NOT EXISTS system_settings (
           key TEXT PRIMARY KEY,
           value TEXT
@@ -1397,7 +1392,8 @@ export async function initDB(): Promise<Pool> {
         CREATE INDEX IF NOT EXISTS albums_tags_trgm_idx ON albums USING gin (tags gin_trgm_ops);
 
         -- ==========================================
-        -- Per-artist averaged audio profile (musicnn + effnet).
+        -- Per-artist averaged audio profile: the 8D sound vector (named
+        -- musicnn_profile from before feature version 3) and the EffNet embedding.
         -- "Similar artists" used to aggregate every artist's vectors across
         -- the whole library on each page view (O(all tracks)); this MV
         -- precomputes it so each lookup only profiles the target artist and
@@ -5975,30 +5971,8 @@ export async function getVectorStats() {
 }
 
 // ==========================================
-// SYSTEM SETTINGS & GENRE MATRIX
+// SYSTEM SETTINGS
 // ==========================================
-
-export async function getGenreMatrixCache() {
-  const db = await initDB();
-  const res = await db.query('SELECT matrix FROM genre_matrix_cache WHERE id = $1', ['default']);
-  if (res.rows.length === 0 || !(res.rows[0] as any).matrix) return {};
-  const matrix = (res.rows[0] as any).matrix as string;
-  try {
-    return JSON.parse(matrix);
-  } catch(e) {
-    return {};
-  }
-}
-
-export async function updateGenreMatrixCache(matrix: any) {
-  const db = await initDB();
-  const matrixStr = JSON.stringify(matrix);
-  await db.query(`
-    INSERT INTO genre_matrix_cache (id, matrix)
-    VALUES ($1, $2)
-    ON CONFLICT (id) DO UPDATE SET matrix = EXCLUDED.matrix
-  `, ['default', matrixStr]);
-}
 
 // system_settings is read on extremely hot paths (87+ call sites: providers,
 // analysis, OAuth, scrobbling) but changes rarely and only ever through

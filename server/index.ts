@@ -425,7 +425,7 @@ app.use('/api/library', libraryRoutes);
 // Playback (history, record, skip, recommend)
 app.use('/api/playback', playbackRoutes);
 
-// Settings & Genre Matrix
+// Settings
 app.use('/api', settingsRoutes);
 
 // Hub (LLM playlists)
