@@ -109,23 +109,3 @@ class MetadataCache {
 
 // Global cache instance
 export const metadataCache = new MetadataCache(100, 30 * 60 * 1000);
-
-/**
- * Memoize metadata extraction to avoid duplicate parsing
- */
-export async function getCachedMetadata(
-  fileHandleName: string,
-  parseFn: () => Promise<mm.IAudioMetadata>
-): Promise<mm.IAudioMetadata> {
-  // Check cache first
-  const cached = metadataCache.get(fileHandleName);
-  if (cached) {
-    return cached;
-  }
-
-  // Parse and cache
-  const metadata = await parseFn();
-  metadataCache.set(fileHandleName, metadata);
-
-  return metadata;
-}

@@ -23,21 +23,6 @@ export type { VideoUpload, VideoAssociation } from './musicVideos';
 let pool: Pool | null = null;
 let initPromise: Promise<Pool> | null = null;
 
-// Reference-counted leak detection control - allows nested long-running operations
-let leakDetectionDisabledCount = 0;
-
-export function disableLeakDetection() {
-  leakDetectionDisabledCount++;
-}
-
-export function enableLeakDetection() {
-  leakDetectionDisabledCount = Math.max(0, leakDetectionDisabledCount - 1);
-}
-
-export function isLeakDetectionActive(): boolean {
-  return leakDetectionDisabledCount === 0;
-}
-
 export async function initDB(): Promise<Pool> {
   if (pool) return pool;
   if (initPromise) return initPromise;
@@ -130,7 +115,7 @@ export async function initDB(): Promise<Pool> {
         }
         const stack = new Error().stack;
         return (originalConnect as any)().then((connected: any) => {
-          if (connected && isLeakDetectionActive()) {
+          if (connected) {
             connected._leakTimeout = setTimeout(() => {
               console.warn(`[DB] CONNECTION LEAK DETECTED: client held for > ${Math.round(leakMs / 1000)}s.`);
               console.warn('[DB] Acquired at:', stack);
@@ -397,11 +382,6 @@ export async function initDB(): Promise<Pool> {
         CREATE TABLE IF NOT EXISTS directories (
           id TEXT PRIMARY KEY,
           path TEXT UNIQUE
-        );
-
-        CREATE TABLE IF NOT EXISTS genre_matrix_cache (
-          id TEXT PRIMARY KEY,
-          matrix TEXT
         );
 
         CREATE TABLE IF NOT EXISTS system_settings (
@@ -1397,7 +1377,8 @@ export async function initDB(): Promise<Pool> {
         CREATE INDEX IF NOT EXISTS albums_tags_trgm_idx ON albums USING gin (tags gin_trgm_ops);
 
         -- ==========================================
-        -- Per-artist averaged audio profile (musicnn + effnet).
+        -- Per-artist averaged audio profile: the 8D sound vector (named
+        -- musicnn_profile from before feature version 3) and the EffNet embedding.
         -- "Similar artists" used to aggregate every artist's vectors across
         -- the whole library on each page view (O(all tracks)); this MV
         -- precomputes it so each lookup only profiles the target artist and
@@ -2054,13 +2035,6 @@ export async function getTrackById(trackId: string) {
   return res.rows[0] ? mapTrackRow(res.rows[0]) : null;
 }
 
-// Returns all known track paths as a Set for O(1) existence checks during scanning.
-export async function getExistingPaths(): Promise<Set<string>> {
-  const db = await initDB();
-  const res = await db.query('SELECT path FROM tracks');
-  return new Set(res.rows.map((r: any) => r.path));
-}
-
 // Path (base64) → { mtime, artHash } for incremental change detection during a
 // scan. mtime is epoch ms (null for rows predating the file_mtime column).
 export async function getPathsWithMeta(): Promise<Map<string, { mtime: number | null; artHash: string | null; needsReparse: boolean }>> {
@@ -2092,14 +2066,6 @@ export async function countTracksByArtHash(hash: string): Promise<number> {
   const db = await initDB();
   const res = await db.query('SELECT 1 FROM tracks WHERE art_hash = $1 LIMIT 1', [hash]);
   return res.rows.length;
-}
-
-// art_hash for a single track path (base64), or null if unknown / unprocessed.
-export async function getArtHashForPath(b64Path: string): Promise<string | null> {
-  const db = await initDB();
-  const res = await db.query('SELECT art_hash FROM tracks WHERE path = $1 LIMIT 1', [b64Path]);
-  if (res.rows.length === 0) return null;
-  return res.rows[0].art_hash ?? null;
 }
 
 export interface ArtworkInfo {
@@ -2355,11 +2321,6 @@ export async function addTrack(track: any) {
       WHERE track_features.bpm IS DISTINCT FROM EXCLUDED.bpm OR track_features.acoustic_vector_8d IS DISTINCT FROM EXCLUDED.acoustic_vector_8d
     `, [id, track.audioFeatures.bpm, vector8dStr]);
   }
-}
-
-export async function clearTracks() {
-  const db = await initDB();
-  await db.query('DELETE FROM tracks');
 }
 
 // One-time backfill of file_size for rows scanned before the column existed.
@@ -2708,19 +2669,6 @@ export async function getSimulatedFeatureTracks(limit = 50): Promise<Array<{
   });
 }
 
-export async function getTrackCountWithFeatures(): Promise<{ withFeatures: number; total: number }> {
-  const db = await initDB();
-  const res = await db.query(`
-    SELECT
-      COUNT(*) as total,
-      COUNT(tf.acoustic_vector_8d) as with_features
-    FROM tracks t
-    LEFT JOIN track_features tf ON t.id = tf.track_id
-  `);
-  const row = res.rows[0];
-  return { withFeatures: parseInt(row.with_features), total: parseInt(row.total) };
-}
-
 export async function addDirectory(dirPath: string) {
   const db = await initDB();
   const id = Buffer.from(dirPath).toString('base64');
@@ -2754,17 +2702,6 @@ export async function removeTracksByDirectory(dirPath: string) {
      WHERE decoded_path = $1 OR (decoded_path >= $2 AND decoded_path < $3)`,
     [dirBuf, lower, upper]
   );
-}
-
-// Delete a specific set of tracks by their IDs.
-export async function deleteTracksByIds(ids: string[]): Promise<void> {
-  if (ids.length === 0) return;
-  const db = await initDB();
-  for (let i = 0; i < ids.length; i += 100) {
-    const chunk = ids.slice(i, i + 100);
-    const placeholders = chunk.map((_, idx) => `$${idx + 1}`).join(',');
-    await db.query(`DELETE FROM tracks WHERE id IN (${placeholders})`, chunk);
-  }
 }
 
 // Delete tracks by their stored base64 path values. Sync-walk diffs disk paths
@@ -2898,18 +2835,6 @@ export async function purgeOrphanedEntities(): Promise<{ albums: number; artists
     artists: artistRes.rowCount ?? 0,
     genres: genreRes.rowCount ?? 0,
   };
-}
-
-export async function recordPlayback(trackId: string) {
-  const db = await initDB();
-  // Increment playCount, update lastPlayedAt, and passively give a small rating bump
-  await db.query(`
-    UPDATE tracks 
-    SET play_count = play_count + 1,
-        last_played_at = NOW(),
-        rating = LEAST(rating + 1, 5)
-    WHERE id = $1
-  `, [trackId]);
 }
 
 export async function recordSkip(trackId: string) {
@@ -5775,13 +5700,6 @@ export async function deletePlaylist(playlistId: string, userId: string | null =
   }
 }
 
-export async function getPlaylistOwner(playlistId: string): Promise<string | null> {
-  const db = await initDB();
-  const res = await db.query('SELECT user_id FROM playlists WHERE id = $1', [playlistId]);
-  if (res.rows.length === 0) return null;
-  return (res.rows[0] as any).user_id || null;
-}
-
 // Enable/disable a public share link for a playlist the user owns. The token is
 // minted once and preserved across re-enables so an already-shared link keeps
 // working. `candidateToken` is used only when no token exists yet. Returns the
@@ -5939,66 +5857,9 @@ export async function updatePlaylistMeta(
   return res.rows[0] || null;
 }
 
-export async function getVectorStats() {
-  const db = await initDB();
-  
-  // Compute means and stddevs in SQL by casting vector to float array.
-  // This is significantly faster than fetching all rows and parsing in JS.
-  const DIM = 8;
-  const selectors = [];
-  for (let i = 1; i <= DIM; i++) {
-    selectors.push(`AVG((acoustic_vector_8d::text::float8[])[${i}]) as m${i}`);
-    selectors.push(`STDDEV((acoustic_vector_8d::text::float8[])[${i}]) as s${i}`);
-  }
-
-  const res = await db.query(`
-    SELECT ${selectors.join(', ')}
-    FROM track_features 
-    WHERE acoustic_vector_8d IS NOT NULL
-  `);
-  
-  if (!res.rows[0] || res.rows[0].m1 === null) {
-    return null;
-  }
-
-  const row = res.rows[0];
-  const means = [];
-  const stddevs = [];
-
-  for (let i = 1; i <= DIM; i++) {
-    means.push(Number(row[`m${i}`]) || 0);
-    // Standard deviation can be null or 0; fallback to 1 to prevent division by zero in normalization
-    stddevs.push(Number(row[`s${i}`]) || 1);
-  }
-
-  return { means, stddevs };
-}
-
 // ==========================================
-// SYSTEM SETTINGS & GENRE MATRIX
+// SYSTEM SETTINGS
 // ==========================================
-
-export async function getGenreMatrixCache() {
-  const db = await initDB();
-  const res = await db.query('SELECT matrix FROM genre_matrix_cache WHERE id = $1', ['default']);
-  if (res.rows.length === 0 || !(res.rows[0] as any).matrix) return {};
-  const matrix = (res.rows[0] as any).matrix as string;
-  try {
-    return JSON.parse(matrix);
-  } catch(e) {
-    return {};
-  }
-}
-
-export async function updateGenreMatrixCache(matrix: any) {
-  const db = await initDB();
-  const matrixStr = JSON.stringify(matrix);
-  await db.query(`
-    INSERT INTO genre_matrix_cache (id, matrix)
-    VALUES ($1, $2)
-    ON CONFLICT (id) DO UPDATE SET matrix = EXCLUDED.matrix
-  `, ['default', matrixStr]);
-}
 
 // system_settings is read on extremely hot paths (87+ call sites: providers,
 // analysis, OAuth, scrobbling) but changes rarely and only ever through
@@ -6312,12 +6173,6 @@ export async function recordSkipForUser(userId: string, trackId: string) {
   // Removed legacy tracks table update to prevent write amplification bloat.
 }
 
-export async function getUserPlaybackStats(userId: string) {
-  const db = await initDB();
-  const res = await db.query('SELECT * FROM user_playback_stats WHERE user_id = $1', [userId]);
-  return res.rows;
-}
-
 export async function getUserTopTracks(userId: string, limit: number = 10) {
   const db = await initDB();
   const res = await db.query(`
@@ -6402,17 +6257,6 @@ export async function listSubsonicApiKeys(userId: string) {
     WHERE user_id = $1
     ORDER BY created_at DESC
   `, [userId]);
-  return res.rows;
-}
-
-export async function listActiveSubsonicApiKeys(): Promise<SubsonicApiKeyRow[]> {
-  const db = await initDB();
-  const res = await db.query(`
-    SELECT id, user_id, name, key_prefix, key_hash, created_at, last_used_at, revoked_at
-    FROM subsonic_api_keys
-    WHERE revoked_at IS NULL
-    ORDER BY created_at DESC
-  `);
   return res.rows;
 }
 
@@ -6512,15 +6356,6 @@ export async function setUserSetting(userId: string, key: string, value: any) {
     ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value
   `, [userId, key, valStr]);
   userSettingCache.set(`${userId}:${key}`, { value: value === undefined ? null : value, expires: Date.now() + SYSTEM_SETTING_TTL_MS });
-}
-
-export async function deleteUserSettings(userId: string) {
-  const db = await initDB();
-  await db.query('DELETE FROM user_settings WHERE user_id = $1', [userId]);
-  // Drop this user's cached settings so stale values aren't served post-delete.
-  for (const k of userSettingCache.keys()) {
-    if (k.startsWith(`${userId}:`)) userSettingCache.delete(k);
-  }
 }
 
 // ==========================================
@@ -6924,54 +6759,6 @@ export async function getArtistVideosCache(artistId: string) {
     [artistId]
   );
   return res.rows[0] || null;
-}
-
-export async function upsertArtistVideosCache(artistId: string, opts: { channelId?: string | null; videosCount?: number; lastError?: string | null }) {
-  const db = await initDB();
-  await db.query(`
-    INSERT INTO artist_videos_cache (artist_id, youtube_channel_id, videos_count, last_error, fetched_at)
-    VALUES ($1, $2, $3, $4, NOW())
-    ON CONFLICT (artist_id) DO UPDATE SET
-      youtube_channel_id = COALESCE(EXCLUDED.youtube_channel_id, artist_videos_cache.youtube_channel_id),
-      videos_count = EXCLUDED.videos_count,
-      last_error = EXCLUDED.last_error,
-      fetched_at = NOW()
-  `, [artistId, opts.channelId ?? null, opts.videosCount ?? 0, opts.lastError ?? null]);
-}
-
-// Replace this artist's cached videos in a transaction so a partial failure
-// can't leave the cache half-rebuilt.
-export async function replaceArtistVideos(artistId: string, videos: Omit<MusicVideoRow, 'fetched_at'>[]) {
-  const db = await initDB();
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query('DELETE FROM artist_music_videos WHERE artist_id = $1', [artistId]);
-    for (const v of videos) {
-      await client.query(`
-        INSERT INTO artist_music_videos (
-          video_id, artist_id, track_id, title, thumbnail_url, published_at, position
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7)
-        ON CONFLICT (video_id) DO UPDATE SET
-          artist_id = EXCLUDED.artist_id,
-          track_id = EXCLUDED.track_id,
-          title = EXCLUDED.title,
-          thumbnail_url = EXCLUDED.thumbnail_url,
-          published_at = EXCLUDED.published_at,
-          position = EXCLUDED.position,
-          fetched_at = NOW()
-      `, [
-        v.video_id, v.artist_id, v.track_id, v.title, v.thumbnail_url,
-        v.published_at, v.position,
-      ]);
-    }
-    await client.query('COMMIT');
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
 }
 
 // Matched videos for an artist, in channel-upload order. Joins the matched

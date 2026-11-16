@@ -1180,7 +1180,7 @@ async function fetchOrderedTracks(ids: string[], userId: string) {
 }
 
 // Resolve a getSimilarSongs seed (song/album/artist id) to acoustic vectors for
-// the EffNet/MusiCNN nearest-neighbour search. Returns null when the seed has
+// the EffNet + 8D sound nearest-neighbour search. Returns null when the seed has
 // no analysed features yet (caller falls back to genre/artist matching).
 async function resolveSimilarSeed(rawId: string, userId: string): Promise<{ vectorStr: string; embeddingCentroidStr: string | null; excludeIds: string[] } | null> {
   const db = await initDB();
@@ -1570,7 +1570,7 @@ async function handleLists(req: Request, res: Response, method: string, ctx: Sub
       const seed = await resolveSimilarSeed(rawId, ctx.userId);
       let rows: any[];
       if (seed) {
-        // EffNet/MusiCNN acoustic nearest-neighbour — the same engine the
+        // EffNet + 8D sound nearest-neighbour — the same engine the
         // daylist/recommendation builder uses (8-d mood vector + 1280-d EffNet
         // embedding, blended via EFFNET_SIMILARITY_WEIGHT).
         rows = await fetchCandidatePool({

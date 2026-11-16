@@ -1275,7 +1275,7 @@ export async function getHubCollections(
   if (userId && systemPlaylistConfig.upNext) {
     const userRecentTracks = await getUserRecentTracks(userId, 5);
     if (userRecentTracks.length >= 3) {
-      // Get MusiCNN and EffNet vectors for the user's recent tracks
+      // Get the 8D sound and EffNet vectors for the user's recent tracks
       const recentIds = userRecentTracks.map((t: any) => t.id);
       const placeholders = recentIds.map((_, i) => `$${i + 1}`).join(',');
       const vecRes = await queryWithRetry(`
@@ -1411,7 +1411,7 @@ export async function getHubCollections(
   if (userId && systemPlaylistConfig.vault) {
     const userTopTracks = await getUserTopTracks(userId, 10);
     if (userTopTracks.length > 0) {
-      // Get MusiCNN and EffNet vectors for user's top tracks
+      // Get the 8D sound and EffNet vectors for user's top tracks
       const topIds = userTopTracks.map((t: any) => t.id);
       const topPlaceholders = topIds.map((_, i) => `$${i + 1}`).join(',');
       const topVecRes = await queryWithRetry(`

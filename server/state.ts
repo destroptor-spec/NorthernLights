@@ -147,18 +147,4 @@ export async function isPathAllowed(requestedPathBuf: Buffer): Promise<boolean> 
   return false;
 }
 
-// Track long-running operations to suppress false-positive leak warnings
-let longRunningOperationCount = 0;
-
-export function startLongRunningOperation() {
-  longRunningOperationCount++;
-}
-
-export function endLongRunningOperation() {
-  longRunningOperationCount = Math.max(0, longRunningOperationCount - 1);
-}
-
-export function isLongRunningOperationActive(): boolean {
-  return longRunningOperationCount > 0;
-}
 

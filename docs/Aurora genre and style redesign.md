@@ -691,7 +691,7 @@ Still open:
 
 - [x] Phase 1 gate (decided 2026-11-06): at least 95 % of tagged tracks have a mapping, and every mapping is reviewed in the review screen. Dev has 261 distinct Picard genre tags (the top 100 cover 96 % of uses), so a full review replaces sampling.
 - [x] Phase 0: blind A/B round, 35 % window vs mean of 20 / 50 / 80 % (mean won 13–7).
-- [ ] Optional: a second blind round of 20 to firm up the window result before re-analysing.
+- [x] ~~Optional: a second blind round of 20 to firm up the window result before re-analysing.~~ Dropped (2026-11-16): dev and prod are already re-analysed with the mean of 20 / 50 / 80 %.
 
 ## Appendix: reviewed sample, round 1
 

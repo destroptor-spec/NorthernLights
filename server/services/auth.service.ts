@@ -30,14 +30,6 @@ export function getCachedJwtSecret(): string | null {
   return cachedSecret;
 }
 
-export async function regenerateJwtSecret(): Promise<string> {
-  const secret = crypto.randomBytes(64).toString('hex');
-  await setSystemSetting('jwtSecret', secret);
-  cachedSecret = secret;
-  console.log('[Auth] Regenerated JWT secret — all existing tokens invalidated');
-  return secret;
-}
-
 export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, SALT_ROUNDS);
 }

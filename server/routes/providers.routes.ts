@@ -10,7 +10,7 @@ import {
 } from '../services/listenbrainz.service';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { scrobbleWithRetry } from '../services/scrobbleRetry.service';
-import { mbFetch, checkMbEnabled, refreshMbToken } from '../services/musicbrainz.service';
+import { mbFetch, checkMbEnabled } from '../services/musicbrainz.service';
 import { writeDebugLog } from '../services/debugLogger.service';
 import { enrichArtistImagesInBackground } from '../services/artistImageEnrichment.service';
 import {
@@ -177,85 +177,7 @@ function sanitizeOrigin(raw: unknown): string | null {
   }
 }
 
-// ─── MusicBrainz Proxy Routes ────────────────────────────────────────
-
-router.get('/providers/musicbrainz/artist/:mbid', async (req, res) => {
-  try {
-    if (!await checkMbEnabled()) return res.status(404).json({ error: 'MusicBrainz not enabled' });
-    const { mbid } = req.params;
-    const inc = req.query.inc || 'url-rels+tags+genres+ratings';
-    const json = await mbFetch(`https://musicbrainz.org/ws/2/artist/${mbid}?inc=${inc}&fmt=json`);
-    res.json(json);
-  } catch (err: any) {
-    console.error('[MusicBrainz Proxy] artist error:', err.message);
-    res.status(502).json({ error: 'MusicBrainz API request failed' });
-  }
-});
-
-router.get('/providers/musicbrainz/release-group/:mbid', async (req, res) => {
-  try {
-    if (!await checkMbEnabled()) return res.status(404).json({ error: 'MusicBrainz not enabled' });
-    const { mbid } = req.params;
-    const inc = req.query.inc || 'genres+tags+ratings';
-    const json = await mbFetch(`https://musicbrainz.org/ws/2/release-group/${mbid}?inc=${inc}&fmt=json`);
-    res.json(json);
-  } catch (err: any) {
-    console.error('[MusicBrainz Proxy] release-group error:', err.message);
-    res.status(502).json({ error: 'MusicBrainz API request failed' });
-  }
-});
-
-router.get('/providers/musicbrainz/recording/:mbid', async (req, res) => {
-  try {
-    if (!await checkMbEnabled()) return res.status(404).json({ error: 'MusicBrainz not enabled' });
-    const { mbid } = req.params;
-    const json = await mbFetch(`https://musicbrainz.org/ws/2/recording/${mbid}?inc=artist-credits+isrcs+tags&fmt=json`);
-    res.json(json);
-  } catch (err: any) {
-    console.error('[MusicBrainz Proxy] recording error:', err.message);
-    res.status(502).json({ error: 'MusicBrainz API request failed' });
-  }
-});
-
-router.get('/providers/musicbrainz/isrc/:isrc', async (req, res) => {
-  try {
-    if (!await checkMbEnabled()) return res.status(404).json({ error: 'MusicBrainz not enabled' });
-    const { isrc } = req.params;
-    const json = await mbFetch(`https://musicbrainz.org/ws/2/isrc/${isrc}?inc=artist-credits+tags&fmt=json`);
-    res.json(json);
-  } catch (err: any) {
-    console.error('[MusicBrainz Proxy] isrc error:', err.message);
-    res.status(502).json({ error: 'MusicBrainz API request failed' });
-  }
-});
-
-router.get('/providers/musicbrainz/search/artist', async (req, res) => {
-  try {
-    if (!await checkMbEnabled()) return res.status(404).json({ error: 'MusicBrainz not enabled' });
-    const query = req.query.q;
-    if (!query) return res.status(400).json({ error: 'Missing query parameter q' });
-    const limit = req.query.limit || '5';
-    const json = await mbFetch(`https://musicbrainz.org/ws/2/artist/?query=${encodeURIComponent(query as string)}&limit=${limit}&fmt=json`);
-    res.json(json);
-  } catch (err: any) {
-    console.error('[MusicBrainz Proxy] search error:', err.message);
-    res.status(502).json({ error: 'MusicBrainz API request failed' });
-  }
-});
-
-router.get('/providers/musicbrainz/search/release-group', async (req, res) => {
-  try {
-    if (!await checkMbEnabled()) return res.status(404).json({ error: 'MusicBrainz not enabled' });
-    const query = req.query.q;
-    if (!query) return res.status(400).json({ error: 'Missing query parameter q' });
-    const limit = req.query.limit || '5';
-    const json = await mbFetch(`https://musicbrainz.org/ws/2/release-group/?query=${encodeURIComponent(query as string)}&limit=${limit}&fmt=json`);
-    res.json(json);
-  } catch (err: any) {
-    console.error('[MusicBrainz Proxy] search release-group error:', err.message);
-    res.status(502).json({ error: 'MusicBrainz API request failed' });
-  }
-});
+// ─── MusicBrainz Routes ──────────────────────────────────────────────
 
 router.get('/providers/musicbrainz/test', async (req, res) => {
   try {
@@ -393,19 +315,6 @@ router.get('/providers/musicbrainz/callback', async (req, res) => {
   } catch (err: any) {
     console.error('[MusicBrainz OAuth] Callback error:', err.message);
     res.redirect(`${getServerOrigin(req)}/?mb_error=internal_error`);
-  }
-});
-
-router.post('/providers/musicbrainz/refresh', async (req, res) => {
-  try {
-    const token = await refreshMbToken();
-    if (token) {
-      res.json({ status: 'ok' });
-    } else {
-      res.status(400).json({ status: 'error', error: 'Failed to refresh token' });
-    }
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
   }
 });
 

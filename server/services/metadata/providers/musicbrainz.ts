@@ -55,17 +55,6 @@ export async function mbGetArtist(mbid: string, signal?: AbortSignal): Promise<M
   }
 }
 
-export async function mbSearchArtist(query: string): Promise<any> {
-  try {
-    return await mbFetch(
-      `https://musicbrainz.org/ws/2/artist/?query=${encodeURIComponent(query)}&limit=5&fmt=json`
-    );
-  } catch (err: any) {
-    if (err instanceof ProviderError) throw err;
-    throw new ProviderError('musicbrainz', messageWithCause(err));
-  }
-}
-
 export async function mbGetAlbumCover(mbid: string): Promise<string | null> {
   try {
     const coverUrl = `https://coverartarchive.org/release/${mbid}/front-500`;

@@ -108,16 +108,3 @@ export const DependencyInfoBox: React.FC<DependencyInfoBoxProps> = ({
     </div>
   );
 };
-
-export const InfoBadge: React.FC<{ label: string; value: string; highlight?: boolean }> = ({
-  label,
-  value,
-  highlight,
-}) => (
-  <div className="flex items-center justify-between py-1.5">
-    <span className="text-xs text-[var(--color-text-muted)]">{label}</span>
-    <span className={`text-xs font-medium ${highlight ? 'text-[var(--color-primary)]' : 'text-[var(--color-text-secondary)]'}`}>
-      {value}
-    </span>
-  </div>
-);

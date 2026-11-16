@@ -295,14 +295,6 @@ export function refreshArtistVideosIfStale(artistId: string, ttlDays?: number): 
   return refresh;
 }
 
-// Retained for callers that explicitly request a refresh. It still shares the
-// in-flight work and respects provider-error cooldowns.
-export async function refreshArtistVideos(artistId: string) {
-  await refreshArtistVideosIfStale(artistId, Number.MIN_VALUE);
-  const cache = await getArtistVideosCache(artistId);
-  return { count: cache?.videos_count ?? 0, channelId: cache?.youtube_channel_id ?? null };
-}
-
 async function refreshArtistVideosOnce(artistId: string, ttlDays?: number): Promise<RefreshResult> {
   let artist = await getArtistById(artistId);
   if (!artist) return { refreshed: false, reason: 'no-artist' };

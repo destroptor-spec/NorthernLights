@@ -4,7 +4,6 @@ import { initDB } from '../database';
 
 const APP_KEY_PREFIX = 'aurora_app_';
 const APP_KEY_LOOKUP_LENGTH = APP_KEY_PREFIX.length + 8;
-const PAIRING_TTL_MS = 10 * 60 * 1000;
 
 export interface AuroraAppPrincipal {
   userId: string;
@@ -348,8 +347,3 @@ export async function exchangePairingRequest(input: {
     client.release();
   }
 }
-
-export const auroraAppAuthConstants = {
-  appKeyPrefix: APP_KEY_PREFIX,
-  pairingTtlMs: PAIRING_TTL_MS,
-};

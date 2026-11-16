@@ -1,4 +1,3 @@
-import fs from 'fs';
 import path from 'path';
 import { redactLogSecrets } from '../../shared/logRedaction';
 import { isHlsLoggingEnabled, isFfmpegLoggingEnabled } from './loggingConfig';
@@ -15,12 +14,6 @@ function enabled(detail: HlsLogDetail) {
   return detail === 'normal' || (detail === 'detailed' ? isHlsLoggingEnabled() : isFfmpegLoggingEnabled());
 }
 
-function ensureDir(dir: string) {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-}
-
 function timestamp() {
   return new Date().toISOString();
 }
@@ -33,11 +26,6 @@ function sanitizeSegment(value: string): string {
 function appendLine(name: string, line: string) {
   const clean = redactLogSecrets(line).replace(/[\r\n]+/g, ' ').slice(0, 16384);
   logFile(name).write(`[${timestamp()}] ${clean}`);
-}
-
-export function getLogFilePath(name: string): string {
-  ensureDir(LOGS_DIR);
-  return path.join(LOGS_DIR, name);
 }
 
 export function writeDebugLog(name: string, line: string) {
