@@ -34,7 +34,7 @@ Top-level layout — explore subdirectories with `ls` for current file inventori
   - `routes/` — Route modules per resource (auth, library, playback, hub, playlists, etc.).
   - `services/` — Business logic (recommendation, llm, audio extraction, `genreTaxonomy/` genres and styles, modular `metadata/`).
   - `workers/` — `audioAnalysis.worker.ts` spawns persistent `tsx` child processes (`analyzeTrack.ts`) for CPU-intensive Essentia analysis. Concurrency controlled by `audioAnalysisCpu` (Background=1, Balanced=4, Maximum=6). Handles non-ASCII filenames via temp symlinks in `/tmp/am-*/`.
-  - `middleware/` — JWT `requireAuth` / `requireAdmin`.
+  - `middleware/` — JWT `requireAuth` / `requireAdmin`; `deprecatedRoute` marks the legacy listener routes the web app no longer calls (logs each call as `[Deprecated API]`, see `docs/legacy-listener-routes.md`). Don't add listener features to those routes: use `/api/v1`.
   - `state.ts` — Shared mutable state (DB status, scan status, session history).
 - `docs/` — Detailed feature specs and plans.
 

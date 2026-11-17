@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { deprecatedRoute } from '../middleware/deprecatedRoute';
 import {
   getAlbumById,
   getAllAlbums,
@@ -14,7 +15,7 @@ import { requireAdmin } from '../middleware/auth';
 
 const router = Router();
 
-router.get('/', async (req, res) => {
+router.get('/', deprecatedRoute('GET /api/v1/albums'), async (req, res) => {
   try {
     const albums = await getAllAlbums();
     res.json(albums);
@@ -24,7 +25,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.get('/:id', async (req, res) => {
+router.get('/:id', deprecatedRoute('GET /api/v1/albums/:id'), async (req, res) => {
   try {
     const album = await getAlbumById(req.params.id);
     if (!album) return res.status(404).json({ error: 'Album not found' });

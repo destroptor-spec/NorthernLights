@@ -17,7 +17,8 @@ import { getApiV1TrackById, mapTrackV1 } from '../services/apiV1Dto.service';
 async function request(body: unknown, legacy = false) {
   const layer = (legacy ? legacyRouter : router).stack.find(layer => layer.route?.path === (legacy ? '/recommend' : '/recommendations/next'))!;
   const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
-  await layer.route!.stack[0].handle({ body, apiV1: { userId: 'listener' }, user: { userId: 'listener' }, requestId: 'request-1' } as unknown as Request, res as unknown as Response, jest.fn());
+  const handlers = layer.route!.stack; // the legacy route has the deprecation log in front
+  await handlers[handlers.length - 1].handle({ body, apiV1: { userId: 'listener' }, user: { userId: 'listener' }, requestId: 'request-1' } as unknown as Request, res as unknown as Response, jest.fn());
   return res;
 }
 beforeEach(() => {

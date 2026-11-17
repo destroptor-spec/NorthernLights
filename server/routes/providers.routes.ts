@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { deprecatedRoute } from '../middleware/deprecatedRoute';
 import { createRateLimiter } from '../middleware/rateLimit';
 import { randomBytes } from 'crypto';
 import { getSystemSetting, setSystemSetting, getUserSetting, setUserSetting, getRepresentativeReleaseMbid, getArtistVideosCache } from '../database';
@@ -606,7 +607,7 @@ router.get('/providers/lastfm/status', async (req, res) => {
   }
 });
 
-router.post('/providers/lastfm/scrobble', async (req, res) => {
+router.post('/providers/lastfm/scrobble', deprecatedRoute('POST /api/v1/playback/reports'), async (req, res) => {
   try {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Authentication required' });
@@ -628,7 +629,7 @@ router.post('/providers/lastfm/scrobble', async (req, res) => {
   }
 });
 
-router.post('/providers/lastfm/now-playing', async (req, res) => {
+router.post('/providers/lastfm/now-playing', deprecatedRoute('POST /api/v1/playback/reports'), async (req, res) => {
   try {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Authentication required' });
@@ -648,7 +649,7 @@ router.post('/providers/lastfm/now-playing', async (req, res) => {
   }
 });
 
-router.post('/providers/lastfm/love', async (req, res) => {
+router.post('/providers/lastfm/love', deprecatedRoute('PUT /api/v1/tracks/:id/loved'), async (req, res) => {
   try {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Authentication required' });
@@ -669,7 +670,7 @@ router.post('/providers/lastfm/love', async (req, res) => {
   }
 });
 
-router.post('/providers/lastfm/unlove', async (req, res) => {
+router.post('/providers/lastfm/unlove', deprecatedRoute('PUT /api/v1/tracks/:id/loved'), async (req, res) => {
   try {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Authentication required' });
@@ -749,7 +750,7 @@ router.post('/providers/listenbrainz/disconnect', async (req, res) => {
   }
 });
 
-router.get('/providers/listenbrainz/status', async (req, res) => {
+router.get('/providers/listenbrainz/status', deprecatedRoute('nothing (Settings → Scrobbling has its own status)'), async (req, res) => {
   try {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Authentication required' });
@@ -768,7 +769,7 @@ router.get('/providers/listenbrainz/status', async (req, res) => {
   }
 });
 
-router.post('/providers/listenbrainz/scrobble', async (req, res) => {
+router.post('/providers/listenbrainz/scrobble', deprecatedRoute('POST /api/v1/playback/reports'), async (req, res) => {
   try {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Authentication required' });
@@ -790,7 +791,7 @@ router.post('/providers/listenbrainz/scrobble', async (req, res) => {
   }
 });
 
-router.post('/providers/listenbrainz/now-playing', async (req, res) => {
+router.post('/providers/listenbrainz/now-playing', deprecatedRoute('POST /api/v1/playback/reports'), async (req, res) => {
   try {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Authentication required' });

@@ -1,9 +1,10 @@
 import { Router } from 'express';
+import { deprecatedRoute } from '../middleware/deprecatedRoute';
 import { getGenreById, getAllGenres, getTracksByGenre, getGenreTaxonomyPaths } from '../database';
 
 const router = Router();
 
-router.get('/', async (req, res) => {
+router.get('/', deprecatedRoute('GET /api/v1/genres'), async (req, res) => {
   try {
     const genres = await getAllGenres();
     res.json(genres);
@@ -25,7 +26,7 @@ router.get('/taxonomy', async (req, res) => {
   }
 });
 
-router.get('/:id', async (req, res) => {
+router.get('/:id', deprecatedRoute('GET /api/v1/genres/:id'), async (req, res) => {
   try {
     const genre = await getGenreById(req.params.id);
     if (!genre) return res.status(404).json({ error: 'Genre not found' });

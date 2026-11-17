@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { deprecatedRoute } from '../middleware/deprecatedRoute';
 import {
   getArtistById,
   getAllArtists,
@@ -15,7 +16,7 @@ import {
 const router = Router();
 
 // Artists
-router.get('/', async (req, res) => {
+router.get('/', deprecatedRoute('GET /api/v1/artists'), async (req, res) => {
   try {
     const artists = await getAllArtists();
     res.json(artists);
@@ -68,7 +69,7 @@ router.get('/:id/credits', async (req, res) => {
   }
 });
 
-router.get('/:id', async (req, res) => {
+router.get('/:id', deprecatedRoute('GET /api/v1/artists/:id'), async (req, res) => {
   try {
     const artist = await getArtistById(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found' });

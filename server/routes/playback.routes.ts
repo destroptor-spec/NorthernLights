@@ -1,8 +1,12 @@
 import { Router } from 'express';
+import { deprecatedRoute } from '../middleware/deprecatedRoute';
 import { recordPlaybackForUser, recordSkipForUser } from '../database';
 import { addToSessionHistory } from '../state';
 
 const router = Router();
+
+// Legacy listener routes: the web app uses /api/v1. Logged until they can go.
+router.use(deprecatedRoute('POST /api/v1/playback/reports'));
 
 // Record session history for Infinity Mode
 router.post('/history', (req, res) => {

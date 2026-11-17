@@ -1,3 +1,4 @@
+import { deprecatedRoute } from '../middleware/deprecatedRoute';
 import { logScanner, logAnalyzer, logLoudness } from '../services/loggingConfig';
 import { setTrackLovedAndSync } from '../services/lovedTrack.service';
 import { decideStaleRemoval, partitionStaleByFailures, walkAudioFiles, type RemovalSkipReason, type WalkedFile } from '../services/libraryWalk';
@@ -354,7 +355,7 @@ router.post('/artist-images/enrich', requireAdmin, async (_req, res) => {
   }
 });
 
-router.post('/love', async (req, res) => {
+router.post('/love', deprecatedRoute('PUT /api/v1/tracks/:id/loved'), async (req, res) => {
   try {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Authentication required' });
@@ -1471,7 +1472,7 @@ router.get('/tracks', async (req, res) => {
 
 // Global search across artists/albums/tracks (trigram ILIKE). Replaces the
 // client-side in-memory scan so search scales without the full track list.
-router.get('/search', async (req, res) => {
+router.get('/search', deprecatedRoute('GET /api/v1/search'), async (req, res) => {
   try {
     const q = typeof req.query.q === 'string' ? req.query.q : '';
     const userId = req.user?.userId || null;

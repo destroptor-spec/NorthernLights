@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { deprecatedRoute } from '../middleware/deprecatedRoute';
 import { nextRecommendationSchema } from '../../shared/api/v1';
 import { getNextInfinityTrackForUser } from '../services/infinityRequest.service';
 
@@ -7,7 +8,7 @@ const requestSchema = nextRecommendationSchema.omit({ exclude: true }).extend({
   excludeTrackIds: nextRecommendationSchema.shape.exclude,
 }).strip();
 
-router.post('/recommend', async (req, res) => {
+router.post('/recommend', deprecatedRoute('POST /api/v1/recommendations/next'), async (req, res) => {
   const parsed = requestSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Invalid recommendation request' });
   try {
