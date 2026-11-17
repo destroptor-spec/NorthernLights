@@ -60,12 +60,11 @@ interface FilterableListPanelProps {
     onSelect: (id: string, label: string) => void;
     onBack: () => void;
     isActive: boolean;
-    isMobile: boolean;
     emptyText?: string;
 }
 
 const FilterableListPanel: React.FC<FilterableListPanelProps> = ({
-    title, placeholder, items, onSelect, onBack, isActive, isMobile, emptyText = 'No results',
+    title, placeholder, items, onSelect, onBack, isActive, emptyText = 'No results',
 }) => {
     const [filter, setFilter] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);
@@ -74,7 +73,9 @@ const FilterableListPanel: React.FC<FilterableListPanelProps> = ({
     useEffect(() => {
         if (isActive) {
             setFilter('');
-            setTimeout(() => inputRef.current?.focus(), 140);
+            // preventScroll: the panel is still sliding in from the right, and a
+            // scrolled-into-view focus would shift the whole menu sideways.
+            setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 140);
         }
     }, [isActive]);
 
@@ -106,31 +107,31 @@ const FilterableListPanel: React.FC<FilterableListPanelProps> = ({
                 </span>
             </div>
 
-            {/* Filter */}
-            <div className="px-3 py-2 border-b border-[var(--glass-border)] flex-shrink-0">
-                <div className="flex items-center gap-2 rounded-lg px-3 py-1.5 bg-black/10 dark:bg-white/5 border border-[var(--color-border)]">
-                    <Search size={13} className="text-[var(--color-text-muted)] flex-shrink-0" />
-                    <input
-                        ref={inputRef}
-                        type="text"
-                        value={filter}
-                        onChange={e => setFilter(e.target.value)}
-                        placeholder={placeholder}
-                        className="flex-1 bg-transparent border-none outline-none text-xs text-[var(--color-text-primary)] placeholder-[var(--color-text-muted)]"
-                    />
-                    {filter && (
-                        <button
-                            onClick={() => setFilter('')}
-                            className="text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] active:scale-90 transition-ui"
-                        >
-                            <X size={12} />
-                        </button>
-                    )}
-                </div>
-            </div>
+            {/* Filter: a row of the menu, its icon in line with the items' icons */}
+            <label className="context-menu-filter">
+                <Search size={15} aria-hidden="true" />
+                <input
+                    ref={inputRef}
+                    type="text"
+                    value={filter}
+                    onChange={e => setFilter(e.target.value)}
+                    placeholder={placeholder}
+                    aria-label={placeholder}
+                />
+                {filter && (
+                    <button
+                        type="button"
+                        onClick={() => { setFilter(''); inputRef.current?.focus({ preventScroll: true }); }}
+                        className="context-menu-filter__clear"
+                        aria-label="Clear filter"
+                    >
+                        <X size={14} />
+                    </button>
+                )}
+            </label>
 
             {/* List */}
-            <div className="overflow-y-auto flex-1 py-1.5" style={{ maxHeight: isMobile ? '60vh' : '260px' }}>
+            <div className="overflow-y-auto flex-1 min-h-0 py-1.5">
                 {filtered.length === 0 ? (
                     <div className="text-center text-[var(--color-text-muted)] text-xs py-6">{emptyText}</div>
                 ) : (
@@ -163,14 +164,13 @@ const CREDITS_ROLE_ORDER = CREDIT_ROLE_ORDER;
 
 interface CreditsPanelProps {
     isActive: boolean;
-    isMobile: boolean;
     loading: boolean;
     credits: TrackCredit[];
     onBack: () => void;
     onSelectArtist: (artistId: string) => void;
 }
 
-const CreditsPanel: React.FC<CreditsPanelProps> = ({ isActive, isMobile, loading, credits, onBack, onSelectArtist }) => {
+const CreditsPanel: React.FC<CreditsPanelProps> = ({ isActive, loading, credits, onBack, onSelectArtist }) => {
     const grouped = React.useMemo(() => {
         const byRole = new Map<string, TrackCredit[]>();
         for (const c of credits) {
@@ -207,10 +207,10 @@ const CreditsPanel: React.FC<CreditsPanelProps> = ({ isActive, isMobile, loading
                 >
                     <ChevronLeft size={18} />
                 </button>
-                <span className="text-sm font-semibold text-[var(--color-text-primary)] flex-1 truncate">credits</span>
+                <span className="text-sm font-semibold text-[var(--color-text-primary)] flex-1 truncate">Credits</span>
             </div>
 
-            <div className="overflow-y-auto flex-1 py-1.5" style={{ maxHeight: isMobile ? '60vh' : '300px' }}>
+            <div className="overflow-y-auto flex-1 min-h-0 py-1.5">
                 {loading ? (
                     <div className="text-center text-[var(--color-text-muted)] text-xs py-6">Loading…</div>
                 ) : grouped.length === 0 ? (
@@ -548,7 +548,6 @@ export const TrackContextMenu: React.FC = () => {
                 onSelect={(id) => void handleAddToPlaylist(id)}
                 onBack={nav.pop}
                 isActive={nav.current === 'playlists'}
-                isMobile={isMobile}
                 emptyText="No playlists found"
             />
 
@@ -559,13 +558,11 @@ export const TrackContextMenu: React.FC = () => {
                 onSelect={(_id, label) => handleGoToArtist(label)}
                 onBack={nav.pop}
                 isActive={nav.current === 'artists'}
-                isMobile={isMobile}
                 emptyText="No artists found"
             />
 
             <CreditsPanel
                 isActive={nav.current === 'credits'}
-                isMobile={isMobile}
                 loading={creditsLoading}
                 credits={trackCredits}
                 onBack={nav.pop}
@@ -585,7 +582,6 @@ export const TrackContextMenu: React.FC = () => {
              *     onSelect={(id) => handleMyAction(id)}
              *     onBack={nav.pop}
              *     isActive={nav.current === 'my-panel'}
-             *     isMobile={isMobile}
              * />
              *
              * Then add a MenuButton in the main panel:

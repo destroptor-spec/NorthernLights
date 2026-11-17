@@ -28,7 +28,9 @@ export const ContextMenuFrame = React.forwardRef<HTMLDivElement, {
 }>(({ children, isMobile = false, widthClassName = 'w-[248px]', className = '' }, ref) => (
     <div
         ref={ref}
-        className={`relative overflow-hidden bg-[var(--glass-bg)] backdrop-blur-3xl border border-[var(--glass-border)] rounded-2xl shadow-2xl ${isMobile ? 'w-full rounded-b-none' : widthClassName} ${className}`}
+        // overflow-clip, not hidden: a hidden box can still be scrolled (by a
+        // focus inside a sliding sub-panel), which shifted menus sideways.
+        className={`relative overflow-clip bg-[var(--glass-bg)] backdrop-blur-3xl border border-[var(--glass-border)] rounded-2xl shadow-2xl ${isMobile ? 'w-full rounded-b-none' : widthClassName} ${className}`}
         onContextMenu={(event) => event.preventDefault()}
     >
         {children}

@@ -8631,6 +8631,56 @@ a.rays-chip:focus-visible {
   padding-bottom: var(--safe-area-bottom);
 }
 
+/* The filter at the top of a context-menu list (Add to Playlist, Go to
+   Artist): a row of the menu like its items, the icon in line with theirs,
+   no box and no focus ring. */
+.context-menu-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 1rem;
+  border-bottom: 1px solid var(--glass-border);
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  cursor: text;
+  transition: color 150ms;
+}
+
+.context-menu-filter:focus-within {
+  color: var(--color-text-secondary);
+}
+
+.context-menu-filter input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: 0.875rem;
+  color: var(--color-text-primary);
+}
+
+.context-menu-filter input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.context-menu-filter input:focus,
+.context-menu-filter input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.context-menu-filter__clear {
+  display: inline-flex;
+  padding: 0.125rem;
+  border-radius: 0.375rem;
+  color: var(--color-text-muted);
+}
+
+.context-menu-filter__clear:hover {
+  color: var(--color-text-primary);
+}
+
 /* Rows and cards whose menu opens on a long press (useContextMenuTrigger):
    no iOS callout, and no text selection where a press means "menu". */
 [data-context-menu] {
