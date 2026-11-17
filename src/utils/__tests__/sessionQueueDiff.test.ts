@@ -154,3 +154,46 @@ describe('Infinity picks', () => {
     ]);
   });
 });
+
+describe('tracks queued by hand (Next in Queue)', () => {
+  const ref = (id: string, extra: Partial<QueueEntryRef> = {}): QueueEntryRef => ({ entryId: id, trackId: id.toUpperCase(), ...extra });
+
+  it('sends a queued insert as its own, marked queued', () => {
+    // The session says what is queued (its server sends queuedBy).
+    const server = [ref('a', { queued: false }), ref('c', { queued: false })];
+    const local = [ref('a'), ref('q', { queued: true }), ref('c'), ref('d')];
+    expect(planQueueOperations(server, local, 0)).toEqual([
+      { type: 'insert', afterEntryId: 'a', trackIds: ['Q'], entryIds: ['q'], queued: true },
+      { type: 'insert', afterEntryId: 'c', trackIds: ['D'], entryIds: ['d'] },
+    ]);
+  });
+
+  it('marks and unmarks entries dragged into or out of the queued tracks', () => {
+    const server = [ref('a', { queued: false }), ref('q', { queued: true }), ref('b', { queued: false }), ref('c', { queued: false })];
+    // b dragged up into the queued tracks; q dragged down out of them.
+    const local = [ref('a'), ref('b', { queued: true }), ref('c'), ref('q')];
+    const operations = planQueueOperations(server, local, 0);
+    expect(operations).toEqual(expect.arrayContaining([
+      { type: 'setQueued', queueEntryIds: ['b'], queued: true },
+      { type: 'setQueued', queueEntryIds: ['q'], queued: false },
+    ]));
+    // The server takes the operation (its entry IDs are UUIDs).
+    expect(playbackSessionPatchSchema.safeParse({
+      expectedRevision: 1, operations: [{ type: 'setQueued', queueEntryIds: [entry(1).entryId], queued: true }],
+    }).success).toBe(true);
+  });
+
+  it('sends no marks to a server that does not say what is queued', () => {
+    const server = [ref('a'), ref('b')];
+    const local = [ref('a'), ref('b', { queued: true })];
+    expect(planQueueOperations(server, local, 0)).toEqual([]);
+  });
+
+  it('marks the queued entries a replace brings', () => {
+    const server = [ref('x', { queued: false })];
+    const local = [ref('a'), ref('q', { queued: true }), ref('b')];
+    const operations = planQueueOperations(server, local, 0);
+    expect(operations[0].type).toBe('replaceQueue');
+    expect(operations.slice(1)).toEqual([{ type: 'setQueued', queueEntryIds: ['q'], queued: true }]);
+  });
+});

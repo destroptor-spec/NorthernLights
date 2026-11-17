@@ -45,9 +45,19 @@ type EntryRow = {
   track_id: string;
   position: number;
   added_at: Date | string;
-  /** 'infinity' for an Infinity pick; null for anything else. */
+  /**
+   * 'infinity' for an Infinity pick; the user's ID for an entry they queued by
+   * hand (`queuedBy`); null for anything else (what was started).
+   */
   added_by: string | null;
 };
+
+const USER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The user who queued the entry by hand, or null. */
+function queuedByOf(entry: Pick<EntryRow, 'added_by'>): string | null {
+  return entry.added_by && USER_ID.test(entry.added_by) ? entry.added_by : null;
+}
 
 export class PlaybackSessionNotFoundError extends Error {}
 /** Only the owner may do this: choose where it plays, end it (docs/listen-together.md). */
@@ -123,14 +133,14 @@ function hashPatch(patch: PlaybackSessionPatch): string {
   return crypto.createHash('sha256').update(JSON.stringify(body)).digest('hex');
 }
 
-function newEntries(trackIds: string[], entryIds?: string[], addedBy: QueueEntryAddedBy = 'user'): EntryRow[] {
+function newEntries(trackIds: string[], entryIds?: string[], addedBy: QueueEntryAddedBy = 'user', queuedBy: string | null = null): EntryRow[] {
   const addedAt = new Date();
   return trackIds.map((trackId, offset) => ({
     queue_entry_id: entryIds?.[offset] ?? crypto.randomUUID(),
     track_id: trackId,
     position: offset,
     added_at: addedAt,
-    added_by: addedBy === 'infinity' ? 'infinity' : null,
+    added_by: addedBy === 'infinity' ? 'infinity' : queuedBy,
   }));
 }
 
@@ -260,6 +270,7 @@ export async function serializeSession(db: Db, row: SessionRow, viewer?: { userI
       track,
       addedAt: new Date(entry.added_at).toISOString(),
       addedBy: entry.added_by === 'infinity' ? 'infinity' as const : 'user' as const,
+      queuedBy: queuedByOf(entry),
     })),
     visibility: row.visibility ?? 'private',
     access: viewer
@@ -323,11 +334,13 @@ async function ensureTracksExist(db: PoolClient, trackIds: string[]) {
 // Positions come out as 0..n-1, which also closes holes left by tracks that
 // were deleted from the library (their entries cascade away).
 async function writeEntries(db: PoolClient, sessionId: string, previous: EntryRow[], next: EntryRow[]) {
-  const previousPosition = new Map(previous.map((entry) => [entry.queue_entry_id, Number(entry.position)]));
+  const before = new Map(previous.map((entry) => [entry.queue_entry_id, entry]));
   const unchanged = new Set<string>();
   const changed: Array<{ entry: EntryRow; position: number }> = [];
   next.forEach((entry, position) => {
-    if (previousPosition.get(entry.queue_entry_id) === position) unchanged.add(entry.queue_entry_id);
+    const prior = before.get(entry.queue_entry_id);
+    // Same place and same mark (setQueued): left as it is.
+    if (prior && Number(prior.position) === position && (prior.added_by ?? null) === (entry.added_by ?? null)) unchanged.add(entry.queue_entry_id);
     else changed.push({ entry, position });
   });
   const stale = previous.map((entry) => entry.queue_entry_id).filter((id) => !unchanged.has(id));
@@ -519,7 +532,7 @@ export async function patchPlaybackSession(input: {
           const at = operation.afterEntryId !== undefined
             ? anchorSlot(entries, operation.afterEntryId)
             : Math.min(operation.index ?? entries.length, entries.length);
-          entries.splice(at, 0, ...newEntries(operation.trackIds, operation.entryIds, operation.addedBy));
+          entries.splice(at, 0, ...newEntries(operation.trackIds, operation.entryIds, operation.addedBy, operation.queued ? input.userId : null));
           if (!currentEntryId) currentEntryId = entries[0]?.queue_entry_id || null;
           queueChanged = true;
           break;
@@ -543,6 +556,18 @@ export async function patchPlaybackSession(input: {
               ? from
               : anchorSlot(entries, operation.afterEntryId);
           entries.splice(to, 0, entry);
+          queueChanged = true;
+          break;
+        }
+        case 'setQueued': {
+          // Into the listener's queue: the caller queued it, unless someone
+          // already had. Out of it: nobody did. Infinity picks stay theirs.
+          const marked = new Set(operation.queueEntryIds);
+          entries = entries.map((entry) => {
+            if (!marked.has(entry.queue_entry_id) || entry.added_by === 'infinity') return entry;
+            const addedBy = operation.queued ? (queuedByOf(entry) ?? input.userId) : null;
+            return addedBy === entry.added_by ? entry : { ...entry, added_by: addedBy };
+          });
           queueChanged = true;
           break;
         }

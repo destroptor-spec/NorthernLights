@@ -42,6 +42,26 @@ test('marks the playing track as current', () => {
   expect(row.getAttribute('aria-current')).toBe('true');
 });
 
+test('during a gig, shows who queued the track', () => {
+  render(
+    <MemoryRouter>
+      <DndContext>
+        <SortableContext items={['row-1']}>
+          <ul>
+            <PlaylistItem
+              id="row-1" index={1} isActive={false} isSidebarCollapsed={false}
+              track={{ id: 't1', path: 'p1', title: 'Enigma', artist: 'A', queued: true, queuedBy: 'u2' }}
+              queuedBy={{ avatar: { userId: 'u2', initial: 'T', pictureUrl: null }, name: 'Tove' }}
+              onPlay={jest.fn()} onContextMenu={jest.fn()} getArtistLink={() => null} parseArtists={(a) => [a]}
+            />
+          </ul>
+        </SortableContext>
+      </DndContext>
+    </MemoryRouter>,
+  );
+  expect(screen.getByTitle('Queued by Tove')).toBeTruthy();
+});
+
 describe('touch rows (mobile Now Playing queue)', () => {
   const renderTouchRow = (handlers: Partial<{ onPlay: jest.Mock; onContextMenu: jest.Mock }> = {}) => {
     const onPlay = handlers.onPlay ?? jest.fn();

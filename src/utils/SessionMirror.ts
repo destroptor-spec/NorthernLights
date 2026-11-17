@@ -3,7 +3,7 @@ import { AuroraApiError } from '../api/auroraApi';
 import * as sessionApi from '../api/playbackSessions';
 import { currentSessionFromError } from '../api/playbackSessions';
 import type { TrackInfo } from './fileSystem';
-import { planSessionPatch, MAX_SESSION_QUEUE, type QueueEntryRef } from './sessionQueueDiff';
+import { localEntryRefs, planSessionPatch, MAX_SESSION_QUEUE, type QueueEntryRef } from './sessionQueueDiff';
 import type { ReceiverHandover } from './receiverSessionFollow';
 import { isOwnSession } from './sessionFollow';
 import { createUuid, isUuid } from './uuid';
@@ -115,8 +115,7 @@ interface Grant { sessionId: string; credential: PlaybackOutputCredential; seq: 
 /** The output that replaced this device: what kind of device, and its name. */
 export interface ReplacingOutput { kind: string; name: string | null }
 
-const entriesOf = (playlist: TrackInfo[]): QueueEntryRef[] =>
-  playlist.map((track) => ({ entryId: track.queueEntryId || '', trackId: track.id, ...(track.isInfinity ? { infinity: true } : {}) }));
+const entriesOf = (playlist: TrackInfo[]): QueueEntryRef[] => localEntryRefs(playlist);
 
 /**
  * Another device took over by casting to the very Cast device this one casts

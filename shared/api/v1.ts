@@ -236,6 +236,8 @@ export const queueEntrySchema = z.object({
   track: trackSchema,
   addedAt: ISO_DATE_TIME,
   addedBy: queueEntryAddedBySchema,
+  queuedBy: z.string().uuid().nullable().optional()
+    .describe('The user who queued this entry by hand (Play next, Add to queue), or null: it came with what was started, or from Infinity. Clients play and show these as the listener\'s queue: right after the current entry, before the rest.'),
 }).meta({ id: 'PlaybackQueueEntry' });
 
 export const PLAYBACK_OUTPUT_KINDS = ['browser', 'cast', 'receiver'] as const;
@@ -393,6 +395,7 @@ const queueInsertOperation = z.object({
   trackIds: z.array(OPAQUE_ID).min(1).max(200),
   entryIds: proposedEntryIds(200),
   addedBy: queueEntryAddedBySchema.optional().describe('Mark the inserted entries as Infinity picks (`infinity`). Default `user`.'),
+  queued: z.boolean().optional().describe('Queued by hand (Play next, Add to queue): the caller becomes the entries\' `queuedBy`. Not with `addedBy: infinity`.'),
 })
   .refine(oneTarget('index'), { message: 'Give exactly one of index or afterEntryId.' })
   .refine(entryIdsMatchTracks, { message: ENTRY_IDS_MESSAGE, path: ['entryIds'] });
@@ -406,6 +409,11 @@ const queueMoveOperation = z.object({
   toIndex: z.number().int().nonnegative().optional().describe('Legacy position form. Give exactly one of toIndex or afterEntryId.'),
   afterEntryId: z.string().uuid().nullable().optional().describe('Move after this entry; null moves to the head. Give exactly one of toIndex or afterEntryId.'),
 }).refine(oneTarget('toIndex'), { message: 'Give exactly one of toIndex or afterEntryId.' });
+const queueSetQueuedOperation = z.object({
+  type: z.literal('setQueued'),
+  queueEntryIds: z.array(z.string().uuid()).min(1).max(200),
+  queued: z.boolean().describe('true: queued by hand (an entry dragged into the listener\'s queue; the caller becomes its `queuedBy` unless someone already is). false: not any more (dragged out of it).'),
+});
 const transportOperation = z.object({
   type: z.literal('setTransport'),
   currentEntryId: z.string().uuid().nullable().optional(),
@@ -426,6 +434,7 @@ export const playbackSessionPatchSchema = z.object({
     queueInsertOperation,
     queueRemoveOperation,
     queueMoveOperation,
+    queueSetQueuedOperation,
     transportOperation,
   ])).min(1).max(50),
 }).strict().meta({ id: 'PlaybackSessionPatch' });

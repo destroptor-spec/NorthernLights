@@ -3,7 +3,7 @@ import { AuroraApiError } from '../api/auroraApi';
 import * as sessionApi from '../api/playbackSessions';
 import { currentSessionFromError } from '../api/playbackSessions';
 import type { TrackInfo } from './fileSystem';
-import { MAX_SESSION_QUEUE, planQueueOperations } from './sessionQueueDiff';
+import { localEntryRefs, MAX_SESSION_QUEUE, planQueueOperations, sessionEntryRefs } from './sessionQueueDiff';
 import { createUuid, isUuid } from './uuid';
 import { FOLLOW_STALE_MS, followFromSession, followedPositionMs, isCastOutput, isFollowedOutputPlaying, isOwnSession, type FollowedOutput } from './sessionFollow';
 
@@ -155,9 +155,11 @@ interface ProgressData {
   report: { state: FollowedOutput['state']; queueEntryId: string | null; positionMs: number; volume?: number };
 }
 
+// Same entries, and the same ones queued by hand (when the server says).
 const sameEntries = (playlist: TrackInfo[], session: PlaybackSession) =>
   playlist.length === session.queue.length
-  && session.queue.every((entry, index) => playlist[index]?.queueEntryId === entry.queueEntryId);
+  && session.queue.every((entry, index) => playlist[index]?.queueEntryId === entry.queueEntryId
+    && (entry.queuedBy === undefined || (entry.queuedBy ?? null) === (playlist[index]?.queuedBy ?? null)));
 
 const settingsOf = (state: Pick<FollowerPlayerState, 'repeat' | 'shuffle' | 'isInfinityMode'>) =>
   `${state.repeat}/${!!state.shuffle}/${!!state.isInfinityMode}`;
@@ -381,11 +383,10 @@ export class SessionFollower {
     const state = this.store?.getState();
     const session = this.session;
     if (!state || !session || !this.editsGoToSession(state)) return;
-    const local = state.playlist.map((track) => ({ entryId: track.queueEntryId || '', trackId: track.id }));
+    const local = localEntryRefs(state.playlist);
     // Clearing the queue here does not stop the receiver.
     if (!local.length || local.length > MAX_SESSION_QUEUE || local.some((entry) => !isUuid(entry.entryId))) return;
-    const server = session.queue.map((entry) => ({ entryId: entry.queueEntryId, trackId: entry.track.id }));
-    const operations = planQueueOperations(server, local, null, session.currentEntryId);
+    const operations = planQueueOperations(sessionEntryRefs(session.queue), local, null, session.currentEntryId);
     if (!operations.length) return;
     this.editing = true;
     try {

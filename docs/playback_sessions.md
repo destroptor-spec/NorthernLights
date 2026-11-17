@@ -529,6 +529,30 @@ The server cannot be the source of truth for a client that cannot reach it:
   offered as a one-tap "Restore the queue from this device" (the existing undo
   pattern) rather than merged silently.
 
+### Queued by hand (2026-11-18)
+
+Tracks a listener queues by hand (Play next, Add to queue) play before the rest
+of what was started: they are a run right after the current entry, and the
+desktop queue sidebar shows them as "Next in Queue" (`src/utils/queueSections.ts`).
+The session carries that mark so every device, and every guest, agrees on it:
+
+- Each queue entry has `queuedBy`: the user who queued it by hand, or `null`.
+  It is stored in `playback_session_entries.added_by`, which also holds
+  `'infinity'` for Infinity picks and `null` for what was started (no new
+  column).
+- `insert` takes `queued: true`; the caller becomes the entries' `queuedBy`
+  (not with `addedBy: 'infinity'`).
+- `setQueued` (`queueEntryIds`, `queued`) marks entries dragged into the run
+  (the caller becomes `queuedBy` unless someone already is) or unmarks those
+  dragged out. Infinity picks keep their mark. It needs the `queue` scope.
+- A `replaceQueue` keeps the entries it keeps as they were, so their marks too.
+- Clients send marks only when the session's server says what they are
+  (`queuedBy` present), so a newer client never sends `setQueued` to an older
+  server. The planner adds the marks after its queue operations
+  (`markOperations` in `sessionQueueDiff.ts`).
+
+During a gig the sidebar shows who queued each track (their avatar on the row).
+
 ### Listen together (later)
 
 Specified in [listen-together.md](listen-together.md) (Phase 6, Andreas's
