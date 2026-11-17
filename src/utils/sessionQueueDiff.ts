@@ -8,7 +8,18 @@ import type { PlaybackSession, PlaybackSessionPatch } from '../../shared/api/v1'
 // replaceQueue instead.
 
 export type SessionOperation = PlaybackSessionPatch['operations'][number];
-export interface QueueEntryRef { entryId: string; trackId: string; /** An Infinity pick (sent as `addedBy: 'infinity'`). */ infinity?: boolean }
+export interface QueueEntryRef {
+  entryId: string;
+  trackId: string;
+  /** An Infinity pick (sent as `addedBy: 'infinity'`). */
+  infinity?: boolean;
+  /**
+   * Queued by hand (sent as `queued`, the session's `queuedBy`). On the
+   * session's side undefined when its server does not say (older server):
+   * then no marks are sent.
+   */
+  queued?: boolean;
+}
 export interface MirroredTransport { repeatMode: PlaybackSession['repeatMode']; shuffle: boolean; infinity?: boolean }
 
 // Server limits (shared/api/v1.ts).
@@ -37,12 +48,53 @@ function longestIncreasingRun(values: number[]): number[] {
   return run.reverse();
 }
 
+/**
+ * setQueued operations that bring the session's marks (queued by hand) in
+ * line with this device's, after `operations` ran: entries the session has
+ * keep its mark, a queued insert carries its own, entries new in a replace
+ * have none. Only when the session's server says what its marks are.
+ */
+function markOperations(server: QueueEntryRef[], local: QueueEntryRef[], operations: SessionOperation[]): SessionOperation[] {
+  if (!server.some((entry) => entry.queued !== undefined)) return [];
+  const marked = new Map(server.map((entry) => [entry.entryId, !!entry.queued]));
+  for (const operation of operations) {
+    if (operation.type === 'insert' && operation.queued) operation.entryIds?.forEach((id) => marked.set(id, true));
+  }
+  const on: string[] = [];
+  const off: string[] = [];
+  for (const entry of local) {
+    if (entry.infinity) continue;
+    const want = !!entry.queued;
+    if ((marked.get(entry.entryId) ?? false) !== want) (want ? on : off).push(entry.entryId);
+  }
+  const chunks = (ids: string[], queued: boolean): SessionOperation[] => {
+    const out: SessionOperation[] = [];
+    for (let at = 0; at < ids.length; at += MAX_REMOVE_ENTRIES) out.push({ type: 'setQueued', queueEntryIds: ids.slice(at, at + MAX_REMOVE_ENTRIES), queued });
+    return out;
+  };
+  return [...chunks(on, true), ...chunks(off, false)];
+}
+
 export function planQueueOperations(
   server: QueueEntryRef[],
   local: QueueEntryRef[],
   currentIndex: number | null,
   /** The session's current entry: it plays, so it is never removed (only a replace drops it). */
   currentEntryId: string | null = null,
+): SessionOperation[] {
+  const operations = planQueueChanges(server, local, currentIndex, currentEntryId);
+  const marks = markOperations(server, local, operations);
+  if (operations.length + marks.length < MAX_PATCH_OPERATIONS) return [...operations, ...marks];
+  // Too many with the marks: one replace, then the marks it needs.
+  const replace = planQueueChanges([], local, currentIndex, null);
+  return [...replace, ...markOperations(server, local, replace)];
+}
+
+function planQueueChanges(
+  server: QueueEntryRef[],
+  local: QueueEntryRef[],
+  currentIndex: number | null,
+  currentEntryId: string | null,
 ): SessionOperation[] {
   const replace = (): SessionOperation[] => [{
     type: 'replaceQueue',
@@ -84,7 +136,7 @@ export function planQueueOperations(
       afterEntryId: runAnchor,
       trackIds: run.map((entry) => entry.trackId),
       entryIds: run.map((entry) => entry.entryId),
-      ...(run[0].infinity ? { addedBy: 'infinity' as const } : {}),
+      ...(run[0].infinity ? { addedBy: 'infinity' as const } : run[0].queued ? { queued: true } : {}),
     });
     runAnchor = run[run.length - 1].entryId;
     run = [];
@@ -92,8 +144,9 @@ export function planQueueOperations(
   local.forEach((entry, index) => {
     const anchor = index === 0 ? null : local[index - 1].entryId;
     if (!serverTrack.has(entry.entryId)) {
-      // One insert marks all its entries alike, so an Infinity pick starts its own.
-      if (run.length && !!run[0].infinity !== !!entry.infinity) flushRun();
+      // One insert marks all its entries alike, so an Infinity pick, or a
+      // track queued by hand, starts its own.
+      if (run.length && (!!run[0].infinity !== !!entry.infinity || !!run[0].queued !== !!entry.queued)) flushRun();
       if (!run.length) runAnchor = anchor;
       run.push(entry);
       if (run.length === MAX_INSERT_TRACKS) flushRun();
@@ -108,6 +161,25 @@ export function planQueueOperations(
   return operations.length >= MAX_PATCH_OPERATIONS ? replace() : operations;
 }
 
+/** The session's queue as entry refs, with its marks when its server gives them. */
+export function sessionEntryRefs(queue: PlaybackSession['queue']): QueueEntryRef[] {
+  return queue.map((entry) => ({
+    entryId: entry.queueEntryId,
+    trackId: entry.track.id,
+    ...(entry.queuedBy !== undefined ? { queued: !!entry.queuedBy } : {}),
+  }));
+}
+
+/** This device's queue as entry refs: Infinity picks and tracks queued by hand marked. */
+export function localEntryRefs(playlist: ReadonlyArray<{ queueEntryId?: string; id: string; isInfinity?: boolean; queued?: boolean }>): QueueEntryRef[] {
+  return playlist.map((track) => ({
+    entryId: track.queueEntryId || '',
+    trackId: track.id,
+    ...(track.isInfinity ? { infinity: true } : {}),
+    ...(track.queued ? { queued: true } : {}),
+  }));
+}
+
 /** Everything the device holding the output owns in the session, except what its reports carry. */
 export function planSessionPatch(
   session: Pick<PlaybackSession, 'queue' | 'repeatMode' | 'shuffle'> & { infinity?: boolean; currentEntryId?: string | null },
@@ -115,7 +187,7 @@ export function planSessionPatch(
   currentIndex: number | null,
   transport: MirroredTransport,
 ): SessionOperation[] {
-  const server = session.queue.map((entry) => ({ entryId: entry.queueEntryId, trackId: entry.track.id }));
+  const server = sessionEntryRefs(session.queue);
   const operations = planQueueOperations(server, local, currentIndex, session.currentEntryId ?? null);
   const infinityChanged = transport.infinity !== undefined && transport.infinity !== (session.infinity ?? false);
   if (transport.repeatMode !== session.repeatMode || transport.shuffle !== session.shuffle || infinityChanged) {

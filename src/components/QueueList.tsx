@@ -22,6 +22,7 @@ import { PlaylistItem } from './PlaylistItem';
 import { useToast } from '../hooks/useToast';
 import type { TrackInfo } from '../utils/fileSystem';
 import { nextFromLabel, queueSections } from '../utils/queueSections';
+import { useGigPeople } from '../hooks/useGigPeople';
 
 // Clear-with-undo, shared by the desktop sidebar header and the mobile
 // now-playing queue header so the two surfaces never drift apart.
@@ -112,6 +113,8 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
   const playlist = usePlayerStore(state => state.playlist);
   const currentIndex = usePlayerStore(state => state.currentIndex);
   const queueSource = usePlayerStore(state => state.queueSource);
+  // During a gig, who queued each track by hand (sidebar only).
+  const gigPeople = useGigPeople();
   // A tap goes to the device that plays, when this one controls it.
   const playAtIndex = usePlayerStore(state => state.playQueueEntry);
   const moveInPlaylist = usePlayerStore(state => state.moveInPlaylist);
@@ -261,6 +264,7 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
                     parseArtists={parseArtists}
                     opacity={(t.isInfinity && (currentIndex === null || idx > currentIndex)) ? 0.6 : 1}
                     touch={touch}
+                    queuedBy={sections && t.queuedBy ? gigPeople?.get(t.queuedBy) : undefined}
                   />
                 </div>
               );

@@ -72,6 +72,8 @@ export interface TrackInfo {
   isInfinity?: boolean;
   /** Queued by hand (Play next, Add to queue): plays before the rest of what was started. See utils/queueSections. */
   queued?: boolean;
+  /** Who queued it by hand (a user ID), from the playback session: shown during a gig. */
+  queuedBy?: string;
 }
 
 const DB_NAME = "MusicPlayerDB";

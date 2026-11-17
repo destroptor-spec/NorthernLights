@@ -62,6 +62,7 @@ export function patchNeed(patch: PlaybackSessionPatch): SessionNeed {
       case 'insert':
       case 'remove':
       case 'move':
+      case 'setQueued':
         scopes.add('queue');
         break;
       case 'setTransport':

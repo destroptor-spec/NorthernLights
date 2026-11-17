@@ -1315,6 +1315,10 @@ export const usePlayerStore = create<PlayerState>()(
         }
       };
 
+      // A track this user queues by hand carries their ID, as the playback session records it.
+      const queuedByMe = (state: PlayerState): { queuedBy?: string } =>
+        (state.currentUser?.id ? { queuedBy: state.currentUser.id } : {});
+
       const prewarmNextFromState = (state: PlayerState, currentIndex: number | null = state.currentIndex) => {
         const nextIndex = currentIndex !== null ? currentIndex + 1 : null;
         const nextTrack = nextIndex !== null ? state.playlist[nextIndex] : null;
@@ -2886,7 +2890,7 @@ export const usePlayerStore = create<PlayerState>()(
           const snapshot = options?.undo ? state.playlist.map((item) => ({ ...item })) : null;
           const snapshotIndex = state.currentIndex;
           // Behind the tracks queued by hand, before the rest of the album or playlist.
-          const queueTrack = { ...cloneTrackForQueue(track), queued: true };
+          const queueTrack = { ...cloneTrackForQueue(track), queued: true, ...queuedByMe(state) };
           const insertAt = addToQueueIndex(state.playlist, state.currentIndex);
           const nextPlaylist = [...state.playlist];
           nextPlaylist.splice(insertAt, 0, queueTrack);
@@ -2915,7 +2919,7 @@ export const usePlayerStore = create<PlayerState>()(
           const newPlaylist = [...state.playlist];
           // The top of the tracks queued by hand.
           const insertAt = state.currentIndex !== null ? state.currentIndex + 1 : newPlaylist.length;
-          const queueTrack = { ...cloneTrackForQueue(track), queued: true };
+          const queueTrack = { ...cloneTrackForQueue(track), queued: true, ...queuedByMe(state) };
           newPlaylist.splice(insertAt, 0, queueTrack);
           if (castManager.isConnected()) {
             void castManager.insertNextInQueue(queueTrack);
@@ -2983,8 +2987,11 @@ export const usePlayerStore = create<PlayerState>()(
           // Dragged into the tracks queued by hand, it is one of them; out of them, it isn't.
           const queued = queuedAfterMove(newPlaylist, newIndex, toIndex, !!moved.queued);
           if (queued !== !!moved.queued) {
-            const { queued: _wasQueued, ...rest } = moved;
-            newPlaylist[toIndex] = queued ? { ...rest, queued: true } : rest;
+            // Who queued it stays; dragged in, the user who dragged it did.
+            const { queued: _wasQueued, queuedBy: _queuedBy, ...rest } = moved;
+            newPlaylist[toIndex] = queued
+              ? { ...rest, queued: true, ...(moved.queuedBy ? { queuedBy: moved.queuedBy } : queuedByMe(state)) }
+              : rest;
           }
           if (castManager.isConnected() && moved?.queueEntryId) {
             void castManager.moveQueueItem(moved.queueEntryId, toIndex);
@@ -3214,8 +3221,10 @@ export const usePlayerStore = create<PlayerState>()(
 
         adoptSessionQueueAsOutput: (incoming: TrackInfo[], currentEntryId: string | null) => {
           const state = get();
+          // The incoming queue says what is queued by hand when it knows (queued defined).
           const same = state.playlist.length === incoming.length
-            && state.playlist.every((track, index) => track.queueEntryId === incoming[index].queueEntryId);
+            && state.playlist.every((track, index) => track.queueEntryId === incoming[index].queueEntryId
+              && (incoming[index].queued === undefined || (!!track.queued === incoming[index].queued && track.queuedBy === incoming[index].queuedBy)));
           if (same) return;
           const follows = castManager.receiverFollowsSession();
           // Keep what plays. It can't be removed from the queue, so it is gone
@@ -3230,7 +3239,7 @@ export const usePlayerStore = create<PlayerState>()(
           const queued = new Set(state.playlist.filter((track) => track.queued).map((track) => track.queueEntryId));
           const tracks = incoming.map((track) => {
             if (infinity.has(track.queueEntryId)) return { ...track, isInfinity: true };
-            if (queued.has(track.queueEntryId)) return { ...track, queued: true };
+            if (track.queued === undefined && queued.has(track.queueEntryId)) return { ...track, queued: true };
             return track;
           });
           const currentIndex = index >= 0 ? index : (tracks.length ? 0 : null);

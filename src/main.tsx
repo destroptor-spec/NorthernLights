@@ -31,6 +31,9 @@ const sessionQueueTracks = (session: PlaybackSession) => toPlayableTracks(sessio
     queueEntryId: session.queue[index].queueEntryId,
     // Infinity picks look different until they play, on every device.
     ...(session.queue[index].addedBy === 'infinity' ? { isInfinity: true } : {}),
+    // Queued by hand, and by whom (the server says from the release that records it).
+    ...(session.queue[index].queuedBy !== undefined ? { queued: !!session.queue[index].queuedBy } : {}),
+    ...(session.queue[index].queuedBy ? { queuedBy: session.queue[index].queuedBy! } : {}),
   }));
 
 // "Sync playback across devices" (off unless the user turns it on here).

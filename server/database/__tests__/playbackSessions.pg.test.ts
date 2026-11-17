@@ -850,6 +850,36 @@ describeDb('playback sessions', () => {
       ]);
     });
 
+    // The queue sidebar's "Next in Queue" (2026-11-18): who queued what by hand.
+    it('records who queued an entry by hand, and setQueued marks or unmarks it, keeping who', async () => {
+      const session = await create(trackIds(0, 3));
+      let after = await patch(session, [
+        { type: 'insert', afterEntryId: session.queue[0].queueEntryId, trackIds: [trackId(10)], queued: true },
+        { type: 'insert', afterEntryId: null, trackIds: [trackId(11)], queued: true, addedBy: 'infinity' },
+      ]);
+      expect(after.queue.map((entry) => [entry.track.id, entry.queuedBy, entry.addedBy])).toEqual([
+        [trackId(11), null, 'infinity'], [trackId(0), null, 'user'], [trackId(10), userId, 'user'],
+        [trackId(1), null, 'user'], [trackId(2), null, 'user'],
+      ]);
+
+      const context = after.queue[3].queueEntryId;
+      const queued = after.queue[2].queueEntryId;
+      after = await patch(after, [{ type: 'setQueued', queueEntryIds: [context, after.queue[0].queueEntryId], queued: true }]);
+      expect(after.queue[3].queuedBy).toBe(userId);
+      expect(after.queue[0].queuedBy).toBeNull(); // an Infinity pick stays one
+      after = await patch(after, [{ type: 'setQueued', queueEntryIds: [queued], queued: false }]);
+      expect(after.queue[2].queuedBy).toBeNull();
+      // Stored, not only answered: read back from the rows.
+      const stored = (await sessions.getPlaybackSession(userId, session.id))!;
+      expect(stored.queue.map((entry) => entry.queuedBy)).toEqual([null, null, null, userId, null]);
+
+      // A replace keeps the entries it keeps as they were.
+      after = await patch(after, [{
+        type: 'replaceQueue', trackIds: after.queue.map((entry) => entry.track.id), entryIds: after.queue.map((entry) => entry.queueEntryId), currentIndex: 1,
+      }]);
+      expect(after.queue[3].queuedBy).toBe(userId);
+    });
+
     it('reads the session again when another device edited it meanwhile', async () => {
       const session = await playingOnReceiver(trackIds(0, 2), 1);
       let edited = false;

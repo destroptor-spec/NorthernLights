@@ -11235,6 +11235,16 @@ button.connect-line:disabled {
 .queue-row-artist-link:hover {
   color: var(--color-primary);
 }
+/* Who queued it (during a gig): in ⋯'s place, which takes over on hover. */
+.queue-row-by {
+  display: inline-flex;
+  flex-shrink: 0;
+  transition: opacity var(--transition-fast);
+}
+.queue-row:hover .queue-row-by,
+.queue-row:focus-within .queue-row-by {
+  opacity: 0;
+}
 /* ⋯ fades in over the end of the text, which fades out under it. */
 .queue-row-more {
   position: absolute;

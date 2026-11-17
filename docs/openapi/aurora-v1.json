@@ -1214,6 +1214,14 @@
               "infinity"
             ],
             "description": "infinity: an Infinity pick (by the server, or a client that chose it itself). user: anything else. Clients show Infinity picks apart until they play."
+          },
+          "queuedBy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The user who queued this entry by hand (Play next, Add to queue), or null: it came with what was started, or from Infinity. Clients play and show these as the listener's queue: right after the current entry, before the rest."
           }
         },
         "required": [
@@ -3187,6 +3195,10 @@
                         "infinity"
                       ],
                       "description": "Mark the inserted entries as Infinity picks (`infinity`). Default `user`."
+                    },
+                    "queued": {
+                      "type": "boolean",
+                      "description": "Queued by hand (Play next, Add to queue): the caller becomes the entries' `queuedBy`. Not with `addedBy: infinity`."
                     }
                   },
                   "required": [
@@ -3248,6 +3260,35 @@
                   "required": [
                     "type",
                     "queueEntryId"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "setQueued"
+                      ]
+                    },
+                    "queueEntryIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "minItems": 1,
+                      "maxItems": 200
+                    },
+                    "queued": {
+                      "type": "boolean",
+                      "description": "true: queued by hand (an entry dragged into the listener's queue; the caller becomes its `queuedBy` unless someone already is). false: not any more (dragged out of it)."
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "queueEntryIds",
+                    "queued"
                   ]
                 },
                 {

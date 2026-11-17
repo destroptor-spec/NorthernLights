@@ -7,6 +7,8 @@ import { GripVertical, MoreHorizontal } from 'lucide-react';
 import { formatTime } from '../utils/formatTime';
 import { AlbumArt } from './AlbumArt';
 import type { TrackInfo } from '../utils/fileSystem';
+import type { GigPerson } from '../hooks/useGigPeople';
+import { UserAvatar } from './UserAvatar';
 
 export interface PlaylistItemProps {
   id: string; // The dnd-kit unique identifier (instance ID)
@@ -21,6 +23,8 @@ export interface PlaylistItemProps {
    * text (a tap on the row plays it); remove and love live in the menu.
    */
   touch?: boolean;
+  /** During a gig: who queued this track by hand (desktop sidebar). */
+  queuedBy?: GigPerson;
 
   onPlay: (index: number) => void;
   onContextMenu: (track: TrackInfo, x: number, y: number) => void;
@@ -29,7 +33,7 @@ export interface PlaylistItemProps {
 }
 
 export const PlaylistItem = memo(({
-  id, track, index, isActive, isSidebarCollapsed, opacity = 1, touch = false,
+  id, track, index, isActive, isSidebarCollapsed, opacity = 1, touch = false, queuedBy,
   onPlay, onContextMenu, getArtistLink, parseArtists
 }: PlaylistItemProps) => {
   const {
@@ -168,6 +172,12 @@ export const PlaylistItem = memo(({
               </div>
             )}
           </div>
+          {queuedBy && (
+            <span className="queue-row-by" title={queuedBy.name ? `Queued by ${queuedBy.name}` : undefined}>
+              <UserAvatar avatar={queuedBy.avatar} size="xs" />
+              {queuedBy.name && <span className="sr-only">Queued by {queuedBy.name}</span>}
+            </span>
+          )}
           <button
             type="button"
             aria-label={`More options for ${title}`}
