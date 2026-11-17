@@ -5162,7 +5162,11 @@ export class CastManager {
         }
     }
 
-    public async insertNextInQueue(track: { queueEntryId?: string; url?: string; rawUrl?: string; title?: string; artist?: string; artUrl?: string; album?: string; format?: string; duration?: number }) {
+    /**
+     * Inserts a track after the current item (Play next), or before the entry
+     * `beforeEntryId` (Add to queue, behind the tracks queued by hand).
+     */
+    public async insertNextInQueue(track: { queueEntryId?: string; url?: string; rawUrl?: string; title?: string; artist?: string; artUrl?: string; album?: string; format?: string; duration?: number }, beforeEntryId?: string) {
         if (this.leftToReceiver('insert-next')) return;
         const artworkReady = this.readySignedArtwork([track.artUrl]);
         if (artworkReady) await artworkReady;
@@ -5181,7 +5185,9 @@ export class CastManager {
             queueEntryId: track.queueEntryId || createQueueEntryId(),
         });
         if (!mediaSession) {
-            if (this.sendReceiverQueueInsert(item, 'next', track.title)) return;
+            // The receiver inserts only next or at the end: an Add to queue
+            // that belongs further down lands at the end rather than first.
+            if (this.sendReceiverQueueInsert(item, beforeEntryId ? 'end' : 'next', track.title)) return;
             // This used to return silently: the track went into the local queue
             // as "next" and never reached the device.
             this.logCast('error', 'Cast play-next failed: no media session', `title=${track.title || 'unknown'}`);
@@ -5194,7 +5200,10 @@ export class CastManager {
         // which is only correct when the current item is already last.
         const items = mediaSession.items;
         const currentItemId = mediaSession.currentItemId;
-        if (Array.isArray(items) && typeof currentItemId === 'number') {
+        const beforeItemId = beforeEntryId ? this.getQueueItemId(beforeEntryId, mediaSession) : null;
+        if (beforeItemId !== null) {
+            request.insertBefore = beforeItemId;
+        } else if (Array.isArray(items) && typeof currentItemId === 'number') {
             const currentIndex = items.findIndex((queueItem: any) => queueItem?.itemId === currentItemId);
             if (currentIndex >= 0 && currentIndex < items.length - 1) {
                 request.insertBefore = items[currentIndex + 1].itemId;

@@ -21,6 +21,7 @@ import { useKnownArtistKeys } from '../hooks/useKnownArtistKeys';
 import { PlaylistItem } from './PlaylistItem';
 import { useToast } from '../hooks/useToast';
 import type { TrackInfo } from '../utils/fileSystem';
+import { nextFromLabel, queueSections } from '../utils/queueSections';
 
 // Clear-with-undo, shared by the desktop sidebar header and the mobile
 // now-playing queue header so the two surfaces never drift apart.
@@ -88,7 +89,16 @@ interface QueueListProps {
   listClassName?: string;
   /** The mobile Now Playing queue: touch rows (see PlaylistItem `touch`). */
   touch?: boolean;
+  /**
+   * The desktop sidebar: the upcoming queue in sections (Current track, Next
+   * in Queue, Next from: …, Infinity), played tracks left out. Headings only
+   * when not collapsed. See utils/queueSections.
+   */
+  sections?: boolean;
 }
+
+/** A row of the list: a section heading, or the queue entry at `index`. */
+type QueueRow = { type: 'heading'; key: string; label: string } | { type: 'track'; index: number };
 
 // The virtualized queue rows plus their drag-reorder and remove-with-undo
 // wiring, extracted from PlaylistSidebar so the mobile now-playing sheet can
@@ -96,11 +106,12 @@ interface QueueListProps {
 // the Dnd contexts always wrap the list; on touch layouts the drag handle is
 // hidden and reordering uses the rows' chevron buttons instead.
 export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function QueueList(
-  { getScrollElement, scrollMargin = 0, collapsed = false, listClassName = '', touch = false },
+  { getScrollElement, scrollMargin = 0, collapsed = false, listClassName = '', touch = false, sections = false },
   ref,
 ) {
   const playlist = usePlayerStore(state => state.playlist);
   const currentIndex = usePlayerStore(state => state.currentIndex);
+  const queueSource = usePlayerStore(state => state.queueSource);
   // A tap goes to the device that plays, when this one controls it.
   const playAtIndex = usePlayerStore(state => state.playQueueEntry);
   const moveInPlaylist = usePlayerStore(state => state.moveInPlaylist);
@@ -120,18 +131,38 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
     [knownArtistKeys]
   );
 
+  const rows = useMemo<QueueRow[]>(() => {
+    if (!sections) return playlist.map((_, index) => ({ type: 'track' as const, index }));
+    const parts = queueSections(playlist, currentIndex);
+    const out: QueueRow[] = [];
+    const add = (key: string, label: string, indexes: number[]) => {
+      if (indexes.length === 0) return;
+      if (!collapsed) out.push({ type: 'heading', key, label });
+      for (const index of indexes) out.push({ type: 'track', index });
+    };
+    if (parts.current !== null) add('current', 'Current track', [parts.current]);
+    add('queued', 'Next in Queue', parts.queued);
+    add('context', nextFromLabel(queueSource, parts.context.map((index) => playlist[index])), parts.context);
+    add('infinity', 'Next from: Infinity', parts.infinity);
+    return out;
+  }, [sections, playlist, currentIndex, queueSource, collapsed]);
+
   // Maintain stability of item heights using estimateSize
   const virtualizer = useVirtualizer({
-    count: playlist.length,
+    count: rows.length,
     getScrollElement,
-    estimateSize: () => (collapsed ? 80 : touch ? 62 : 70),
+    estimateSize: (i) => (rows[i]?.type === 'heading' ? 48 : collapsed ? 80 : touch ? 62 : sections ? 60 : 70),
     overscan: 10,
     scrollMargin,
   });
 
   useImperativeHandle(ref, () => ({
-    scrollToIndex: (index, options) => virtualizer.scrollToIndex(index, options),
-  }), [virtualizer]);
+    // `index` is the queue entry's; in sections the rows include headings.
+    scrollToIndex: (index, options) => {
+      const row = rows.findIndex((entry) => entry.type === 'track' && entry.index === index);
+      if (row >= 0) virtualizer.scrollToIndex(row, options);
+    },
+  }), [virtualizer, rows]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -143,6 +174,11 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
   // Queue entry IDs are unique and stay with a row when it moves, so a drag
   // animates the row itself; position-based IDs only for entries without one.
   const sortableItems = useMemo(() => playlist.map((t, idx) => t.queueEntryId || `${t.id}-${idx}`), [playlist]);
+  // The rows that can be dragged, in the order they show.
+  const visibleSortable = useMemo(
+    () => rows.flatMap((row) => (row.type === 'track' ? [sortableItems[row.index]] : [])),
+    [rows, sortableItems],
+  );
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
@@ -155,8 +191,6 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
     }
   }, [sortableItems, moveInPlaylist]);
 
-  const handleRemoveFromQueue = useRemoveFromQueueWithUndo();
-
   return (
     <div className={listClassName}>
       <DndContext
@@ -166,7 +200,7 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
         onDragEnd={handleDragEnd}
       >
         <SortableContext
-          items={sortableItems}
+          items={visibleSortable}
           strategy={verticalListSortingStrategy}
         >
           <ul
@@ -178,25 +212,42 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
             className="list-none p-0 m-0"
           >
             {virtualizer.getVirtualItems().map((virtualRow) => {
-              const idx = virtualRow.index;
+              const row = rows[virtualRow.index];
+              if (!row) return null;
+              const rowStyle: React.CSSProperties = {
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                // With an external scroller, row offsets include the
+                // list's scrollMargin — subtract it to position within
+                // the list itself.
+                transform: `translateY(${virtualRow.start - scrollMargin}px)`,
+              };
+              if (row.type === 'heading') {
+                return (
+                  <li
+                    key={`heading-${row.key}`}
+                    data-index={virtualRow.index}
+                    ref={virtualizer.measureElement}
+                    style={rowStyle}
+                    className="queue-section-heading"
+                    role="presentation"
+                  >
+                    <h4>{row.label}</h4>
+                  </li>
+                );
+              }
+              const idx = row.index;
               const t = playlist[idx];
               const itemId = sortableItems[idx];
 
               return (
                 <div
                   key={itemId}
-                  data-index={idx}
+                  data-index={virtualRow.index}
                   ref={virtualizer.measureElement}
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    // With an external scroller, row offsets include the
-                    // list's scrollMargin — subtract it to position within
-                    // the list itself.
-                    transform: `translateY(${virtualRow.start - scrollMargin}px)`,
-                  }}
+                  style={rowStyle}
                 >
                   <PlaylistItem
                     id={itemId}
@@ -204,10 +255,7 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
                     index={idx}
                     isActive={currentIndex === idx}
                     isSidebarCollapsed={collapsed}
-                    totalTracks={playlist.length}
                     onPlay={playAtIndex}
-                    onRemove={handleRemoveFromQueue}
-                    onMove={moveInPlaylist}
                     onContextMenu={openRowMenu}
                     getArtistLink={getArtistLink}
                     parseArtists={parseArtists}

@@ -13,6 +13,7 @@ import { useListenTogetherStore } from '../store/listenTogether';
 import { joinNearby, leaveSharedSession, openSharedSession, refreshNearby, refreshOwn } from '../utils/listenTogether';
 import { sessionTitle } from '../utils/listenTogetherText';
 import { AvailableGigs, GigSection } from './GigSection';
+import { useQueueSidebarShowsGig } from '../hooks/useQueueSidebarShowsGig';
 import { UserAvatar } from './UserAvatar';
 
 const MENU_WIDTH = 304;
@@ -169,6 +170,7 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
   const audioOutputDeviceLabel = usePlayerStore((s) => s.audioOutputDeviceLabel);
   const defaultOutputLabel = usePlayerStore((s) => s.audioOutputDevices.find((device) => device.isDefault)?.label);
   const syncOn = usePlayerStore((s) => s.syncPlaybackAcrossDevices);
+  const sidebarShowsGig = useQueueSidebarShowsGig();
   const connectedDevices = usePlayerStore((s) => s.connectedDevices);
   // A Cast device that plays the session (another device casts to it, or it
   // follows the session itself) belongs with Cast at the top; any other
@@ -414,7 +416,8 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
       {syncOn && (
         <AvailableGigs gigs={gigs} disabled={!!chosen} onJoin={(gig) => pick(`join:${gig.sessionId}`, () => { void joinNearby(gig); })} />
       )}
-      {syncOn && <GigSection onDone={onDone} />}
+      {/* On desktop with the queue sidebar open, the gig is there instead. */}
+      {syncOn && !sidebarShowsGig && <GigSection onDone={onDone} />}
     </div>
   );
 };
