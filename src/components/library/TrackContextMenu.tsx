@@ -8,10 +8,9 @@ import {
     Play, Plus, ListPlus, Check,
     ChevronRight, ChevronLeft,
     Search, X, Disc3, Mic2, ListMinus,
-    Heart, Users, ListX,
+    Heart, Users, ListX, Galaxy,
 } from 'lucide-react';
 import { raysPath } from '../../api/browse';
-import { Galaxy } from '../icons/Galaxy';
 import { playlistPermissions } from '../../../shared/playlistPermissions';
 import {
     ContextMenuButton,
