@@ -17,7 +17,8 @@ import { BackButton } from './BackButton';
 import { FadedHeroImage } from './FadedHeroImage';
 import { ArtistInitial } from './ArtistInitial';
 import { formatDuration, formatTime } from '../../utils/formatTime';
-import { ExternalLink, Globe, Users, Mic2, Calendar, Sparkles, Music2, Clock, BookOpen, Play, Headphones, Link2, Disc3, Radio, Tag } from 'lucide-react';
+import { ExternalLink, Globe, Users, Mic2, Calendar, Sparkles, Music2, Clock, BookOpen, Play, Headphones, Link2, Disc3, Radio, Tag, MoreHorizontal } from 'lucide-react';
+import { ContextMenuTarget } from '../ContextMenuTarget';
 import { ContextMenuFrame, ContextMenuHeader, ContextMenuLink, ContextMenuList, ContextMenuPortal } from '../ContextMenu';
 import { useArtistConcerts, OnTourSticker, UpcomingShows } from './ArtistConcerts';
 import { useArtistMusicVideos, MusicVideos } from './ArtistMusicVideos';
@@ -286,6 +287,7 @@ export const ArtistDetail: React.FC = () => {
     const artists = usePlayerStore((s) => s.artists);
     const albums = usePlayerStore((s) => s.albums);
     const setPlaylist = usePlayerStore((s) => s.setPlaylist);
+    const openContextMenu = usePlayerStore((s) => s.openContextMenu);
     const getAuthHeader = usePlayerStore((s) => s.getAuthHeader);
     const isLibraryLoading = usePlayerStore((s) => s.isLibraryLoading);
     const mediaAccessToken = usePlayerStore((s) => s.mediaAccessToken);
@@ -1098,23 +1100,25 @@ export const ArtistDetail: React.FC = () => {
                         </div>
 
                         {/* Column headers */}
-                        <div className="grid grid-cols-[24px_40px_minmax(0,1fr)] md:grid-cols-[34px_52px_minmax(0,1.7fr)_minmax(160px,1fr)_120px_56px] gap-2 md:gap-3 px-1.5 md:px-4 py-3 border-b border-black/5 dark:border-white/10 font-semibold text-xs uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+                        <div className="grid grid-cols-[24px_40px_minmax(0,1fr)_32px] md:grid-cols-[34px_52px_minmax(0,1.7fr)_minmax(160px,1fr)_120px_56px_40px] gap-2 md:gap-3 px-1.5 md:px-4 py-3 border-b border-black/5 dark:border-white/10 font-semibold text-xs uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
                             <div className="text-center md:text-left">#</div>
                             <div aria-hidden="true" />
                             <div>Title</div>
                             <div className="hidden md:block">Album</div>
                             <div className="hidden md:block">Last.fm plays</div>
                             <div className="hidden md:block text-right">Time</div>
+                            <div aria-hidden="true" />
                         </div>
 
                         <div className="space-y-0.5">
                             {popularLibraryTracks.slice(0, popularExpanded ? 10 : 5).map(({ track, rank, playcount, listeners }, index) => {
                                 const isCurrentPopular = track.id === currentTrackId;
                                 return (
-                                <div
+                                <ContextMenuTarget
                                     key={track.id}
+                                    onOpenMenu={(x, y) => openContextMenu(track, x, y)}
                                     onClick={() => handlePlayPopularTracks(index)}
-                                    className={`grid grid-cols-[24px_40px_minmax(0,1fr)] md:grid-cols-[34px_52px_minmax(0,1.7fr)_minmax(160px,1fr)_120px_56px] gap-2 md:gap-3 px-1.5 md:px-4 py-2 border-b border-black/5 dark:border-white/5 cursor-pointer items-center transition-ui duration-200 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg my-0.5 group ${isCurrentPopular ? 'bg-primary/5' : ''}`}
+                                    className={`grid grid-cols-[24px_40px_minmax(0,1fr)_32px] md:grid-cols-[34px_52px_minmax(0,1.7fr)_minmax(160px,1fr)_120px_56px_40px] gap-2 md:gap-3 px-1.5 md:px-4 py-2 border-b border-black/5 dark:border-white/5 cursor-pointer items-center transition-ui duration-200 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg my-0.5 group ${isCurrentPopular ? 'bg-primary/5' : ''}`}
                                 >
                                     {/* Rank */}
                                     <div className="flex items-center justify-center md:justify-start text-[var(--color-text-muted)] group-hover:text-[var(--color-primary)] transition-colors text-sm tabular-nums">
@@ -1168,7 +1172,22 @@ export const ArtistDetail: React.FC = () => {
                                     <div className="hidden md:block text-[var(--color-text-muted)] text-sm tabular-nums text-right">
                                         {formatTime(track.duration, '--:--')}
                                     </div>
-                                </div>
+
+                                    {/* Menu, as on album rows */}
+                                    <div className="flex justify-end">
+                                        <button
+                                            type="button"
+                                            aria-label={`More options for ${track.title || 'track'}`}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                openContextMenu(track, e.clientX, e.clientY);
+                                            }}
+                                            className="opacity-50 md:opacity-0 md:group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-primary)] hover:bg-black/5 dark:hover:bg-white/10 rounded-md transition-ui p-1.5 focus:opacity-100"
+                                        >
+                                            <MoreHorizontal size={18} />
+                                        </button>
+                                    </div>
+                                </ContextMenuTarget>
                                 );
                             })}
                         </div>

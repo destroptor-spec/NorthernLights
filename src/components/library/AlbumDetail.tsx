@@ -7,6 +7,7 @@ import { AlbumCoverDisc } from './AlbumCoverDisc';
 import { useApiV1EntityTracks } from '../../hooks/useApiV1TrackList';
 import { parseArtistsForDisplay } from '../../utils/artistUtils';
 import { useKnownArtistKeys } from '../../hooks/useKnownArtistKeys';
+import { useContextMenuTrigger } from '../../hooks/useContextMenuTrigger';
 import { formatDuration, formatTime } from '../../utils/formatTime';
 import { scrollToAlbumTrackTarget } from '../../utils/albumTrackFocus';
 import { buildArtistLinkMap } from '../../utils/artistLinks';
@@ -194,6 +195,7 @@ const AlbumTrackRow = memo(({
 }: AlbumTrackRowProps) => {
     const knownArtistKeys = useKnownArtistKeys();
     const isCurrent = useIsCurrentTrack(track.id);
+    const menuTrigger = useContextMenuTrigger((x, y) => onContextMenu(track, x, y));
     const artistNames = useMemo(() => {
         const raw = Array.isArray(track.artists) && track.artists.length > 0
             ? track.artists
@@ -206,6 +208,7 @@ const AlbumTrackRow = memo(({
 
     return (
         <div
+            {...menuTrigger}
             data-track-id={track.id}
             onClick={() => onPlay(index)}
             role="button"

@@ -158,6 +158,7 @@ The scanner indicator in `App.tsx` must use reactive Zustand subscriptions for `
 - `useLlmConnectionTest({ getAuthHeader, onModelsReceived })` — LLM connection testing state + logic.
 - `useSwipe(ref, { onSwipeLeft, onSwipeRight, onSwipeUp, onSwipeDown, threshold })` — Reusable touch swipe gesture detection hook. Returns a ref to attach to the target element.
 - `useReviewQueue(base)` — A review queue in Settings → Library Entities (artists, genres): entries, 30-day decisions, signature-cached previews, `decide`/`undo`. Rendered by `settings/ReviewQueue.tsx` (kind filters, one entry open, Skip, Undo toast, Decided list) and `settings/ReviewPanel.tsx` (outcome cards, Skip/Apply, keys 1–9/S/Enter); classes `.entity-review-*`. Use these for any new review queue.
+- `useContextMenuTrigger(open)` — right-click, the keyboard menu key and a 500 ms long press on touch screens (iOS too) open an item's context menu, the same one its ⋯ button opens. Spread it on the row or card; for rows inside a `.map` use `<ContextMenuTarget onOpenMenu>` (`src/components/ContextMenuTarget.tsx`). Mark drag handles `data-no-long-press`. Every row or card with a ⋯ menu should have it.
 - `useToast()` — Global toast access. Returns `{ toasts, addToast, removeToast }`. Toast items rendered via `ToastContainer` in App.tsx.
 
 ## Workflow

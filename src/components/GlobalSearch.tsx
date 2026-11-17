@@ -10,6 +10,7 @@ import { AlbumArt } from './AlbumArt';
 import { ArtistInitial } from './library/ArtistInitial';
 import { LoveButton } from './LoveButton';
 import { useKnownArtistKeys } from '../hooks/useKnownArtistKeys';
+import { ContextMenuTarget } from './ContextMenuTarget';
 import { buildArtistLinkMap, getTrackArtistDisplayNames, resolveArtistLink, resolveTrackArtistLink } from '../utils/artistLinks';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -173,8 +174,9 @@ const SearchResults = React.memo(function SearchResults({
                         {matchedTracks.map((track, i) => {
                             const artistNames = getTrackArtistDisplayNames(track, knownArtistKeys);
                             return (
-                                <div
+                                <ContextMenuTarget
                                     key={track.id || i}
+                                    onOpenMenu={(x, y) => openContextMenu(track, x, y)}
                                     className="global-search-result-row group flex items-center gap-3 w-full text-left p-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
                                 >
                                 <button
@@ -235,7 +237,7 @@ const SearchResults = React.memo(function SearchResults({
                                     <MoreHorizontal size={16} />
                                 </button>
                                 <LoveButton track={track} size={15} className="p-2 flex-shrink-0" />
-                                </div>
+                                </ContextMenuTarget>
                             );
                         })}
                     </div>

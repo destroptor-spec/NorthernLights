@@ -8631,6 +8631,19 @@ a.rays-chip:focus-visible {
   padding-bottom: var(--safe-area-bottom);
 }
 
+/* Rows and cards whose menu opens on a long press (useContextMenuTrigger):
+   no iOS callout, and no text selection where a press means "menu". */
+[data-context-menu] {
+  -webkit-touch-callout: none;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  [data-context-menu] {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
 .safe-area-top {
   padding-top: var(--safe-area-top);
 }
