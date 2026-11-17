@@ -9,6 +9,7 @@ import { prefetchAlbumDetail, prefetchArtistDetail } from '../utils/routePrefetc
 import { AlbumArt } from './AlbumArt';
 import { ArtistInitial } from './library/ArtistInitial';
 import { useKnownArtistKeys } from '../hooks/useKnownArtistKeys';
+import { useContextMenuTrigger } from '../hooks/useContextMenuTrigger';
 import { buildArtistLinkMap, getTrackArtistDisplayNames, resolveArtistLink, resolveTrackArtistLink } from '../utils/artistLinks';
 
 type RankedResultType = 'artist' | 'album' | 'track';
@@ -108,6 +109,10 @@ const SearchResultRow = memo(({
     knownArtistKeys: Set<string>;
 }) => {
     const navigate = useNavigate();
+    // Only track results have a menu; the hook runs for every row (hook order).
+    const menuTrigger = useContextMenuTrigger((x, y) => {
+        if (result.type === 'track') onContextMenu(result.item, x, y);
+    });
 
     if (result.type === 'artist') {
         const artist = result.item;
@@ -193,7 +198,7 @@ const SearchResultRow = memo(({
     const canOpenAlbum = Boolean(track.albumId);
 
     return (
-        <div className="search-page-result-row search-page-result-row--track group">
+        <div {...menuTrigger} className="search-page-result-row search-page-result-row--track group">
             <button
                 type="button"
                 aria-label={`Play ${title}`}

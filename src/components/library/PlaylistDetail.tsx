@@ -43,6 +43,7 @@ import { usePlayerStore } from '../../store';
 import { formatDuration, formatTime } from '../../utils/formatTime';
 import { parseArtistsForDisplay } from '../../utils/artistUtils';
 import { useKnownArtistKeys } from '../../hooks/useKnownArtistKeys';
+import { useContextMenuTrigger } from '../../hooks/useContextMenuTrigger';
 import type { TrackInfo } from '../../utils/fileSystem';
 import { getSuggestedPlaylistTracks } from '../../utils/playlistSuggestions';
 import { useApiV1TrackList } from '../../hooks/useApiV1TrackList';
@@ -335,6 +336,12 @@ const PlaylistTrackRow = memo(({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, disabled: readOnly });
   const knownArtistKeys = useKnownArtistKeys();
   const isCurrent = track.id === currentTrackId;
+  // Same as the ⋯ button: a read-only playlist hides "Remove from Playlist".
+  const openMenu = (x: number, y: number) => {
+    if (readOnly) onContextMenu(track, x, y, undefined as any, undefined as any);
+    else onContextMenu(track, x, y, playlistId, index);
+  };
+  const menuTrigger = useContextMenuTrigger(openMenu);
   const artistNames = useMemo(() => {
     const raw = Array.isArray(track.artists) && track.artists.length > 0
       ? track.artists
@@ -344,6 +351,7 @@ const PlaylistTrackRow = memo(({
 
   return (
     <div
+      {...menuTrigger}
       ref={setNodeRef}
       style={{
         transform: CSS.Transform.toString(transform),
@@ -452,6 +460,7 @@ const PlaylistTrackRow = memo(({
             <button
               {...attributes}
               {...listeners}
+              data-no-long-press
               aria-label="Drag to reorder"
               onClick={(event) => event.stopPropagation()}
               className="hidden md:flex cursor-grab text-[var(--color-text-muted)] hover:text-[var(--color-primary)] hover:bg-black/5 dark:hover:bg-white/10 rounded-md p-1.5 active:cursor-grabbing"
@@ -463,12 +472,7 @@ const PlaylistTrackRow = memo(({
             aria-label="More options"
             onClick={(event) => {
               event.stopPropagation();
-              // For read-only playlists, omit playlistId so "Remove from Playlist" is hidden.
-              if (readOnly) {
-                onContextMenu(track, event.clientX, event.clientY, undefined as any, undefined as any);
-              } else {
-                onContextMenu(track, event.clientX, event.clientY, playlistId, index);
-              }
+              openMenu(event.clientX, event.clientY);
             }}
             className="text-[var(--color-text-muted)] hover:text-[var(--color-primary)] hover:bg-black/5 dark:hover:bg-white/10 rounded-md p-1.5"
           >

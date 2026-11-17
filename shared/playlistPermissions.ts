@@ -13,8 +13,8 @@
  * | Kind                         | rename / edit tracks | share | pin | privacy | delete |
  * |------------------------------|----------------------|-------|-----|---------|--------|
  * | manual (made by the listener)| yes                  | yes   | yes | yes     | yes    |
- * | custom AI mix (from a prompt)| yes                  | yes   | yes | yes     | yes    |
- * | Hub collection (AI, rebuilt) | no — would be lost   | yes   | yes | yes     | yes    |
+ * | custom AI mix (from a prompt)| yes                  | yes   | yes | no      | yes    |
+ * | Hub collection (AI, rebuilt) | no — would be lost   | yes   | yes | no      | yes    |
  * | system (Daylist, radio, …)   | no                   | no    | yes | no      | no     |
  * | someone else's               | no                   | no    | no  | no      | no     |
  *
@@ -22,6 +22,10 @@
  * track edit would be silently overwritten; deleting one only lasts until the
  * next rebuild. Pinning only reorders the owner's own list, so it is allowed
  * even on system playlists.
+ *
+ * Changed 2026-11-17: AI playlists have no privacy setting. Discovery never
+ * lists them (it requires is_llm_generated = FALSE), so "Discoverable" on one
+ * promised something that didn't happen. A share link still works.
  */
 export interface PlaylistPermissions {
   rename: boolean;
@@ -49,8 +53,8 @@ export function playlistPermissions(playlist: PlaylistKind): PlaylistPermissions
     // Only a prompt-made mix is the listener's own to reshape. Anything else
     // AI-generated — including rows from before generation_source existed —
     // is treated as a Hub collection, the more conservative reading.
-    if (playlist.generationSource === 'custom') return { ...ALL };
-    return { ...ALL, rename: false, editTracks: false };
+    if (playlist.generationSource === 'custom') return { ...ALL, setPrivacy: false };
+    return { ...ALL, rename: false, editTracks: false, setPrivacy: false };
   }
   return { ...ALL };
 }

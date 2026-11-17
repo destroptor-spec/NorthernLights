@@ -42,8 +42,8 @@ beforeEach(() => {
 
 test.each([
   ['manual', { rename: true, share: true, privacy: true }],
-  ['custom', { rename: true, share: true, privacy: true }],
-  ['hub', { rename: false, share: true, privacy: true }],
+  ['custom', { rename: true, share: true, privacy: false }],
+  ['hub', { rename: false, share: true, privacy: false }],
   ['system', { rename: false, share: false, privacy: false }],
 ] as const)('%s playlist shows exactly the allowed controls', (kind, expected) => {
   renderKind(kind);

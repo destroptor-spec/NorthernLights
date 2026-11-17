@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 export function useIsMobile(breakpoint = 640) {
@@ -28,7 +28,9 @@ export const ContextMenuFrame = React.forwardRef<HTMLDivElement, {
 }>(({ children, isMobile = false, widthClassName = 'w-[248px]', className = '' }, ref) => (
     <div
         ref={ref}
-        className={`relative overflow-hidden bg-[var(--glass-bg)] backdrop-blur-3xl border border-[var(--glass-border)] rounded-2xl shadow-2xl ${isMobile ? 'w-full rounded-b-none' : widthClassName} ${className}`}
+        // overflow-clip, not hidden: a hidden box can still be scrolled (by a
+        // focus inside a sliding sub-panel), which shifted menus sideways.
+        className={`relative overflow-clip bg-[var(--glass-bg)] backdrop-blur-3xl border border-[var(--glass-border)] rounded-2xl shadow-2xl ${isMobile ? 'w-full rounded-b-none' : widthClassName} ${className}`}
         onContextMenu={(event) => event.preventDefault()}
     >
         {children}
@@ -114,6 +116,111 @@ export const ContextMenuLink: React.FC<{
     </a>
 );
 
+// ─── Desktop placement ───────────────────────────────────────────────────────
+
+/** Space kept between a popover and the window's edges. */
+export const MENU_EDGE_MARGIN = 16;
+/** Gap between a popover and the button it hangs from. */
+const ANCHOR_GAP = 8;
+
+export interface MenuSize { width: number; height: number }
+
+export interface MenuPlacement {
+    left: number;
+    top: number;
+    /** Set only when the menu is taller than the window: it scrolls. */
+    maxHeight?: number;
+    /** Where it grows from, for the open animation: 'top left', 'bottom right'… */
+    origin: string;
+}
+
+/**
+ * Where a desktop popover goes so all of it is on screen, from its measured
+ * size. At a point (a click or right-click) it opens down and to the right,
+ * and flips up or left where there isn't room, as desktop menus do. On a
+ * button it hangs below (or above), on the side with room. A menu taller than
+ * the window is pinned to the top margin and scrolls.
+ */
+export function placeMenu({ size, viewport, point, anchor, align = 'right', placement = 'below' }: {
+    size: MenuSize;
+    viewport: { width: number; height: number };
+    point?: { x: number; y: number };
+    anchor?: { left: number; right: number; top: number; bottom: number };
+    align?: 'left' | 'right';
+    placement?: 'below' | 'above';
+}): MenuPlacement {
+    const m = MENU_EDGE_MARGIN;
+    const maxLeft = Math.max(m, viewport.width - size.width - m);
+    const roomy = viewport.height - 2 * m;
+    const fitOrScroll = (top: number, originY: string, originX: string): MenuPlacement => (
+        size.height > roomy
+            ? { left: 0, top: m, maxHeight: roomy, origin: `top ${originX}` }
+            : { left: 0, top: Math.min(Math.max(m, top), viewport.height - size.height - m), origin: `${originY} ${originX}` }
+    );
+
+    if (point) {
+        const fitsRight = point.x + size.width <= viewport.width - m;
+        const left = fitsRight ? point.x : Math.max(m, Math.min(point.x - size.width, maxLeft));
+        const originX = fitsRight ? 'left' : 'right';
+        const fitsBelow = point.y + size.height <= viewport.height - m;
+        const fitsAbove = point.y - size.height >= m;
+        const placed = fitsBelow || !fitsAbove
+            ? fitOrScroll(point.y, 'top', originX)
+            : fitOrScroll(point.y - size.height, 'bottom', originX);
+        return { ...placed, left };
+    }
+
+    if (anchor) {
+        const rawLeft = align === 'left' ? anchor.left : anchor.right - size.width;
+        const left = Math.max(m, Math.min(rawLeft, maxLeft));
+        const originX = align === 'left' ? 'left' : 'right';
+        const below = anchor.bottom + ANCHOR_GAP;
+        const above = anchor.top - ANCHOR_GAP - size.height;
+        const fitsBelow = below + size.height <= viewport.height - m;
+        const fitsAbove = above >= m;
+        const goAbove = placement === 'above'
+            ? fitsAbove || (!fitsBelow && anchor.top > viewport.height - anchor.bottom)
+            : !fitsBelow && (fitsAbove || anchor.top > viewport.height - anchor.bottom);
+        const placed = goAbove ? fitOrScroll(above, 'bottom', originX) : fitOrScroll(below, 'top', originX);
+        return { ...placed, left };
+    }
+
+    return { left: m, top: m, origin: 'top left' };
+}
+
+/**
+ * The popover's real size, measured before it paints and again whenever its
+ * content changes size. `fallback` covers the first render (and test DOMs,
+ * which measure 0).
+ */
+export function useMeasuredMenuSize(
+    ref: React.RefObject<HTMLElement | null>,
+    active: boolean,
+    fallback: MenuSize,
+): MenuSize {
+    const [size, setSize] = useState<MenuSize>(fallback);
+    useLayoutEffect(() => {
+        if (!active) return;
+        const el = ref.current;
+        if (!el) return;
+        const measure = () => {
+            // scrollHeight is the full content height even while a cap makes it
+            // scroll, but leaves out borders: add them back (offset − client).
+            const width = el.offsetWidth;
+            const height = el.scrollHeight + (el.offsetHeight - el.clientHeight);
+            if (!width || !height) return;
+            setSize(prev => (prev.width === width && prev.height === height ? prev : { width, height }));
+        };
+        measure();
+        if (typeof ResizeObserver !== 'function') return;
+        const observer = new ResizeObserver(measure);
+        observer.observe(el);
+        if (el.firstElementChild) observer.observe(el.firstElementChild);
+        return () => observer.disconnect();
+    }, [active, ref]);
+    return size;
+}
+
 /** How long closing takes: the popover fades back (as it opened), the phone's sheet slides down. */
 export const POPOVER_CLOSE_MS = 150;
 export const SHEET_CLOSE_MS = 300;
@@ -159,6 +266,15 @@ export const ContextMenuPortal: React.FC<{
     const isMobile = useIsMobile();
     const menuRef = useRef<HTMLDivElement>(null);
     const [isVisible, setIsVisible] = useState(false);
+    const menuSize = useMeasuredMenuSize(menuRef, open && !isMobile, { width: desktopWidth, height: desktopHeight });
+    // Re-place when the window changes size while open.
+    const [, setViewportTick] = useState(0);
+    useEffect(() => {
+        if (!open || isMobile) return;
+        const onResize = () => setViewportTick(tick => tick + 1);
+        window.addEventListener('resize', onResize);
+        return () => window.removeEventListener('resize', onResize);
+    }, [open, isMobile]);
     // Closing fades (or slides) away before it unmounts, showing what it
     // showed when it closed (lastContent), and takes no taps meanwhile.
     const lastContent = useRef<React.ReactNode>(null);
@@ -243,27 +359,28 @@ export const ContextMenuPortal: React.FC<{
     }
 
     const rect = anchorRef?.current?.getBoundingClientRect();
-    const rectAlignedX = rect
-        ? (menuAlign === 'left' ? rect.left : rect.right - desktopWidth)
-        : 16;
-    const rawX = position?.x ?? rectAlignedX;
-    const rawY = position?.y ?? (rect ? rect.bottom + 8 : 16);
-    const left = Math.max(16, Math.min(rawX, window.innerWidth - desktopWidth - 16));
-    const top = Math.max(16, Math.min(rawY, window.innerHeight - desktopHeight - 16));
-    const above = placement === 'above' && rect && !position;
-    const vertical = above ? { bottom: Math.max(16, window.innerHeight - rect.top + 8) } : { top };
+    const placed = placeMenu({
+        size: menuSize,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        point: position,
+        anchor: !position && rect ? rect : undefined,
+        align: menuAlign,
+        placement,
+    });
+    const above = placed.origin.startsWith('bottom');
 
     return createPortal(
         <div
             ref={menuRef}
             className="fixed z-[9999]"
             style={{
-                ...vertical,
-                left,
+                top: placed.top,
+                left: placed.left,
+                ...(placed.maxHeight ? { maxHeight: placed.maxHeight, overflowY: 'auto' as const } : {}),
                 opacity: isVisible ? 1 : 0,
                 transform: isVisible ? 'scale(1) translateY(0)' : `scale(0.95) translateY(${above ? 4 : -4}px)`,
                 transition: reduceMotion ? 'none' : `opacity ${POPOVER_CLOSE_MS}ms, transform ${POPOVER_CLOSE_MS}ms`,
-                transformOrigin: above ? 'bottom right' : 'top left',
+                transformOrigin: placed.origin,
                 ...blockWhileClosing,
             }}
         >

@@ -36,7 +36,7 @@ const TrackContextMenu = React.lazy(() => import('./components/library/TrackCont
 const DatabaseControl = React.lazy(() => import('./components/DatabaseControl').then(module => ({ default: module.DatabaseControl })));
 
 const FullPageFallback: React.FC<{ label?: string }> = ({ label = 'Loading...' }) => (
-  <div className="h-screen w-full flex flex-col items-center justify-center bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]">
+  <div className="app-viewport-height w-full flex flex-col items-center justify-center bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]">
     <div className="w-12 h-12 border-4 border-primary/20 border-t-[var(--color-primary)] rounded-full animate-spin" />
     <p className="mt-4 text-sm text-[var(--color-text-secondary)]">{label}</p>
   </div>
@@ -552,7 +552,7 @@ const App: React.FC = () => {
       const showSetupLabel = dbConnected === true && needsSetup === null;
 
       return (
-        <div className="h-screen w-full flex flex-col items-center justify-center bg-[var(--color-bg-primary)]">
+        <div className="app-viewport-height w-full flex flex-col items-center justify-center bg-[var(--color-bg-primary)]">
           <div className="flex flex-col items-center space-y-6">
             <div className="relative">
               <div className="w-16 h-16 border-4 border-primary/20 border-t-[var(--color-primary)] rounded-full animate-spin" />
@@ -641,7 +641,7 @@ const App: React.FC = () => {
         <GlobalScanningIndicator onClose={() => setIsScannerVisibleLocally(false)} />
       )}
 
-      <div className="flex h-screen relative z-10 overflow-hidden text-[var(--color-text-primary)]">
+      <div className="flex app-viewport-height relative z-10 overflow-hidden text-[var(--color-text-primary)]">
 
 
         <main className="flex-1 flex flex-col min-w-0 relative">

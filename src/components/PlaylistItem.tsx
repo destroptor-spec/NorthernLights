@@ -1,4 +1,5 @@
 import React, { memo } from 'react';
+import { useContextMenuTrigger } from '../hooks/useContextMenuTrigger';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Link } from 'react-router-dom';
@@ -51,6 +52,8 @@ export const PlaylistItem = memo(({
     zIndex: isDragging ? 10 : 1,
   };
   const title = track.title ?? track.path.split(/[\\\/]/).pop();
+  // Right-click, or a long press on touch screens, opens the row's menu.
+  const menuTrigger = useContextMenuTrigger((x, y) => onContextMenu(track, x, y));
 
   if (touch) {
     return (
@@ -60,9 +63,8 @@ export const PlaylistItem = memo(({
         className={`queue-row-touch flex items-center gap-3 py-1.5 pl-2 my-[2px] rounded-lg border select-none
           ${isActive ? 'bg-emerald-500/10 border-emerald-500/20' : 'border-transparent'}
           ${isDragging ? 'bg-[var(--glass-bg)] shadow-lg' : ''}`}
+        {...menuTrigger}
         onClick={() => onPlay(index)}
-        // A long press opens the menu, like the ⋯ button.
-        onContextMenu={(e) => { e.preventDefault(); onContextMenu(track, e.clientX, e.clientY); }}
         role="button"
         tabIndex={0}
         aria-current={isActive ? 'true' : undefined}
@@ -99,6 +101,7 @@ export const PlaylistItem = memo(({
           {...attributes}
           {...listeners}
           className="queue-row-touch-btn queue-row-drag-handle"
+          data-no-long-press
           aria-label={`Reorder ${title}`}
           onClick={(e) => e.stopPropagation()}
         >
@@ -117,6 +120,7 @@ export const PlaylistItem = memo(({
           ? 'bg-emerald-500/10 border-emerald-500/20 dark:bg-emerald-500/10 dark:border-emerald-500/20' 
           : 'hover:bg-black/5 hover:border-black/5 dark:hover:bg-white/5 dark:hover:border-white/5'}
         ${isSidebarCollapsed ? 'justify-center p-2' : ''}`}
+      {...menuTrigger}
       onClick={() => onPlay(index)}
       role="button"
       tabIndex={0}
@@ -133,6 +137,7 @@ export const PlaylistItem = memo(({
           {...listeners}
           className="shrink-0 cursor-grab active:cursor-grabbing text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 px-1 hidden md:inline-flex"
           title="Drag to reorder"
+          data-no-long-press
           aria-label="Drag to reorder"
           onClick={(e) => e.stopPropagation()}
         >

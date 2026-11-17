@@ -8,6 +8,7 @@ import {
   Disc3, MoreHorizontal, Pin,
 } from 'lucide-react';
 import { useDominantColor } from '../../hooks/useDominantColor';
+import { useContextMenuTrigger } from '../../hooks/useContextMenuTrigger';
 import type { Playlist } from '../../store';
 import {
   PlaylistContextMenu,
@@ -45,16 +46,23 @@ const PlaylistCard: React.FC<{
   const sizeArt = (url: string) =>
     url.includes('/api/art') && !/[?&]size=/.test(url) ? `${url}&size=256` : url;
 
+  // Right-click, or a long press on touch screens, opens the card's menu.
+  const menuTrigger = useContextMenuTrigger(onMenuOpen);
+
   const subtitle = ownerName
     ? `by ${ownerName}`
     : `${playlist.tracks.length} ${playlist.tracks.length === 1 ? 'track' : 'tracks'}`;
 
   return (
     <div
+      {...(showMenu ? menuTrigger : {})}
       className="group flex flex-col relative cursor-pointer"
       onClick={onOpen}
       onPointerEnter={prefetchPlaylistDetail}
-      onPointerDown={prefetchPlaylistDetail}
+      onPointerDown={(e) => {
+        prefetchPlaylistDetail();
+        if (showMenu) menuTrigger.onPointerDown(e);
+      }}
       onFocus={prefetchPlaylistDetail}
       role="button"
       tabIndex={0}
