@@ -7827,6 +7827,21 @@ a.rays-chip:focus-visible {
     transform 180ms var(--ease-out);
 }
 
+/* The rounded field shows focus (below); the input inside it gets no outline
+   of its own (the global :focus-visible rule would draw a second, inner one). */
+.global-search-mobile-field input:focus,
+.global-search-mobile-field input:focus-visible {
+  outline: none;
+}
+
+/* Both search fields have their own clear (×) button; hide the browser's
+   built-in one for type="search", which showed a second × beside it. */
+.global-search-input::-webkit-search-cancel-button,
+.global-search-mobile-field input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
 .global-search-mobile-field:focus-within {
   border-color: var(--color-primary);
   box-shadow: 0 0 1.4rem color-mix(in srgb, var(--color-primary) 24%, transparent);
