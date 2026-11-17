@@ -11,6 +11,7 @@ import {
     Heart, Users, ListX, Sparkles,
 } from 'lucide-react';
 import { raysPath } from '../../api/browse';
+import { playlistPermissions } from '../../../shared/playlistPermissions';
 import {
     ContextMenuButton,
     ContextMenuDivider,
@@ -402,7 +403,15 @@ export const TrackContextMenu: React.FC = () => {
     };
 
     // ── panel item lists ──────────────────────────────────────────────────────
-    const playlistItems = playlists.map(pl => ({
+    // Only playlists this listener may add tracks to: not artist radio, the
+    // Daylist or other system playlists, Hub AI collections (rebuilt, so an
+    // added track would be lost) or someone else's. The server refuses those.
+    const playlistItems = playlists.filter(pl => playlistPermissions({
+        isOwner: pl.isOwner !== false,
+        isSystem: !!pl.isSystem,
+        isLlmGenerated: !!pl.isLlmGenerated,
+        generationSource: pl.generationSource,
+    }).editTracks).map(pl => ({
         id: pl.id,
         label: pl.title,
         icon: <ListPlus size={14} />,

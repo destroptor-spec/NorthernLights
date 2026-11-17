@@ -9,9 +9,9 @@ describe('playlistPermissions', () => {
   const cases: Array<[string, PlaylistKind, string]> = [
     ['manual playlist', { ...own, generationSource: 'manual' }, 'Y Y Y Y Y Y'],
     ['manual playlist from before generation_source', { ...own }, 'Y Y Y Y Y Y'],
-    ['custom AI mix', { ...own, isLlmGenerated: true, generationSource: 'custom' }, 'Y Y Y Y Y Y'],
-    ['Hub collection', { ...own, isLlmGenerated: true, generationSource: 'hub' }, '- - Y Y Y Y'],
-    ['AI playlist with no recorded source', { ...own, isLlmGenerated: true, generationSource: null }, '- - Y Y Y Y'],
+    ['custom AI mix', { ...own, isLlmGenerated: true, generationSource: 'custom' }, 'Y Y Y Y - Y'],
+    ['Hub collection', { ...own, isLlmGenerated: true, generationSource: 'hub' }, '- - Y Y - Y'],
+    ['AI playlist with no recorded source', { ...own, isLlmGenerated: true, generationSource: null }, '- - Y Y - Y'],
     ['Daylist', { ...own, isSystem: true, generationSource: 'daylist' }, '- - - Y - -'],
     ['artist radio', { ...own, isSystem: true, generationSource: 'artist-radio' }, '- - - Y - -'],
     ['Wrapped', { ...own, isSystem: true, generationSource: 'wrapped' }, '- - - Y - -'],

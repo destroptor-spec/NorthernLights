@@ -44,11 +44,11 @@ const actions = {
 } as const;
 type Action = keyof typeof actions;
 
-// The agreed table.
+// The agreed table (AI playlists have no privacy setting since 2026-11-17).
 const allowed: Record<Kind, Action[]> = {
   manual: ['rename', 'editTracks', 'share', 'pin', 'privacy', 'delete'],
-  custom: ['rename', 'editTracks', 'share', 'pin', 'privacy', 'delete'],
-  hub: ['share', 'pin', 'privacy', 'delete'],
+  custom: ['rename', 'editTracks', 'share', 'pin', 'delete'],
+  hub: ['share', 'pin', 'delete'],
   system: ['pin'],
 };
 
