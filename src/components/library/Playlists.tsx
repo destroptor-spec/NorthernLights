@@ -56,7 +56,7 @@ const PlaylistCard: React.FC<{
   return (
     <div
       {...(showMenu ? menuTrigger : {})}
-      className="group flex flex-col relative cursor-pointer"
+      className="group card-hover flex flex-col relative cursor-pointer"
       onClick={onOpen}
       onPointerEnter={prefetchPlaylistDetail}
       onPointerDown={(e) => {
@@ -73,7 +73,7 @@ const PlaylistCard: React.FC<{
     >
       {/* Square cover — AuroraCover (wrapped/discover), full-bleed image (radios),
           or the default 2×2 collage of track covers */}
-      <div className="relative aspect-square w-full mb-3 rounded-2xl border border-black/5 dark:border-white/5 bg-white/5 dark:bg-black/20 shadow-md overflow-hidden transition-transform duration-300 group-hover:scale-[1.02] motion-reduce:transition-none motion-reduce:group-hover:scale-100">
+      <div className="relative aspect-square w-full mb-3 rounded-2xl border border-black/5 dark:border-white/5 bg-white/5 dark:bg-black/20 shadow-md overflow-hidden">
         {coverVariant ? (
           <AuroraCover
             variant={coverVariant}
@@ -133,23 +133,15 @@ const PlaylistCard: React.FC<{
           </button>
         )}
 
-        {/* Hover overlay + centered play */}
-        <div className="absolute inset-0 bg-transparent group-hover:bg-black/40 transition-colors duration-300 flex items-center justify-center z-10 pointer-events-none rounded-2xl">
-          <button
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onPlay(); }}
-            aria-label={`Play ${playlist.title}`}
-            className="
-              z-20 pointer-events-auto w-14 h-14 rounded-full flex items-center justify-center
-              opacity-0 md:scale-75 md:group-hover:opacity-100 md:group-hover:scale-100
-              transition-ui duration-300 ease-out hover:scale-110 active:scale-95 motion-reduce:transition-none
-              bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white backdrop-blur-sm
-              shadow-[0_4px_24px_rgba(16,185,129,0.3)] hover:shadow-[0_8px_32px_rgba(16,185,129,0.5)]
-              focus-visible:opacity-100 focus-visible:scale-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white
-            "
-          >
-            <Play size={22} fill="currentColor" className="text-white ml-0.5" />
-          </button>
-        </div>
+        {/* Play: rises in on hover, as on the Hub cards (.card-play) */}
+        <button
+          type="button"
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onPlay(); }}
+          aria-label={`Play ${playlist.title}`}
+          className="btn-fab card-play"
+        >
+          <Play className="w-4 h-4 ml-0.5" fill="currentColor" />
+        </button>
       </div>
 
       {/* Text */}

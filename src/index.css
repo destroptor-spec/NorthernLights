@@ -731,6 +731,60 @@ button :where(span),
   cursor: not-allowed;
 }
 
+/* ─── CARD HOVER ───
+   One hover for cover cards (album, playlist, video), the Hub's "Uniquely
+   yours" one: the card rises 2px, its title turns primary (a
+   group-hover:text class at the call site) and Play rises in at the cover's
+   bottom-left. The cover itself doesn't zoom or darken.
+   `.card-hover` goes on the card (with `group`), `.card-play` on a `.btn-fab`
+   inside the cover (which needs `position: relative`). Play is hidden on touch:
+   there is no hover there, and an invisible button would still catch taps. */
+.card-play {
+  display: none;
+}
+
+@media (hover: hover) {
+  .card-hover {
+    transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .card-hover:hover {
+    transform: translateY(-2px);
+  }
+
+  .card-play {
+    position: absolute;
+    left: 0.75rem;
+    bottom: 0.75rem;
+    z-index: 20;
+    display: inline-flex;
+    width: 2.5rem;
+    height: 2.5rem;
+    opacity: 0;
+    transform: translateY(0.5rem);
+    transition:
+      opacity 200ms cubic-bezier(0.22, 1, 0.36, 1),
+      transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
+      background-color var(--transition-fast);
+  }
+  .card-hover:hover .card-play,
+  .card-hover:focus-within .card-play,
+  .card-play:focus-visible {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (hover: hover) and (prefers-reduced-motion: reduce) {
+  .card-hover,
+  .card-hover:hover,
+  .card-play {
+    transform: none;
+  }
+  .card-play {
+    transition: opacity 120ms linear;
+  }
+}
+
 /* ─── PLAYBACK FOOTER ─── */
 .playback-controls-footer {
   padding: var(--spacing-lg) var(--spacing-xl) var(--spacing-xl);
@@ -1082,7 +1136,6 @@ button :where(span),
   background: linear-gradient(145deg, rgba(52, 211, 153, 0.9), rgba(16, 185, 129, 0.95));
   border-color: rgba(110, 231, 183, 0.6);
   box-shadow: 0 0 36px rgba(16, 185, 129, 0.65), inset 0 1px 0 rgba(255,255,255,0.25);
-  transform: scale(1.06);
 }
 
 .dark .play-btn-main {
@@ -8899,7 +8952,6 @@ a.rays-chip:focus-visible {
 
 .mobile-player-play-btn:hover {
   border-color: rgba(110, 231, 183, 0.6);
-  transform: scale(1.04);
   box-shadow: 0 0 2rem color-mix(in srgb, var(--color-primary) 54%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.24);
 }
 
