@@ -10,7 +10,9 @@ import { getUserSetting } from '../database';
 
 async function request(body: unknown) {
   const response = { status: jest.fn().mockReturnThis(), json: jest.fn() };
-  await router.stack[0].route!.stack[0].handle(
+  // The route's own handler: the last in its stack, after the deprecation log.
+  const handlers = router.stack[0].route!.stack;
+  await handlers[handlers.length - 1].handle(
     { body, user: { userId: 'listener' } } as Request,
     response as unknown as Response, jest.fn(),
   );

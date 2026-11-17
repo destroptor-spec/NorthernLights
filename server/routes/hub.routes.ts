@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { deprecatedRoute } from '../middleware/deprecatedRoute';
 import { getHubCollections } from '../services/recommendation.service';
 import { generateCustomHubPlaylist, queueLlmHubRefreshForUser, runLlmHubRegeneration } from '../services/hubRefresh.service';
 import { ThinRequestError } from '../services/aiPlaylistSupport';
@@ -15,6 +16,9 @@ import {
 import { publishApiV1Event } from '../services/apiV1Events.service';
 
 const router = Router();
+
+// Legacy listener routes: the web app uses /api/v1. Logged until they can go.
+router.use(deprecatedRoute('the /api/v1/hub routes'));
 
 // Get Hub Data (per-user)
 router.get('/', async (req, res) => {

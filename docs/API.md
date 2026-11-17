@@ -726,6 +726,7 @@ Get the entire library structure (tracks, directories, artists, albums, genres).
   ```
 
 ### [GET] `/api/library/search`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Search artists, albums, and tracks in the authenticated library.
 
 - `q` is the required search text. An empty value returns empty results.
@@ -817,6 +818,7 @@ Get per-directory statistics.
 `analyzed` counts tracks with an acoustic vector at the current feature version or newer, using the same rule as incremental analysis. `missingAnalysis` counts absent acoustic vectors (including loudness-only rows); `outdatedAnalysis` counts existing acoustic vectors from older versions. Their sum is the backlog that a regular scan or **Analyze Pending** processes across the library. Current-version simulated fallback results count as processed and remain available in the separate fallback retry list.
 
 ### [POST] `/api/library/love`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Toggle loved status of a track for the current user, optionally syncing to Last.fm and/or MusicBrainz. The web client now uses `PUT /api/v1/tracks/:id/loved`, which shares this route's implementation; this route remains for compatibility. A failed provider is reported as `{ "provider": "lastfm", "status": "failed", "error": "…" }`.
 - **Example Request**:
   ```json
@@ -908,6 +910,7 @@ Filter library albums using logical group conditions.
 ## 🎵 Playlists
 
 ### [GET] `/api/playlists`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 List all playlists owned by or pinned by the current user.
 - **Example Response**:
   ```json
@@ -926,6 +929,7 @@ List all playlists owned by or pinned by the current user.
   ```
 
 ### [POST] `/api/playlists`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Create a new playlist.
 - **Example Request**:
   ```json
@@ -933,6 +937,7 @@ Create a new playlist.
   ```
 
 ### [POST] `/api/playlists/:id/tracks`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Add tracks to an existing playlist.
 - **Example Request**:
   ```json
@@ -940,9 +945,11 @@ Add tracks to an existing playlist.
   ```
 
 ### [DELETE] `/api/playlists/:id`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Delete a playlist (owner or admin).
 
 ### [PATCH] `/api/playlists/:id/pin`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Pin or unpin a playlist.
 - **Example Request**:
   ```json
@@ -954,11 +961,13 @@ Pin or unpin a playlist.
 ## ✨ Playback & History
 
 ### [POST] `/api/playback/history`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Record a track as "Played" in the current session.
 - **Payload**: `{ "trackId": "uuid" }`
 - **Role**: Influences the Infinity Mode decay centroid.
 
 ### [POST] `/api/playback/record`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Record a successful playback (increments database play count).
 - **Example Request**:
   ```json
@@ -966,10 +975,12 @@ Record a successful playback (increments database play count).
   ```
 
 ### [POST] `/api/playback/skip`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Record a track skip.
 - **Payload**: `{ "trackId": "uuid" }`
 
 ### [POST] `/api/recommend`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Request the next track for Infinity Mode.
 - **Payload**: 
   ```json
@@ -1070,6 +1081,7 @@ Receive real-time progress for ML model downloads (Admin only).
 ## 🤖 Hub & AI Features
 
 ### [GET] `/api/hub`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Get the user's saved AI-generated Hub playlists.
 - **Query Params**: `queueRefresh` (`true` or `false`).
 - **Example Response**:
@@ -1087,10 +1099,12 @@ Get the user's saved AI-generated Hub playlists.
   ```
 
 ### [POST] `/api/hub/regenerate`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Trigger regeneration of LLM playlists for the authenticated user.
 - **Payload**: `{ "force": true }` (optional, bypasses the recent-playlist freshness guard).
 
 ### [POST] `/api/hub/generate-custom`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Generate a new playlist concept from a natural language prompt.
 - **Example Request**:
   ```json
@@ -1106,6 +1120,7 @@ Generate a new playlist concept from a natural language prompt.
 ### Smart Hub & Listening History Features
 
 ### [GET] `/api/hub/smart`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Get a combined bundle of personalized history-based listening nodes.
 - **Example Response**:
   ```json
@@ -1118,18 +1133,23 @@ Get a combined bundle of personalized history-based listening nodes.
   ```
 
 ### [GET] `/api/hub/jump-back-in`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Get "Jump Back In" recommendation tiles (tracks/albums recently played).
 
 ### [GET] `/api/hub/on-repeat`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Get the user's current most-played tracks ("On Repeat").
 
 ### [GET] `/api/hub/repeat-rewind`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Get past favorites the user has stopped playing recently ("Repeat Rewind").
 
 ### [GET] `/api/hub/daylist`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Get a daily discovery mix titled by weekday + time-of-day mood. The track list is a discovery-first blend: high-played / hearted tracks (`favorites` pool), mood-adjacent acoustic matches (`acoustic` pool), and never-played or 60-day-stale neighbours (`discovery` pool). The LLM-generated title and description follow the `Mood Weekday TimeOfDay` template (e.g. `Lazy Tuesday Afternoon`). Cached for 4 hours and force-refreshed when the time-of-day bucket rolls over. See [docs/radios.md](./radios.md) for the multi-pool architecture.
 
 ### [POST] `/api/hub/artist-radio`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Generate a 30-track radio playlist seeded by an artist. Built by blending five pools — `seed` (the artist's own most-played tracks), `core` (1280D Discogs-EffNet K-NN around a centroid of the artist's top tracks), `adjacent` (tracks sharing the artist's genre or adjacent genre paths), `bridge` (acoustic midpoint with the library's mainstream), and `discovery` (never-played / dormant neighbours). Deduplicates by MB recording id with normalized-title fallback, enforces artist diversity (max 2 per neighbour artist), and excludes the "Various Artists" pseudo-entity. Cached for 12 hours per (user, artist). See [docs/radios.md](./radios.md) for the multi-pool architecture.
 - **Example Request**:
   ```json
@@ -1149,6 +1169,7 @@ Generate a 30-track radio playlist seeded by an artist. Built by blending five p
 ### Artists
 
 ### [GET] `/api/artists`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 List all artists.
 - **Example Response**:
   ```json
@@ -1156,6 +1177,7 @@ List all artists.
   ```
 
 ### [GET] `/api/artists/:id`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Get artist details with tracks.
 
 ### [GET] `/api/artists/:id/similar`
@@ -1169,17 +1191,21 @@ Get similar artists in the library based on their audio profiles.
 ### Albums
 
 ### [GET] `/api/albums`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 List all albums.
 
 ### [GET] `/api/albums/:id`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Get album details with tracks.
 
 ### Genres
 
 ### [GET] `/api/genres`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 List the genres tracks are in: Aurora's genres and styles ("Grunge", "Rock"), derived from the fused results, not the file tags. Each row includes `track_count` across a track's styles and genres and `alias_count`. Grouped alias rows and tag spellings without tracks are hidden.
 
 ### [GET] `/api/genres/:id`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Get a genre or style with its tracks. A grouped alias ID redirects to its canonical genre, and membership includes every track with that genre or style (not only the strongest).
 
 ### Genre review queue (admin)
@@ -1407,6 +1433,7 @@ Disconnect user.
 Check scrobble and connection status.
 
 ### [POST] `/api/providers/lastfm/scrobble`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Scrobble track playbacks. Kept for older clients; the web app and API v1 clients scrobble through `POST /api/v1/playback/reports`.
 - **Example Request**:
   ```json
@@ -1414,9 +1441,11 @@ Scrobble track playbacks. Kept for older clients; the web app and API v1 clients
   ```
 
 ### [POST] `/api/providers/lastfm/now-playing`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Update Last.fm now-playing card.
 
 ### [POST] `/api/providers/lastfm/love` (or `unlove`)
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Love/unlove a track.
 
 ### [POST] `/api/providers/lastfm/test`
@@ -1432,12 +1461,15 @@ Connect using user token.
 Disconnect integration.
 
 ### [GET] `/api/providers/listenbrainz/status`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Check scrobble status.
 
 ### [POST] `/api/providers/listenbrainz/scrobble`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Scrobble track playbacks. Kept for older clients; the web app and API v1 clients scrobble through `POST /api/v1/playback/reports`.
 
 ### [POST] `/api/providers/listenbrainz/now-playing`
+> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
 Update now-playing status.
 
 ### Genius

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { deprecatedRoute } from '../middleware/deprecatedRoute';
 import crypto from 'crypto';
 import {
   getPlaylistTracks,
@@ -19,6 +20,9 @@ import {
 import { publishApiV1Event } from '../services/apiV1Events.service';
 
 const router = Router();
+
+// Legacy listener routes: the web app uses /api/v1. Logged until they can go.
+router.use(deprecatedRoute('the /api/v1/playlists routes'));
 
 // Get all playlists for current user. Backed by a two-query helper that
 // avoids the previous N+1 (one `getPlaylistTracks` per playlist).
