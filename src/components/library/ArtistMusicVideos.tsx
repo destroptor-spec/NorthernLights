@@ -84,7 +84,7 @@ const VideoCard: React.FC<{ video: MusicVideo; onOpen: (v: MusicVideo) => void }
         <button
             type="button"
             onClick={() => onOpen(video)}
-            className="group block w-full text-left focus:outline-none"
+            className="group card-hover block w-full text-left"
             aria-label={`Play music video: ${video.title || 'Untitled'}`}
         >
             <div className="relative aspect-video w-full overflow-hidden rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface-variant)]">
@@ -94,33 +94,21 @@ const VideoCard: React.FC<{ video: MusicVideo; onOpen: (v: MusicVideo) => void }
                         alt={video.title || ''}
                         loading="lazy"
                         decoding="async"
-                        className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105 motion-reduce:transition-none motion-reduce:group-hover:scale-100"
+                        className="h-full w-full object-cover"
                     />
                 ) : (
                     <div className="flex h-full w-full items-center justify-center text-[var(--color-text-muted)]">
                         <Video className="h-8 w-8 opacity-50" />
                     </div>
                 )}
-                {/* Hover overlay — same primary FAB used across the app's cards */}
-                <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-transparent transition-colors duration-300 group-hover:bg-black/40 group-focus-visible:bg-black/40">
-                    <span
-                        className="
-                            flex h-14 w-14 items-center justify-center rounded-full
-                            opacity-0 md:scale-75
-                            transition-ui duration-300 ease-out
-                            group-hover:opacity-100 group-hover:scale-100
-                            group-focus-visible:opacity-100 group-focus-visible:scale-100
-                            bg-[var(--color-primary)] text-white backdrop-blur-sm
-                            shadow-[0_4px_24px_rgba(16,185,129,0.3)]
-                            motion-reduce:transition-none
-                        "
-                    >
-                        <Play size={24} fill="currentColor" className="ml-1 text-white" />
-                    </span>
-                </div>
+                {/* Play: rises in on hover, as on the Hub cards (.card-play).
+                    A span: the whole card is the button. */}
+                <span className="btn-fab card-play pointer-events-none" aria-hidden="true">
+                    <Play className="h-4 w-4 ml-0.5" fill="currentColor" />
+                </span>
             </div>
             <div className="mt-2">
-                <h4 className="line-clamp-1 text-sm font-semibold text-[var(--color-text-primary)]">
+                <h4 className="line-clamp-1 text-sm font-semibold text-[var(--color-text-primary)] transition-colors group-hover:text-[var(--color-primary)]">
                     {video.title || 'Untitled'}
                 </h4>
                 {credit && (
