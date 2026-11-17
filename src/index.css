@@ -366,7 +366,20 @@ h4 {
 #root {
   width: 100%;
   height: 100vh;
+  height: 100dvh;
   position: relative;
+}
+
+/* The app shell is as tall as the part of the screen the browser shows.
+   100vh is the tallest the viewport can get: with a browser toolbar that stays
+   at the bottom (Samsung Internet with Android's navigation buttons; the page
+   scrolls inside the shell, so the toolbar never hides) the shell's bottom sat
+   behind the toolbar and the last row of a page couldn't be scrolled out from
+   under the mini player. 100dvh is the visible height; 100vh stays as the
+   fallback for browsers without it. */
+.app-viewport-height {
+  height: 100vh;
+  height: 100dvh;
 }
 
 /* Public shared-playlist route (/share/:token) renders outside the app shell,
@@ -3548,6 +3561,7 @@ a.rays-chip:focus-visible {
   width: 90%;
   max-width: 380px;
   height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   animation: slide-in-left 300ms var(--ease-out);

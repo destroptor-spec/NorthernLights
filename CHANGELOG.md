@@ -22,6 +22,7 @@
 
 ### Bug fixes
 - **Menus on right-click and long press:** every track row and playlist card with a ⋯ menu (albums, playlists, the queue, search results, quick search, Popular on artist pages) now also opens it by right-click, the keyboard's menu key, or a long press on phones and tablets, including iPhones and iPads, which had no long press before. The tap that ends a long press doesn't also play the track, and right-clicking a link keeps the browser's own menu.
+- **Last row reachable with a bottom browser toolbar:** in browsers whose toolbar stays at the bottom (Samsung Internet with Android's navigation buttons), the end of a page sat behind the mini player and tab bar, so a single's only track couldn't be tapped. The app now fits the visible part of the screen.
 - **Add to Playlist offers only your own editable playlists:** the track menu no longer lists artist radio, the Daylist and other read-only playlists (or Hub AI playlists, which are rebuilt), where adding a song failed.
 - **AI playlists have no Discoverable setting:** other listeners never see AI playlists, so the Private/Discoverable button on them did nothing and is gone (from the server's rules too). A share link still works.
 - **Track menu sub-panels:** Go to Artist and Add to Playlist no longer open shifted to the side, Credits and the other lists use the menu's full height instead of stopping partway, and the filter is a plain row of the menu with no box or focus border.
