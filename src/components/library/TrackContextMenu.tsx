@@ -8,9 +8,10 @@ import {
     Play, Plus, ListPlus, Check,
     ChevronRight, ChevronLeft,
     Search, X, Disc3, Mic2, ListMinus,
-    Heart, Users, ListX, Sparkles,
+    Heart, Users, ListX,
 } from 'lucide-react';
 import { raysPath } from '../../api/browse';
+import { Galaxy } from '../icons/Galaxy';
 import { playlistPermissions } from '../../../shared/playlistPermissions';
 import {
     ContextMenuButton,
@@ -500,8 +501,8 @@ export const TrackContextMenu: React.FC = () => {
                         {/* Everything Aurora knows about the track (genre & style preview). */}
                         {newBrowseEnabled && (
                             <ContextMenuButton
-                                icon={<Sparkles size={15} />}
-                                label="Aurora rays"
+                                icon={<Galaxy size={15} />}
+                                label={<>Aurora rays <span className="menu-beta-tag">Beta</span></>}
                                 onClick={() => { navigate(raysPath(track.id)); closeContextMenu(); }}
                             />
                         )}
