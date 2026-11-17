@@ -1,10 +1,11 @@
 import React, { useRef, useCallback, useState } from 'react';
 import { saveQueueAsPlaylist } from '../utils/saveQueueAsPlaylist';
 import { usePlayerStore } from '../store';
-import { ChevronLeft } from 'lucide-react';
+import { ChevronLeft, History, ListMusic } from 'lucide-react';
 import { QueueList, useClearQueueWithUndo } from './QueueList';
 import { PromptModal } from './PromptModal';
 import { QueueSidebarHeader } from './QueueSidebarHeader';
+import { RecentlyPlayedList } from './RecentlyPlayedList';
 import { useToast } from '../hooks/useToast';
 
 function getDefaultQueuePlaylistName(): string {
@@ -28,6 +29,15 @@ const PlaylistSidebarInner: React.FC = () => {
   const setIsSidebarCollapsed = usePlayerStore(state => state.setIsSidebarCollapsed);
 
   const parentRef = useRef<HTMLDivElement>(null);
+  const getScrollElement = useCallback(() => parentRef.current, []);
+  // The tabs at the bottom: the queue, or the user's recently played tracks.
+  const [tab, setTab] = useState<'queue' | 'recent'>('queue');
+  const showRecent = tab === 'recent' && !isSidebarCollapsed;
+  const chooseTab = (next: 'queue' | 'recent') => {
+    if (next === tab) return;
+    setTab(next);
+    parentRef.current?.scrollTo({ top: 0 });
+  };
 
   const handleClearQueue = useClearQueueWithUndo();
 
@@ -79,13 +89,42 @@ const PlaylistSidebarInner: React.FC = () => {
           ref={parentRef}
           className="flex-1 overflow-y-auto overflow-x-hidden hide-scrollbar"
         >
-          <QueueList
-            getScrollElement={() => parentRef.current}
-            collapsed={isSidebarCollapsed}
-            sections
-            listClassName={`${isSidebarCollapsed ? 'px-2' : 'px-3'} pt-1 pb-4`}
-          />
+          {showRecent ? (
+            <RecentlyPlayedList active getScrollElement={getScrollElement} />
+          ) : (
+            <QueueList
+              getScrollElement={getScrollElement}
+              collapsed={isSidebarCollapsed}
+              sections
+              listClassName={`${isSidebarCollapsed ? 'px-2' : 'px-3'} pt-1 pb-4`}
+            />
+          )}
         </div>
+
+        {!isSidebarCollapsed && (
+          <div className="queue-tabs" role="tablist" aria-label="Queue or recently played">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'queue'}
+              className="queue-tab"
+              onClick={() => chooseTab('queue')}
+            >
+              <ListMusic size={15} aria-hidden="true" />
+              Queue
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'recent'}
+              className="queue-tab"
+              onClick={() => chooseTab('recent')}
+            >
+              <History size={15} aria-hidden="true" />
+              Recently played
+            </button>
+          </div>
+        )}
       </div>
       {isSavePromptOpen && (
         <PromptModal

@@ -11268,6 +11268,55 @@ button.connect-line:disabled {
   mask-image: linear-gradient(to right, #000 calc(100% - 64px), transparent calc(100% - 28px));
 }
 
+/* The sidebar's tabs, at its foot: Queue (default) and Recently played. */
+.queue-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin: 0 12px 12px;
+  padding: 4px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-text-primary) 5%, transparent);
+}
+.queue-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+.queue-tab:hover {
+  color: var(--color-text-primary);
+}
+.queue-tab[aria-selected="true"] {
+  background: color-mix(in srgb, var(--color-text-primary) 9%, transparent);
+  color: var(--color-text-primary);
+}
+.queue-empty {
+  padding: 24px 8px;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  text-align: center;
+}
+.queue-empty-retry {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
 /* A guest below Playback Control: the seek bar shows where it is, no more. */
 .seek-locked {
   pointer-events: none;

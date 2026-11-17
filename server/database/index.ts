@@ -987,6 +987,8 @@ export async function initDB(): Promise<Pool> {
         );
         CREATE INDEX IF NOT EXISTS ups_user_id_idx ON user_playback_stats(user_id);
         CREATE INDEX IF NOT EXISTS ups_track_id_idx ON user_playback_stats(track_id);
+        -- Recently played (GET /api/v1/me/recently-played): newest first, per user.
+        CREATE INDEX IF NOT EXISTS ups_user_last_played_idx ON user_playback_stats(user_id, last_played_at DESC, track_id DESC) WHERE last_played_at IS NOT NULL;
 
         CREATE TABLE IF NOT EXISTS user_track_play_buckets (
           user_id UUID REFERENCES users(id) ON DELETE CASCADE,
