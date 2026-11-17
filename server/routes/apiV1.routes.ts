@@ -103,6 +103,7 @@ import {
   revokeAuroraAppKey,
   rotateAuroraAppKey,
 } from '../services/auroraAppAuth.service';
+import { getRecentlyPlayedPage } from '../services/recentlyPlayed.service';
 import {
   getApiV1TrackById,
   getApiV1TracksByIds,
@@ -567,6 +568,24 @@ router.post('/auth/scoped-token', async (req, res) => {
     : input.expiresIn === '12h' ? 43200
     : 900;
   dataResponse(req, res, { token, scope: input.scope, expiresAt: new Date(Date.now() + seconds * 1000).toISOString() });
+});
+
+// Recently played, newest first: each track once, at its last play on any device.
+router.get('/me/recently-played', async (req, res) => {
+  const pagination = paginationRequest(req);
+  if (!pagination) return sendApiV1Error(req, res, 400, 'INVALID_CURSOR', 'The pagination cursor is invalid.');
+  const userId = req.apiV1!.userId;
+  const after = pagination.after ? { playedAt: pagination.after.sort, trackId: pagination.after.id } : null;
+  let rows: Array<{ trackId: string; playedKey: string }>;
+  try {
+    rows = await getRecentlyPlayedPage(userId, { limit: pagination.limit + 1, after });
+  } catch {
+    // A cursor whose timestamp Postgres can't read.
+    return sendApiV1Error(req, res, 400, 'INVALID_CURSOR', 'The pagination cursor is invalid.');
+  }
+  const page = databasePage(rows.map((row) => ({ ...row, id: row.trackId })), pagination.limit, (row) => row.playedKey);
+  const tracks = await getApiV1TracksByIds(userId, page.items.map((row) => row.trackId));
+  res.json({ data: tracks, page: page.page, meta: { requestId: req.requestId } });
 });
 
 router.get('/artists', async (req, res) => {
