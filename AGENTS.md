@@ -63,6 +63,7 @@ Example: `<button className="btn btn-primary btn-sm">Rescan</button>`
 | `.safe-area-top` | `padding-top: env(safe-area-inset-top)` — notched device support |
 | `.hub-discover-cover` | Responsive cover art size (100px mobile, 120px desktop) with right shadow |
 | `--safe-area-*` | CSS custom properties wrapping `env(safe-area-inset-*)` |
+| `.card-hover` + `.card-play` | The one card hover (the Hub's "Uniquely yours" cards): card rises 2px, Play (`btn-fab card-play`) rises in at the cover's bottom-left; title gets `group-hover:text-[var(--color-primary)]`. No cover zoom or dark overlay. Play is hidden on touch |
 
 Mobile-specific rules (in `@media (max-width: 767px)` block):
 - Larger touch targets: `.player-control-btn` 48px, `.play-btn-main` 64px
