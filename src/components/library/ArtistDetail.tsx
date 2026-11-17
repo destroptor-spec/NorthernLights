@@ -416,7 +416,7 @@ export const ArtistDetail: React.FC = () => {
             // it would leave raw, art-less tracks in the queue until a reload
             // rebuilt them from the persisted snapshot.
             const tracks = toPlayableTracks((playlist?.tracks || []).map((entry) => entry.track));
-            if (tracks.length > 0) setPlaylist(tracks, 0, artistId ? { kind: 'radio', id: artistId } : null);
+            if (tracks.length > 0) setPlaylist(tracks, 0, artistId ? { kind: 'radio', id: artistId, name: artistName || undefined } : null);
         } catch (e) {
             console.error('[Artist Radio] Failed to start radio', e);
         } finally {
@@ -799,8 +799,8 @@ export const ArtistDetail: React.FC = () => {
         if (popularTrackQueue.length === 0) return;
         // "Popular in your library" is the Last.fm top-tracks list — treat it as the
         // artist itself so the now-playing title links back to the artist page.
-        setPlaylist(popularTrackQueue, startIndex, artistId ? { kind: 'artist-top', id: artistId } : null);
-    }, [popularTrackQueue, setPlaylist, artistId]);
+        setPlaylist(popularTrackQueue, startIndex, artistId ? { kind: 'artist-top', id: artistId, name: artistName || undefined } : null);
+    }, [popularTrackQueue, setPlaylist, artistId, artistName]);
 
     // Merged, deduplicated tags: communityTags take priority; plain genres fill in unique gaps
     const mergedTags = useMemo(() => {

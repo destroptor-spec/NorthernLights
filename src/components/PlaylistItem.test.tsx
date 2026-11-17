@@ -7,15 +7,15 @@ import { PlaylistItem } from './PlaylistItem';
 jest.mock('./LoveButton', () => ({ LoveButton: () => null }));
 jest.mock('./AlbumArt', () => ({ AlbumArt: () => null }));
 
-const renderRow = (isActive: boolean) => render(
+const renderRow = (isActive: boolean, handlers: Partial<{ onPlay: jest.Mock; onContextMenu: jest.Mock }> = {}) => render(
   <MemoryRouter>
     <DndContext>
       <SortableContext items={['row-1']}>
         <ul>
           <PlaylistItem
-            id="row-1" index={1} isActive={isActive} isSidebarCollapsed={false} totalTracks={3}
+            id="row-1" index={1} isActive={isActive} isSidebarCollapsed={false}
             track={{ id: 't1', path: 'p1', title: 'Enigma', artist: 'A' }}
-            onPlay={jest.fn()} onRemove={jest.fn()} onMove={jest.fn()} onContextMenu={jest.fn()}
+            onPlay={handlers.onPlay ?? jest.fn()} onContextMenu={handlers.onContextMenu ?? jest.fn()}
             getArtistLink={() => null} parseArtists={(artists) => [artists]}
           />
         </ul>
@@ -24,14 +24,22 @@ const renderRow = (isActive: boolean) => render(
   </MemoryRouter>,
 );
 
-test('offers Remove for a queued track', () => {
-  renderRow(false);
-  expect(screen.getByRole('button', { name: 'Remove track Enigma' })).toBeTruthy();
+test('desktop rows: ⋯ opens the menu (Remove and Love are in it), the cover holds the drag handle', () => {
+  const onContextMenu = jest.fn();
+  const onPlay = jest.fn();
+  renderRow(false, { onContextMenu, onPlay });
+  expect(screen.queryByRole('button', { name: 'Remove track Enigma' })).toBeNull();
+  screen.getByRole('button', { name: 'More options for Enigma' }).click();
+  expect(onContextMenu).toHaveBeenCalled();
+  expect(onPlay).not.toHaveBeenCalled();
+  expect(screen.getByLabelText('Reorder Enigma').closest('.queue-row-art')).toBeTruthy();
 });
 
-test('has no Remove on the playing track (Skip moves past it)', () => {
+test('marks the playing track as current', () => {
   renderRow(true);
-  expect(screen.queryByRole('button', { name: 'Remove track Enigma' })).toBeNull();
+  const row = document.querySelector('.queue-row')!;
+  expect(row.className).toContain('is-current');
+  expect(row.getAttribute('aria-current')).toBe('true');
 });
 
 describe('touch rows (mobile Now Playing queue)', () => {
@@ -44,9 +52,9 @@ describe('touch rows (mobile Now Playing queue)', () => {
           <SortableContext items={['row-1']}>
             <ul>
               <PlaylistItem
-                id="row-1" index={1} isActive={false} isSidebarCollapsed={false} totalTracks={3} touch
+                id="row-1" index={1} isActive={false} isSidebarCollapsed={false} touch
                 track={{ id: 't1', path: 'p1', title: 'Enigma', artist: 'A feat. B', duration: 221 }}
-                onPlay={onPlay} onRemove={jest.fn()} onMove={jest.fn()} onContextMenu={onContextMenu}
+                onPlay={onPlay} onContextMenu={onContextMenu}
                 getArtistLink={() => '/library/artist/a'} parseArtists={() => ['A', 'B']}
               />
             </ul>

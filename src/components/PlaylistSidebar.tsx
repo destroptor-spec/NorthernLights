@@ -1,9 +1,10 @@
 import React, { useRef, useCallback, useState } from 'react';
 import { saveQueueAsPlaylist } from '../utils/saveQueueAsPlaylist';
 import { usePlayerStore } from '../store';
-import { ChevronLeft, ChevronRight, ListPlus, ListX, Loader2 } from 'lucide-react';
+import { ChevronLeft } from 'lucide-react';
 import { QueueList, useClearQueueWithUndo } from './QueueList';
 import { PromptModal } from './PromptModal';
+import { QueueSidebarHeader } from './QueueSidebarHeader';
 import { useToast } from '../hooks/useToast';
 
 function getDefaultQueuePlaylistName(): string {
@@ -53,48 +54,10 @@ const PlaylistSidebarInner: React.FC = () => {
 
   return (
     <>
-      <div className="w-full border-r border-black/5 dark:border-white/5 flex flex-col h-full relative group/sidebar bg-white/40 dark:bg-black/20 backdrop-blur-3xl">
-        <div className={`flex items-center py-3 mt-4 ${isSidebarCollapsed ? 'justify-center px-2' : 'justify-between pl-4 pr-8'}`}>
-          {!isSidebarCollapsed ? (
-            <>
-              <h3 className="text-xs font-bold text-[var(--color-text-secondary)] uppercase tracking-wider">Play Queue ({playlist.length})</h3>
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={() => setIsSavePromptOpen(true)}
-                  disabled={playlist.length === 0 || isSavingQueue}
-                  className="btn btn-ghost btn-sm px-2.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Save queue as playlist"
-                  aria-label="Save queue as playlist"
-                >
-                  {isSavingQueue ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <ListPlus size={16} />
-                  )}
-                  <span className="hidden xl:inline">Save</span>
-                </button>
-                <button
-                  onClick={handleClearQueue}
-                  disabled={playlist.length === 0}
-                  className="btn btn-ghost btn-sm px-2.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Clear queue"
-                  aria-label="Clear queue"
-                >
-                  <ListX size={16} />
-                  <span className="hidden xl:inline">Clear</span>
-                </button>
-                <button 
-                  onClick={() => setIsSidebarCollapsed(true)}
-                  className="hidden md:flex p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-ui"
-                  title="Collapse Queue"
-                  aria-label="Collapse Queue"
-                >
-                  <ChevronRight size={16} />
-                </button>
-              </div>
-            </>
-          ) : (
-            <button 
+      <div className="queue-sidebar w-full border-r border-black/5 dark:border-white/5 flex flex-col h-full relative bg-white/40 dark:bg-black/20 backdrop-blur-3xl">
+        {isSidebarCollapsed ? (
+          <div className="flex items-center justify-center px-2 py-3 mt-4">
+            <button
               onClick={() => setIsSidebarCollapsed(false)}
               className="p-2 rounded-xl bg-white/50 dark:bg-black/30 border border-black/5 dark:border-white/5 hover:bg-black/5 dark:hover:bg-white/10 text-[var(--color-primary)] transition-ui shadow-sm flex items-center justify-center"
               title={`Expand Queue (${playlist.length})`}
@@ -102,8 +65,15 @@ const PlaylistSidebarInner: React.FC = () => {
             >
               <ChevronLeft size={20} />
             </button>
-          )}
-        </div>
+          </div>
+        ) : (
+          <QueueSidebarHeader
+            onSave={() => setIsSavePromptOpen(true)}
+            saving={isSavingQueue}
+            onClear={handleClearQueue}
+            onCollapse={() => setIsSidebarCollapsed(true)}
+          />
+        )}
 
         <div
           ref={parentRef}
@@ -112,7 +82,8 @@ const PlaylistSidebarInner: React.FC = () => {
           <QueueList
             getScrollElement={() => parentRef.current}
             collapsed={isSidebarCollapsed}
-            listClassName={`${isSidebarCollapsed ? 'px-2' : 'pl-4 pr-8'} py-2`}
+            sections
+            listClassName={`${isSidebarCollapsed ? 'px-2' : 'px-3'} pt-1 pb-4`}
           />
         </div>
       </div>

@@ -10,6 +10,7 @@ import { extractMetadata } from '../utils/fileSystem';
 import { playbackManager, PlaybackState } from '../utils/PlaybackManager';
 import { castManager } from '../utils/CastManager';
 import { cloneTrackForQueue, ensureQueueEntryIds, hasNextTrack, rekeyLegacyQueueEntryIds } from '../utils/queue';
+import { addToQueueIndex, queuedAfterMove } from '../utils/queueSections';
 import { storedSignInLacksUrlTokens } from '../utils/urlTokens';
 import { preloadManager } from '../utils/PreloadManager';
 import { setPlaybackDebugLogging } from '../utils/playbackDebug';
@@ -341,6 +342,8 @@ export type QueueSourceKind = 'album' | 'playlist' | 'artist' | 'artist-top' | '
 export interface QueueSource {
   kind: QueueSourceKind;
   id: string;
+  /** Its name (the album's or playlist's title, the artist), for "Next from: …" in the queue. */
+  name?: string;
 }
 
 /** Minimal album identity for the Hub "jump back into browsing" fallback. */
@@ -2882,10 +2885,14 @@ export const usePlayerStore = create<PlayerState>()(
         addTrackToPlaylist: (track: TrackInfo, options?: QueueMutationOptions) => set((state: PlayerState) => {
           const snapshot = options?.undo ? state.playlist.map((item) => ({ ...item })) : null;
           const snapshotIndex = state.currentIndex;
-          const queueTrack = cloneTrackForQueue(track);
-          const nextPlaylist = [...state.playlist, queueTrack];
+          // Behind the tracks queued by hand, before the rest of the album or playlist.
+          const queueTrack = { ...cloneTrackForQueue(track), queued: true };
+          const insertAt = addToQueueIndex(state.playlist, state.currentIndex);
+          const nextPlaylist = [...state.playlist];
+          nextPlaylist.splice(insertAt, 0, queueTrack);
           if (castManager.isConnected()) {
-            void castManager.appendToQueue(queueTrack);
+            if (insertAt >= state.playlist.length) void castManager.appendToQueue(queueTrack);
+            else void castManager.insertNextInQueue(queueTrack, state.playlist[insertAt]?.queueEntryId);
           }
           prewarmNextFromState({ ...state, playlist: nextPlaylist });
           queueMicrotask(() => {
@@ -2906,8 +2913,9 @@ export const usePlayerStore = create<PlayerState>()(
           const snapshot = options?.undo ? state.playlist.map((item) => ({ ...item })) : null;
           const snapshotIndex = state.currentIndex;
           const newPlaylist = [...state.playlist];
+          // The top of the tracks queued by hand.
           const insertAt = state.currentIndex !== null ? state.currentIndex + 1 : newPlaylist.length;
-          const queueTrack = cloneTrackForQueue(track);
+          const queueTrack = { ...cloneTrackForQueue(track), queued: true };
           newPlaylist.splice(insertAt, 0, queueTrack);
           if (castManager.isConnected()) {
             void castManager.insertNextInQueue(queueTrack);
@@ -2971,6 +2979,12 @@ export const usePlayerStore = create<PlayerState>()(
               if (fromIndex < state.currentIndex && toIndex >= state.currentIndex) newIndex = state.currentIndex - 1;
               if (fromIndex > state.currentIndex && toIndex <= state.currentIndex) newIndex = state.currentIndex + 1;
             }
+          }
+          // Dragged into the tracks queued by hand, it is one of them; out of them, it isn't.
+          const queued = queuedAfterMove(newPlaylist, newIndex, toIndex, !!moved.queued);
+          if (queued !== !!moved.queued) {
+            const { queued: _wasQueued, ...rest } = moved;
+            newPlaylist[toIndex] = queued ? { ...rest, queued: true } : rest;
           }
           if (castManager.isConnected() && moved?.queueEntryId) {
             void castManager.moveQueueItem(moved.queueEntryId, toIndex);
@@ -3211,9 +3225,14 @@ export const usePlayerStore = create<PlayerState>()(
           let index = incoming.findIndex((track) => track.queueEntryId === playingId);
           if (index < 0 && playingId && !follows) return;
           if (index < 0) index = incoming.findIndex((track) => track.queueEntryId === currentEntryId);
-          // Infinity picks keep their look.
+          // Infinity picks keep their look, and tracks queued by hand stay queued.
           const infinity = new Set(state.playlist.filter((track) => track.isInfinity).map((track) => track.queueEntryId));
-          const tracks = incoming.map((track) => (infinity.has(track.queueEntryId) ? { ...track, isInfinity: true } : track));
+          const queued = new Set(state.playlist.filter((track) => track.queued).map((track) => track.queueEntryId));
+          const tracks = incoming.map((track) => {
+            if (infinity.has(track.queueEntryId)) return { ...track, isInfinity: true };
+            if (queued.has(track.queueEntryId)) return { ...track, queued: true };
+            return track;
+          });
           const currentIndex = index >= 0 ? index : (tracks.length ? 0 : null);
           set({ playlist: tracks, currentIndex, queueSource: null });
           // A Cast receiver that does not follow the session gets the edit from here.

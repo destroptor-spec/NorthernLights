@@ -47,6 +47,34 @@ describe('Music Store Logic', () => {
     expect(usePlayerStore.getState().playlist.map((t: TrackInfo) => t.id)).toEqual(['b', 'a']);
   });
 
+  it('Add to queue goes behind the tracks queued by hand, Play next to their top; both are marked queued', () => {
+    usePlayerStore.setState({
+      playlist: [{ id: 'a', path: '/a.mp3' }, { id: 'b', path: '/b.mp3' }, { id: 'c', path: '/c.mp3' }],
+      currentIndex: 0,
+    });
+    const store = () => usePlayerStore.getState();
+    store().addTrackToPlaylist({ id: 'q1', path: '/q1.mp3' });
+    store().addTrackToPlaylist({ id: 'q2', path: '/q2.mp3' });
+    store().playNext({ id: 'n', path: '/n.mp3' });
+    expect(store().playlist.map((t: TrackInfo) => t.id)).toEqual(['a', 'n', 'q1', 'q2', 'b', 'c']);
+    expect(store().playlist.map((t: TrackInfo) => !!t.queued)).toEqual([false, true, true, true, false, false]);
+  });
+
+  it('a track dragged into the queued tracks is queued, and one dragged out of them is not', () => {
+    usePlayerStore.setState({
+      playlist: [
+        { id: 'a', path: '/a.mp3' }, { id: 'q1', path: '/q1.mp3', queued: true }, { id: 'q2', path: '/q2.mp3', queued: true },
+        { id: 'b', path: '/b.mp3' }, { id: 'c', path: '/c.mp3' },
+      ],
+      currentIndex: 0,
+    });
+    const store = () => usePlayerStore.getState();
+    store().moveInPlaylist(4, 2); // c between q1 and q2
+    expect(store().playlist.map((t: TrackInfo) => `${t.id}${t.queued ? '*' : ''}`)).toEqual(['a', 'q1*', 'c*', 'q2*', 'b']);
+    store().moveInPlaylist(1, 4); // q1 to the end
+    expect(store().playlist.map((t: TrackInfo) => `${t.id}${t.queued ? '*' : ''}`)).toEqual(['a', 'c*', 'q2*', 'b', 'q1']);
+  });
+
   it('preserves Auto quality while hydrating browser track URLs', () => {
     usePlayerStore.setState({ mediaAccessToken: 'media-token', streamingQuality: 'auto' });
     const [track] = usePlayerStore.getState().hydrateTracks([

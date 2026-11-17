@@ -70,6 +70,8 @@ export interface TrackInfo {
   _pictureData?: { data: string; format: string };
   _format?: string;
   isInfinity?: boolean;
+  /** Queued by hand (Play next, Add to queue): plays before the rest of what was started. See utils/queueSections. */
+  queued?: boolean;
 }
 
 const DB_NAME = "MusicPlayerDB";
