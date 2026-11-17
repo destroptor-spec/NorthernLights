@@ -155,7 +155,7 @@ const SimilarArtistRow: React.FC<{ artist: SimilarArtist }> = ({ artist }) => {
             onPointerEnter={prefetchArtistDetail}
             onPointerDown={prefetchArtistDetail}
             onFocus={prefetchArtistDetail}
-            className="group rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] p-3 transition-ui hover:border-primary/40 hover:bg-[var(--glass-bg-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
+            className="group card-hover rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] p-3 transition-ui hover:border-primary/40 hover:bg-[var(--glass-bg-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
         >
             <div className="flex items-start gap-3">
                 <div
@@ -976,7 +976,7 @@ export const ArtistDetail: React.FC = () => {
                                     : 'Play a mix inspired by this artist'
                                 }
                                 aria-label={hasPopularInLibrary ? 'Play artist radio' : undefined}
-                                className={`${hasPopularInLibrary ? 'h-12 w-12 px-0 shrink-0' : 'w-full px-8 sm:w-auto'} flex items-center justify-center gap-2 py-3.5 bg-[var(--color-primary)] text-white font-bold text-sm tracking-widest uppercase rounded-full shadow-[0_4px_24px_rgba(16,185,129,0.22)] hover:bg-[var(--color-primary-dark)] hover:scale-[1.02] active:scale-[0.98] disabled:opacity-55 disabled:cursor-not-allowed transition-ui`}
+                                className={`${hasPopularInLibrary ? 'h-12 w-12 px-0 shrink-0' : 'w-full px-8 sm:w-auto'} flex items-center justify-center gap-2 py-3.5 bg-[var(--color-primary)] text-white font-bold text-sm tracking-widest uppercase rounded-full shadow-[0_4px_24px_rgba(16,185,129,0.22)] hover:bg-[var(--color-primary-dark)] active:scale-[0.98] disabled:opacity-55 disabled:cursor-not-allowed transition-ui`}
                             >
                                 {radioLoading ? (
                                     <span className="w-[18px] h-[18px] rounded-full border-2 border-white/40 border-t-white animate-spin" />
@@ -990,7 +990,7 @@ export const ArtistDetail: React.FC = () => {
                                 <button
                                     type="button"
                                     onClick={() => handlePlayPopularTracks(0)}
-                                    className="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-full bg-[var(--color-primary)] px-6 py-3.5 text-sm font-bold uppercase tracking-widest text-white shadow-[0_4px_24px_rgba(16,185,129,0.22)] transition-ui hover:bg-[var(--color-primary-dark)] hover:scale-[1.02] active:scale-[0.98] sm:flex-none"
+                                    className="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-full bg-[var(--color-primary)] px-6 py-3.5 text-sm font-bold uppercase tracking-widest text-white shadow-[0_4px_24px_rgba(16,185,129,0.22)] transition-ui hover:bg-[var(--color-primary-dark)] active:scale-[0.98] sm:flex-none"
                                 >
                                     <Play className="h-4 w-4 shrink-0" fill="currentColor" />
                                     <span className="truncate">Play {artistName}</span>

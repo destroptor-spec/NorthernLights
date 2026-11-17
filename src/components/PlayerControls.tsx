@@ -54,7 +54,7 @@ const playBtnClass =
   'shadow-[0_0_18px_rgba(16,185,129,0.32),inset_0_1px_0_rgba(255,255,255,0.2)] ' +
   'hover:from-emerald-400/90 hover:to-emerald-500/95 hover:border-emerald-300/60 ' +
   'hover:shadow-[0_0_28px_rgba(16,185,129,0.55),inset_0_1px_0_rgba(255,255,255,0.25)] ' +
-  'hover:scale-105 active:scale-95 transition-ui duration-200';
+  'active:scale-95 transition-ui duration-200';
 
 // ──────────────────────────────────────────────────────────────────────────
 // Title ticker — ping-pong scroll when text overflows (float mode only)
