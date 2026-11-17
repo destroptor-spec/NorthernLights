@@ -17,7 +17,9 @@ import {
     ContextMenuFrame,
     ContextMenuHeader,
     ContextMenuList,
+    placeMenu,
     useIsMobile,
+    useMeasuredMenuSize,
 } from '../ContextMenu';
 import { useRemoveFromQueueWithUndo } from '../QueueList';
 
@@ -256,6 +258,8 @@ export const TrackContextMenu: React.FC = () => {
     const newBrowseEnabled = usePlayerStore(s => s.newBrowseEnabled);
     const menuRef   = useRef<HTMLDivElement>(null);
     const isMobile  = useIsMobile();
+    // The menu's real size (it grew past the old 340 px guess and ran off the bottom).
+    const menuSize  = useMeasuredMenuSize(menuRef, Boolean(contextMenu) && !isMobile, { width: 248, height: 340 });
     const nav       = useMenuNav();
 
     const [addedStatus, setAddedStatus] = useState<string | null>(null);
@@ -329,10 +333,12 @@ export const TrackContextMenu: React.FC = () => {
     if (!contextMenu) return null;
     const { track, x, y, playlistId: contextPlaylistId, playlistTrackIndex, queueEntryId } = contextMenu;
 
-    // ── desktop position ──────────────────────────────────────────────────────
-    const menuW = 248, menuH = 340;
-    const posX = Math.min(x, window.innerWidth  - menuW - 16);
-    const posY = Math.min(y, window.innerHeight - menuH - 16);
+    // ── desktop position: all of it on screen, flipped up or left near an edge ─
+    const placed = placeMenu({
+        size: menuSize,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        point: { x, y },
+    });
 
     // ── derived data ──────────────────────────────────────────────────────────
     const artistNames    = getArtistNames(track);
@@ -619,11 +625,12 @@ export const TrackContextMenu: React.FC = () => {
         <div
             className="fixed z-[9999]"
             style={{
-                top: posY, left: posX,
+                top: placed.top, left: placed.left,
+                ...(placed.maxHeight ? { maxHeight: placed.maxHeight, overflowY: 'auto' as const } : {}),
                 opacity: isVisible ? 1 : 0,
-                transform: isVisible ? 'scale(1) translateY(0)' : 'scale(0.95) translateY(-4px)',
+                transform: isVisible ? 'scale(1) translateY(0)' : `scale(0.95) translateY(${placed.origin.startsWith('bottom') ? 4 : -4}px)`,
                 transition: 'opacity 0.15s, transform 0.15s',
-                transformOrigin: 'top left',
+                transformOrigin: placed.origin,
             }}
         >
             {inner}
