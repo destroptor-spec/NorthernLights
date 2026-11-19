@@ -11226,6 +11226,79 @@ button.connect-line:disabled {
   display: flex;
   flex-direction: column;
 }
+/* "Join Bo's Gig": a light travels slowly round its 1px border (a conic
+   gradient turning behind an opaque fill), blue on one side, rose on the
+   other, fading to the plain border between. Still with reduced motion. */
+.gig-join {
+  --gig-join-edge: color-mix(in srgb, var(--color-text-primary) 14%, transparent);
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 14px 6px 8px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--color-text-primary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.gig-join::before {
+  content: "";
+  position: absolute;
+  z-index: -2;
+  left: 50%;
+  top: 50%;
+  width: 150%;
+  aspect-ratio: 1;
+  background: conic-gradient(
+    var(--gig-join-edge) 0deg 40deg,
+    rgba(59, 130, 246, 0.95) 90deg,
+    var(--gig-join-edge) 140deg 220deg,
+    rgba(244, 63, 94, 0.95) 270deg,
+    var(--gig-join-edge) 320deg 360deg
+  );
+  transform: translate(-50%, -50%) rotate(0deg);
+  animation: gig-join-turn 8s linear infinite;
+}
+.gig-join::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 1px;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--color-text-primary) 4%, var(--color-background));
+  transition: background-color var(--transition-fast);
+}
+.gig-join:hover::after {
+  background: color-mix(in srgb, var(--color-text-primary) 8%, var(--color-background));
+}
+.gig-join:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.gig-join-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@keyframes gig-join-turn {
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gig-join::before {
+    animation: none;
+  }
+}
 .queue-gig .gig-row {
   min-height: 34px;
   font-size: 0.8rem;

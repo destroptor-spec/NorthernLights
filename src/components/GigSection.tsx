@@ -4,7 +4,7 @@ import type { SessionInvitePreview, UserAvatar as UserAvatarData } from '../../s
 import { useListenTogetherStore } from '../store/listenTogether';
 import { endTogether, prepareInviteLink, setDiscoverable, setGigLevel, shareInviteLink, startGig } from '../utils/listenTogether';
 import { GIG_LEVELS, gigLevelOf, gigRunning, sessionTitle } from '../utils/listenTogetherText';
-import { AvatarStack, SessionPreviewAvatars } from './UserAvatar';
+import { AvatarStack, SessionPreviewAvatars, UserAvatar } from './UserAvatar';
 
 /**
  * The owner's gig, at the foot of the Connect card: a line like Output,
@@ -171,6 +171,23 @@ export const GigSection: React.FC<{ onDone?: () => void }> = ({ onDone }) => {
     </div>
   );
 };
+
+/**
+ * "Join Bo's Gig": the owner's avatar on the left, and a border whose light
+ * slowly travels round it (.gig-join). The desktop queue sidebar's way into a
+ * gig nearby, or into one the user is a guest in on another device.
+ */
+export const GigJoinButton: React.FC<{
+  ownerName: string | null;
+  owner: UserAvatarData | null;
+  onJoin: () => void;
+  disabled?: boolean;
+}> = ({ ownerName, owner, onJoin, disabled }) => (
+  <button type="button" className="gig-join" disabled={disabled} onClick={onJoin}>
+    {owner ? <UserAvatar avatar={owner} size="sm" /> : <Users size={16} aria-hidden="true" />}
+    <span className="gig-join-label">{ownerName ? `Join ${sessionTitle(ownerName)}` : 'Join the gig'}</span>
+  </button>
+);
 
 /** Discoverable gigs nearby, each with its preview and Join (6e). */
 export const AvailableGigs: React.FC<{ gigs: SessionInvitePreview[]; onJoin: (gig: SessionInvitePreview) => void; disabled?: boolean }> = ({ gigs, onJoin, disabled }) => {

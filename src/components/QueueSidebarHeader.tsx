@@ -1,11 +1,13 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ListPlus, ListX, Loader2, MoreHorizontal, PanelRightClose, Users } from 'lucide-react';
 import { usePlayerStore } from '../store';
 import { useListenTogetherStore } from '../store/listenTogether';
 import { useQueueSidebarShowsGig } from '../hooks/useQueueSidebarShowsGig';
 import { sessionTitle } from '../utils/listenTogetherText';
 import { ContextMenuButton, ContextMenuDivider, ContextMenuFrame, ContextMenuList, ContextMenuPortal } from './ContextMenu';
-import { EndGigButton, GigLevel, GigOpenSession, GigPeople, InviteButton, useOwnGig } from './GigSection';
+import { EndGigButton, GigJoinButton, GigLevel, GigOpenSession, GigPeople, InviteButton, useOwnGig } from './GigSection';
+import { UserAvatar } from './UserAvatar';
+import { joinNearby, leaveSharedSession, openSharedSession, refreshNearby } from '../utils/listenTogether';
 
 /**
  * The top of the desktop queue sidebar (Andreas's design, 2026-11-18): "Now
@@ -26,12 +28,32 @@ export const QueueSidebarHeader: React.FC<{
   const showsGig = useQueueSidebarShowsGig();
   const shared = useListenTogetherStore((state) => state.shared);
   const openedSessionId = useListenTogetherStore((state) => state.openedSessionId);
+  const available = useListenTogetherStore((state) => state.available);
   const { own, running, people, starting, start } = useOwnGig();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [joining, setJoining] = useState<string | null>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
 
   const guestView = !!openedSessionId && shared?.sessionId === openedSessionId;
   const gig = syncOn && showsGig && !guestView;
+  // Gigs nearby to join, and one this user is a guest in that another of their devices shows.
+  const nearby = available.filter((preview) => !preview.joined && preview.sessionId !== shared?.sessionId);
+  const sharedElsewhere = gig && shared && !guestView ? shared : null;
+
+  // The list nearby: read once here; its events keep it current after that.
+  useEffect(() => {
+    if (syncOn && showsGig) void refreshNearby();
+  }, [syncOn, showsGig]);
+
+  const join = async (key: string, act: () => Promise<void>) => {
+    if (joining) return;
+    setJoining(key);
+    try {
+      await act();
+    } finally {
+      setJoining(null);
+    }
+  };
   const title = guestView
     ? (shared?.ownerName ? sessionTitle(shared.ownerName) : 'Listening together')
     : gig && running
@@ -54,6 +76,35 @@ export const QueueSidebarHeader: React.FC<{
           {saving ? <Loader2 size={16} className="animate-spin" /> : <MoreHorizontal size={18} />}
         </button>
       </div>
+
+      {/* A gig to join: the user's own on another device first, then those nearby. */}
+      {sharedElsewhere && (
+        <GigJoinButton
+          ownerName={sharedElsewhere.ownerName}
+          owner={sharedElsewhere.owner}
+          disabled={!!joining}
+          onJoin={() => void join('shared', openSharedSession)}
+        />
+      )}
+      {gig && nearby.map((preview) => (
+        <GigJoinButton
+          key={preview.sessionId}
+          ownerName={preview.ownerName}
+          owner={preview.owner}
+          disabled={!!joining}
+          onJoin={() => void join(preview.sessionId, () => joinNearby(preview))}
+        />
+      ))}
+
+      {/* A guest, on the device that shows the gig: its owner, and Leave. */}
+      {syncOn && showsGig && guestView && (
+        <div className="queue-gig-people">
+          {shared?.owner && <UserAvatar avatar={shared.owner} size="sm" />}
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => void leaveSharedSession()}>
+            Leave
+          </button>
+        </div>
+      )}
 
       {gig && !running && (
         <button type="button" className="queue-gig-start" disabled={starting} onClick={() => void start()}>

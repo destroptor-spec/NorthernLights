@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Improvements
+- **Join a gig from the queue sidebar:** on desktop, gigs you can join now show at the top of the queue sidebar as "Join Bo's Gig", with Bo's avatar and a slowly turning light round the button, and so does a gig you're already in on another device. While you're a guest, the sidebar shows whose gig it is and Leave. On phones it stays in Connect.
 - **Album menu:** albums have a menu too (⋯ on the cover, right-click, or a long press on phones): Play Album, Add to Queue (all its tracks, behind the ones you queued) and Add to Playlist.
 - **Menus stand out more:** in dark mode menus are a little lighter than the page behind them.
 - **Who queued what, in a gig:** tracks someone queued by hand carry their avatar in the desktop queue, and they stay in Next in Queue on every device, for guests too. A guest's Add to queue now lands behind the tracks already queued, as it does for you.
