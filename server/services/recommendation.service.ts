@@ -1,5 +1,7 @@
 import { initDB, createPlaylist, addTracksToPlaylist, getPlaylists, getPlaylistTracks, getUserRecentTracks, getUserTopTracks, deleteSystemPlaylistsForUser, getSystemSetting } from '../database';
 import { getLibraryProfile } from './libraryProfile.service';
+// One definition of song identity and loose keys, shared with the pools engine.
+import { getSongDedupKey, normalizeLooseKey, normalizeTitle } from './candidatePool.service';
 import { compileConceptToLibrary } from './llmConceptCompiler.service';
 import { queryWithRetry } from '../utils/db';
 import { christmasExclusionSql, isChristmasSeason, isChristmasRow } from '../utils/seasonalFilter';
@@ -20,23 +22,6 @@ import { moodOf, vocalsOf, type Mood } from '../../shared/descriptors';
 // for simplicity we assume vectors are already [0,1] normalized.
 // Distance query uses native PGLite `<->` vector L2 distance operator.
 
-function normalizeTitle(title: string): string {
-  if (!title) return '';
-  let t = title.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
-
-  // 1. Strip known "noise" tags in parentheses or brackets
-  // Matches things like (Remastered), [2012 Remaster], (Deluxe Edition), etc.
-  const noiseRegex = /[\(\[]\s*(?:(?:\d{4}\s*)?remaster(?:ed)?|deluxe|special|expanded|anniversary|digital|mono|stereo|explicit|edition)\s*[\)\]]/gi;
-  t = t.replace(noiseRegex, '');
-
-  // 2. Also strip plain "Remastered" text not in parentheses
-  t = t.replace(/(?:\d{4}\s*)?remaster(?:ed)?/gi, '');
-
-  // 3. Clean up leading/trailing punctuation and double spaces
-  return t.replace(/\s+/g, ' ')
-          .replace(/[\s\-\:\.\(\)\[\]]+$/, '')
-          .trim();
-}
 
 function isSameSong(a: { title: string, artist: string, mb_recording_id?: string }, b: { title: string, artist: string, mb_recording_id?: string }) {
   if (a.mb_recording_id && b.mb_recording_id && a.mb_recording_id !== '') {
@@ -51,23 +36,8 @@ function isSameSong(a: { title: string, artist: string, mb_recording_id?: string
   return titleA === titleB;
 }
 
-function normalizeArtistName(artist: string): string {
-  return (artist || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, ' ');
-}
-
 /** The artist a track counts under for artist spread: the credit's lead name (scoredMix.leadArtistKey). */
 const spreadArtistKey = leadArtistKey;
-
-function normalizeLooseKey(value: string): string {
-  return (value || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, ' ');
-}
-
-function getSongDedupKey(track: { title?: string, artist?: string, mb_recording_id?: string }): string {
-  if (track.mb_recording_id && track.mb_recording_id.trim() !== '') {
-    return `mb:${track.mb_recording_id.trim().toLowerCase()}`;
-  }
-  return `meta:${normalizeArtistName(track.artist || '')}:${normalizeTitle(track.title || '')}`;
-}
 
 function getGenreRoot(row: any): string {
   const path = row.genre_path || row.genre || '';

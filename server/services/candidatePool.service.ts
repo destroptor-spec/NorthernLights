@@ -12,7 +12,8 @@ import { artistGenrePaths, isRowBanned, pathsMatchSql, resolveBannedPaths, track
 
 // ─── Dedup helpers ─────────────────────────────────────────
 
-function normalizeTitle(title: string): string {
+/** A title without edition noise (Remastered, Deluxe…), for telling songs apart. */
+export function normalizeTitle(title: string): string {
   if (!title) return '';
   let t = title.toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '');
   const noise = /[\(\[]\s*(?:(?:\d{4}\s*)?remaster(?:ed)?|deluxe|special|expanded|anniversary|digital|mono|stereo|explicit|edition)\s*[\)\]]/gi;
@@ -24,7 +25,8 @@ function normalizeArtistName(artist: string): string {
   return (artist || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').trim().replace(/\s+/g, ' ');
 }
 
-function normalizeLooseKey(value: string): string {
+/** Lowercased, accents stripped, spaces squeezed: genre roots and album names. */
+export function normalizeLooseKey(value: string): string {
   return (value || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').trim().replace(/\s+/g, ' ');
 }
 
