@@ -78,6 +78,7 @@
 - **API and discovery:** Fixed pagination with UUID identifiers, playlist metadata, Hub regeneration feedback, and Wrapped period boundaries in local time.
 
 ### Security
+- **Dependency fixes:** updated 17 packages with published security fixes (request parsing, compression, proxy address handling, music file parsing, validation, and build tools), each at a version at least two weeks old. Still open: `sharp` (its fix is the 0.35 upgrade, #30) and build-only PWA tooling.
 - Restricted media, event-stream, and receiver credentials to their intended uses; hardened pairing, streaming rate limits, and artwork cache access.
 - Isolated Cast media credentials from login credentials and session broadcasts, and added image-specific signed artwork links.
 - Protected the server owner and last administrator from unsafe account changes; closing a shared listening session invalidates its invitation links.
