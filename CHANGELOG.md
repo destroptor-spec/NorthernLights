@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Improvements
-- **Queue on phones:** the queue in Now Playing starts at the song that plays and runs down from there (played songs are in Recently played). Songs you added with Play next or Add to queue have a small Q before their title. Queue and Recently played tabs sit at the foot of the queue, as on desktop. The song that plays can't be dragged, and nothing can be dropped onto it.
+- **Queue on phones:** the queue in Now Playing starts at the song that plays and runs down from there (played songs are in Recently played). Songs you added with Play next or Add to queue have a small Q before their title. Its heading says Queue, with "Playing from <album or playlist>" under it, and the Queue and Recently played tabs sit at the bottom of the screen, as on desktop. The song that plays can't be dragged, and nothing can be dropped onto it.
 - **Join a gig from the queue sidebar:** on desktop, gigs you can join now show at the top of the queue sidebar as "Join Bo's Gig", with Bo's avatar and a slowly turning light round the button, and so does a gig you're already in on another device. While you're a guest, the sidebar shows whose gig it is and Leave. On phones it stays in Connect.
 - **Album menu:** albums have a menu too (⋯ on the cover, right-click, or a long press on phones): Play Album, Add to Queue (all its tracks, behind the ones you queued) and Add to Playlist.
 - **Menus stand out more:** in dark mode menus are a little lighter than the page behind them.

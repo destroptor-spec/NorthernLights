@@ -19,6 +19,7 @@ import { useTrackMusicVideo } from '../hooks/useTrackMusicVideo';
 import MobileNowPlayingVideo, { type VideoPhase } from './MobileNowPlayingVideo';
 import { QueueList, useClearQueueWithUndo, type QueueListHandle } from './QueueList';
 import { RecentlyPlayedList } from './RecentlyPlayedList';
+import { queueSourceName } from '../utils/queueSections';
 import { ConnectButton } from './ConnectMenu';
 import { hardwareKeysControlCastVolume } from '../utils/castVolumeKeys';
 
@@ -232,8 +233,13 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
     return () => observer.disconnect();
   }, []);
 
-  // The queue shows the track that plays and what follows.
-  const upcomingCount = currentIndex !== null ? Math.max(0, playlist.length - currentIndex) : playlist.length;
+  // "Playing from <album / playlist>" under the queue's heading: what was
+  // started, not the tracks queued by hand or Infinity's picks.
+  const queueSource = usePlayerStore((state) => state.queueSource);
+  const playingFrom = useMemo(
+    () => queueSourceName(queueSource, playlist.filter((track) => !track.queued && !track.isInfinity)),
+    [queueSource, playlist],
+  );
   const chooseQueueTab = (tab: 'queue' | 'recent') => {
     if (tab === queueTab) return;
     setQueueTab(tab);
@@ -548,7 +554,10 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
               <ChevronUp size={18} />
             </button>
             <div className="mobile-now-playing-heading">
-              <span>{queueTab === 'queue' ? `Up Next (${upcomingCount})` : 'Recently played'}</span>
+              <span>{queueTab === 'queue' ? 'Queue' : 'Recently played'}</span>
+              {queueTab === 'queue' && playingFrom && (
+                <span className="mobile-now-queue-from">Playing from {playingFrom}</span>
+              )}
             </div>
             <button
               type="button"
@@ -561,7 +570,7 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
               <ListX size={18} />
             </button>
           </div>
-          <div ref={queueListWrapRef}>
+          <div ref={queueListWrapRef} className="mobile-now-queue-list">
             {queueTab === 'queue' ? (
               <QueueList
                 ref={queueListRef}

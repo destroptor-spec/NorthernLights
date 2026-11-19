@@ -100,12 +100,24 @@ export function queuedAfterMove(
  * its tracks share one, else "Next up".
  */
 export function nextFromLabel(
-  source: { kind: 'album' | 'playlist' | 'artist' | 'artist-top' | 'radio'; name?: string } | null,
+  source: QueueSourceRef | null,
   tracks: readonly Pick<TrackInfo, 'album'>[],
 ): string {
+  const name = queueSourceName(source, tracks);
+  return name ? `Next from: ${name}` : 'Next up';
+}
+
+type QueueSourceRef = { kind: 'album' | 'playlist' | 'artist' | 'artist-top' | 'radio'; name?: string };
+
+/**
+ * What the queue plays from, by name: the album, the playlist, "<artist>
+ * radio", or without a named source the album its tracks share. Null when
+ * there is none (a mix of albums from search or the Hub).
+ */
+export function queueSourceName(source: QueueSourceRef | null, tracks: readonly Pick<TrackInfo, 'album'>[]): string | null {
   const name = source?.name?.trim();
-  if (name) return source!.kind === 'radio' ? `Next from: ${name} radio` : `Next from: ${name}`;
+  if (name) return source!.kind === 'radio' ? `${name} radio` : name;
   const album = tracks[0]?.album?.trim();
-  if (album && tracks.every((track) => track.album?.trim() === album)) return `Next from: ${album}`;
-  return 'Next up';
+  if (album && tracks.every((track) => track.album?.trim() === album)) return album;
+  return null;
 }

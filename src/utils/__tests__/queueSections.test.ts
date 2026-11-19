@@ -1,4 +1,4 @@
-import { addToQueueIndex, canMoveInSections, nextFromLabel, queuedAfterMove, queueSections } from '../queueSections';
+import { addToQueueIndex, canMoveInSections, nextFromLabel, queuedAfterMove, queueSections, queueSourceName } from '../queueSections';
 
 // c = context (what was started), q = queued by hand, i = Infinity.
 const queue = (spec: string) => spec.split('').map((kind) => ({
@@ -87,5 +87,14 @@ describe('canMoveInSections (the sidebar keeps the track that plays in place)', 
     expect(canMoveInSections(5, 3, 2)).toBe(true);
     expect(canMoveInSections(3, 5, 2)).toBe(true);
     expect(canMoveInSections(3, 0, null)).toBe(true);
+  });
+});
+
+describe('queueSourceName ("Playing from …" on phones)', () => {
+  it('names the album, playlist or radio, else the album the tracks share, else nothing', () => {
+    expect(queueSourceName({ kind: 'playlist', name: 'Road trip' }, [])).toBe('Road trip');
+    expect(queueSourceName({ kind: 'radio', name: 'ATB' }, [])).toBe('ATB radio');
+    expect(queueSourceName(null, [{ album: 'Kid A' }, { album: 'Kid A' }])).toBe('Kid A');
+    expect(queueSourceName(null, [{ album: 'Kid A' }, { album: 'Amnesiac' }])).toBeNull();
   });
 });

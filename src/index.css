@@ -9217,12 +9217,30 @@ a.rays-chip:focus-visible {
 }
 
 .mobile-now-queue {
+  /* A column at least a screen tall: the list grows, so the tabs at its foot
+     reach the bottom of the screen under a short queue too. */
+  display: flex;
+  flex-direction: column;
   min-height: 100%;
   scroll-snap-align: start;
   background: var(--color-bg-primary);
   border-top: 1px solid var(--glass-border);
   border-radius: 1.25rem 1.25rem 0 0;
-  padding-bottom: calc(1rem + var(--safe-area-bottom));
+}
+.mobile-now-queue-list {
+  flex: 1 0 auto;
+}
+/* "Playing from <album>" under the queue's heading: small, in plain case. */
+.mobile-now-queue-from {
+  max-width: 14rem;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
 }
 
 /* Sticks while browsing the queue. Safe-area padding so the stuck header
