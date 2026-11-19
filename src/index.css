@@ -114,6 +114,8 @@
 
   /* Glass - Light Mode */
   --glass-bg: rgba(255, 255, 255, 0.65);
+  /* Menus (ContextMenuFrame and its panels): the glass, in light mode as it is. */
+  --menu-bg: var(--glass-bg);
   --glass-bg-hover: rgba(255, 255, 255, 0.8);
   --glass-border: rgba(0, 0, 0, 0.1);
   --glass-border-hover: rgba(0, 0, 0, 0.18);
@@ -200,6 +202,9 @@
      haze through translucent glass, while Firefox stays dark — a more opaque
      fill makes both browsers render the surfaces consistently dark. */
   --glass-bg: rgba(4, 2, 14, 0.78);
+  /* Menus: the glass 10% brighter (mixed 10% toward white), so a menu stands
+     out from the dark page behind it. */
+  --menu-bg: rgba(29, 27, 38, 0.78);
   --glass-bg-hover: rgba(10, 8, 28, 0.85);
   --glass-border: rgba(255, 255, 255, 0.04);
   --glass-border-hover: rgba(34, 201, 131, 0.15);
@@ -772,6 +777,46 @@ button :where(span),
     opacity: 1;
     transform: none;
   }
+}
+
+/* ⋯ in a card's top-right corner: like Play, only with hover (on touch a
+   long press opens the menu). */
+.card-more {
+  display: none;
+}
+@media (hover: hover) {
+  .card-more {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    z-index: 20;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.35);
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+    color: rgba(255, 255, 255, 0.95);
+    opacity: 0;
+    cursor: pointer;
+    transition: opacity var(--transition-fast), background-color var(--transition-fast);
+  }
+  .card-more:hover {
+    background: rgba(0, 0, 0, 0.55);
+  }
+  .card-hover:hover .card-more,
+  .card-hover:focus-within .card-more,
+  .card-more[aria-expanded="true"] {
+    opacity: 1;
+  }
+}
+/* A card's own link: no iOS link preview on a long press (it opens the menu). */
+.card-link {
+  -webkit-touch-callout: none;
 }
 
 @media (hover: hover) and (prefers-reduced-motion: reduce) {

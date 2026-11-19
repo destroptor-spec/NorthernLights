@@ -894,6 +894,8 @@ export interface PlayerState {
   // Play Queue Actions
   setPlaylist: (tracks: TrackInfo[], startIndex?: number, source?: QueueSource | null) => Promise<void>;
   addTrackToPlaylist: (track: TrackInfo, options?: QueueMutationOptions) => void;
+  /** Add to queue for several tracks (an album): behind the tracks queued by hand, in order, one toast. */
+  addTracksToQueue: (tracks: TrackInfo[], options?: QueueMutationOptions) => void;
   playNext: (track: TrackInfo, options?: QueueMutationOptions) => void;
   removeFromPlaylist: (index: number) => void;
   moveInPlaylist: (fromIndex: number, toIndex: number) => void;
@@ -2886,24 +2888,36 @@ export const usePlayerStore = create<PlayerState>()(
 
         setLastOpenedAlbum: (album: LastOpenedAlbum | null) => set({ lastOpenedAlbum: album }),
 
-        addTrackToPlaylist: (track: TrackInfo, options?: QueueMutationOptions) => set((state: PlayerState) => {
+        addTrackToPlaylist: (track: TrackInfo, options?: QueueMutationOptions) => get().addTracksToQueue([track], options),
+
+        addTracksToQueue: (tracks: TrackInfo[], options?: QueueMutationOptions) => set((state: PlayerState) => {
+          if (tracks.length === 0) return {};
           const snapshot = options?.undo ? state.playlist.map((item) => ({ ...item })) : null;
           const snapshotIndex = state.currentIndex;
-          // Behind the tracks queued by hand, before the rest of the album or playlist.
-          const queueTrack = { ...cloneTrackForQueue(track), queued: true, ...queuedByMe(state) };
+          // Behind the tracks queued by hand, before the rest of the album or playlist, in order.
+          const queueTracks = tracks.map((track) => ({ ...cloneTrackForQueue(track), queued: true, ...queuedByMe(state) }));
           const insertAt = addToQueueIndex(state.playlist, state.currentIndex);
           const nextPlaylist = [...state.playlist];
-          nextPlaylist.splice(insertAt, 0, queueTrack);
+          nextPlaylist.splice(insertAt, 0, ...queueTracks);
           if (castManager.isConnected()) {
-            if (insertAt >= state.playlist.length) void castManager.appendToQueue(queueTrack);
-            else void castManager.insertNextInQueue(queueTrack, state.playlist[insertAt]?.queueEntryId);
+            const before = insertAt >= state.playlist.length ? undefined : state.playlist[insertAt]?.queueEntryId;
+            // One at a time, so the Cast queue keeps their order.
+            void (async () => {
+              for (const queueTrack of queueTracks) {
+                if (before) await castManager.insertNextInQueue(queueTrack, before);
+                else await castManager.appendToQueue(queueTrack);
+              }
+            })();
           }
           prewarmNextFromState({ ...state, playlist: nextPlaylist });
           queueMicrotask(() => {
             persistContinuitySnapshot(true);
             if (options?.notify) {
-              const title = queueTrack.title || queueTrack.path.split(/[\\/]/).pop() || 'track';
-              get().addToast(options.message || `Added "${title}" to queue.`, 'success', options.undo && snapshot ? {
+              const first = queueTracks[0];
+              const title = first.title || first.path.split(/[\\/]/).pop() || 'track';
+              const message = options.message
+                || (queueTracks.length === 1 ? `Added "${title}" to queue.` : `Added ${queueTracks.length} tracks to queue.`);
+              get().addToast(message, 'success', options.undo && snapshot ? {
                 actionLabel: 'Undo',
                 onAction: () => get().restoreQueueSnapshot(snapshot, snapshotIndex),
                 duration: 6500,

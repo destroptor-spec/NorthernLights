@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Improvements
+- **Album menu:** albums have a menu too (⋯ on the cover, right-click, or a long press on phones): Play Album, Add to Queue (all its tracks, behind the ones you queued) and Add to Playlist.
+- **Menus stand out more:** in dark mode menus are a little lighter than the page behind them.
 - **Who queued what, in a gig:** tracks someone queued by hand carry their avatar in the desktop queue, and they stay in Next in Queue on every device, for guests too. A guest's Add to queue now lands behind the tracks already queued, as it does for you.
 - **Recently played:** the desktop queue sidebar has two tabs at its foot, Queue and Recently played. Recently played lists the songs you played last, on any device (phone, Symfonium, Cast), newest first and each once; scroll down for more. Tap one to play the list from there.
 - **New queue sidebar on desktop:** the queue now reads top to bottom as Current track, Next in Queue (the tracks you added yourself), then "Next from: <album or playlist>" and Infinity's picks. Add to queue now puts a track behind the ones you added, so it plays before the rest of the album instead of after it; Play next still puts it first. Drag a track into or out of your tracks to queue or unqueue it. Rows are quieter: cover, title and artists, with a drag handle on the cover and ⋯ on hover (Remove from queue and Like are in that menu). Save and Clear moved into the ⋯ next to "Now playing". Listen together moved here on desktop too: Start Gig under the title, and while your gig runs, everyone in it, Invite, Guest permissions, Open session and End gig. On phones, and with the sidebar collapsed, the gig stays in Connect.

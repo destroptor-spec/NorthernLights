@@ -35,7 +35,8 @@ export interface ContextMenuTriggerProps {
  * iOS never sends `contextmenu` for a long press, so a touch press runs its
  * own timer; Android does send it, and whichever comes first opens the menu
  * once. The tap that ends a long press doesn't also play the row. Right-click
- * on a link keeps the browser's own menu (open in a new tab); elements marked
+ * on a link keeps the browser's own menu (open in a new tab), unless the link
+ * is the card itself (`data-card-link`, e.g. AlbumCard's overlay); elements marked
  * `data-no-long-press` (drag handles) never start a long press.
  */
 export function useContextMenuTrigger(open: (x: number, y: number) => void): ContextMenuTriggerProps {
@@ -71,8 +72,10 @@ export function useContextMenuTrigger(open: (x: number, y: number) => void): Con
           openFromPress(current);
           return;
         }
-        const target = event.target as Element;
-        if (target.closest('a[href]')) return;
+        // A link keeps the browser's menu (open in a new tab), except a
+        // card's own link that covers it (`data-card-link`): that is the card.
+        const link = (event.target as Element).closest('a[href]');
+        if (link && !link.hasAttribute('data-card-link')) return;
         event.preventDefault();
         let { clientX: x, clientY: y } = event;
         if (x === 0 && y === 0) {

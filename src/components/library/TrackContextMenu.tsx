@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { usePlayerStore } from '../../store';
-import type { TrackCredit } from '../../store';
+import type { Playlist, TrackCredit } from '../../store';
 import { CREDIT_ROLE_ORDER } from '../../../shared/trackCredits';
 import {
     Play, Plus, ListPlus, Check,
@@ -40,7 +40,7 @@ function getArtistNames(track: any): string[] {
 // `stack` is a list of panel IDs; empty means "main" is shown.
 // push / pop are the only mutations; each sub-panel just calls pop() to go back.
 
-function useMenuNav() {
+export function useMenuNav() {
     const [stack, setStack] = useState<string[]>([]);
     const push  = useCallback((id: string) => setStack(s => [...s, id]), []);
     const pop   = useCallback(() => setStack(s => s.slice(0, -1)), []);
@@ -64,7 +64,7 @@ interface FilterableListPanelProps {
     emptyText?: string;
 }
 
-const FilterableListPanel: React.FC<FilterableListPanelProps> = ({
+export const FilterableListPanel: React.FC<FilterableListPanelProps> = ({
     title, placeholder, items, onSelect, onBack, isActive, emptyText = 'No results',
 }) => {
     const [filter, setFilter] = useState('');
@@ -86,7 +86,7 @@ const FilterableListPanel: React.FC<FilterableListPanelProps> = ({
 
     return (
         <div
-            className="absolute inset-0 flex flex-col bg-[var(--glass-bg)]"
+            className="absolute inset-0 flex flex-col bg-[var(--menu-bg)]"
             style={{
                 transform: isActive ? 'translateX(0)' : 'translateX(100%)',
                 transition: 'transform 0.28s cubic-bezier(0.4,0,0.2,1)',
@@ -193,7 +193,7 @@ const CreditsPanel: React.FC<CreditsPanelProps> = ({ isActive, loading, credits,
 
     return (
         <div
-            className="absolute inset-0 flex flex-col bg-[var(--glass-bg)]"
+            className="absolute inset-0 flex flex-col bg-[var(--menu-bg)]"
             style={{
                 transform: isActive ? 'translateX(0)' : 'translateX(100%)',
                 transition: 'transform 0.28s cubic-bezier(0.4,0,0.2,1)',
@@ -244,6 +244,24 @@ const CreditsPanel: React.FC<CreditsPanelProps> = ({ isActive, loading, credits,
         </div>
     );
 };
+
+/**
+ * Playlists this listener may add tracks to, as menu items: not artist radio,
+ * the Daylist or other system playlists, Hub AI collections (rebuilt, so an
+ * added track would be lost) or someone else's. The server refuses those.
+ */
+export function addablePlaylistItems(playlists: Playlist[]): { id: string; label: string; icon: React.ReactNode }[] {
+    return playlists.filter(pl => playlistPermissions({
+        isOwner: pl.isOwner !== false,
+        isSystem: !!pl.isSystem,
+        isLlmGenerated: !!pl.isLlmGenerated,
+        generationSource: pl.generationSource,
+    }).editTracks).map(pl => ({
+        id: pl.id,
+        label: pl.title,
+        icon: <ListPlus size={14} />,
+    }));
+}
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
@@ -403,19 +421,7 @@ export const TrackContextMenu: React.FC = () => {
     };
 
     // ── panel item lists ──────────────────────────────────────────────────────
-    // Only playlists this listener may add tracks to: not artist radio, the
-    // Daylist or other system playlists, Hub AI collections (rebuilt, so an
-    // added track would be lost) or someone else's. The server refuses those.
-    const playlistItems = playlists.filter(pl => playlistPermissions({
-        isOwner: pl.isOwner !== false,
-        isSystem: !!pl.isSystem,
-        isLlmGenerated: !!pl.isLlmGenerated,
-        generationSource: pl.generationSource,
-    }).editTracks).map(pl => ({
-        id: pl.id,
-        label: pl.title,
-        icon: <ListPlus size={14} />,
-    }));
+    const playlistItems = addablePlaylistItems(playlists);
 
     const artistItems = artistNames.map(name => ({
         id: name,
@@ -618,7 +624,7 @@ export const TrackContextMenu: React.FC = () => {
                     style={{ transform: isVisible ? 'translateY(0)' : 'translateY(100%)' }}
                 >
                     {inner}
-                    <div className="h-[env(safe-area-inset-bottom,0px)] bg-[var(--glass-bg)] border-x border-[var(--glass-border)]" />
+                    <div className="h-[env(safe-area-inset-bottom,0px)] bg-[var(--menu-bg)] border-x border-[var(--glass-border)]" />
                 </div>
             </>,
             document.body

@@ -201,6 +201,7 @@ export const BrowseAlbumGrid: React.FC<{
             subtitle={albumSubtitle(item)}
             editionLabel={item.album.editionLabel}
             linkTo={`/library/album/${item.album.id}`}
+            albumId={item.album.id}
             linkState={{ backLabel }}
             onPlay={() => onPlay(item.album.id)}
           />

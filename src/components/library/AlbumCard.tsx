@@ -1,7 +1,9 @@
-import React, { memo, useCallback } from 'react';
+import React, { memo, useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlbumArt } from '../AlbumArt';
-import { Play } from 'lucide-react';
+import { MoreHorizontal, Play } from 'lucide-react';
+import { useContextMenuTrigger } from '../../hooks/useContextMenuTrigger';
+import { AlbumContextMenu } from './AlbumContextMenu';
 import { prefetchAlbumDetail } from '../../utils/routePrefetch';
 import { readBackLabel, type AlbumHeroState } from '../../utils/heroState';
 
@@ -15,6 +17,8 @@ interface AlbumCardProps {
     onOpen?: () => void;
     linkTo?: string;
     linkState?: unknown;
+    /** The album's ID: gives the card its menu (⋯, right-click, long press). */
+    albumId?: string;
 }
 
 export const AlbumCardSkeleton: React.FC = () => (
@@ -27,10 +31,17 @@ export const AlbumCardSkeleton: React.FC = () => (
     </div>
 );
 
-export const AlbumCard: React.FC<AlbumCardProps> = memo(({ title, artist, artUrl, subtitle, editionLabel, onPlay, onOpen, linkTo, linkState }) => {
+const stopEvent = (event: React.SyntheticEvent) => event.stopPropagation();
+
+export const AlbumCard: React.FC<AlbumCardProps> = memo(({ title, artist, artUrl, subtitle, editionLabel, onPlay, onOpen, linkTo, linkState, albumId }) => {
     const handlePrefetch = useCallback(() => {
         if (linkTo) prefetchAlbumDetail();
     }, [linkTo]);
+
+    // The album's menu: Play album, Add to queue, Add to playlist.
+    const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+    const menuTrigger = useContextMenuTrigger((x, y) => setMenu({ x, y }));
+    const closeMenu = useCallback(() => setMenu(null), []);
 
     // Derive a hero placeholder from the card's own props so the detail view
     // can paint its hero before tracks hydrate. Preserve any caller-supplied
@@ -48,12 +59,16 @@ export const AlbumCard: React.FC<AlbumCardProps> = memo(({ title, artist, artUrl
 
     return (
         <div
+            {...(albumId ? menuTrigger : {})}
             className="group card-hover flex flex-col relative cursor-pointer"
             role={!linkTo ? "button" : undefined}
             tabIndex={!linkTo ? 0 : undefined}
             onClick={!linkTo ? onOpen : undefined}
             onPointerEnter={handlePrefetch}
-            onPointerDown={handlePrefetch}
+            onPointerDown={(event) => {
+                handlePrefetch();
+                if (albumId) menuTrigger.onPointerDown(event);
+            }}
             onFocus={handlePrefetch}
             onKeyDown={!linkTo ? (e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
@@ -67,7 +82,9 @@ export const AlbumCard: React.FC<AlbumCardProps> = memo(({ title, artist, artUrl
                 <Link
                     to={linkTo}
                     state={navState}
-                    className="absolute inset-0 z-10 rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                    // The card itself: its menu opens on right-click too.
+                    data-card-link
+                    className="card-link absolute inset-0 z-10 rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
                     aria-label={`View album: ${title}`}
                 />
             )}
@@ -103,6 +120,23 @@ export const AlbumCard: React.FC<AlbumCardProps> = memo(({ title, artist, artUrl
                 >
                     <Play className="w-4 h-4 ml-0.5" fill="currentColor" />
                 </button>
+
+                {albumId && (
+                    <button
+                        type="button"
+                        onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setMenu({ x: e.clientX, y: e.clientY });
+                        }}
+                        aria-label={`More options for ${title}`}
+                        aria-haspopup="menu"
+                        aria-expanded={menu !== null}
+                        className="card-more"
+                    >
+                        <MoreHorizontal size={16} />
+                    </button>
+                )}
             </div>
 
             {/* Text */}
@@ -114,6 +148,19 @@ export const AlbumCard: React.FC<AlbumCardProps> = memo(({ title, artist, artUrl
                     <div className="text-xs md:text-sm text-[var(--color-text-secondary)] truncate mt-0.5">{subtitle}</div>
                 )}
             </div>
+            {albumId && (
+                // The menu is portalled to <body>, but React events still bubble
+                // to this card: a click, key or right-click in it is the menu's own.
+                <div
+                    className="contents"
+                    onClick={stopEvent}
+                    onKeyDown={stopEvent}
+                    onContextMenu={stopEvent}
+                    onPointerDown={stopEvent}
+                >
+                    <AlbumContextMenu album={{ id: albumId, title, artist }} position={menu} onClose={closeMenu} />
+                </div>
+            )}
         </div>
     );
 });
