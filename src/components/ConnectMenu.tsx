@@ -379,8 +379,9 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
         </div>
       )}
 
-      {/* The gig this user is a guest in, shown on another device: Open it here. */}
-      {syncOn && shared && (
+      {/* The gig this user is a guest in, shown on another device: Open it here.
+          On desktop with the queue sidebar open, it is there instead (Join). */}
+      {syncOn && shared && !sidebarShowsGig && (
         <div className={`connect-options${chosen ? ' has-choice' : ''}`}>
           <ConnectOption
             icon={shared.owner ? <UserAvatar avatar={shared.owner} size="sm" /> : <Users size={18} />}
@@ -413,7 +414,7 @@ export const ConnectMenuContent: React.FC<{ onDone: () => void }> = ({ onDone })
       )}
 
       {/* Listen together: gigs nearby, then this user's own gig. */}
-      {syncOn && (
+      {syncOn && !sidebarShowsGig && (
         <AvailableGigs gigs={gigs} disabled={!!chosen} onJoin={(gig) => pick(`join:${gig.sessionId}`, () => { void joinNearby(gig); })} />
       )}
       {/* On desktop with the queue sidebar open, the gig is there instead. */}

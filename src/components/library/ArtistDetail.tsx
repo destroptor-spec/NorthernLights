@@ -1271,6 +1271,7 @@ export const ArtistDetail: React.FC = () => {
                                             subtitle={`${trackCount} track${trackCount !== 1 ? 's' : ''}`}
                                             editionLabel={album.editionLabel}
                                             linkTo={album.albumId ? `/library/album/${album.albumId}` : undefined}
+                                            albumId={album.albumId || undefined}
                                             linkState={{ backLabel: 'Back to Artist' }}
                                             onPlay={() => { if (album.tracks.length > 0) setPlaylist(album.tracks, 0); }}
                                         />
@@ -1307,6 +1308,7 @@ export const ArtistDetail: React.FC = () => {
                                                 : undefined}
                                             editionLabel={al.edition_label}
                                             linkTo={`/library/album/${al.id}`}
+                                            albumId={al.id}
                                             linkState={{ backLabel: 'Back to Artist' }}
                                             onPlay={() => { if (albumTracks.length > 0) setPlaylist(albumTracks, 0); }}
                                         />
@@ -1345,6 +1347,7 @@ export const ArtistDetail: React.FC = () => {
                                 subtitle={album.artist}
                                 editionLabel={album.editionLabel}
                                 linkTo={album.albumId ? `/library/album/${album.albumId}` : undefined}
+                                albumId={album.albumId || undefined}
                                 linkState={{ backLabel: 'Back to Artist' }}
                                 onPlay={() => setPlaylist(album.tracks, 0)}
                             />

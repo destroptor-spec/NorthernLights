@@ -21,7 +21,7 @@ import { useKnownArtistKeys } from '../hooks/useKnownArtistKeys';
 import { PlaylistItem } from './PlaylistItem';
 import { useToast } from '../hooks/useToast';
 import type { TrackInfo } from '../utils/fileSystem';
-import { nextFromLabel, queueSections } from '../utils/queueSections';
+import { canMoveInSections, nextFromLabel, queueSections } from '../utils/queueSections';
 import { useGigPeople } from '../hooks/useGigPeople';
 
 // Clear-with-undo, shared by the desktop sidebar header and the mobile
@@ -96,6 +96,11 @@ interface QueueListProps {
    * when not collapsed. See utils/queueSections.
    */
   sections?: boolean;
+  /**
+   * The phone's Now Playing queue: one list from the track that plays down,
+   * played tracks left out (they are in Recently played), no headings.
+   */
+  upcoming?: boolean;
 }
 
 /** A row of the list: a section heading, or the queue entry at `index`. */
@@ -107,7 +112,7 @@ type QueueRow = { type: 'heading'; key: string; label: string } | { type: 'track
 // the Dnd contexts always wrap the list; on touch layouts the drag handle is
 // hidden and reordering uses the rows' chevron buttons instead.
 export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function QueueList(
-  { getScrollElement, scrollMargin = 0, collapsed = false, listClassName = '', touch = false, sections = false },
+  { getScrollElement, scrollMargin = 0, collapsed = false, listClassName = '', touch = false, sections = false, upcoming = false },
   ref,
 ) {
   const playlist = usePlayerStore(state => state.playlist);
@@ -135,6 +140,10 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
   );
 
   const rows = useMemo<QueueRow[]>(() => {
+    if (upcoming && !sections) {
+      const from = currentIndex !== null && currentIndex < playlist.length ? currentIndex : 0;
+      return playlist.slice(from).map((_, offset) => ({ type: 'track' as const, index: from + offset }));
+    }
     if (!sections) return playlist.map((_, index) => ({ type: 'track' as const, index }));
     const parts = queueSections(playlist, currentIndex);
     const out: QueueRow[] = [];
@@ -148,7 +157,7 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
     add('context', nextFromLabel(queueSource, parts.context.map((index) => playlist[index])), parts.context);
     add('infinity', 'Next from: Infinity', parts.infinity);
     return out;
-  }, [sections, playlist, currentIndex, queueSource, collapsed]);
+  }, [sections, upcoming, playlist, currentIndex, queueSource, collapsed]);
 
   // Maintain stability of item heights using estimateSize
   const virtualizer = useVirtualizer({
@@ -188,11 +197,14 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
     if (over && active.id !== over.id) {
       const oldIndex = sortableItems.indexOf(active.id as string);
       const newIndex = sortableItems.indexOf(over.id as string);
-      if (oldIndex !== -1 && newIndex !== -1) {
+      // Where played tracks are left out (sidebar, phone), the track that
+      // plays stays put: a drop onto it snaps back.
+      const fromPlaying = sections || upcoming;
+      if (oldIndex !== -1 && newIndex !== -1 && (!fromPlaying || canMoveInSections(oldIndex, newIndex, currentIndex))) {
         moveInPlaylist(oldIndex, newIndex);
       }
     }
-  }, [sortableItems, moveInPlaylist]);
+  }, [sortableItems, moveInPlaylist, sections, upcoming, currentIndex]);
 
   return (
     <div className={listClassName}>
@@ -264,6 +276,8 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
                     parseArtists={parseArtists}
                     opacity={(t.isInfinity && (currentIndex === null || idx > currentIndex)) ? 0.6 : 1}
                     touch={touch}
+                    // The sidebar's current track: neither dragged nor dropped onto.
+                    locked={(sections || upcoming) && currentIndex === idx}
                     queuedBy={sections && t.queuedBy ? gigPeople?.get(t.queuedBy) : undefined}
                   />
                 </div>

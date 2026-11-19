@@ -422,6 +422,7 @@ export const LibraryHome: React.FC<{ section?: 'artists' | 'albums' | 'genres' }
                                             subtitle={album.artist_name || ''}
                                             onPlay={() => { if (explicitTracks.length) setPlaylist(explicitTracks, 0); }}
                                             linkTo={album.id ? `/library/album/${album.id}` : undefined}
+                                            albumId={album.id || undefined}
                                             linkState={{ backLabel: 'Back to Library' }}
                                         />
                                     );

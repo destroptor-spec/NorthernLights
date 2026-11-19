@@ -96,7 +96,7 @@ const PlaylistSidebarInner: React.FC = () => {
               getScrollElement={getScrollElement}
               collapsed={isSidebarCollapsed}
               sections
-              listClassName={`${isSidebarCollapsed ? 'px-2' : 'px-3'} pt-1 pb-4`}
+              listClassName={`${isSidebarCollapsed ? 'px-2' : 'queue-pad-x'} pt-1 pb-4`}
             />
           )}
         </div>

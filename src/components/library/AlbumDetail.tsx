@@ -1,4 +1,5 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { compareAlbumOrder } from '../../utils/albumTracks';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { usePlayerStore } from '../../store/index';
@@ -698,17 +699,7 @@ export const AlbumDetail: React.FC = () => {
     }, [albumCredits, albumCreditRoleOrder]);
 
     const sortedTracks = useMemo(() => {
-        return [...albumTracks].sort((a, b) => {
-            const discA = a.discNumber ?? 1;
-            const discB = b.discNumber ?? 1;
-            if (discA !== discB) return discA - discB;
-            if (a.trackNumber != null && b.trackNumber != null) return a.trackNumber - b.trackNumber;
-            if (a.trackNumber != null) return -1;
-            if (b.trackNumber != null) return 1;
-            const aName = a.title || a.path.split(/[\\/]/).pop() || '';
-            const bName = b.title || b.path.split(/[\\/]/).pop() || '';
-            return aName.localeCompare(bName, undefined, { numeric: true, sensitivity: 'base' });
-        });
+        return [...albumTracks].sort(compareAlbumOrder);
     }, [albumTracks]);
 
     const isMultiDisc = useMemo(() =>

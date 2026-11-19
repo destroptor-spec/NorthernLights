@@ -60,6 +60,30 @@ describe('Music Store Logic', () => {
     expect(store().playlist.map((t: TrackInfo) => !!t.queued)).toEqual([false, true, true, true, false, false]);
   });
 
+  it('adds an album to the queue in order, behind the tracks queued by hand, with one toast', async () => {
+    const original = usePlayerStore.getState().addToast;
+    const addToast = jest.fn();
+    usePlayerStore.setState({
+      playlist: [{ id: 'a', path: '/a.mp3' }, { id: 'q', path: '/q.mp3', queued: true }, { id: 'b', path: '/b.mp3' }],
+      currentIndex: 0,
+      addToast,
+    } as never);
+    try {
+      usePlayerStore.getState().addTracksToQueue(
+        [{ id: 't1', path: '/t1.mp3' }, { id: 't2', path: '/t2.mp3' }, { id: 't3', path: '/t3.mp3' }],
+        { notify: true },
+      );
+      const { playlist } = usePlayerStore.getState();
+      expect(playlist.map((t: TrackInfo) => t.id)).toEqual(['a', 'q', 't1', 't2', 't3', 'b']);
+      expect(playlist.slice(2, 5).every((t: TrackInfo) => t.queued && t.queueEntryId)).toBe(true);
+      await Promise.resolve();
+      expect(addToast).toHaveBeenCalledTimes(1);
+      expect(addToast.mock.calls[0][0]).toBe('Added 3 tracks to queue.');
+    } finally {
+      usePlayerStore.setState({ addToast: original });
+    }
+  });
+
   it('a track dragged into the queued tracks is queued, and one dragged out of them is not', () => {
     usePlayerStore.setState({
       playlist: [

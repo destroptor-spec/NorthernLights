@@ -133,6 +133,7 @@ export const GenreDetail: React.FC = () => {
                             artUrl={album.artUrl}
                             subtitle={`${album.artist} · ${album.tracks.length} tracks`}
                             linkTo={album.albumId ? `/library/album/${album.albumId}` : undefined}
+                            albumId={album.albumId || undefined}
                             linkState={{ backLabel: 'Back to Genre' }}
                             onPlay={() => setPlaylist(album.tracks, 0)}
                         />

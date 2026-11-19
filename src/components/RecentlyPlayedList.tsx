@@ -16,12 +16,13 @@ const RecentRow: React.FC<{
   onMenu: (track: TrackInfo, x: number, y: number) => void;
   artists: string[];
   artistLink: (name: string) => string | null;
-}> = ({ track, index, onPlay, onMenu, artists, artistLink }) => {
+  touch: boolean;
+}> = ({ track, index, onPlay, onMenu, artists, artistLink, touch }) => {
   const title = track.title ?? track.path.split(/[\\/]/).pop();
   const menuTrigger = useContextMenuTrigger((x, y) => onMenu(track, x, y));
   return (
     <li
-      className="queue-row group"
+      className={`queue-row group${touch ? ' is-touch' : ''}`}
       {...menuTrigger}
       onClick={() => onPlay(index)}
       role="button"
@@ -45,7 +46,7 @@ const RecentRow: React.FC<{
               return (
                 <React.Fragment key={name}>
                   {i > 0 && ', '}
-                  {link ? (
+                  {link && !touch ? (
                     <Link to={link} onClick={(e) => e.stopPropagation()} className="queue-row-artist-link">{name}</Link>
                   ) : (
                     <span>{name}</span>
@@ -79,7 +80,10 @@ const RecentRow: React.FC<{
 export const RecentlyPlayedList: React.FC<{
   active: boolean;
   getScrollElement: () => HTMLElement | null;
-}> = ({ active, getScrollElement }) => {
+  /** The phone's Now Playing: ⋯ always shows, artists are plain text (a tap plays the row). */
+  touch?: boolean;
+  className?: string;
+}> = ({ active, getScrollElement, touch = false, className = 'queue-pad-x pt-3 pb-4' }) => {
   const { tracks, loading, failed, loaded, hasMore, loadMore, retry } = useRecentlyPlayed(active);
   const setPlaylist = usePlayerStore((state) => state.setPlaylist);
   const openContextMenu = usePlayerStore((state) => state.openContextMenu);
@@ -108,7 +112,7 @@ export const RecentlyPlayedList: React.FC<{
   if (!active) return null;
 
   return (
-    <div className="px-3 pt-3 pb-4">
+    <div className={className}>
       {loaded && tracks.length === 0 && !failed && (
         <p className="queue-empty">Nothing played yet.</p>
       )}
@@ -123,6 +127,7 @@ export const RecentlyPlayedList: React.FC<{
               onMenu={menu}
               artists={track.artist ? parseArtistsForDisplay(track.artist, knownArtistKeys) : []}
               artistLink={artistLink}
+              touch={touch}
             />
           ))}
         </ul>

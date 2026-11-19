@@ -114,6 +114,8 @@
 
   /* Glass - Light Mode */
   --glass-bg: rgba(255, 255, 255, 0.65);
+  /* Menus (ContextMenuFrame and its panels): the glass, in light mode as it is. */
+  --menu-bg: var(--glass-bg);
   --glass-bg-hover: rgba(255, 255, 255, 0.8);
   --glass-border: rgba(0, 0, 0, 0.1);
   --glass-border-hover: rgba(0, 0, 0, 0.18);
@@ -200,6 +202,9 @@
      haze through translucent glass, while Firefox stays dark — a more opaque
      fill makes both browsers render the surfaces consistently dark. */
   --glass-bg: rgba(4, 2, 14, 0.78);
+  /* Menus: the glass 10% brighter (mixed 10% toward white), so a menu stands
+     out from the dark page behind it. */
+  --menu-bg: rgba(29, 27, 38, 0.78);
   --glass-bg-hover: rgba(10, 8, 28, 0.85);
   --glass-border: rgba(255, 255, 255, 0.04);
   --glass-border-hover: rgba(34, 201, 131, 0.15);
@@ -772,6 +777,46 @@ button :where(span),
     opacity: 1;
     transform: none;
   }
+}
+
+/* ⋯ in a card's top-right corner: like Play, only with hover (on touch a
+   long press opens the menu). */
+.card-more {
+  display: none;
+}
+@media (hover: hover) {
+  .card-more {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    z-index: 20;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.35);
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+    color: rgba(255, 255, 255, 0.95);
+    opacity: 0;
+    cursor: pointer;
+    transition: opacity var(--transition-fast), background-color var(--transition-fast);
+  }
+  .card-more:hover {
+    background: rgba(0, 0, 0, 0.55);
+  }
+  .card-hover:hover .card-more,
+  .card-hover:focus-within .card-more,
+  .card-more[aria-expanded="true"] {
+    opacity: 1;
+  }
+}
+/* A card's own link: no iOS link preview on a long press (it opens the menu). */
+.card-link {
+  -webkit-touch-callout: none;
 }
 
 @media (hover: hover) and (prefers-reduced-motion: reduce) {
@@ -9127,6 +9172,44 @@ a.rays-chip:focus-visible {
   color: var(--color-text-primary);
   background: rgba(255, 255, 255, 0.06);
 }
+/* Queued by hand (Play next, Add to queue): a Q before the title, as tall
+   as the title's text. */
+.queue-mark {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.3em;
+  vertical-align: -0.14em;
+  color: var(--color-primary);
+}
+/* The phone's queue / recently played tabs: at the queue's foot, kept in
+   view at the bottom of the screen while the queue panel scrolls. */
+.mobile-now-queue-tabs {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  padding: 0.5rem 0 calc(0.5rem + var(--safe-area-bottom));
+  background: var(--color-bg-primary);
+}
+.mobile-now-queue-tabs .queue-tabs {
+  margin-bottom: 0;
+}
+/* Recently played on the phone: ⋯ always there, nothing waits for hover. */
+.queue-row.is-touch .queue-row-more {
+  position: static;
+  width: 44px;
+  height: 44px;
+  opacity: 1;
+  transform: none;
+}
+.queue-row.is-touch:hover .queue-row-text,
+.queue-row.is-touch:focus-within .queue-row-text {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+.queue-row.is-touch {
+  padding-right: 0;
+}
 /* Dragging starts from the handle at once; the rest of the row scrolls. */
 .queue-row-drag-handle {
   touch-action: none;
@@ -9134,12 +9217,30 @@ a.rays-chip:focus-visible {
 }
 
 .mobile-now-queue {
+  /* A column at least a screen tall: the list grows, so the tabs at its foot
+     reach the bottom of the screen under a short queue too. */
+  display: flex;
+  flex-direction: column;
   min-height: 100%;
   scroll-snap-align: start;
   background: var(--color-bg-primary);
   border-top: 1px solid var(--glass-border);
   border-radius: 1.25rem 1.25rem 0 0;
-  padding-bottom: calc(1rem + var(--safe-area-bottom));
+}
+.mobile-now-queue-list {
+  flex: 1 0 auto;
+}
+/* "Playing from <album>" under the queue's heading: small, in plain case. */
+.mobile-now-queue-from {
+  max-width: 14rem;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
 }
 
 /* Sticks while browsing the queue. Safe-area padding so the stuck header
@@ -11097,11 +11198,25 @@ button.connect-line:disabled {
    Header: "Now playing" (or the gig's name) and ⋯, Start Gig or the gig's
    controls under it. Then the queue in sections (QueueList `sections`):
    headings over rows of cover, title and artists. */
+/* The sidebar's side padding: header, lists and tabs alike. More room on
+   wide screens (Tailwind xl). The header sits a few pixels in, level with
+   the rows' own padding. */
+.queue-sidebar {
+  --queue-pad: 0.75rem;
+}
+@media (min-width: 1280px) {
+  .queue-sidebar {
+    --queue-pad: 1.75rem;
+  }
+}
+.queue-pad-x {
+  padding-inline: var(--queue-pad);
+}
 .queue-sidebar-head {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 22px 16px 6px 18px;
+  padding: 22px calc(var(--queue-pad) + 4px) 6px calc(var(--queue-pad) + 6px);
 }
 .queue-sidebar-title-row {
   display: flex;
@@ -11166,6 +11281,79 @@ button.connect-line:disabled {
 .queue-gig {
   display: flex;
   flex-direction: column;
+}
+/* "Join Bo's Gig": a light travels slowly round its 1px border (a conic
+   gradient turning behind an opaque fill), blue on one side, rose on the
+   other, fading to the plain border between. Still with reduced motion. */
+.gig-join {
+  --gig-join-edge: color-mix(in srgb, var(--color-text-primary) 14%, transparent);
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 14px 6px 8px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--color-text-primary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.gig-join::before {
+  content: "";
+  position: absolute;
+  z-index: -2;
+  left: 50%;
+  top: 50%;
+  width: 150%;
+  aspect-ratio: 1;
+  background: conic-gradient(
+    var(--gig-join-edge) 0deg 40deg,
+    rgba(59, 130, 246, 0.95) 90deg,
+    var(--gig-join-edge) 140deg 220deg,
+    rgba(244, 63, 94, 0.95) 270deg,
+    var(--gig-join-edge) 320deg 360deg
+  );
+  transform: translate(-50%, -50%) rotate(0deg);
+  animation: gig-join-turn 8s linear infinite;
+}
+.gig-join::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 1px;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--color-text-primary) 4%, var(--color-background));
+  transition: background-color var(--transition-fast);
+}
+.gig-join:hover::after {
+  background: color-mix(in srgb, var(--color-text-primary) 8%, var(--color-background));
+}
+.gig-join:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.gig-join-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@keyframes gig-join-turn {
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gig-join::before {
+    animation: none;
+  }
 }
 .queue-gig .gig-row {
   min-height: 34px;
@@ -11350,7 +11538,7 @@ button.connect-line:disabled {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 4px;
-  margin: 0 12px 12px;
+  margin: 0 var(--queue-pad, 0.75rem) 12px;
   padding: 4px;
   border-radius: 10px;
   background: color-mix(in srgb, var(--color-text-primary) 5%, transparent);

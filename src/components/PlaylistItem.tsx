@@ -3,7 +3,7 @@ import { useContextMenuTrigger } from '../hooks/useContextMenuTrigger';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Link } from 'react-router-dom';
-import { GripVertical, MoreHorizontal } from 'lucide-react';
+import { GripVertical, MoreHorizontal, SquareLetterQ } from 'lucide-react';
 import { formatTime } from '../utils/formatTime';
 import { AlbumArt } from './AlbumArt';
 import type { TrackInfo } from '../utils/fileSystem';
@@ -23,6 +23,8 @@ export interface PlaylistItemProps {
    * text (a tap on the row plays it); remove and love live in the menu.
    */
   touch?: boolean;
+  /** Not draggable, and nothing is dropped onto it (the sidebar's current track). */
+  locked?: boolean;
   /** During a gig: who queued this track by hand (desktop sidebar). */
   queuedBy?: GigPerson;
 
@@ -33,7 +35,7 @@ export interface PlaylistItemProps {
 }
 
 export const PlaylistItem = memo(({
-  id, track, index, isActive, isSidebarCollapsed, opacity = 1, touch = false, queuedBy,
+  id, track, index, isActive, isSidebarCollapsed, opacity = 1, touch = false, locked = false, queuedBy,
   onPlay, onContextMenu, getArtistLink, parseArtists
 }: PlaylistItemProps) => {
   const {
@@ -43,7 +45,7 @@ export const PlaylistItem = memo(({
     transform,
     transition,
     isDragging
-  } = useSortable({ id });
+  } = useSortable({ id, disabled: locked });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -78,6 +80,10 @@ export const PlaylistItem = memo(({
         <AlbumArt artUrl={track.artUrl} artist={track.artist} className="w-12 h-12 rounded-sm shrink-0" />
         <div className="flex-1 min-w-0">
           <div className={`text-[0.9rem] truncate ${isActive ? 'text-[var(--color-primary)] font-semibold' : 'text-[var(--color-text-secondary)]'}`}>
+            {/* Queued by hand (Play next, Add to queue): a Q as tall as the title. */}
+            {track.queued && (
+              <SquareLetterQ className="queue-mark" aria-label="Queued" role="img" />
+            )}
             {title}
           </div>
           <div className="text-[0.75rem] text-[var(--color-text-muted)] truncate mt-[2px]">
@@ -97,7 +103,7 @@ export const PlaylistItem = memo(({
         >
           <MoreHorizontal size={18} />
         </button>
-        <span
+        {!locked && <span
           {...attributes}
           {...listeners}
           className="queue-row-touch-btn queue-row-drag-handle"
@@ -106,7 +112,7 @@ export const PlaylistItem = memo(({
           onClick={(e) => e.stopPropagation()}
         >
           <GripVertical size={18} />
-        </span>
+        </span>}
       </li>
     );
   }
@@ -135,7 +141,7 @@ export const PlaylistItem = memo(({
     >
       <span className="queue-row-art">
         <AlbumArt artUrl={track.artUrl} artist={track.artist} className="h-full w-full" />
-        {!isSidebarCollapsed && (
+        {!isSidebarCollapsed && !locked && (
           <span
             {...attributes}
             {...listeners}

@@ -22,6 +22,7 @@ function Row({ onOpen, onPlay }: { onOpen: (x: number, y: number) => void; onPla
     <div {...trigger} data-testid="row" onClick={onPlay}>
       <span data-testid="title">Title</span>
       <a href="/library/artist/1" data-testid="link">Artist</a>
+      <a href="/library/album/1" data-testid="card-link" data-card-link>Album</a>
       <span data-testid="handle" data-no-long-press>⋮⋮</span>
     </div>
   );
@@ -53,6 +54,14 @@ test('right-click on a link keeps the browser menu', () => {
   fireEvent(getByTestId('link'), event);
   expect(onOpen).not.toHaveBeenCalled();
   expect(event.defaultPrevented).toBe(false);
+});
+
+test("right-click on a card's own link (it covers the card) opens the card's menu", () => {
+  const { onOpen, getByTestId } = setup();
+  const event = createEvent.contextMenu(getByTestId('card-link'), { clientX: 12, clientY: 14 });
+  fireEvent(getByTestId('card-link'), event);
+  expect(onOpen).toHaveBeenCalledWith(12, 14);
+  expect(event.defaultPrevented).toBe(true);
 });
 
 test('the keyboard menu key opens it by the row', () => {

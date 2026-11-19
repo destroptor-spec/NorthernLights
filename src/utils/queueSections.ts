@@ -61,6 +61,17 @@ export function queueSections(playlist: readonly QueueEntry[], currentIndex: num
 }
 
 /**
+ * Whether the sidebar takes a drag from `fromIndex` to `toIndex`. The track
+ * that plays stays where it is, and nothing is dropped onto it or above it:
+ * that would put the dragged track among the played ones (hidden there) or
+ * push queued tracks into them. Such a drop snaps back.
+ */
+export function canMoveInSections(fromIndex: number, toIndex: number, currentIndex: number | null): boolean {
+  if (currentIndex === null) return true;
+  return fromIndex !== currentIndex && toIndex > currentIndex;
+}
+
+/**
  * Whether a track moved to `toIndex` is queued by hand afterwards. `playlist`
  * and `currentIndex` are the queue after the move. Inside the run (or at its
  * top) it is; past it, or among the played tracks, it isn't; at the run's
@@ -89,12 +100,24 @@ export function queuedAfterMove(
  * its tracks share one, else "Next up".
  */
 export function nextFromLabel(
-  source: { kind: 'album' | 'playlist' | 'artist' | 'artist-top' | 'radio'; name?: string } | null,
+  source: QueueSourceRef | null,
   tracks: readonly Pick<TrackInfo, 'album'>[],
 ): string {
+  const name = queueSourceName(source, tracks);
+  return name ? `Next from: ${name}` : 'Next up';
+}
+
+type QueueSourceRef = { kind: 'album' | 'playlist' | 'artist' | 'artist-top' | 'radio'; name?: string };
+
+/**
+ * What the queue plays from, by name: the album, the playlist, "<artist>
+ * radio", or without a named source the album its tracks share. Null when
+ * there is none (a mix of albums from search or the Hub).
+ */
+export function queueSourceName(source: QueueSourceRef | null, tracks: readonly Pick<TrackInfo, 'album'>[]): string | null {
   const name = source?.name?.trim();
-  if (name) return source!.kind === 'radio' ? `Next from: ${name} radio` : `Next from: ${name}`;
+  if (name) return source!.kind === 'radio' ? `${name} radio` : name;
   const album = tracks[0]?.album?.trim();
-  if (album && tracks.every((track) => track.album?.trim() === album)) return `Next from: ${album}`;
-  return 'Next up';
+  if (album && tracks.every((track) => track.album?.trim() === album)) return album;
+  return null;
 }
