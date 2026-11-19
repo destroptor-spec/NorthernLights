@@ -9172,6 +9172,44 @@ a.rays-chip:focus-visible {
   color: var(--color-text-primary);
   background: rgba(255, 255, 255, 0.06);
 }
+/* Queued by hand (Play next, Add to queue): a Q before the title, as tall
+   as the title's text. */
+.queue-mark {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.3em;
+  vertical-align: -0.14em;
+  color: var(--color-primary);
+}
+/* The phone's queue / recently played tabs: at the queue's foot, kept in
+   view at the bottom of the screen while the queue panel scrolls. */
+.mobile-now-queue-tabs {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  padding: 0.5rem 0 calc(0.5rem + var(--safe-area-bottom));
+  background: var(--color-bg-primary);
+}
+.mobile-now-queue-tabs .queue-tabs {
+  margin-bottom: 0;
+}
+/* Recently played on the phone: ⋯ always there, nothing waits for hover. */
+.queue-row.is-touch .queue-row-more {
+  position: static;
+  width: 44px;
+  height: 44px;
+  opacity: 1;
+  transform: none;
+}
+.queue-row.is-touch:hover .queue-row-text,
+.queue-row.is-touch:focus-within .queue-row-text {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+.queue-row.is-touch {
+  padding-right: 0;
+}
 /* Dragging starts from the handle at once; the rest of the row scrolls. */
 .queue-row-drag-handle {
   touch-action: none;
@@ -11482,7 +11520,7 @@ button.connect-line:disabled {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 4px;
-  margin: 0 var(--queue-pad) 12px;
+  margin: 0 var(--queue-pad, 0.75rem) 12px;
   padding: 4px;
   border-radius: 10px;
   background: color-mix(in srgb, var(--color-text-primary) 5%, transparent);

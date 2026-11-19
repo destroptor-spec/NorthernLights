@@ -3,7 +3,7 @@ import { useContextMenuTrigger } from '../hooks/useContextMenuTrigger';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Link } from 'react-router-dom';
-import { GripVertical, MoreHorizontal } from 'lucide-react';
+import { GripVertical, MoreHorizontal, SquareLetterQ } from 'lucide-react';
 import { formatTime } from '../utils/formatTime';
 import { AlbumArt } from './AlbumArt';
 import type { TrackInfo } from '../utils/fileSystem';
@@ -80,6 +80,10 @@ export const PlaylistItem = memo(({
         <AlbumArt artUrl={track.artUrl} artist={track.artist} className="w-12 h-12 rounded-sm shrink-0" />
         <div className="flex-1 min-w-0">
           <div className={`text-[0.9rem] truncate ${isActive ? 'text-[var(--color-primary)] font-semibold' : 'text-[var(--color-text-secondary)]'}`}>
+            {/* Queued by hand (Play next, Add to queue): a Q as tall as the title. */}
+            {track.queued && (
+              <SquareLetterQ className="queue-mark" aria-label="Queued" role="img" />
+            )}
             {title}
           </div>
           <div className="text-[0.75rem] text-[var(--color-text-muted)] truncate mt-[2px]">
@@ -99,7 +103,7 @@ export const PlaylistItem = memo(({
         >
           <MoreHorizontal size={18} />
         </button>
-        <span
+        {!locked && <span
           {...attributes}
           {...listeners}
           className="queue-row-touch-btn queue-row-drag-handle"
@@ -108,7 +112,7 @@ export const PlaylistItem = memo(({
           onClick={(e) => e.stopPropagation()}
         >
           <GripVertical size={18} />
-        </span>
+        </span>}
       </li>
     );
   }

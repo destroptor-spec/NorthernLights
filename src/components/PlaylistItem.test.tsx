@@ -82,7 +82,7 @@ test('during a gig, shows who queued the track', () => {
 });
 
 describe('touch rows (mobile Now Playing queue)', () => {
-  const renderTouchRow = (handlers: Partial<{ onPlay: jest.Mock; onContextMenu: jest.Mock }> = {}) => {
+  const renderTouchRow = (handlers: Partial<{ onPlay: jest.Mock; onContextMenu: jest.Mock }> = {}, extra: { queued?: boolean; locked?: boolean } = {}) => {
     const onPlay = handlers.onPlay ?? jest.fn();
     const onContextMenu = handlers.onContextMenu ?? jest.fn();
     render(
@@ -91,8 +91,8 @@ describe('touch rows (mobile Now Playing queue)', () => {
           <SortableContext items={['row-1']}>
             <ul>
               <PlaylistItem
-                id="row-1" index={1} isActive={false} isSidebarCollapsed={false} touch
-                track={{ id: 't1', path: 'p1', title: 'Enigma', artist: 'A feat. B', duration: 221 }}
+                id="row-1" index={1} isActive={false} isSidebarCollapsed={false} touch locked={extra.locked}
+                track={{ id: 't1', path: 'p1', title: 'Enigma', artist: 'A feat. B', duration: 221, queued: extra.queued }}
                 onPlay={onPlay} onContextMenu={onContextMenu}
                 getArtistLink={() => '/library/artist/a'} parseArtists={() => ['A', 'B']}
               />
@@ -121,6 +121,23 @@ describe('touch rows (mobile Now Playing queue)', () => {
     expect(screen.queryByRole('button', { name: 'Remove track Enigma' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Move up' })).toBeNull();
     expect(document.querySelector('.group-hover\\:opacity-100')).toBeNull();
+  });
+
+  test('a track queued by hand has a Q before its title; others have none', () => {
+    renderTouchRow({}, { queued: true });
+    const mark = screen.getByRole('img', { name: 'Queued' });
+    expect(mark.getAttribute('class')).toContain('queue-mark');
+    expect(mark.parentElement!.textContent).toBe('Enigma');
+  });
+
+  test('a plain track has no Q', () => {
+    renderTouchRow();
+    expect(screen.queryByRole('img', { name: 'Queued' })).toBeNull();
+  });
+
+  test('the track that plays (locked) has no drag handle', () => {
+    renderTouchRow({}, { locked: true });
+    expect(screen.queryByLabelText('Reorder Enigma')).toBeNull();
   });
 
   test('a long press opens the menu', () => {

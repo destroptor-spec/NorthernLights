@@ -3,9 +3,9 @@ import { useFollowedDeviceLabel } from '../hooks/useFollowedDeviceName';
 import { useDisplayedPlaying } from '../hooks/useDisplayedPlaying';
 import { useDisplayedVolume } from '../hooks/useDisplayedVolume';
 import { hasNextTrack } from '../utils/queue';
-import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { useCallback, useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { X, Infinity as InfinityIcon, ListMusic, ListX, ChevronUp, FileText } from 'lucide-react';
+import { X, Infinity as InfinityIcon, ListMusic, ListX, ChevronUp, FileText, History } from 'lucide-react';
 import ProgressBar from './ProgressBar';
 import { useGuestMay } from '../hooks/useGuestMay';
 import { useSwipe } from '../hooks/useSwipe';
@@ -18,6 +18,7 @@ import { buildBloomGradient } from '../utils/coverGradient';
 import { useTrackMusicVideo } from '../hooks/useTrackMusicVideo';
 import MobileNowPlayingVideo, { type VideoPhase } from './MobileNowPlayingVideo';
 import { QueueList, useClearQueueWithUndo, type QueueListHandle } from './QueueList';
+import { RecentlyPlayedList } from './RecentlyPlayedList';
 import { ConnectButton } from './ConnectMenu';
 import { hardwareKeysControlCastVolume } from '../utils/castVolumeKeys';
 
@@ -213,6 +214,9 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
   const queueListWrapRef = useRef<HTMLDivElement>(null);
   const queueListRef = useRef<QueueListHandle>(null);
   const clearQueue = useClearQueueWithUndo();
+  // The tabs at the queue's foot, as on desktop: the queue, or recently played.
+  const [queueTab, setQueueTab] = useState<'queue' | 'recent'>('queue');
+  const getScroller = useCallback(() => scrollerRef.current, [scrollerRef]);
 
   // Offset of the queue list inside the scroller (≈ page 1's height) — the
   // virtualizer needs it as scrollMargin. Re-measure when page 1 resizes
@@ -227,6 +231,15 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
     observer.observe(page);
     return () => observer.disconnect();
   }, []);
+
+  // The queue shows the track that plays and what follows.
+  const upcomingCount = currentIndex !== null ? Math.max(0, playlist.length - currentIndex) : playlist.length;
+  const chooseQueueTab = (tab: 'queue' | 'recent') => {
+    if (tab === queueTab) return;
+    setQueueTab(tab);
+    // To the top of the panel, not wherever the other list was.
+    scrollerRef.current?.scrollTo({ top: queueOffset });
+  };
 
   const prefersReducedMotion = () =>
     typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -243,7 +256,7 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
     const behavior: ScrollBehavior = prefersReducedMotion() ? 'auto' : 'smooth';
     if (scroller.scrollTop > scroller.clientHeight / 2) {
       scroller.scrollTo({ top: 0, behavior });
-    } else if (currentIndex !== null) {
+    } else if (currentIndex !== null && queueTab === 'queue') {
       queueListRef.current?.scrollToIndex(currentIndex, { align: 'center', behavior });
     } else {
       scroller.scrollTo({ top: queueOffset, behavior });
@@ -535,26 +548,45 @@ const MobileNowPlaying: React.FC<MobileNowPlayingProps> = ({ onClose, isOpen = t
               <ChevronUp size={18} />
             </button>
             <div className="mobile-now-playing-heading">
-              <span>Up Next ({playlist.length})</span>
+              <span>{queueTab === 'queue' ? `Up Next (${upcomingCount})` : 'Recently played'}</span>
             </div>
             <button
               type="button"
               onClick={clearQueue}
-              disabled={playlist.length === 0}
+              disabled={playlist.length === 0 || queueTab !== 'queue'}
               className="mobile-player-control-btn mobile-player-control-btn-sm"
               aria-label="Clear queue"
+              style={queueTab === 'queue' ? undefined : { visibility: 'hidden' }}
             >
               <ListX size={18} />
             </button>
           </div>
           <div ref={queueListWrapRef}>
-            <QueueList
-              ref={queueListRef}
-              getScrollElement={() => scrollerRef.current}
-              scrollMargin={queueOffset}
-              listClassName="px-3 pb-2"
-              touch
-            />
+            {queueTab === 'queue' ? (
+              <QueueList
+                ref={queueListRef}
+                getScrollElement={getScroller}
+                scrollMargin={queueOffset}
+                listClassName="px-3 pb-2"
+                touch
+                upcoming
+              />
+            ) : (
+              <RecentlyPlayedList active getScrollElement={getScroller} touch className="px-3 pb-2" />
+            )}
+          </div>
+          {/* At the queue's foot, as on desktop; stays in view while the queue scrolls. */}
+          <div className="mobile-now-queue-tabs">
+            <div className="queue-tabs" role="tablist" aria-label="Queue or recently played">
+              <button type="button" role="tab" aria-selected={queueTab === 'queue'} className="queue-tab" onClick={() => chooseQueueTab('queue')}>
+                <ListMusic size={15} aria-hidden="true" />
+                Queue
+              </button>
+              <button type="button" role="tab" aria-selected={queueTab === 'recent'} className="queue-tab" onClick={() => chooseQueueTab('recent')}>
+                <History size={15} aria-hidden="true" />
+                Recently played
+              </button>
+            </div>
           </div>
         </section>
       </div>
