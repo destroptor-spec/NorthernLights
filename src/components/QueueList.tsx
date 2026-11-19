@@ -183,6 +183,11 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
   // Maintain stability of item heights using estimateSize
   const virtualizer = useVirtualizer({
     count: presence.length,
+    // Sizes are remembered per row, not per position: rows move (a heading
+    // comes or goes, a row folds away to 0 px), and a row that moved must not
+    // take the size measured for whatever stood there before, which drew rows
+    // on top of each other.
+    getItemKey: (index) => presence[index]?.key ?? index,
     getScrollElement,
     estimateSize: (i) => (presence[i]?.item.type === 'heading' ? 48 : collapsed ? 80 : touch ? 62 : sections ? 60 : 70),
     overscan: 10,
