@@ -1,9 +1,8 @@
-import { openDB } from "idb";
 import * as mm from "music-metadata";
-import { fromBuffer, type ITokenizerOptions } from 'strtok3';
+import { fromBuffer } from 'strtok3';
 
 // Import format detection and caching utilities
-import { detectAudioFormat, getParserForFormat } from "./metadataFormat";
+import { detectAudioFormat } from "./metadataFormat";
 import { metadataCache } from "./metadataCache";
 
 // Added type extensions for modern File System Access API methods missing from default dom lib
@@ -12,12 +11,6 @@ declare global {
     queryPermission(descriptor: { mode: 'read' | 'readwrite' }): Promise<'granted' | 'denied' | 'prompt'>;
     requestPermission(descriptor: { mode: 'read' | 'readwrite' }): Promise<'granted' | 'denied' | 'prompt'>;
   }
-}
-
-// Type for embedded picture data from music-metadata
-interface EmbeddedPicture {
-  data: ArrayBuffer;
-  format: string;
 }
 
 export interface TrackInfo {
@@ -76,23 +69,6 @@ export interface TrackInfo {
   queuedBy?: string;
 }
 
-const DB_NAME = "MusicPlayerDB";
-const STORE_NAME = "tracks";
-const FOLDERS_STORE = "folders";
-
-async function getDB() {
-  return openDB(DB_NAME, 2, {
-    upgrade(db, oldVersion) {
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: "fileHandle" });
-      }
-      if (!db.objectStoreNames.contains(FOLDERS_STORE)) {
-        db.createObjectStore(FOLDERS_STORE, { keyPath: "name" });
-      }
-    },
-  });
-}
-
 export async function readDirRecursive(dirHandle: FileSystemDirectoryHandle): Promise<FileSystemFileHandle[]> {
   const files: FileSystemFileHandle[] = [];
   for await (const entry of dirHandle.values()) {
@@ -115,17 +91,6 @@ function bufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
-// Convert base64 string back to Blob
-function base64ToBlob(base64: string, mimeType: string): Blob {
-  const byteCharacters = atob(base64);
-  const byteNumbers = new Array(byteCharacters.length);
-  for (let i = 0; i < byteCharacters.length; i++) {
-    byteNumbers[i] = byteCharacters.charCodeAt(i);
-  }
-  const byteArray = new Uint8Array(byteNumbers);
-  return new Blob([byteArray], { type: mimeType });
-}
-
 // Helper function to detect and skip ID3v2 headers
 function findAudioStart(arrayBuffer: ArrayBuffer): number {
   const bytes = new Uint8Array(arrayBuffer);
@@ -137,7 +102,7 @@ function findAudioStart(arrayBuffer: ArrayBuffer): number {
   }
 
   const majorVersion = bytes[3];
-  const minorVersion = bytes[4];
+  // bytes[4] is the minor version, which the size doesn't depend on.
   const flags = bytes[5];
 
   // Synchsafe encoding: 7 bits per byte (MSB is 0)
