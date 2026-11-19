@@ -15,6 +15,7 @@ import { resolveTrackArtists } from '../utils/trackArtists';
 // shared/artistCredit.ts). Re-exported so existing `import('../database')`
 // consumers (e.g. library.routes) keep resolving `splitArtistNames` here.
 import { joinedCreditSplits, splitArtistNames, splitJoinedCredit, splitPeopleCredit, uniqueArtistNames } from '../../shared/artistCredit';
+import { normalizeArtistIdentityKey } from '../../shared/artistIdentity';
 import { accountProtection, type AccountProtection } from '../../shared/accountProtection';
 export { splitArtistNames };
 export { getArtistVideoUploads, saveArtistVideoCatalog, noteArtistVideoFailure } from './musicVideos';
@@ -2972,16 +2973,8 @@ function compilationArtistNameSql(nameExpr: string): string {
   return `LOWER(BTRIM(${nameExpr})) IN (${list})`;
 }
 
-export function normalizeArtistIdentityKey(name: string | null | undefined): string {
-  return (name || '')
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[’‘`´]/g, "'")
-    .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9]+/g, '')
-    .trim();
-}
+// The canonical artist identity key, shared with the client.
+export { normalizeArtistIdentityKey };
 
 function scoreArtistDisplayName(name: string): number {
   let score = 0;

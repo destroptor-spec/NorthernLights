@@ -1,20 +1,11 @@
 import { cleanCreditPart, splitArtistNames } from '../../shared/artistCredit';
 
 /**
- * Canonical identity key for an artist name. Mirrors the server-side
- * `normalizeArtistIdentityKey` so client-side comparisons match the
- * canonicalization used during merges (e.g. "N'to" and "NTO" -> "nto").
+ * Canonical identity key for an artist name, the same function the server
+ * uses for artists.normalized_key and merges (e.g. "N'to" and "NTO" -> "nto").
  */
-export function normalizeArtistIdentityKey(name: string | null | undefined): string {
-  return (name || '')
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/[‘’`´]/g, "'")
-    .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9]+/g, '')
-    .trim();
-}
+export { normalizeArtistIdentityKey } from '../../shared/artistIdentity';
+import { normalizeArtistIdentityKey } from '../../shared/artistIdentity';
 
 /**
  * Split an ID3/Vorbis artist string into individual artist names.
