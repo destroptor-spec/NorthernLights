@@ -21,7 +21,7 @@ import { useKnownArtistKeys } from '../hooks/useKnownArtistKeys';
 import { PlaylistItem } from './PlaylistItem';
 import { useToast } from '../hooks/useToast';
 import type { TrackInfo } from '../utils/fileSystem';
-import { nextFromLabel, queueSections } from '../utils/queueSections';
+import { canMoveInSections, nextFromLabel, queueSections } from '../utils/queueSections';
 import { useGigPeople } from '../hooks/useGigPeople';
 
 // Clear-with-undo, shared by the desktop sidebar header and the mobile
@@ -188,11 +188,12 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
     if (over && active.id !== over.id) {
       const oldIndex = sortableItems.indexOf(active.id as string);
       const newIndex = sortableItems.indexOf(over.id as string);
-      if (oldIndex !== -1 && newIndex !== -1) {
+      // In the sidebar, the track that plays stays put: a drop onto it snaps back.
+      if (oldIndex !== -1 && newIndex !== -1 && (!sections || canMoveInSections(oldIndex, newIndex, currentIndex))) {
         moveInPlaylist(oldIndex, newIndex);
       }
     }
-  }, [sortableItems, moveInPlaylist]);
+  }, [sortableItems, moveInPlaylist, sections, currentIndex]);
 
   return (
     <div className={listClassName}>
@@ -264,6 +265,8 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
                     parseArtists={parseArtists}
                     opacity={(t.isInfinity && (currentIndex === null || idx > currentIndex)) ? 0.6 : 1}
                     touch={touch}
+                    // The sidebar's current track: neither dragged nor dropped onto.
+                    locked={sections && currentIndex === idx}
                     queuedBy={sections && t.queuedBy ? gigPeople?.get(t.queuedBy) : undefined}
                   />
                 </div>

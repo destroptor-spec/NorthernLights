@@ -35,6 +35,25 @@ test('desktop rows: ⋯ opens the menu (Remove and Love are in it), the cover ho
   expect(screen.getByLabelText('Reorder Enigma').closest('.queue-row-art')).toBeTruthy();
 });
 
+test('a locked row (the sidebar\'s current track) has no drag handle', () => {
+  render(
+    <MemoryRouter>
+      <DndContext>
+        <SortableContext items={['row-1']}>
+          <ul>
+            <PlaylistItem
+              id="row-1" index={1} isActive isSidebarCollapsed={false} locked
+              track={{ id: 't1', path: 'p1', title: 'Enigma', artist: 'A' }}
+              onPlay={jest.fn()} onContextMenu={jest.fn()} getArtistLink={() => null} parseArtists={(a) => [a]}
+            />
+          </ul>
+        </SortableContext>
+      </DndContext>
+    </MemoryRouter>,
+  );
+  expect(screen.queryByLabelText('Reorder Enigma')).toBeNull();
+});
+
 test('marks the playing track as current', () => {
   renderRow(true);
   const row = document.querySelector('.queue-row')!;

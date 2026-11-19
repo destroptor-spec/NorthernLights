@@ -61,6 +61,17 @@ export function queueSections(playlist: readonly QueueEntry[], currentIndex: num
 }
 
 /**
+ * Whether the sidebar takes a drag from `fromIndex` to `toIndex`. The track
+ * that plays stays where it is, and nothing is dropped onto it or above it:
+ * that would put the dragged track among the played ones (hidden there) or
+ * push queued tracks into them. Such a drop snaps back.
+ */
+export function canMoveInSections(fromIndex: number, toIndex: number, currentIndex: number | null): boolean {
+  if (currentIndex === null) return true;
+  return fromIndex !== currentIndex && toIndex > currentIndex;
+}
+
+/**
  * Whether a track moved to `toIndex` is queued by hand afterwards. `playlist`
  * and `currentIndex` are the queue after the move. Inside the run (or at its
  * top) it is; past it, or among the played tracks, it isn't; at the run's

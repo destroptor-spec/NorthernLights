@@ -23,6 +23,8 @@ export interface PlaylistItemProps {
    * text (a tap on the row plays it); remove and love live in the menu.
    */
   touch?: boolean;
+  /** Not draggable, and nothing is dropped onto it (the sidebar's current track). */
+  locked?: boolean;
   /** During a gig: who queued this track by hand (desktop sidebar). */
   queuedBy?: GigPerson;
 
@@ -33,7 +35,7 @@ export interface PlaylistItemProps {
 }
 
 export const PlaylistItem = memo(({
-  id, track, index, isActive, isSidebarCollapsed, opacity = 1, touch = false, queuedBy,
+  id, track, index, isActive, isSidebarCollapsed, opacity = 1, touch = false, locked = false, queuedBy,
   onPlay, onContextMenu, getArtistLink, parseArtists
 }: PlaylistItemProps) => {
   const {
@@ -43,7 +45,7 @@ export const PlaylistItem = memo(({
     transform,
     transition,
     isDragging
-  } = useSortable({ id });
+  } = useSortable({ id, disabled: locked });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -135,7 +137,7 @@ export const PlaylistItem = memo(({
     >
       <span className="queue-row-art">
         <AlbumArt artUrl={track.artUrl} artist={track.artist} className="h-full w-full" />
-        {!isSidebarCollapsed && (
+        {!isSidebarCollapsed && !locked && (
           <span
             {...attributes}
             {...listeners}

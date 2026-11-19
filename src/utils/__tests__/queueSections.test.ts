@@ -1,4 +1,4 @@
-import { addToQueueIndex, nextFromLabel, queuedAfterMove, queueSections } from '../queueSections';
+import { addToQueueIndex, canMoveInSections, nextFromLabel, queuedAfterMove, queueSections } from '../queueSections';
 
 // c = context (what was started), q = queued by hand, i = Infinity.
 const queue = (spec: string) => spec.split('').map((kind) => ({
@@ -72,5 +72,20 @@ describe('nextFromLabel', () => {
     expect(nextFromLabel(null, [{ album: 'Kid A' }, { album: 'Kid A' }])).toBe('Next from: Kid A');
     expect(nextFromLabel({ kind: 'album' }, [{ album: 'Kid A' }, { album: 'Amnesiac' }])).toBe('Next up');
     expect(nextFromLabel(null, [])).toBe('Next up');
+  });
+});
+
+describe('canMoveInSections (the sidebar keeps the track that plays in place)', () => {
+  it('snaps back a drop onto the current track, or above it', () => {
+    expect(canMoveInSections(5, 2, 2)).toBe(false);
+    expect(canMoveInSections(5, 1, 2)).toBe(false);
+  });
+  it('does not move the current track itself', () => {
+    expect(canMoveInSections(2, 4, 2)).toBe(false);
+  });
+  it('takes any move below it, and any move when nothing plays', () => {
+    expect(canMoveInSections(5, 3, 2)).toBe(true);
+    expect(canMoveInSections(3, 5, 2)).toBe(true);
+    expect(canMoveInSections(3, 0, null)).toBe(true);
   });
 });

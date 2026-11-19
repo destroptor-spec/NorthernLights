@@ -25,6 +25,7 @@
 - **Python 3.14:** The analysis environment moves to Python 3.14 with a pinned Essentia build. Existing installs rebuild `.venv` once (see the production guide; the full upgrade checklist is in `docs/genre-engine-upgrade.md`).
 
 ### Bug fixes
+- **Queue sidebar:** dragging a track onto the one that plays no longer makes it vanish (it went among the played tracks); the drop snaps back. The track that plays can't be dragged either.
 - **Search field on phones:** no second, inner green border while typing, and only one clear (×) button: the browser's own no longer shows beside Aurora's (on desktop too).
 - **Menus on right-click and long press:** every track row and playlist card with a ⋯ menu (albums, playlists, the queue, search results, quick search, Popular on artist pages) now also opens it by right-click, the keyboard's menu key, or a long press on phones and tablets, including iPhones and iPads, which had no long press before. The tap that ends a long press doesn't also play the track, and right-clicking a link keeps the browser's own menu.
 - **Last row reachable with a bottom browser toolbar:** in browsers whose toolbar stays at the bottom (Samsung Internet with Android's navigation buttons), the end of a page sat behind the mini player and tab bar, so a single's only track couldn't be tapped. The app now fits the visible part of the screen.
