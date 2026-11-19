@@ -275,8 +275,10 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
                     role="presentation"
                     aria-hidden={entry.leaving || undefined}
                   >
-                    <div className="presence-fold-inner queue-section-heading">
-                      <h4>{row.label}</h4>
+                    <div className="presence-fold-inner">
+                      <div className="queue-section-heading">
+                        <h4>{row.label}</h4>
+                      </div>
                     </div>
                   </li>
                 );

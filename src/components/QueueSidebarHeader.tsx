@@ -163,7 +163,9 @@ export const QueueSidebarHeader: React.FC<{
           className={`presence-fold${entering ? ' is-entering' : ''}${leaving ? ' is-leaving' : ''}`}
           aria-hidden={leaving || undefined}
         >
-          <div className="presence-fold-inner queue-sidebar-block">{item.render()}</div>
+          <div className="presence-fold-inner">
+            <div className="queue-sidebar-block">{item.render()}</div>
+          </div>
         </div>
       ))}
 
