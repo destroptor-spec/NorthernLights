@@ -4,12 +4,14 @@ Every step needed to take branch `genre-engine-next` to prod, in one place. Each
 
 | Phase | What it changes on prod | Status |
 | --- | --- | --- |
-| 0 | Python 3.14 venv, new analysis models (Discogs-EffNet and its classifiers), `track_style_scores`, full re-analysis | Built, not deployed |
-| 1 | Genre list, MusicBrainz genre snapshot, tag mapping, artist-tag split, artist-tag backfill, genre review | Built, not deployed |
-| 2 | Fusion (genres and styles per track, album and artist profiles), new Browse behind a setting, "Aurora rays from {title}" | Built, not deployed |
-| 3 | Style centroids, fusion v2, places, languages, eras, vocals and moods (`track_origin`); automatic credit imports | Built, not deployed |
-| 4 | The styles engine for everyone; track genres from the fused genres and styles; Genre Matrix and MBDB import retired | Built, not deployed |
-| 5 | AI playlists on one score, moods from the sound (`track_moods`), special lists, the support check, the Discover rail by style and original year, artist radio on the score, large-library fixes | Built, not deployed (the daylist and mood-led requests stay off: issues #233, #234) |
+| 0 | Python 3.14 venv, new analysis models (Discogs-EffNet and its classifiers), `track_style_scores`, full re-analysis | Deployed 2026-11-15 |
+| 1 | Genre list, MusicBrainz genre snapshot, tag mapping, artist-tag split, artist-tag backfill, genre review | Deployed 2026-11-15 |
+| 2 | Fusion (genres and styles per track, album and artist profiles), new Browse behind a setting, "Aurora rays from {title}" | Deployed 2026-11-15 |
+| 3 | Style centroids, fusion v2, places, languages, eras, vocals and moods (`track_origin`); automatic credit imports | Deployed 2026-11-15 |
+| 4 | The styles engine for everyone; track genres from the fused genres and styles; Genre Matrix and MBDB import retired | Deployed 2026-11-15 |
+| 5 | AI playlists on one score, moods from the sound (`track_moods`), special lists, the support check, the Discover rail by style and original year, artist radio on the score, large-library fixes | Deployed 2026-11-15 (the daylist and mood-led requests stay off: issues #233, #234) |
+
+**Status 2026-11-19:** phases 0–5 merged in #235 and deployed to prod on 2026-11-15. The boxes below are the deploy checklist as written; what is still open on prod is the genre review by hand (Phase 1, step 5) and the optional clean-ups (Phase 0, step 6: delete `server/models/msd-musicnn-1.pb`; Phase 4, step 2c: drop the Genre Matrix tables), for which commands were prepared on 2026-11-19.
 
 Prod facts these steps rely on: the prod host (`<prod-user>@<prod-host>` below; see your own deploy notes), app in `~/NorthernLights`, deployed with `scripts/deploy-prod.sh` (leaves the checkout detached, keeps `dist-prev` for `--rollback`, and exports the database first whenever a deploy changes the schema).
 
