@@ -915,6 +915,7 @@ describeDb('database read queries', () => {
         getCreditedArtistNames: [pool],
         getJoinedCreditDecisions: [pool],
         getTrackPathsByIds: [[`${TRACK_ID}0`]],
+        getTracksForMoveMatching: [["eC5mbGFj"]],
         getArtistReviewPreview: ['artist-joined:none'],
       });
 

@@ -9,7 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import { ChildProcessPool } from '../workers/processPool';
 import * as mm from 'music-metadata';
-import { addDirectory, addTrack, addTrackFeatures, getTracksWithoutFeatures, getTracksWithSimulatedFeatures, getSimulatedFeatureTracks, getAllTracks, getDirectories, removeDirectory, removeTracksByDirectory, getOrCreateArtist, getOrCreateAlbum, getOrCreateGenre, getAllArtists, getAllAlbums, getAllGenres, getPathsWithMeta, countTracksByArtHash, deleteTracksByPaths, purgeOrphanedEntities, recordUnparsedTrack, purgeOrphanedTracks, getSystemSetting, getPrimaryArtistName, setTrackCredits, alignArtistMbidsWithTracks, runArtistCreditSplitInBackground, setTrackLoudness, getTracksWithoutLoudness, getTracksWithFailedLoudness } from '../database';
+import { addDirectory, addTrack, addTrackFeatures, getTracksWithoutFeatures, getTracksWithSimulatedFeatures, getSimulatedFeatureTracks, getAllTracks, getDirectories, removeDirectory, removeTracksByDirectory, getOrCreateArtist, getOrCreateAlbum, getOrCreateGenre, getAllArtists, getAllAlbums, getAllGenres, getPathsWithMeta, countTracksByArtHash, deleteTracksByPaths, getTracksForMoveMatching, moveTrackPaths, purgeOrphanedEntities, recordUnparsedTrack, purgeOrphanedTracks, getSystemSetting, getPrimaryArtistName, setTrackCredits, alignArtistMbidsWithTracks, runArtistCreditSplitInBackground, setTrackLoudness, getTracksWithoutLoudness, getTracksWithFailedLoudness } from '../database';
 import { measureLoudness } from '../services/loudness.service';
 import { cleanupOrphanArt } from '../services/artCache';
 import { scanStatus, scanClients, broadcastScanStatus } from '../state';
@@ -20,6 +20,7 @@ import { refreshArtistAudioProfiles, searchLibrary, searchLibraryRanked, Invalid
 import { createRateLimiter } from '../middleware/rateLimit';
 import { areAnalysisModelsReady } from '../services/downloadModels';
 import { publishApiV1LibraryRevision } from '../services/apiV1Events.service';
+import { detectMoves, type NewFile } from '../services/moveDetection';
 
 const router = Router();
 
@@ -535,7 +536,7 @@ async function processMetadataBatch(input: Array<Buffer | ScanItem>, concurrency
               console.warn(`[Scanner] Failed to get/create genre "${primaryGenreName}" for ${nameStr}:`, e);
             }
 
-            await addTrack({
+            const savedTrackId = await addTrack({
               path: dbPath,
               title: metadata.title || nameStr,
               artist: metadata.artist || metadata.albumartist || null,
@@ -588,8 +589,8 @@ async function processMetadataBatch(input: Array<Buffer | ScanItem>, concurrency
             // producer, etc.). DELETE-then-INSERT is scoped to source='tag'
             // inside setTrackCredits so any future MB-sourced rows survive.
             if (Array.isArray(metadata.credits)) {
-              const trackId = Buffer.from(dbPath).toString('base64');
-              try { await setTrackCredits(trackId, metadata.credits); } catch (e) {
+              // The row's own id: a moved track keeps its old one (#78).
+              try { await setTrackCredits(savedTrackId, metadata.credits); } catch (e) {
                 console.warn(`[Scanner] Failed to write credits for ${nameStr}:`, e);
               }
             }
@@ -932,7 +933,7 @@ router.post('/scan', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Scan already in progress' });
   }
 
-  let walkResult: { added: number; removed: number; removalSkipped?: RemovalSkipReason | 'unreadable-paths' } | null = null;
+  let walkResult: { added: number; removed: number; moved: number; removalSkipped?: RemovalSkipReason | 'unreadable-paths' } | null = null;
   try {
     scanStatus.isScanning = true;
     scanStatus.scannedFiles = 0;
@@ -947,7 +948,7 @@ router.post('/scan', requireAdmin, async (req, res) => {
 
     logScanner(`[Scan] Starting scan for: ${dirPath}`);
     walkResult = await runSyncWalk(dirPath);
-    logScanner(`[Scan] Completed for ${dirPath}: ${walkResult.added} added, ${walkResult.removed} removed`);
+    logScanner(`[Scan] Completed for ${dirPath}: ${walkResult.added} added, ${walkResult.removed} removed, ${walkResult.moved} moved`);
 
     const skipNote = walkResult.removalSkipped
       ? ` Some missing tracks were kept because their folders could not be read (${walkResult.removalSkipped}).`
@@ -956,9 +957,11 @@ router.post('/scan', requireAdmin, async (req, res) => {
       status: 'completed', 
       added: walkResult.added, 
       removed: walkResult.removed,
+      moved: walkResult.moved,
       removalSkipped: walkResult.removalSkipped ?? null,
-      message: (walkResult.added > 0 || walkResult.removed > 0 
+      message: (walkResult.added > 0 || walkResult.removed > 0 || walkResult.moved > 0
         ? `Added ${walkResult.added} tracks, removed ${walkResult.removed} stale`
+          + (walkResult.moved > 0 ? `, kept ${walkResult.moved} moved or renamed` : '')
         : 'No changes detected') + skipNote
     });
   } catch (error) {
@@ -969,12 +972,23 @@ router.post('/scan', requireAdmin, async (req, res) => {
   }
 });
 
+/** Title, artist, album and length of a new file, to tell whether it is a moved track (#78). */
+async function readTagsForMoveCheck(file: NewFile) {
+  const metadata = await mm.parseFile(Buffer.from(file.path, 'base64').toString('utf8'), { duration: false, skipCovers: true });
+  return {
+    title: metadata.common.title ?? null,
+    artist: metadata.common.artist ?? metadata.common.albumartist ?? null,
+    album: metadata.common.album ?? null,
+    duration: typeof metadata.format.duration === 'number' ? metadata.format.duration : null,
+  };
+}
+
 // ─── Sync Walk: diff disk vs DB, remove stale, scan new ───────────────
 // Exported so the auto-walk scheduler in server/index.ts can reuse it.
 export async function runSyncWalk(
   dirPath: string,
   options: { unattended?: boolean } = {},
-): Promise<{ removed: number; added: number; removalSkipped?: RemovalSkipReason | 'unreadable-paths' }> {
+): Promise<{ removed: number; added: number; moved: number; removalSkipped?: RemovalSkipReason | 'unreadable-paths' }> {
   const totalStartTime = Date.now();
   const dirBuf = Buffer.from(dirPath, 'utf8');
 
@@ -1023,6 +1037,55 @@ export async function runSyncWalk(
   stalePaths.push(...removable.map((buf) => buf.toString('base64')));
   if (held.length > 0) {
     console.warn(`[Scanner] Keeping ${held.length} missing track(s) under unreadable path(s) in ${dirPath}; they will be checked again on the next walk.`);
+  }
+
+  // Moved or renamed files (#78): a missing track whose file turns up under a
+  // new path in this walk keeps its row, id, playlist entries, likes, history
+  // and analysis. Only one-to-one matches (moveDetection.ts); the rest is
+  // removed and added as before.
+  let movedCount = 0;
+  if (stalePaths.length > 0) {
+    const freshFiles: NewFile[] = walkedFiles
+      .filter((f) => !existingMeta.has(f.buf.toString('base64')) && typeof f.size === 'number' && typeof f.mtime === 'number')
+      .map((f) => ({ path: f.buf.toString('base64'), size: f.size as number, mtime: f.mtime as number }));
+    if (freshFiles.length > 0) {
+      try {
+        const missing = await getTracksForMoveMatching(stalePaths);
+        const moves = await detectMoves(missing, freshFiles, readTagsForMoveCheck);
+        const applied = await moveTrackPaths(moves.map((move) => ({
+          from: move.from,
+          to: move.to,
+          size: move.size,
+          // Same file: its modified time. Same song: keep the old one, so the
+          // file is re-read below (its other tags or cover may differ).
+          mtime: move.by === 'same-file' ? move.mtime : null,
+        })));
+        const appliedFrom = new Set(applied.map((move) => move.from));
+        for (const move of moves) {
+          if (!appliedFrom.has(move.from)) continue;
+          const before = existingMeta.get(move.from);
+          existingMeta.delete(move.from);
+          existingMeta.set(move.to, {
+            mtime: move.by === 'same-file' ? move.mtime : (before?.mtime ?? null),
+            artHash: before?.artHash ?? null,
+            needsReparse: move.by === 'same-song' || (before?.needsReparse ?? false),
+          });
+        }
+        const remaining = stalePaths.filter((p) => !appliedFrom.has(p));
+        stalePaths.length = 0;
+        stalePaths.push(...remaining);
+        movedCount = applied.length;
+        if (movedCount > 0) {
+          const bySong = moves.filter((move) => move.by === 'same-song' && appliedFrom.has(move.from)).length;
+          // Not behind LOG_SCANNER: it is the other side of a removal.
+          console.log(`[Scanner] Kept ${movedCount} moved or renamed track(s) in ${dirPath} with their playlists, likes and history`
+            + ` (${movedCount - bySong} by size and date, ${bySong} by size and tags)`);
+        }
+      } catch (e) {
+        // Moving is a kindness: if it fails, the walk goes on as before.
+        console.warn('[Scanner] Move detection failed; missing tracks are handled as before:', e);
+      }
+    }
   }
   const removal = decideStaleRemoval({
     staleCount: stalePaths.length,
@@ -1100,8 +1163,8 @@ export async function runSyncWalk(
   }
 
   if (itemsToProcess.length === 0 && removedCount === 0) {
-    logScanner(`[Scanner] No changes detected in ${dirPath}`);
-    return { removed: 0, added: 0, removalSkipped };
+    if (movedCount === 0) logScanner(`[Scanner] No changes detected in ${dirPath}`);
+    return { removed: 0, added: 0, moved: movedCount, removalSkipped };
   }
 
   if (itemsToProcess.length > 0) {
@@ -1162,7 +1225,7 @@ export async function runSyncWalk(
 
   const totalDuration = ((Date.now() - totalStartTime) / 1000).toFixed(1);
   logScanner(`[Scanner] Sync walk complete for ${dirPath}: ~${itemsToProcess.length} processed, -${removedCount} removed (Total: ${totalDuration}s)`);
-  return { removed: removedCount, added: itemsToProcess.length, removalSkipped };
+  return { removed: removedCount, added: itemsToProcess.length, moved: movedCount, removalSkipped };
 }
 
 // Trigger standalone analysis (no scan — analyzes tracks missing features)
