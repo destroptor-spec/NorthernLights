@@ -356,6 +356,20 @@ describeDb('listen together', () => {
       expect(await members.listNearbyGigs(ownerId, HOME)).toEqual([]); // not one's own
     });
 
+    it("counts the server's LAN as one place (any private address), and an IPv6 network by its /64", async () => {
+      const session = await create();
+      await members.createSessionInvite(ownerId, session.id, ['queue']);
+      await members.setSessionSharing(ownerId, session.id, { visibility: 'discoverable' });
+      // The owner's phone on the home Wi-Fi, the guest's desktop on another VLAN.
+      at(ownerId, 'owner-phone', '10.10.1.57');
+      expect((await members.listNearbyGigs(guestId, '10.10.0.20')).map((gig) => gig.sessionId)).toEqual([session.id]);
+      expect(await members.listNearbyGigs(otherId, HOME)).toEqual([]);
+      // Elsewhere, over IPv6: each device has its own address on the network.
+      at(ownerId, 'owner-laptop', '2001:db8:aa:bb:1111:2222:3333:4444');
+      expect((await members.listNearbyGigs(otherId, '2001:db8:aa:bb::99')).map((gig) => gig.sessionId)).toEqual([session.id]);
+      expect(await members.listNearbyGigs(otherId, '2001:db8:aa:cc::99')).toEqual([]);
+    });
+
     it("joining nearby takes the gig's level; not discoverable or not nearby is not found", async () => {
       const session = await create();
       await members.createSessionInvite(ownerId, session.id, ['queue', 'transport']);

@@ -29,6 +29,7 @@
 - **Python 3.14:** The analysis environment moves to Python 3.14 with a pinned Essentia build. Existing installs rebuild `.venv` once (see the production guide; the full upgrade checklist is in `docs/genre-engine-upgrade.md`).
 
 ### Bug fixes
+- **Gigs nearby on your home network:** an open gig now shows to everyone on the same network as the Aurora server, whatever their device's own address (each device on IPv6 has its own, which hid gigs between a phone and a desktop at home). Elsewhere, devices on the same IPv6 network see each other's gigs too.
 - **Queue sidebar:** dragging a track onto the one that plays no longer makes it vanish (it went among the played tracks); the drop snaps back. The track that plays can't be dragged either. On wide screens (1280 px and up) the sidebar has more room at its sides.
 - **Search field on phones:** no second, inner green border while typing, and only one clear (×) button: the browser's own no longer shows beside Aurora's (on desktop too).
 - **Menus on right-click and long press:** every track row and playlist card with a ⋯ menu (albums, playlists, the queue, search results, quick search, Popular on artist pages) now also opens it by right-click, the keyboard's menu key, or a long press on phones and tablets, including iPhones and iPads, which had no long press before. The tap that ends a long press doesn't also play the track, and right-clicking a link keeps the browser's own menu.
