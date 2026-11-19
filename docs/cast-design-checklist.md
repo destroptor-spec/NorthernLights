@@ -87,13 +87,15 @@ Superseded 2026-10-26 (Connect menu step 2): `CastButton` and `<google-cast-laun
 ### Files to Modify
 
 - `src/utils/CastManager.ts`
-- `src/components/CastButton.tsx`
+- `src/components/ConnectMenu.tsx` (Cast lives in the Connect menu since 2026-10-26; `CastButton.tsx` is gone)
 
 ### Acceptance Criteria
 
-- [ ] Cancel does not show error toast
-- [ ] Real errors show concise recovery message
-- [ ] Disconnect action matches Google wording and behavior
+Done in `d83b984` (checked 2026-11-19):
+
+- [x] Cancel does not show error toast
+- [x] Real errors show concise recovery message
+- [x] Disconnect action matches Google wording and behavior ("Stop casting")
 
 ---
 
