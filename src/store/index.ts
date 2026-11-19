@@ -959,8 +959,9 @@ export interface PlayerState {
   nextTrack: (options?: NextTrackOptions) => Promise<void>;
   prevTrack: () => Promise<void>;
   setVolume: (v: number) => void;
-  // Sleep timer. sleepTimerEndsAt is the epoch-ms fire time (null = inactive);
-  // it's transient (not persisted). startSleepTimer(0) cancels.
+  // Sleep timer (set from the user menu). sleepTimerEndsAt is the epoch-ms fire
+  // time (null = inactive); transient (not persisted). One at a time:
+  // startSleepTimer does nothing while one runs. startSleepTimer(0) cancels.
   sleepTimerEndsAt: number | null;
   startSleepTimer: (minutes: number) => void;
   cancelSleepTimer: () => void;
@@ -3435,6 +3436,8 @@ export const usePlayerStore = create<PlayerState>()(
 
         sleepTimerEndsAt: null,
         startSleepTimer: (minutes: number) => {
+          // One timer at a time: a running one is cancelled first, never replaced.
+          if (minutes > 0 && get().sleepTimerEndsAt) return;
           clearSleepTimers();
           if (!minutes || minutes <= 0) {
             playbackManager.setVolume(get().volume); // undo any in-progress fade

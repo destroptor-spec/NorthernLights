@@ -99,6 +99,20 @@ describe('Music Store Logic', () => {
     expect(store().playlist.map((t: TrackInfo) => `${t.id}${t.queued ? '*' : ''}`)).toEqual(['a', 'c*', 'q2*', 'b', 'q1']);
   });
 
+  it('runs one sleep timer at a time: a second start does nothing until it is cancelled', () => {
+    const store = () => usePlayerStore.getState();
+    store().startSleepTimer(30);
+    const endsAt = store().sleepTimerEndsAt;
+    expect(endsAt).not.toBeNull();
+    store().startSleepTimer(10);
+    expect(store().sleepTimerEndsAt).toBe(endsAt);
+    store().cancelSleepTimer();
+    expect(store().sleepTimerEndsAt).toBeNull();
+    store().startSleepTimer(10);
+    expect(store().sleepTimerEndsAt).not.toBe(endsAt);
+    store().cancelSleepTimer();
+  });
+
   it('preserves Auto quality while hydrating browser track URLs', () => {
     usePlayerStore.setState({ mediaAccessToken: 'media-token', streamingQuality: 'auto' });
     const [track] = usePlayerStore.getState().hydrateTracks([

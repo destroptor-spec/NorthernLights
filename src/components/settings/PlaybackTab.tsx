@@ -60,9 +60,6 @@ export const PlaybackTab: React.FC = () => {
     const loudnessPreampDb = usePlayerStore(state => state.loudnessPreampDb);
     const loudnessMode = usePlayerStore(state => state.loudnessMode);
     const playbackTelemetry = usePlayerStore(state => state.playbackTelemetry);
-    const sleepTimerEndsAt = usePlayerStore(state => state.sleepTimerEndsAt);
-    const startSleepTimer = usePlayerStore(state => state.startSleepTimer);
-    const cancelSleepTimer = usePlayerStore(state => state.cancelSleepTimer);
     const castConnected = usePlayerStore(state => state.castConnected);
     const audioOutputSupported = usePlayerStore(state => state.audioOutputSupported);
     const audioOutputPickerSupported = usePlayerStore(state => state.audioOutputPickerSupported);
@@ -92,18 +89,6 @@ export const PlaybackTab: React.FC = () => {
             void ensureAudioOutputAccess();
         }
     }, [playbackTab, ensureAudioOutputAccess]);
-
-    // Tick once a second while a sleep timer is active to show the countdown.
-    const [sleepNow, setSleepNow] = useState(() => Date.now());
-    useEffect(() => {
-        if (!sleepTimerEndsAt) return;
-        setSleepNow(Date.now());
-        const id = setInterval(() => setSleepNow(Date.now()), 1000);
-        return () => clearInterval(id);
-    }, [sleepTimerEndsAt]);
-    const sleepRemainingMs = sleepTimerEndsAt ? Math.max(0, sleepTimerEndsAt - sleepNow) : 0;
-    const sleepRemainingLabel = `${Math.floor(sleepRemainingMs / 60000)}:${String(Math.floor((sleepRemainingMs % 60000) / 1000)).padStart(2, '0')}`;
-    const SLEEP_PRESETS = [15, 30, 45, 60];
 
     return (
         <div className="settings-section mb-8">
@@ -325,39 +310,6 @@ export const PlaybackTab: React.FC = () => {
                                     A constant offset applied on top of the target. Casting is not affected. First play of a new track may be unnormalized until it's measured.
                                 </p>
                             </div>
-                        </div>
-                    </div>
-
-                    <div className="mb-6 p-4 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)]">
-                        <div className="flex items-center justify-between mb-3">
-                            <div>
-                                <p className="text-sm font-medium text-[var(--color-text-primary)]">Sleep Timer</p>
-                                <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                                    {sleepTimerEndsAt
-                                        ? `Fading out and stopping in ${sleepRemainingLabel}.`
-                                        : 'Gently fade out and pause after a set time.'}
-                                </p>
-                            </div>
-                            {sleepTimerEndsAt && (
-                                <button onClick={() => cancelSleepTimer()} className="btn btn-ghost btn-sm flex-shrink-0 ml-4">
-                                    Cancel
-                                </button>
-                            )}
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                            {SLEEP_PRESETS.map((min) => {
-                                const active = !!sleepTimerEndsAt && Math.round(sleepRemainingMs / 60000) <= min && Math.round(sleepRemainingMs / 60000) > min - 15;
-                                return (
-                                    <button
-                                        key={min}
-                                        onClick={() => startSleepTimer(min)}
-                                        className={`btn btn-sm ${active ? 'btn-primary' : 'btn-ghost'}`}
-                                        aria-pressed={active}
-                                    >
-                                        {min} min
-                                    </button>
-                                );
-                            })}
                         </div>
                     </div>
 

@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { usePlayerStore } from '../store/index';
-import { LogOut, ChevronDown, Settings, Download } from 'lucide-react';
+import { LogOut, ChevronDown, Settings, Download, Moon, X } from 'lucide-react';
+import { useSleepTimerRemaining } from '../hooks/useSleepTimerRemaining';
+import { SleepTimerModal } from './SleepTimerModal';
 import { ownAvatar, UserAvatar } from './UserAvatar';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 
@@ -14,6 +16,10 @@ export const UserMenu: React.FC<UserMenuProps> = ({ onOpenSettings }) => {
   const clearAuthToken = usePlayerStore(state => state.clearAuthToken);
   const { canInstall, isInstalled, platform, install } = usePWAInstall();
   const [isOpen, setIsOpen] = useState(false);
+  // The sleep timer lives here: set in a modal, its countdown in the menu.
+  const [sleepModalOpen, setSleepModalOpen] = useState(false);
+  const sleep = useSleepTimerRemaining();
+  const cancelSleepTimer = usePlayerStore(state => state.cancelSleepTimer);
   const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -53,7 +59,7 @@ export const UserMenu: React.FC<UserMenuProps> = ({ onOpenSettings }) => {
       {isOpen && buttonRect && createPortal(
         <div
           ref={dropdownRef}
-          className="fixed w-48 bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-xl shadow-2xl backdrop-blur-xl overflow-hidden z-[9999]"
+          className="fixed w-56 bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-xl shadow-2xl backdrop-blur-xl overflow-hidden z-[9999]"
           style={{ top: buttonRect.bottom + 8, right: window.innerWidth - buttonRect.right }}
         >
           <div className="p-3 border-b border-[var(--glass-border)]">
@@ -93,6 +99,31 @@ export const UserMenu: React.FC<UserMenuProps> = ({ onOpenSettings }) => {
             </button>
           )}
 
+          {/* Sleep timer: one at a time. While it runs, its countdown and a cancel. */}
+          {sleep.active ? (
+            <div className="w-full pl-4 pr-2 py-1.5 text-sm text-[var(--color-text-secondary)] flex items-center gap-2">
+              <Moon className="w-4 h-4 shrink-0 text-[var(--color-primary)]" />
+              <span className="flex-1 min-w-0 truncate">Sleep timer</span>
+              <span className="tabular-nums text-[var(--color-text-primary)]" aria-label={`Sleep timer: ${sleep.label} left`} role="timer">{sleep.label}</span>
+              <button
+                type="button"
+                onClick={() => cancelSleepTimer()}
+                aria-label="Cancel sleep timer"
+                title="Cancel sleep timer"
+                className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-white/[0.06] transition-colors"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => { setSleepModalOpen(true); setIsOpen(false); }}
+              className="w-full px-4 py-2.5 text-left text-sm text-[var(--color-text-secondary)] hover:bg-white/[0.06] transition-colors flex items-center gap-2"
+            >
+              <Moon className="w-4 h-4" /> Sleep timer
+            </button>
+          )}
+
           <button
             onClick={() => { clearAuthToken(); setIsOpen(false); }}
             className="w-full px-4 py-2.5 text-left text-sm text-red-400 hover:bg-red-500/10 transition-colors flex items-center gap-2"
@@ -102,6 +133,7 @@ export const UserMenu: React.FC<UserMenuProps> = ({ onOpenSettings }) => {
         </div>,
         document.body
       )}
+      {sleepModalOpen && !sleep.active && <SleepTimerModal onClose={() => setSleepModalOpen(false)} />}
     </div>
   );
 };
