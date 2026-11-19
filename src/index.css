@@ -7317,17 +7317,53 @@ a.rays-chip:focus-visible {
   margin-left: 0;
 }
 
+/* A pill on the header row: the inactive tabs, Settings, the user menu (and
+   the search pill at rest, which repeats these values). Same height, fill,
+   border and hover everywhere on the row. */
+.header-pill {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 2.375rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+  white-space: nowrap;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  cursor: pointer;
+  transition: background-color 200ms var(--ease-out), border-color 200ms var(--ease-out), color 200ms var(--ease-out);
+}
+.dark .header-pill {
+  background: rgba(255, 255, 255, 0.06);
+}
+.header-pill:hover,
+.header-pill[aria-expanded="true"] {
+  background: rgba(0, 0, 0, 0.1);
+  border-color: var(--glass-border-hover);
+  color: var(--color-text-primary);
+}
+.dark .header-pill:hover,
+.dark .header-pill[aria-expanded="true"] {
+  background: rgba(255, 255, 255, 0.12);
+}
+
 .global-search-pill {
   position: relative;
   display: flex;
   align-items: center;
-  height: 2.25rem;
-  border: 1px solid var(--glass-border);
+  /* At rest it is one of the header's pills (.header-pill): same height, fill
+     and border as the tabs, Settings and the user menu. */
+  height: 2.375rem;
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-pill);
   overflow: hidden;
   color: var(--color-text-secondary);
-  background: color-mix(in srgb, var(--color-bg-primary) 28%, transparent);
-  backdrop-filter: blur(18px);
+  background: rgba(0, 0, 0, 0.05);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
   transform-origin: right center;
   transition:
     background-color 180ms var(--ease-out),
@@ -7338,7 +7374,7 @@ a.rays-chip:focus-visible {
 }
 
 .dark .global-search-pill {
-  background: color-mix(in srgb, var(--color-bg-primary) 38%, transparent);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .global-search-pill--collapsed {
@@ -7349,9 +7385,10 @@ a.rays-chip:focus-visible {
 .global-search-pill--collapsed:hover {
   color: var(--color-text-primary);
   border-color: var(--glass-border-hover);
-  background: color-mix(in srgb, var(--color-bg-primary) 18%, var(--glass-bg-hover));
-  box-shadow: 0 0.75rem 1.6rem color-mix(in srgb, var(--color-primary) 10%, transparent);
-  transform: translateY(-1px);
+  background: rgba(0, 0, 0, 0.1);
+}
+.dark .global-search-pill--collapsed:hover {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .global-search-pill--collapsed:active {
@@ -7359,13 +7396,10 @@ a.rays-chip:focus-visible {
 }
 
 .global-search-pill--mobile {
-  width: 2.5rem;
-  height: 2.5rem;
+  width: 2.375rem;
+  height: 2.375rem;
   justify-content: center;
   color: var(--color-text-secondary);
-  border-color: var(--glass-border);
-  background: color-mix(in srgb, var(--color-bg-primary) 25%, var(--glass-bg));
-  box-shadow: 0 0.5rem 1.4rem color-mix(in srgb, var(--color-primary) 8%, transparent);
   cursor: pointer;
   animation: global-search-mobile-trigger-in 220ms var(--ease-out) both;
 }
@@ -7385,8 +7419,12 @@ a.rays-chip:focus-visible {
 .global-search-pill--mobile:hover,
 .global-search-pill--mobile:focus-visible {
   color: var(--color-text-primary);
-  border-color: color-mix(in srgb, var(--color-primary) 34%, var(--glass-border-hover));
-  background: color-mix(in srgb, var(--color-bg-primary) 18%, var(--glass-bg-hover));
+  border-color: var(--glass-border-hover);
+  background: rgba(0, 0, 0, 0.1);
+}
+.dark .global-search-pill--mobile:hover,
+.dark .global-search-pill--mobile:focus-visible {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .global-search-pill--mobile:active {

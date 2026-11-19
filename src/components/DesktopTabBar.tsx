@@ -43,10 +43,7 @@ const DesktopTabBarInner: React.FC<DesktopTabBarProps> = ({ onOpenSettings, isSc
             border backdrop-blur-md whitespace-nowrap
             transition-ui duration-200 cursor-pointer
             active:scale-95 no-underline
-            ${isActive
-              ? 'btn-aurora shadow-aurora'
-              : 'text-[var(--color-text-secondary)] border-[var(--color-border)] bg-black/5 dark:bg-white/[0.06] hover:bg-black/10 dark:hover:bg-white/[0.12] hover:text-[var(--color-text-primary)] hover:border-[var(--glass-border-hover)]'
-            }
+            ${isActive ? 'btn-aurora shadow-aurora' : 'header-pill'}
           `}
         >
           {tab.label}
@@ -67,7 +64,7 @@ const DesktopTabBarInner: React.FC<DesktopTabBarProps> = ({ onOpenSettings, isSc
         )}
         <button
           onClick={onOpenSettings}
-          className="p-2 rounded-full text-[var(--color-text-secondary)] bg-black/5 dark:bg-white/[0.06] hover:text-[var(--color-text-primary)] hover:bg-black/10 dark:hover:bg-white/[0.12] transition-ui duration-300 border border-[var(--color-border)] hover:border-[var(--glass-border-hover)] flex-shrink-0"
+          className="header-pill w-[2.375rem] justify-center"
           title="Settings"
         >
           <SettingsIcon className="w-5 h-5" />
