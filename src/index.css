@@ -736,6 +736,45 @@ button :where(span),
   cursor: not-allowed;
 }
 
+/* ─── FOLD IN / OUT ───
+   An item that appears folds open, and one that goes folds shut (grid rows
+   0fr <-> 1fr) while it fades, so what's around it moves smoothly: the
+   Connect card's device rows (.connect-device), as one class for the rest
+   (usePresenceList). `.presence-fold` on the item, `.presence-fold-inner` on
+   its one child, with no padding of its own: padding can't fold, and what
+   was left of it (10 px) dropped away at the end, a jump. Spacing goes on an
+   element inside it. Clipped only while it folds: a dragged queue row must
+   not be cut off. */
+.presence-fold {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition: grid-template-rows 220ms var(--ease-out), opacity 220ms var(--ease-out);
+}
+.presence-fold > .presence-fold-inner {
+  min-height: 0;
+}
+.presence-fold.is-entering > .presence-fold-inner,
+.presence-fold.is-leaving > .presence-fold-inner {
+  overflow: clip;
+}
+.presence-fold.is-entering {
+  animation: presence-fold-in 220ms var(--ease-out);
+}
+.presence-fold.is-leaving {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+}
+@keyframes presence-fold-in {
+  from { grid-template-rows: 0fr; opacity: 0; }
+  to { grid-template-rows: 1fr; opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .presence-fold { transition: none; }
+  .presence-fold.is-entering { animation: none; }
+}
+
 /* ─── CARD HOVER ───
    One hover for cover cards (album, playlist, video), the Hub's "Uniquely
    yours" one: the card rises 2px, its title turns primary (a
@@ -11215,8 +11254,12 @@ button.connect-line:disabled {
 .queue-sidebar-head {
   display: flex;
   flex-direction: column;
-  gap: 10px;
   padding: 22px calc(var(--queue-pad) + 4px) 6px calc(var(--queue-pad) + 6px);
+}
+/* Each block under the title carries its own space above, inside its
+   .presence-fold-inner, so it folds away with it. */
+.queue-sidebar-block {
+  padding-top: 10px;
 }
 .queue-sidebar-title-row {
   display: flex;
