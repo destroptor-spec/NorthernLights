@@ -30,6 +30,7 @@
 - **Python 3.14:** The analysis environment moves to Python 3.14 with a pinned Essentia build. Existing installs rebuild `.venv` once (see the production guide; the full upgrade checklist is in `docs/genre-engine-upgrade.md`).
 
 ### Bug fixes
+- **Moving or renaming music files keeps their history:** a file that moves to another folder or gets a new name now stays the same track, with its playlist entries, likes, play history and analysis. Before, the scanner deleted the old track and added a new one, and everything attached to it was lost. Aurora recognises the file by its size and date, or by its size and tags when its date changed on the way; when it can't be sure (two identical copies, say), it does what it did before. A file that is re-tagged and moved in one go still counts as new.
 - **Gigs nearby on your home network:** an open gig now shows to everyone on the same network as the Aurora server, whatever their device's own address (each device on IPv6 has its own, which hid gigs between a phone and a desktop at home). Elsewhere, devices on the same IPv6 network see each other's gigs too.
 - **Queue sidebar:** dragging a track onto the one that plays no longer makes it vanish (it went among the played tracks); the drop snaps back. The track that plays can't be dragged either. On wide screens (1280 px and up) the sidebar has more room at its sides.
 - **Search field on phones:** no second, inner green border while typing, and only one clear (×) button: the browser's own no longer shows beside Aurora's (on desktop too).

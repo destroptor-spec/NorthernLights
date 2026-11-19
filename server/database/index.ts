@@ -2,6 +2,7 @@ import { Pool, type PoolClient } from 'pg';
 import { MOOD_SCORE_VERSION, type AudioMood } from '../../shared/audioMoods';
 import { databaseHost } from './dbHost';
 import path from 'path';
+import crypto from 'crypto';
 import fs from 'fs';
 import { ARTWORK_EXTRACTION_VERSION } from '../services/artworkVersion';
 import { AUDIO_FEATURE_VERSION, PENDING_AUDIO_FEATURES_SQL, STYLE_SCORE_COUNT, STYLE_SCORE_MODEL, STYLE_SCORE_VERSION } from '../services/audioFeatureVersion';
@@ -2162,7 +2163,7 @@ export async function getTrackPathsByIds(trackIds: string[]): Promise<Buffer[]> 
 // the filename. Mirrors addTrack's id/path derivation so it targets the same row.
 export async function recordUnparsedTrack(track: { path: string; title: string; fileMtime: number | null; fileSize: number | null }): Promise<void> {
   const db = await initDB();
-  const id = Buffer.from(track.path).toString('base64');
+  const id = await resolveTrackIdForPath(db, track.path);
   await db.query(
     `INSERT INTO tracks (id, title, path, file_mtime, file_size, decoded_path)
      VALUES ($1, $2, $3, $4, $5, decode($3, 'base64'))
@@ -2174,9 +2175,87 @@ export async function recordUnparsedTrack(track: { path: string; title: string; 
   );
 }
 
-export async function addTrack(track: any) {
+/**
+ * The id of the track at `path` (base64): the existing row's, else the id a
+ * new row gets. A track keeps its id when its file moves (moveTrackPaths, #78),
+ * so the id is not always base64(path) any more: look the row up by its path.
+ * A new file whose base64(path) is held by a moved track gets a fresh UUID.
+ */
+export async function resolveTrackIdForPath(db: Pick<Pool, 'query'>, trackPath: string): Promise<string> {
+  const existing = await db.query('SELECT id FROM tracks WHERE path = $1', [trackPath]);
+  if (existing.rows[0]) return String(existing.rows[0].id);
+  const derived = Buffer.from(trackPath).toString('base64');
+  const taken = await db.query('SELECT 1 FROM tracks WHERE id = $1', [derived]);
+  return taken.rows.length > 0 ? crypto.randomUUID() : derived;
+}
+
+/** What move detection compares for tracks the walk did not find (#78). */
+export async function getTracksForMoveMatching(paths: string[]): Promise<Array<{
+  path: string; size: number | null; mtime: number | null; duration: number | null;
+  title: string | null; artist: string | null; album: string | null;
+}>> {
+  if (paths.length === 0) return [];
   const db = await initDB();
-  const id = Buffer.from(track.path).toString('base64');
+  const rows: any[] = [];
+  for (let at = 0; at < paths.length; at += 5000) {
+    const result = await db.query(
+      'SELECT path, file_size, file_mtime, duration, title, artist, album FROM tracks WHERE path = ANY($1::text[])',
+      [paths.slice(at, at + 5000)],
+    );
+    rows.push(...result.rows);
+  }
+  return rows.map((row) => ({
+    path: String(row.path),
+    size: row.file_size != null ? Number(row.file_size) : null,
+    mtime: row.file_mtime != null ? Number(row.file_mtime) : null,
+    duration: row.duration != null ? Number(row.duration) : null,
+    title: row.title ?? null,
+    artist: row.artist ?? null,
+    album: row.album ?? null,
+  }));
+}
+
+/**
+ * Moves tracks to their new paths in place (#78): the row, its id and
+ * everything attached to it (playlist entries, likes, play history, analysis)
+ * stay. One transaction; a move whose new path is already a track is skipped.
+ * `mtime` null keeps the stored modified time (so the next walk re-reads the
+ * file). Returns the moves applied.
+ */
+export async function moveTrackPaths(moves: Array<{ from: string; to: string; size: number; mtime: number | null }>): Promise<Array<{ from: string; to: string }>> {
+  if (moves.length === 0) return [];
+  const db = await initDB();
+  const client = await db.connect();
+  const applied: Array<{ from: string; to: string }> = [];
+  try {
+    await client.query('BEGIN');
+    for (const move of moves) {
+      const result = await client.query(
+        `UPDATE tracks
+            SET path = $2,
+                decoded_path = decode($2, 'base64'),
+                file_size = $3,
+                file_mtime = COALESCE($4, file_mtime)
+          WHERE path = $1
+            AND NOT EXISTS (SELECT 1 FROM tracks other WHERE other.path = $2)`,
+        [move.from, move.to, move.size, move.mtime],
+      );
+      if (result.rowCount) applied.push({ from: move.from, to: move.to });
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+  return applied;
+}
+
+/** Writes a scanned track; returns its id (see resolveTrackIdForPath). */
+export async function addTrack(track: any): Promise<string> {
+  const db = await initDB();
+  const id = await resolveTrackIdForPath(db, track.path);
   
   // Sanitize strings to remove null bytes which crash Postgres
   const sanitizeArray = (arr: any) => Array.isArray(arr) ? arr.map(sanitizeString) : arr;
@@ -2332,6 +2411,7 @@ export async function addTrack(track: any) {
       WHERE track_features.bpm IS DISTINCT FROM EXCLUDED.bpm OR track_features.acoustic_vector_8d IS DISTINCT FROM EXCLUDED.acoustic_vector_8d
     `, [id, track.audioFeatures.bpm, vector8dStr]);
   }
+  return id;
 }
 
 // One-time backfill of file_size for rows scanned before the column existed.

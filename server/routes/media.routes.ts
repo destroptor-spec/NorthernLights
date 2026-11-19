@@ -249,7 +249,16 @@ async function resolveTrackForHls(trackId: string, userId?: string): Promise<{
     duration = Number.isFinite(Number(result.rows[0].duration)) ? Number(result.rows[0].duration) : null;
     resolvedId = trackId;
   } else {
-    const dbPath = Buffer.from(decodeURIComponent(trackId), 'base64').toString();
+    // A track's file is looked up by its id: a moved track keeps its old id
+    // (#78), so its id no longer spells its path. Decoding the id is only the
+    // fallback for an id the database doesn't know.
+    const decodedId = decodeURIComponent(trackId);
+    let dbPath = Buffer.from(decodedId, 'base64').toString();
+    try {
+      const db = await initDB();
+      const byId = await db.query('SELECT path FROM tracks WHERE id = $1', [decodedId]);
+      if (byId.rows[0]?.path) dbPath = String(byId.rows[0].path);
+    } catch { /* the decoded id below */ }
     fileBuf = pathToBuffer(dbPath);
 
     try {

@@ -86,6 +86,8 @@ Library scanning operates in three distinct phases:
 
 1. **Walk Phase**: Recursive directory traversal collecting audio file paths (MP3, FLAC, OGG, M4A, AAC, WMA). No database writes.
 
+   **Moves and renames (#78):** before the walk removes tracks it didn't find, `services/moveDetection.ts` pairs them with new files one-to-one (same size and modified time; else same size, title, artist, album and length ±1.5 s) and `moveTrackPaths` moves the row in place, so its id, playlist entries, likes, history and analysis stay. A track's id is therefore not always base64(path): look rows up by path (`resolveTrackIdForPath`, used by `addTrack` / `recordUnparsedTrack`), and the stream route resolves a file by id first.
+
 2. **Metadata Phase**: Parallel ID3/Vorbis/ASF tag extraction via `music-metadata`. Stores track metadata (title, artist, album, genre, duration) in PostgreSQL. Creates artist/album/genre entity records. Tracks visible immediately after this phase.
 
 3. **Analysis Phase**: Audio feature extraction via worker threads:
