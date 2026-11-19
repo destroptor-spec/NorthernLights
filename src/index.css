@@ -11097,11 +11097,25 @@ button.connect-line:disabled {
    Header: "Now playing" (or the gig's name) and ⋯, Start Gig or the gig's
    controls under it. Then the queue in sections (QueueList `sections`):
    headings over rows of cover, title and artists. */
+/* The sidebar's side padding: header, lists and tabs alike. More room on
+   wide screens (Tailwind xl). The header sits a few pixels in, level with
+   the rows' own padding. */
+.queue-sidebar {
+  --queue-pad: 0.75rem;
+}
+@media (min-width: 1280px) {
+  .queue-sidebar {
+    --queue-pad: 1.75rem;
+  }
+}
+.queue-pad-x {
+  padding-inline: var(--queue-pad);
+}
 .queue-sidebar-head {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 22px 16px 6px 18px;
+  padding: 22px calc(var(--queue-pad) + 4px) 6px calc(var(--queue-pad) + 6px);
 }
 .queue-sidebar-title-row {
   display: flex;
@@ -11350,7 +11364,7 @@ button.connect-line:disabled {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 4px;
-  margin: 0 12px 12px;
+  margin: 0 var(--queue-pad) 12px;
   padding: 4px;
   border-radius: 10px;
   background: color-mix(in srgb, var(--color-text-primary) 5%, transparent);

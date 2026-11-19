@@ -108,7 +108,7 @@ export const RecentlyPlayedList: React.FC<{
   if (!active) return null;
 
   return (
-    <div className="px-3 pt-3 pb-4">
+    <div className="queue-pad-x pt-3 pb-4">
       {loaded && tracks.length === 0 && !failed && (
         <p className="queue-empty">Nothing played yet.</p>
       )}
