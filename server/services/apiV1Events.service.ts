@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import { locationOf } from './nearbyLocation';
 import crypto from 'crypto';
 import { initDB } from '../database';
 import { getLibraryRevision } from './apiV1Dto.service';
@@ -97,26 +98,27 @@ export type ConnectedDevice = { clientId: string; name: string | null; kind: Con
 
 // The user's devices with an event stream open now: those remote commands
 // and transfers can reach, and the Connect menu lists (GET /devices).
-// Each with the address its stream comes from, for gigs nearby (6e).
-const listening = new Map<string, Map<string, { count: number; name: string | null; kind: ConnectedDeviceKind; ip: string | null }>>();
+// Each with where its stream comes from, for gigs nearby (6e): its location
+// (nearbyLocation.ts: the server's LAN, an IPv6 /64, or a public IPv4).
+const listening = new Map<string, Map<string, { count: number; name: string | null; kind: ConnectedDeviceKind; location: string | null }>>();
 
 /** The users with Aurora open somewhere now (an event stream open): who can be prompted to join. */
 export function listOnlineUserIds(): string[] {
   return Array.from(listening.keys());
 }
 
-/** The public addresses the user's open streams come from (docs/listen-together.md, Discovery). */
-export function addressesOf(userId: string): Set<string> {
-  const addresses = new Set<string>();
-  for (const device of listening.get(userId)?.values() ?? []) if (device.ip) addresses.add(device.ip);
-  return addresses;
+/** Where the user's open streams come from, as locations (docs/listen-together.md, Discovery). */
+export function locationsOf(userId: string): Set<string> {
+  const locations = new Set<string>();
+  for (const device of listening.get(userId)?.values() ?? []) if (device.location) locations.add(device.location);
+  return locations;
 }
 
-/** The users with a stream open from any of `addresses`: who is "nearby". */
-export function usersAt(addresses: Set<string>): string[] {
-  if (addresses.size === 0) return [];
+/** The users with a stream open from any of `locations`: who is "nearby". */
+export function usersAt(locations: Set<string>): string[] {
+  if (locations.size === 0) return [];
   return Array.from(listening.entries())
-    .filter(([, clients]) => Array.from(clients.values()).some((device) => !!device.ip && addresses.has(device.ip)))
+    .filter(([, clients]) => Array.from(clients.values()).some((device) => !!device.location && locations.has(device.location)))
     .map(([userId]) => userId);
 }
 
@@ -143,7 +145,7 @@ export function noteClientListening(
     count: (existing?.count ?? 0) + 1,
     name: device.name ?? existing?.name ?? null,
     kind: device.kind ?? existing?.kind ?? 'browser',
-    ip: device.ip ?? existing?.ip ?? null,
+    location: locationOf(device.ip) ?? existing?.location ?? null,
   });
   listening.set(userId, clients);
   if (!existing) publishDevicesChanged(userId);

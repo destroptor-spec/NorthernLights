@@ -1,6 +1,7 @@
 import { initDB } from '../database';
 import { SESSION_SCOPES, type OnlineUser, type PlaybackSession, type SessionInvite, type SessionInvitePreview, type SessionMembers, type UserAvatar } from '../../shared/api/v1';
-import { addressesOf, listOnlineUserIds, publishApiV1Event, usersAt } from './apiV1Events.service';
+import { listOnlineUserIds, locationsOf, publishApiV1Event, usersAt } from './apiV1Events.service';
+import { locationOf } from './nearbyLocation';
 import { isPlaybackSyncEnabledFor } from './playbackSync.service';
 import {
   enforceAccess,
@@ -79,7 +80,7 @@ async function gigPermissions(db: Db, sessionId: string): Promise<string[]> {
 
 /** Users nearby hear that a discoverable gig appeared or went (live only), to read the list again. */
 function announceNearby(ownerId: string, sessionId: string, discoverable: boolean) {
-  for (const user of usersAt(addressesOf(ownerId))) {
+  for (const user of usersAt(locationsOf(ownerId))) {
     if (user !== ownerId) publishApiV1Event(user, 'playbackSession.discoverable', { sessionId, discoverable }, { transient: true });
   }
 }
@@ -323,23 +324,26 @@ export async function joinSessionByInvite(userId: string, token: string): Promis
   return sessionAs(db, userId, invite.session_id);
 }
 
-/** A discoverable gig whose owner has a stream open from `ip`, other than the user's own. */
+/** A discoverable gig whose owner has a stream open from where `ip` is (its location), other than the user's own. */
 async function nearbyGig(db: Db, sessionId: string, ip: string) {
   if (!UUID.test(sessionId)) return null;
   const row = (await db.query('SELECT id, user_id, visibility FROM playback_sessions WHERE id = $1', [sessionId])).rows[0] as
     { id: string; user_id: string; visibility: string } | undefined;
-  if (!row || row.visibility !== 'discoverable' || !ip || !addressesOf(String(row.user_id)).has(ip)) return null;
+  const here = locationOf(ip);
+  if (!row || row.visibility !== 'discoverable' || !here || !locationsOf(String(row.user_id)).has(here)) return null;
   return { id: String(row.id), ownerId: String(row.user_id) };
 }
 
 /**
- * Discoverable gigs nearby: the owner has a stream open from the same
- * public address as the caller (docs/listen-together.md, Discovery). Each
- * as its preview: the owner's name and avatars, nothing about what plays.
+ * Discoverable gigs nearby: the owner has a stream open from the caller's
+ * location: the server's LAN, the same IPv6 network or the same public IPv4
+ * (nearbyLocation.ts, docs/listen-together.md, Discovery). Each as its
+ * preview: the owner's name and avatars, nothing about what plays.
  */
 export async function listNearbyGigs(userId: string, ip: string): Promise<SessionInvitePreview[]> {
-  if (!ip) return [];
-  const owners = usersAt(new Set([ip])).filter((id) => id !== userId);
+  const here = locationOf(ip);
+  if (!here) return [];
+  const owners = usersAt(new Set([here])).filter((id) => id !== userId);
   if (owners.length === 0) return [];
   const db = await initDB();
   const rows = (await db.query(

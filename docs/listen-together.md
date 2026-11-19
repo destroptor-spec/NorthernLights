@@ -149,7 +149,20 @@ same public IP address** as one of the owner's devices that has an open event
 stream (`getTrustedClientIp`, which already honours `TRUSTED_PROXY_MODE`).
 
 - **Who sees a discoverable session:** online users on this server whose event
-  stream comes from that same address.
+  stream comes from the same *location* (`server/services/nearbyLocation.ts`,
+  2026-11-19, after a gig on a phone didn't show on a desktop at home):
+  - **The server's LAN is one location:** any private address (10/8,
+    172.16/12, 192.168/16, the VPN range 100.64/10, loopback, IPv6 unique and
+    link-local) can only reach the server from its own network, whatever the
+    subnet or VLAN; so can an IPv6 address in one of the server's own IPv6
+    networks (its interfaces' /64s), which is a device at home coming through
+    Cloudflare over IPv6.
+  - **Other IPv6 addresses** count by their /64: every device on a network has
+    its own IPv6 address, but they share the /64.
+  - **A public IPv4 address** counts as itself (one router, one address).
+  - Not covered: one device through Cloudflare over IPv4 and another over
+    IPv6 from the same home (or a phone on Wi-Fi while the server only sees the
+    home's public IPv4); they still look like two places.
 - **What they see before joining:** see [Before joining](#before-joining).
 - **Limits:**
   - a phone on mobile data, or behind a VPN, won't see it;
