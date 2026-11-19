@@ -23,6 +23,7 @@ import { useToast } from '../hooks/useToast';
 import type { TrackInfo } from '../utils/fileSystem';
 import { canMoveInSections, nextFromLabel, queueSections } from '../utils/queueSections';
 import { useGigPeople } from '../hooks/useGigPeople';
+import { usePresenceList } from '../hooks/usePresenceList';
 
 // Clear-with-undo, shared by the desktop sidebar header and the mobile
 // now-playing queue header so the two surfaces never drift apart.
@@ -103,8 +104,17 @@ interface QueueListProps {
   upcoming?: boolean;
 }
 
-/** A row of the list: a section heading, or the queue entry at `index`. */
-type QueueRow = { type: 'heading'; key: string; label: string } | { type: 'track'; index: number };
+/**
+ * A row of the list: a section heading, or the queue entry at `index`, with
+ * what it shows, so a row that went can still be drawn while it folds away.
+ */
+type QueueRow =
+  | { type: 'heading'; key: string; label: string }
+  | { type: 'track'; index: number; id: string; track: TrackInfo; active: boolean };
+
+const rowKey = (row: QueueRow) => (row.type === 'heading' ? `heading-${row.key}` : row.id);
+/** More rows in or out than this at once (a new album) just switches. */
+const MAX_FOLDING_ROWS = 12;
 
 // The virtualized queue rows plus their drag-reorder and remove-with-undo
 // wiring, extracted from PlaylistSidebar so the mobile now-playing sheet can
@@ -139,31 +149,42 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
     [knownArtistKeys]
   );
 
+  // Queue entry IDs are unique and stay with a row when it moves, so a drag
+  // animates the row itself; position-based IDs only for entries without one.
+  const sortableItems = useMemo(() => playlist.map((t, idx) => t.queueEntryId || `${t.id}-${idx}`), [playlist]);
+
   const rows = useMemo<QueueRow[]>(() => {
+    const trackRow = (index: number): QueueRow => ({
+      type: 'track', index, id: sortableItems[index], track: playlist[index], active: currentIndex === index,
+    });
     if (upcoming && !sections) {
       const from = currentIndex !== null && currentIndex < playlist.length ? currentIndex : 0;
-      return playlist.slice(from).map((_, offset) => ({ type: 'track' as const, index: from + offset }));
+      return playlist.slice(from).map((_, offset) => trackRow(from + offset));
     }
-    if (!sections) return playlist.map((_, index) => ({ type: 'track' as const, index }));
+    if (!sections) return playlist.map((_, index) => trackRow(index));
     const parts = queueSections(playlist, currentIndex);
     const out: QueueRow[] = [];
     const add = (key: string, label: string, indexes: number[]) => {
       if (indexes.length === 0) return;
       if (!collapsed) out.push({ type: 'heading', key, label });
-      for (const index of indexes) out.push({ type: 'track', index });
+      for (const index of indexes) out.push(trackRow(index));
     };
     if (parts.current !== null) add('current', 'Current track', [parts.current]);
     add('queued', 'Next in Queue', parts.queued);
     add('context', nextFromLabel(queueSource, parts.context.map((index) => playlist[index])), parts.context);
     add('infinity', 'Next from: Infinity', parts.infinity);
     return out;
-  }, [sections, upcoming, playlist, currentIndex, queueSource, collapsed]);
+  }, [sections, upcoming, playlist, sortableItems, currentIndex, queueSource, collapsed]);
+
+  // In the sidebar, rows and headings fold open as they come and shut as they
+  // go (a track queued, the played one leaving the top), as in the Connect card.
+  const presence = usePresenceList(rows, rowKey, { enabled: sections, maxAnimated: MAX_FOLDING_ROWS });
 
   // Maintain stability of item heights using estimateSize
   const virtualizer = useVirtualizer({
-    count: rows.length,
+    count: presence.length,
     getScrollElement,
-    estimateSize: (i) => (rows[i]?.type === 'heading' ? 48 : collapsed ? 80 : touch ? 62 : sections ? 60 : 70),
+    estimateSize: (i) => (presence[i]?.item.type === 'heading' ? 48 : collapsed ? 80 : touch ? 62 : sections ? 60 : 70),
     overscan: 10,
     scrollMargin,
   });
@@ -171,10 +192,10 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
   useImperativeHandle(ref, () => ({
     // `index` is the queue entry's; in sections the rows include headings.
     scrollToIndex: (index, options) => {
-      const row = rows.findIndex((entry) => entry.type === 'track' && entry.index === index);
+      const row = presence.findIndex((entry) => !entry.leaving && entry.item.type === 'track' && entry.item.index === index);
       if (row >= 0) virtualizer.scrollToIndex(row, options);
     },
-  }), [virtualizer, rows]);
+  }), [virtualizer, presence]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -183,13 +204,10 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
     })
   );
 
-  // Queue entry IDs are unique and stay with a row when it moves, so a drag
-  // animates the row itself; position-based IDs only for entries without one.
-  const sortableItems = useMemo(() => playlist.map((t, idx) => t.queueEntryId || `${t.id}-${idx}`), [playlist]);
-  // The rows that can be dragged, in the order they show.
+  // The rows that can be dragged, in the order they show (not those folding away).
   const visibleSortable = useMemo(
-    () => rows.flatMap((row) => (row.type === 'track' ? [sortableItems[row.index]] : [])),
-    [rows, sortableItems],
+    () => presence.flatMap((entry) => (entry.item.type === 'track' && !entry.leaving ? [entry.item.id] : [])),
+    [presence],
   );
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
@@ -227,8 +245,10 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
             className="list-none p-0 m-0"
           >
             {virtualizer.getVirtualItems().map((virtualRow) => {
-              const row = rows[virtualRow.index];
-              if (!row) return null;
+              const entry = presence[virtualRow.index];
+              if (!entry) return null;
+              const row = entry.item;
+              const fold = `presence-fold${entry.entering ? ' is-entering' : ''}${entry.leaving ? ' is-leaving' : ''}`;
               const rowStyle: React.CSSProperties = {
                 position: 'absolute',
                 top: 0,
@@ -242,33 +262,40 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
               if (row.type === 'heading') {
                 return (
                   <li
-                    key={`heading-${row.key}`}
+                    key={entry.key}
                     data-index={virtualRow.index}
                     ref={virtualizer.measureElement}
                     style={rowStyle}
-                    className="queue-section-heading"
+                    className={fold}
                     role="presentation"
+                    aria-hidden={entry.leaving || undefined}
                   >
-                    <h4>{row.label}</h4>
+                    <div className="presence-fold-inner queue-section-heading">
+                      <h4>{row.label}</h4>
+                    </div>
                   </li>
                 );
               }
+              // A row that went is drawn as it was (its index may be stale), and does nothing.
               const idx = row.index;
-              const t = playlist[idx];
-              const itemId = sortableItems[idx];
+              const t = row.track;
+              const itemId = row.id;
 
               return (
                 <div
-                  key={itemId}
+                  key={entry.key}
                   data-index={virtualRow.index}
                   ref={virtualizer.measureElement}
                   style={rowStyle}
+                  className={fold}
+                  aria-hidden={entry.leaving || undefined}
                 >
+                  <div className="presence-fold-inner">
                   <PlaylistItem
                     id={itemId}
                     track={t}
                     index={idx}
-                    isActive={currentIndex === idx}
+                    isActive={row.active}
                     isSidebarCollapsed={collapsed}
                     onPlay={playAtIndex}
                     onContextMenu={openRowMenu}
@@ -277,9 +304,10 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
                     opacity={(t.isInfinity && (currentIndex === null || idx > currentIndex)) ? 0.6 : 1}
                     touch={touch}
                     // The sidebar's current track: neither dragged nor dropped onto.
-                    locked={(sections || upcoming) && currentIndex === idx}
+                    locked={entry.leaving || ((sections || upcoming) && currentIndex === idx)}
                     queuedBy={sections && t.queuedBy ? gigPeople?.get(t.queuedBy) : undefined}
                   />
+                  </div>
                 </div>
               );
             })}

@@ -7,6 +7,9 @@ import { sessionTitle } from '../utils/listenTogetherText';
 import { ContextMenuButton, ContextMenuDivider, ContextMenuFrame, ContextMenuList, ContextMenuPortal } from './ContextMenu';
 import { EndGigButton, GigJoinButton, GigLevel, GigOpenSession, GigPeople, InviteButton, useOwnGig } from './GigSection';
 import { UserAvatar } from './UserAvatar';
+import { usePresenceList } from '../hooks/usePresenceList';
+
+const blockKey = (block: { key: string }) => block.key;
 import { joinNearby, leaveSharedSession, openSharedSession, refreshNearby } from '../utils/listenTogether';
 
 /**
@@ -45,6 +48,83 @@ export const QueueSidebarHeader: React.FC<{
     if (syncOn && showsGig) void refreshNearby();
   }, [syncOn, showsGig]);
 
+  // What sits under the title, each folding open as it comes and shut as it
+  // goes (a gig opening nearby, starting or ending a gig), as in Connect.
+  const headerBlocks: Array<{ key: string; render: () => React.ReactNode }> = [];
+  // A gig to join: the user's own on another device first, then those nearby.
+  if (sharedElsewhere) {
+    headerBlocks.push({
+      key: `join-${sharedElsewhere.sessionId}`,
+      render: () => (
+        <GigJoinButton
+          ownerName={sharedElsewhere.ownerName}
+          owner={sharedElsewhere.owner}
+          disabled={!!joining}
+          onJoin={() => void join('shared', openSharedSession)}
+        />
+      ),
+    });
+  }
+  if (gig) {
+    for (const preview of nearby) {
+      headerBlocks.push({
+        key: `join-${preview.sessionId}`,
+        render: () => (
+          <GigJoinButton
+            ownerName={preview.ownerName}
+            owner={preview.owner}
+            disabled={!!joining}
+            onJoin={() => void join(preview.sessionId, () => joinNearby(preview))}
+          />
+        ),
+      });
+    }
+  }
+  // A guest, on the device that shows the gig: its owner, and Leave.
+  if (syncOn && showsGig && guestView) {
+    headerBlocks.push({
+      key: 'guest',
+      render: () => (
+        <div className="queue-gig-people">
+          {shared?.owner && <UserAvatar avatar={shared.owner} size="sm" />}
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => void leaveSharedSession()}>
+            Leave
+          </button>
+        </div>
+      ),
+    });
+  }
+  if (gig && !running) {
+    headerBlocks.push({
+      key: 'start',
+      render: () => (
+        <button type="button" className="queue-gig-start" disabled={starting} onClick={() => void start()}>
+          <Users size={13} aria-hidden="true" />
+          Start Gig
+        </button>
+      ),
+    });
+  }
+  if (gig && running) {
+    headerBlocks.push({
+      key: 'gig',
+      render: () => (
+        <div className="queue-gig">
+          <div className="queue-gig-people">
+            <GigPeople people={people} />
+            <InviteButton className="queue-gig-invite" />
+          </div>
+          <GigLevel permissions={own?.permissions} />
+          <GigOpenSession discoverable={own?.visibility === 'discoverable'} />
+          <div>
+            <EndGigButton className="btn-ghost" />
+          </div>
+        </div>
+      ),
+    });
+  }
+  const blocks = usePresenceList(headerBlocks, blockKey);
+
   const join = async (key: string, act: () => Promise<void>) => {
     if (joining) return;
     setJoining(key);
@@ -77,55 +157,15 @@ export const QueueSidebarHeader: React.FC<{
         </button>
       </div>
 
-      {/* A gig to join: the user's own on another device first, then those nearby. */}
-      {sharedElsewhere && (
-        <GigJoinButton
-          ownerName={sharedElsewhere.ownerName}
-          owner={sharedElsewhere.owner}
-          disabled={!!joining}
-          onJoin={() => void join('shared', openSharedSession)}
-        />
-      )}
-      {gig && nearby.map((preview) => (
-        <GigJoinButton
-          key={preview.sessionId}
-          ownerName={preview.ownerName}
-          owner={preview.owner}
-          disabled={!!joining}
-          onJoin={() => void join(preview.sessionId, () => joinNearby(preview))}
-        />
+      {blocks.map(({ key, item, entering, leaving }) => (
+        <div
+          key={key}
+          className={`presence-fold${entering ? ' is-entering' : ''}${leaving ? ' is-leaving' : ''}`}
+          aria-hidden={leaving || undefined}
+        >
+          <div className="presence-fold-inner queue-sidebar-block">{item.render()}</div>
+        </div>
       ))}
-
-      {/* A guest, on the device that shows the gig: its owner, and Leave. */}
-      {syncOn && showsGig && guestView && (
-        <div className="queue-gig-people">
-          {shared?.owner && <UserAvatar avatar={shared.owner} size="sm" />}
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => void leaveSharedSession()}>
-            Leave
-          </button>
-        </div>
-      )}
-
-      {gig && !running && (
-        <button type="button" className="queue-gig-start" disabled={starting} onClick={() => void start()}>
-          <Users size={13} aria-hidden="true" />
-          Start Gig
-        </button>
-      )}
-
-      {gig && running && (
-        <div className="queue-gig">
-          <div className="queue-gig-people">
-            <GigPeople people={people} />
-            <InviteButton className="queue-gig-invite" />
-          </div>
-          <GigLevel permissions={own?.permissions} />
-          <GigOpenSession discoverable={own?.visibility === 'discoverable'} />
-          <div>
-            <EndGigButton className="btn-ghost" />
-          </div>
-        </div>
-      )}
 
       <ContextMenuPortal
         open={menuOpen}
