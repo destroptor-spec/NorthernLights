@@ -20,26 +20,18 @@ beforeEach(() => {
 
 const openMenu = () => fireEvent.click(screen.getByRole('button', { name: /listener/ }));
 
-it('sets the sleep timer in a modal from the user menu', () => {
+it('sets the sleep timer on a slider from 10 to 90 minutes, in a modal from the user menu', () => {
   render(<UserMenu />);
   openMenu();
   fireEvent.click(screen.getByRole('button', { name: 'Sleep timer' }));
   expect(screen.getByRole('dialog', { name: 'Sleep timer' })).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: '45 min' }));
+  const slider = screen.getByRole('slider', { name: 'Minutes' }) as HTMLInputElement;
+  expect([slider.min, slider.max, slider.step, slider.value]).toEqual(['10', '90', '5', '30']);
+  fireEvent.change(slider, { target: { value: '45' } });
+  expect(screen.getByText('45 min')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Start' }));
   expect(startSleepTimer).toHaveBeenCalledWith(45);
   expect(screen.queryByRole('dialog')).toBeNull();
-});
-
-it('takes a number of minutes of your own, within 1 to 480', () => {
-  render(<UserMenu />);
-  openMenu();
-  fireEvent.click(screen.getByRole('button', { name: 'Sleep timer' }));
-  const minutes = screen.getByRole('spinbutton', { name: 'Minutes' });
-  fireEvent.change(minutes, { target: { value: '0' } });
-  expect((screen.getByRole('button', { name: 'Start' }) as HTMLButtonElement).disabled).toBe(true);
-  fireEvent.change(minutes, { target: { value: '20' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Start' }));
-  expect(startSleepTimer).toHaveBeenCalledWith(20);
 });
 
 it('while a timer runs: its countdown and a cancel, and no way to start a second one', () => {

@@ -4,27 +4,26 @@ import { X } from 'lucide-react';
 import { usePlayerStore } from '../store/index';
 import { useDialogFocus } from '../hooks/useDialogFocus';
 
-const PRESETS = [15, 30, 45, 60, 90];
-const MAX_MINUTES = 480;
+const MIN_MINUTES = 10;
+const MAX_MINUTES = 90;
+const STEP_MINUTES = 5;
 
 /**
- * Sets the sleep timer (opened from the user menu): a preset or a number of
+ * Sets the sleep timer (opened from the user menu) on a slider from 10 to 90
  * minutes. The music fades out over its last 20 seconds and pauses. One timer
  * at a time: the menu offers this only while none runs.
  */
 export const SleepTimerModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const startSleepTimer = usePlayerStore((state) => state.startSleepTimer);
-  const [minutes, setMinutes] = useState('30');
+  const [minutes, setMinutes] = useState(30);
   const titleId = useId();
   const descriptionId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   useDialogFocus(dialogRef, inputRef, onClose);
 
-  const value = Number(minutes);
-  const valid = Number.isInteger(value) && value >= 1 && value <= MAX_MINUTES;
-  const start = (chosen: number) => {
-    startSleepTimer(chosen);
+  const start = () => {
+    startSleepTimer(minutes);
     onClose();
   };
 
@@ -55,39 +54,37 @@ export const SleepTimerModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
           </p>
         </div>
 
-        <div className="flex flex-wrap gap-2" role="group" aria-label="Presets">
-          {PRESETS.map((preset) => (
-            <button key={preset} type="button" className="btn btn-ghost btn-sm" onClick={() => start(preset)}>
-              {preset} min
-            </button>
-          ))}
-        </div>
-
         <form
-          className="space-y-4"
+          className="space-y-5"
           onSubmit={(e) => {
             e.preventDefault();
-            if (valid) start(value);
+            start();
           }}
         >
-          <label className="flex items-center gap-3 text-sm text-[var(--color-text-secondary)]">
-            Or
+          <div>
+            <label className="flex justify-between text-sm font-medium text-[var(--color-text-primary)] mb-2">
+              <span>Stop after</span>
+              <span className="tabular-nums">{minutes} min</span>
+            </label>
             <input
               ref={inputRef}
-              type="number"
-              inputMode="numeric"
-              min={1}
+              type="range"
+              min={MIN_MINUTES}
               max={MAX_MINUTES}
-              step={1}
+              step={STEP_MINUTES}
               value={minutes}
-              onChange={(e) => setMinutes(e.target.value)}
+              onChange={(e) => setMinutes(Number(e.target.value))}
               aria-label="Minutes"
-              className="w-24 px-3 py-2 rounded-xl bg-[var(--color-surface)] border border-[var(--glass-border)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors text-sm tabular-nums"
+              aria-valuetext={`${minutes} minutes`}
+              className="w-full accent-[var(--color-primary)]"
             />
-            minutes
-          </label>
+            <div className="flex justify-between text-xs text-[var(--color-text-muted)] mt-1 tabular-nums" aria-hidden="true">
+              <span>{MIN_MINUTES} min</span>
+              <span>{MAX_MINUTES} min</span>
+            </div>
+          </div>
           <div className="flex gap-3">
-            <button type="submit" disabled={!valid} className="btn btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed">
+            <button type="submit" className="btn btn-primary flex-1">
               Start
             </button>
             <button type="button" onClick={onClose} className="btn btn-ghost flex-1">
