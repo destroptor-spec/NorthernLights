@@ -62,7 +62,7 @@ export const PlaylistItem = memo(({
       <li
         ref={setNodeRef}
         style={style}
-        className={`queue-row-touch flex items-center gap-3 py-1.5 pl-2 my-[2px] rounded-lg border select-none
+        className={`queue-row-touch flex items-center gap-2 py-1.5 pl-2 my-[2px] rounded-lg border select-none
           ${isActive ? 'bg-emerald-500/10 border-emerald-500/20' : 'border-transparent'}
           ${isDragging ? 'bg-[var(--glass-bg)] shadow-lg' : ''}`}
         {...menuTrigger}
@@ -79,40 +79,43 @@ export const PlaylistItem = memo(({
       >
         <AlbumArt artUrl={track.artUrl} artist={track.artist} className="w-12 h-12 rounded-sm shrink-0" />
         <div className="flex-1 min-w-0">
-          <div className={`text-[0.9rem] truncate ${isActive ? 'text-[var(--color-primary)] font-semibold' : 'text-[var(--color-text-secondary)]'}`}>
+          <div className={`text-[0.9rem] line-clamp-2 break-words ${isActive ? 'text-[var(--color-primary)] font-semibold' : 'text-[var(--color-text-secondary)]'}`}>
             {/* Queued by hand (Play next, Add to queue): a Q as tall as the title. */}
             {track.queued && (
               <SquareLetterQ className="queue-mark" aria-label="Queued" role="img" />
             )}
             {title}
           </div>
-          <div className="text-[0.75rem] text-[var(--color-text-muted)] truncate mt-[2px]">
-            {track.artist && parseArtists(track.artist).join(', ')}
-            {track.artist && track.duration !== undefined && ' · '}
-            {track.duration !== undefined && <span className="tabular-nums">{formatTime(track.duration)}</span>}
+          <div className="flex items-baseline gap-1 text-[0.75rem] text-[var(--color-text-muted)] mt-[2px]">
+            {track.artist && <span className="truncate">{parseArtists(track.artist).join(', ')}</span>}
+            {track.duration !== undefined && (
+              <span className="shrink-0 tabular-nums">{track.artist && '· '}{formatTime(track.duration)}</span>
+            )}
           </div>
         </div>
-        <button
-          type="button"
-          className="queue-row-touch-btn"
-          aria-label={`More options for ${title}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            onContextMenu(track, e.clientX, e.clientY);
-          }}
-        >
-          <MoreHorizontal size={18} />
-        </button>
-        {!locked && <span
-          {...attributes}
-          {...listeners}
-          className="queue-row-touch-btn queue-row-drag-handle"
-          data-no-long-press
-          aria-label={`Reorder ${title}`}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <GripVertical size={18} />
-        </span>}
+        <div className="flex shrink-0 items-center">
+          <button
+            type="button"
+            className="queue-row-touch-btn"
+            aria-label={`More options for ${title}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onContextMenu(track, e.clientX, e.clientY);
+            }}
+          >
+            <MoreHorizontal size={18} />
+          </button>
+          {!locked && <span
+            {...attributes}
+            {...listeners}
+            className="queue-row-touch-btn queue-row-drag-handle"
+            data-no-long-press
+            aria-label={`Reorder ${title}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <GripVertical size={18} />
+          </span>}
+        </div>
       </li>
     );
   }
