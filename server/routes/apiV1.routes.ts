@@ -237,6 +237,15 @@ const sessionInviteLimiter = createRateLimiter({
 // needs its own. Range requests make it the highest-frequency endpoint here, and
 // its own bucket stops a heavy stream from consuming a client's API quota.
 const mediaLimiter = createRateLimiter({ keyPrefix: 'api-v1-media', windowMs: 60_000, max: 1800 });
+// Stream format starts an ffprobe for a file not probed yet: its own bucket
+// per user keeps a client from spawning probes at the listener rate. The
+// player asks once per track change, and repeats come from the cache.
+const streamFormatLimiter = createRateLimiter({
+  keyPrefix: 'api-v1-stream-format',
+  windowMs: 60_000,
+  max: 120,
+  keyGenerator: (req) => `user:${req.apiV1?.userId ?? 'unknown'}`,
+});
 
 function parseBody<T>(schema: ZodType<T>, req: Request, res: Response): T | null {
   const parsed = schema.safeParse(req.body || {});
@@ -886,7 +895,7 @@ const STREAM_FORMAT_CODECS = new Set(['aac', 'mp3', 'ac3', 'eac3']);
 
 // What comes in and what goes out: the file's own audio, and what the HLS
 // stream at this quality writes (the same plan the transcode follows).
-router.get('/tracks/:id/stream-format', async (req, res) => {
+router.get('/tracks/:id/stream-format', streamFormatLimiter, async (req, res) => {
   const id = routeParam(req, 'id');
   const quality = typeof req.query.quality === 'string' && STREAM_FORMAT_QUALITIES.has(req.query.quality) ? req.query.quality : '128k';
   const requestedCodec = typeof req.query.codec === 'string' && STREAM_FORMAT_CODECS.has(req.query.codec) ? req.query.codec : 'aac';
