@@ -226,6 +226,31 @@ export const lyricsSchema = z.object({
   })),
 }).meta({ id: 'TrackLyrics' });
 
+/**
+ * What one track's audio is and what a stream of it carries: the file's own
+ * codec, sample rate and bit depth, and what the server's HLS stream writes
+ * at a quality (copied as is, or transcoded; above 48 kHz resampled to 44.1/48).
+ */
+export const streamFormatSchema = z.object({
+  trackId: OPAQUE_ID,
+  source: z.object({
+    codec: z.string().nullable().describe('ffprobe codec name, e.g. "flac", "aac", "mp3", "pcm_s24le".'),
+    container: z.string().nullable().describe('The scanned format, e.g. "FLAC", "MPEG", "MP4/M4A".'),
+    sampleRate: z.number().int().positive().nullable(),
+    bitDepth: z.number().int().positive().nullable().describe('Lossless sources only.'),
+    channels: z.number().int().positive().nullable(),
+    bitrate: z.number().int().positive().nullable().describe('bits/s'),
+    lossless: z.boolean().nullable(),
+  }),
+  output: z.object({
+    quality: z.string(),
+    mode: z.enum(['copy', 'transcode']),
+    codec: z.string(),
+    bitrate: z.number().int().positive().nullable().describe('bits/s; null for Auto, which adapts between renditions.'),
+    sampleRate: z.number().int().positive().nullable(),
+  }),
+}).meta({ id: 'StreamFormat' });
+
 export const QUEUE_ENTRY_ADDED_BY = ['user', 'infinity'] as const;
 const queueEntryAddedBySchema = z.enum(QUEUE_ENTRY_ADDED_BY)
   .describe('infinity: an Infinity pick (by the server, or a client that chose it itself). user: anything else. Clients show Infinity picks apart until they play.');
@@ -802,6 +827,7 @@ export const trackRaysSchema = z.object({
 }).meta({ id: 'TrackRays' });
 
 export type TrackRays = z.infer<typeof trackRaysSchema>;
+export type StreamFormat = z.infer<typeof streamFormatSchema>;
 export type BrowseStyleRef = z.infer<typeof browseStyleRefSchema>;
 export type BrowseGenre = z.infer<typeof browseGenreSchema>;
 export type BrowseGenres = z.infer<typeof browseGenresSchema>;

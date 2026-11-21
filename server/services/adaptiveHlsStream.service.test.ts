@@ -128,6 +128,11 @@ describe('adaptive HLS packaging', () => {
     expect(args.at(-1)).toBe('%v/playlist.m3u8');
   });
 
+  it('resamples once, before the split, when asked', () => {
+    const ladder = buildAdaptiveLadder(2_450_000, 'flac', true);
+    expect(buildAdaptiveFfmpegArgs('/music/track.flac', ladder, 'aac', 48000)).toContain(`[0:a:0]aresample=48000,asplit=${ladder.length}${ladder.map((_, i) => `[a${i}]`).join('')}`);
+  });
+
   it('deduplicates sessions and resolves only exact rendition-owned segments', async () => {
     spawnMock.mockImplementation(successfulFfmpeg as typeof spawn);
     const ladder = buildAdaptiveLadder(160_000, 'mp3');

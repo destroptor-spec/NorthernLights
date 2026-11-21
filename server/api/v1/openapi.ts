@@ -57,6 +57,7 @@ import {
   playlistSchema,
   trackSchema,
   userSchema,
+  streamFormatSchema,
 } from '../../../shared/api/v1';
 
 const registry = new OpenAPIRegistry();
@@ -92,6 +93,7 @@ const schemas = {
   PlaybackOutputReportResult: registry.register('PlaybackOutputReportResult', playbackOutputReportResultSchema),
   Preferences: registry.register('ListenerPreferences', listenerPreferencesSchema),
   Lyrics: registry.register('TrackLyrics', lyricsSchema),
+  StreamFormat: registry.register('StreamFormat', streamFormatSchema),
   BrowseGenres: registry.register('BrowseGenres', browseGenresSchema),
   BrowseGenreDetail: registry.register('BrowseGenreDetail', browseGenreDetailSchema),
   BrowseStyleDetail: registry.register('BrowseStyleDetail', browseStyleDetailSchema),
@@ -182,6 +184,7 @@ path({ method: 'get', path: '/genres', summary: 'List genres', tags: ['Library']
 path({ method: 'get', path: '/genres/{id}', summary: 'Get a genre and tracks', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(schemas.GenreDetail) });
 path({ method: 'get', path: '/tracks/{id}', summary: 'Get one path-free track resource', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(schemas.Track) });
 path({ method: 'get', path: '/tracks/{id}/rays', summary: '"Aurora rays from {title}": credits, genres and styles with their sources, sound, album and artist context, other albums with the recording', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(schemas.TrackRays) });
+path({ method: 'get', path: '/tracks/{id}/stream-format', summary: "A track's source audio (codec, sample rate, bit depth) and what an HLS stream of it carries at a quality", tags: ['Playback'], security: authed, request: { params: idParams, query: z.object({ quality: z.string().optional().describe('64k, 128k, 160k, 320k, source or auto (default 128k).'), codec: z.enum(['aac', 'mp3', 'ac3', 'eac3']).optional() }) }, responses: ok(schemas.StreamFormat) });
 path({ method: 'get', path: '/tracks/{id}/lyrics', summary: 'Get embedded synced or unsynced lyrics', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(schemas.Lyrics) });
 path({ method: 'get', path: '/search', summary: 'Search the listener library', tags: ['Library'], security: authed, request: { query: z.object({ q: z.string().min(1), limit: z.coerce.number().int().min(1).max(100).optional(), artistLimit: z.coerce.number().int().min(1).max(100).optional(), albumLimit: z.coerce.number().int().min(1).max(100).optional(), trackLimit: z.coerce.number().int().min(1).max(100).optional() }) }, responses: ok(unknownObject) });
 path({ method: 'get', path: '/search/ranked', summary: 'Relevance-ranked search across artists, albums and tracks, paginated', tags: ['Library'], security: authed, request: { query: z.object({ q: z.string().min(1), limit: z.coerce.number().int().min(1).max(100).optional(), cursor: z.string().optional() }) }, responses: ok(unknownObject) });

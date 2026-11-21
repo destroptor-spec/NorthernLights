@@ -12,7 +12,8 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { completeVodPlaylist, waitForSegmentListed } from './hlsStream.service';
+import { buildFfmpegArgs, completeVodPlaylist, planHlsOutput, waitForSegmentListed } from './hlsStream.service';
+import type { SourceAudio } from './sourceAudio.service';
 
 // The exact shape FFmpeg serves mid-transcode: EVENT type, no ENDLIST, and
 // frame-aligned 10.0078s segments (44.1kHz AAC). Captured from prod on
@@ -232,5 +233,55 @@ describe('waitForSegmentListed', () => {
   it('matches whole lines, not substrings', async () => {
     writePlaylist('segment0001.ts');
     await expect(waitForSegmentListed(playlistPath, 'segment000.ts', () => true)).resolves.toBe(false);
+  });
+});
+
+
+const audio = (overrides: Partial<SourceAudio>): SourceAudio => ({
+  codec: 'flac', sampleRate: 44100, bitDepth: 16, channels: 2, bitrate: 900_000, lossless: true, ...overrides,
+});
+
+describe('planHlsOutput', () => {
+  it('resamples a 96 kHz source to 48 kHz (Beoplay Cast stutter, 2026-11-21)', () => {
+    const plan = planHlsOutput('128k', 2_450_000, 'FLAC', 'aac', audio({ sampleRate: 96000, bitDepth: 24, bitrate: 2_450_000 }));
+    expect(plan).toEqual({ mode: 'transcode', codec: 'aac', bitrateKbps: 128, sampleRate: 48000, resampleTo: 48000 });
+    const args = buildFfmpegArgs('/music/a.flac', 'playlist.m3u8', 'segment%03d.ts', plan);
+    expect(args.slice(args.indexOf('-ar'), args.indexOf('-ar') + 2)).toEqual(['-ar', '48000']);
+  });
+
+  it('resamples 88.2 kHz to 44.1 kHz', () => {
+    const plan = planHlsOutput('128k', 2_300_000, 'FLAC', 'aac', audio({ sampleRate: 88200, bitDepth: 24 }));
+    expect(plan.sampleRate).toBe(44100);
+    expect(plan.resampleTo).toBe(44100);
+  });
+
+  it('leaves 44.1 and 48 kHz sources at their own rate, with no -ar', () => {
+    for (const sampleRate of [44100, 48000]) {
+      const plan = planHlsOutput('128k', 900_000, 'FLAC', 'aac', audio({ sampleRate }));
+      expect(plan.sampleRate).toBe(sampleRate);
+      expect(plan.resampleTo).toBeNull();
+      expect(buildFfmpegArgs('/music/a.flac', 'p.m3u8', 's%03d.ts', plan)).not.toContain('-ar');
+    }
+  });
+
+  it('copies a matching AAC source at or below the quality', () => {
+    const plan = planHlsOutput('320k', 256_000, 'MPEG-4', 'aac', audio({ codec: 'aac', bitDepth: null, lossless: false, bitrate: 256_000 }));
+    expect(plan).toEqual({ mode: 'copy', codec: 'aac', bitrateKbps: 256, sampleRate: 44100, resampleTo: null });
+    expect(buildFfmpegArgs('/music/a.m4a', 'p.m3u8', 's%03d.ts', plan)).toEqual(expect.arrayContaining(['-c:a', 'copy']));
+  });
+
+  it('transcodes rather than copies an AAC source above 48 kHz', () => {
+    const plan = planHlsOutput('source', 256_000, 'MPEG-4', 'aac', audio({ codec: 'aac', sampleRate: 96000, bitDepth: null, lossless: false }));
+    expect(plan.mode).toBe('transcode');
+    expect(plan.sampleRate).toBe(48000);
+  });
+
+  it('caps "source" from a lossless file at 320k AAC', () => {
+    expect(planHlsOutput('source', 2_450_000, 'FLAC', 'aac', audio({ sampleRate: 96000 })).bitrateKbps).toBe(320);
+  });
+
+  it('sets no rate when the probe failed', () => {
+    const plan = planHlsOutput('128k', 900_000, 'FLAC', 'aac', null);
+    expect(plan).toEqual({ mode: 'transcode', codec: 'aac', bitrateKbps: 128, sampleRate: null, resampleTo: null });
   });
 });
