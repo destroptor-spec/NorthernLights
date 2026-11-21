@@ -23,17 +23,34 @@ import { moodOf, vocalsOf, type Mood } from '../../shared/descriptors';
 // Distance query uses native PGLite `<->` vector L2 distance operator.
 
 
-function isSameSong(a: { title: string, artist: string, mb_recording_id?: string }, b: { title: string, artist: string, mb_recording_id?: string }) {
-  if (a.mb_recording_id && b.mb_recording_id && a.mb_recording_id !== '') {
-    return a.mb_recording_id === b.mb_recording_id;
-  }
-  const artistA = (a.artist || '').toLowerCase().trim();
-  const artistB = (b.artist || '').toLowerCase().trim();
-  if (artistA !== artistB) return false;
+/**
+ * A title for telling songs apart: edition noise (normalizeTitle) and a
+ * featured credit removed, so "Telephone (feat. Beyoncé)" is "telephone".
+ * Mix, live and acoustic labels stay: a remix is another song for Infinity.
+ */
+function sameSongTitleKey(title: string | null | undefined): string {
+  const withoutFeaturing = (title || '')
+    .replace(/\s*[([]\s*(?:feat\.?|ft\.?|featuring|with)\s[^)\]]*[)\]]/gi, '')
+    .replace(/\s+(?:feat\.?|ft\.?|featuring)\s.*$/i, '');
+  return normalizeTitle(withoutFeaturing);
+}
 
-  const titleA = normalizeTitle(a.title);
-  const titleB = normalizeTitle(b.title);
-  return titleA === titleB;
+type SongIdentity = { title?: string | null; artist?: string | null; mb_recording_id?: string | null };
+
+/**
+ * Whether two tracks are the same song, for Infinity's repeat check. The same
+ * MusicBrainz recording is; otherwise the same title by the same lead artist
+ * is, whatever the recording ids say: a compilation or bootleg copy often
+ * carries another id ("Electric Chapel" on Born This Way and on a bootleg),
+ * and "Sia" and "Sia feat. Burna Boy" credit the same song.
+ */
+export function isSameSong(a: SongIdentity, b: SongIdentity): boolean {
+  const recordingA = (a.mb_recording_id || '').trim().toLowerCase();
+  const recordingB = (b.mb_recording_id || '').trim().toLowerCase();
+  if (recordingA && recordingA === recordingB) return true;
+  const titleA = sameSongTitleKey(a.title);
+  if (!titleA || titleA !== sameSongTitleKey(b.title)) return false;
+  return leadArtistKey(a.artist || '') === leadArtistKey(b.artist || '');
 }
 
 /** The artist a track counts under for artist spread: the credit's lead name (scoredMix.leadArtistKey). */
