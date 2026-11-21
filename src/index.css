@@ -747,6 +747,7 @@ button :where(span),
    not be cut off. */
 .presence-fold {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: 1fr;
   opacity: 1;
   transition: grid-template-rows 220ms var(--ease-out), opacity 220ms var(--ease-out);
