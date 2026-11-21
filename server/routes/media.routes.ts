@@ -11,6 +11,7 @@ import { providerArtworkProxyPath, resolveProviderArtworkUrl } from '../services
 import {
   completeVodPlaylist,
   getOrCreateHlsSession,
+  normalizeTargetCodec,
   waitForSegmentListed,
   getSessionInfo,
   touchSession,
@@ -289,14 +290,6 @@ async function resolveTrackForHls(trackId: string, userId?: string): Promise<{
   }
 
   return { fileBuf, bitrate, sourceFormat, sourceLossless, duration };
-}
-
-function normalizeTargetCodec(codec: string, quality: string): string {
-  if ((codec === 'ac3' || codec === 'eac3') && quality !== 'source' && parseInt(quality, 10) < 256) {
-    logHls(`[HLS] Overriding ${codec} → AAC (${quality} too low for AC-3)`);
-    return 'aac';
-  }
-  return codec;
 }
 
 async function ensureHlsSessionForRequest(trackId: string, quality: string, targetCodec: string, userId?: string) {

@@ -5,6 +5,7 @@ import path from 'path';
 import os from 'os';
 import { writeHlsServerLog, writeHlsSessionLog, type HlsLogDetail } from './debugLogger.service';
 import { logHls, logFfmpeg } from './loggingConfig';
+import { hlsOutputSampleRate, MAX_HLS_SAMPLE_RATE, probeSourceAudioSync, type SourceAudio } from './sourceAudio.service';
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -236,13 +237,15 @@ export async function getOrCreateHlsSession(
 
   // Determine encoding strategy
   const inputPath = trackPath.toString('utf8');
-  const shouldRemux = getRemuxDecision(quality, sourceBitrate, sourceFormat, targetCodec, inputPath);
+  const source = probeSourceAudioSync(inputPath);
+  const plan = planHlsOutput(quality, sourceBitrate, sourceFormat, targetCodec, source);
   logHlsSession(trackId, quality, targetCodec, `Creating session in ${outputDir}`);
   logHlsSession(trackId, quality, targetCodec, `Input path: ${inputPath}`, 'detailed');
-  logHlsSession(trackId, quality, targetCodec, `Remux decision: ${shouldRemux ? 'copy' : 'transcode'}`);
+  logHlsSession(trackId, quality, targetCodec, `Source: ${source ? `${source.codec} ${source.sampleRate ?? '?'} Hz ${source.bitDepth ? `${source.bitDepth}-bit ` : ''}${source.channels ?? '?'} ch` : 'probe failed'}`);
+  logHlsSession(trackId, quality, targetCodec, `Remux decision: ${plan.mode}${plan.mode === 'transcode' ? ` ${plan.codec} ${plan.bitrateKbps}k${plan.sampleRate ? ` @ ${plan.sampleRate} Hz` : ''}${plan.resampleTo ? ' (resampled)' : ''}` : ''}`);
 
   // Build FFmpeg args
-  const ffmpegArgs = buildFfmpegArgs(inputPath, playlistFilename, segmentFilename, quality, shouldRemux, targetCodec, sourceBitrate);
+  const ffmpegArgs = buildFfmpegArgs(inputPath, playlistFilename, segmentFilename, plan);
   logHlsSession(trackId, quality, targetCodec, `FFmpeg args: ${ffmpegArgs.join(' ')}`, 'detailed');
 
   // Create the readiness promise — resolves when segment000.ts appears
@@ -490,40 +493,37 @@ const NOT_TS_COMPATIBLE = new Set([
 ]);
 
 /**
- * Use ffprobe to detect the actual audio codec of a file.
- * Returns codec name (e.g., 'aac', 'alac', 'mp3', 'flac') or null on failure.
+ * The codec an HLS client asks for, made safe: AC-3/E-AC-3 below 256 kbps
+ * falls back to AAC.
  */
-function detectActualCodec(filePath: string): string | null {
-  try {
-    const output = execFileSync('ffprobe', [
-      '-v', 'quiet',
-      '-select_streams', 'a:0',
-      '-show_entries', 'stream=codec_name',
-      '-of', 'csv=p=0',
-      filePath,
-    ], { timeout: 5000 }).toString().trim();
-    return output || null;
-  } catch {
-    return null;
+export function normalizeTargetCodec(codec: string, quality: string): string {
+  if ((codec === 'ac3' || codec === 'eac3') && quality !== 'source' && parseInt(quality, 10) < 256) {
+    logHls(`[HLS] Overriding ${codec} → AAC (${quality} too low for AC-3)`);
+    return 'aac';
   }
+  return codec;
 }
 
 /**
  * Decide whether to remux (copy codec) or transcode.
- * Considers: user quality preference, source format, and target codec.
+ * Considers: user quality preference, source format, target codec, and the
+ * source's sample rate (above 48 kHz is always transcoded, see MAX_HLS_SAMPLE_RATE).
  */
 function getRemuxDecision(
   quality: string,
   sourceBitrate: number | null,
   sourceFormat: string | null,
   targetCodec: string,
-  inputPath: string
+  source: SourceAudio | null,
 ): boolean {
   const fmt = (sourceFormat || '').toLowerCase();
-  const actualCodec = detectActualCodec(inputPath)?.toLowerCase() || null;
+  const actualCodec = source?.codec ?? null;
 
   // Known incompatible formats — always transcode regardless of quality
   if (NOT_TS_COMPATIBLE.has(fmt) || (actualCodec && NOT_TS_COMPATIBLE.has(actualCodec))) return false;
+
+  // A copied stream keeps its sample rate; above 48 kHz it must be resampled.
+  if (source?.sampleRate && source.sampleRate > MAX_HLS_SAMPLE_RATE) return false;
 
   // MPEG-4 container: could be AAC or ALAC — must detect actual codec
   if (fmt === 'mpeg-4' || fmt === 'm4a' || fmt === 'mp4') {
@@ -576,14 +576,50 @@ function resolveTranscodeBitrate(quality: string, sourceBitrate: number | null, 
   return `${Math.max(minKbps, Math.min(sourceKbps, maxKbps))}k`;
 }
 
-function buildFfmpegArgs(
+/** What one HLS session writes: copied as is, or transcoded to this codec, bitrate and rate. */
+export interface HlsOutputPlan {
+  mode: 'copy' | 'transcode';
+  codec: string;
+  /** Encoder target (transcode) or the source's own bitrate (copy); null when unknown. */
+  bitrateKbps: number | null;
+  sampleRate: number | null;
+  /** Set when the transcode resamples (`-ar`). */
+  resampleTo: number | null;
+}
+
+export function planHlsOutput(
+  quality: string,
+  sourceBitrate: number | null,
+  sourceFormat: string | null,
+  targetCodec: string,
+  source: SourceAudio | null,
+): HlsOutputPlan {
+  if (getRemuxDecision(quality, sourceBitrate, sourceFormat, targetCodec, source)) {
+    const bitrate = source?.bitrate ?? sourceBitrate;
+    return {
+      mode: 'copy',
+      codec: targetCodec,
+      bitrateKbps: bitrate ? Math.round(bitrate / 1000) : null,
+      sampleRate: source?.sampleRate ?? null,
+      resampleTo: null,
+    };
+  }
+  const bitrateKbps = parseInt(resolveTranscodeBitrate(quality, sourceBitrate, targetCodec), 10);
+  const sampleRate = hlsOutputSampleRate(source?.sampleRate);
+  return {
+    mode: 'transcode',
+    codec: targetCodec === 'aac_he' ? 'aac' : targetCodec,
+    bitrateKbps: Number.isFinite(bitrateKbps) ? bitrateKbps : null,
+    sampleRate,
+    resampleTo: sampleRate !== null && sampleRate !== source?.sampleRate ? sampleRate : null,
+  };
+}
+
+export function buildFfmpegArgs(
   inputPath: string,
   playlistPath: string,
   segmentPattern: string,
-  quality: string,
-  shouldRemux: boolean,
-  codec: string,
-  sourceBitrate: number | null
+  plan: HlsOutputPlan,
 ): string[] {
   const args = [
     '-i', inputPath,
@@ -591,11 +627,11 @@ function buildFfmpegArgs(
     '-map', '0:a:0',               // Take first audio stream only
   ];
 
-  if (shouldRemux) {
+  if (plan.mode === 'copy') {
     args.push('-c:a', 'copy');      // Zero CPU — container change only
   } else {
-    const bitrate = resolveTranscodeBitrate(quality, sourceBitrate, codec);
-    switch (codec) {
+    const bitrate = `${plan.bitrateKbps ?? 128}k`;
+    switch (plan.codec) {
       case 'mp3':
         args.push('-c:a', 'libmp3lame', '-b:a', bitrate);
         break;
@@ -609,6 +645,7 @@ function buildFfmpegArgs(
         args.push('-c:a', 'aac', '-b:a', bitrate, '-profile:a', 'aac_low');
         break;
     }
+    if (plan.resampleTo) args.push('-ar', String(plan.resampleTo));
   }
 
   args.push(

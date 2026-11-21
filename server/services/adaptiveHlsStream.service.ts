@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 import { writeHlsServerLog, writeHlsSessionLog, type HlsLogDetail } from './debugLogger.service';
 import { logFfmpeg, logHls } from './loggingConfig';
+import { hlsOutputSampleRate, probeSourceAudioSync } from './sourceAudio.service';
 
 export const ADAPTIVE_RENDITION_KBPS = [64, 128, 160, 320] as const;
 export type AdaptiveRenditionKbps = typeof ADAPTIVE_RENDITION_KBPS[number];
@@ -177,6 +178,7 @@ export function buildAdaptiveFfmpegArgs(
   inputPath: string,
   ladder: AdaptiveRendition[],
   codec: string = 'aac',
+  resampleTo: number | null = null,
 ): string[] {
   if (codec !== 'aac') {
     throw new Error(`Adaptive HLS only supports AAC, received ${codec}`);
@@ -189,7 +191,8 @@ export function buildAdaptiveFfmpegArgs(
   const args = [
     '-i', inputPath,
     '-vn',
-    '-filter_complex', `[0:a:0]asplit=${ladder.length}${labels}`,
+    // Every rendition shares one rate: the source's, or 44.1/48 kHz above 48 (hlsOutputSampleRate).
+    '-filter_complex', `[0:a:0]${resampleTo ? `aresample=${resampleTo},` : ''}asplit=${ladder.length}${labels}`,
   ];
 
   ladder.forEach((rendition, index) => {
@@ -316,7 +319,14 @@ export async function getOrCreateAdaptiveHlsSession(
   activeSessions.set(key, session);
 
   const inputPath = trackPath.toString('utf8');
-  const ffmpegArgs = buildAdaptiveFfmpegArgs(inputPath, ladder, codec);
+  const sourceSampleRate = probeSourceAudioSync(inputPath)?.sampleRate ?? null;
+  const outputSampleRate = hlsOutputSampleRate(sourceSampleRate);
+  const ffmpegArgs = buildAdaptiveFfmpegArgs(
+    inputPath,
+    ladder,
+    codec,
+    outputSampleRate !== null && outputSampleRate !== sourceSampleRate ? outputSampleRate : null,
+  );
   logAdaptiveSession(session, `Creating one-process adaptive package in ${outputDir}`);
   logAdaptiveSession(session, `FFmpeg args: ${ffmpegArgs.join(' ')}`, 'detailed');
   logHls(`[HLS] Spawning adaptive FFmpeg for ${trackId}: ${ladderKey}`);

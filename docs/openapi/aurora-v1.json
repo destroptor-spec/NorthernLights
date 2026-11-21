@@ -1634,6 +1634,125 @@
           "documents"
         ]
       },
+      "StreamFormat": {
+        "type": "object",
+        "properties": {
+          "trackId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "codec": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "ffprobe codec name, e.g. \"flac\", \"aac\", \"mp3\", \"pcm_s24le\"."
+              },
+              "container": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The scanned format, e.g. \"FLAC\", \"MPEG\", \"MP4/M4A\"."
+              },
+              "sampleRate": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "exclusiveMinimum": 0
+              },
+              "bitDepth": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "exclusiveMinimum": 0,
+                "description": "Lossless sources only."
+              },
+              "channels": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "exclusiveMinimum": 0
+              },
+              "bitrate": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "exclusiveMinimum": 0,
+                "description": "bits/s"
+              },
+              "lossless": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "codec",
+              "container",
+              "sampleRate",
+              "bitDepth",
+              "channels",
+              "bitrate",
+              "lossless"
+            ]
+          },
+          "output": {
+            "type": "object",
+            "properties": {
+              "quality": {
+                "type": "string"
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "copy",
+                  "transcode"
+                ]
+              },
+              "codec": {
+                "type": "string"
+              },
+              "bitrate": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "exclusiveMinimum": 0,
+                "description": "bits/s; null for Auto, which adapts between renditions."
+              },
+              "sampleRate": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": [
+              "quality",
+              "mode",
+              "codec",
+              "bitrate",
+              "sampleRate"
+            ]
+          }
+        },
+        "required": [
+          "trackId",
+          "source",
+          "output"
+        ]
+      },
       "BrowseGenres": {
         "type": "object",
         "properties": {
@@ -6537,6 +6656,147 @@
                   "properties": {
                     "data": {
                       "$ref": "#/components/schemas/TrackRays"
+                    },
+                    "meta": {
+                      "type": "object",
+                      "properties": {
+                        "requestId": {
+                          "type": "string",
+                          "description": "Request ID echoed in the X-Request-Id response header."
+                        }
+                      },
+                      "required": [
+                        "requestId"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Revision or state conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tracks/{id}/stream-format": {
+      "get": {
+        "summary": "A track's source audio (codec, sample rate, bit depth) and what an HLS stream of it carries at a quality",
+        "tags": [
+          "Playback"
+        ],
+        "security": [
+          {
+            "listenerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "64k, 128k, 160k, 320k, source or auto (default 128k)."
+            },
+            "required": false,
+            "description": "64k, 128k, 160k, 320k, source or auto (default 128k).",
+            "name": "quality",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "aac",
+                "mp3",
+                "ac3",
+                "eac3"
+              ]
+            },
+            "required": false,
+            "name": "codec",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/StreamFormat"
                     },
                     "meta": {
                       "type": "object",

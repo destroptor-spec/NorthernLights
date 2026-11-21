@@ -19,7 +19,9 @@ import { formatTime } from '../utils/formatTime';
 import { playbackManager } from '../utils/PlaybackManager';
 import { usePlayerPlacement } from '../hooks/usePlayerPlacement';
 import type { PlaybackLoadPath } from '../store/index';
-import type { StreamingQualityPreset } from '../utils/streaming';
+import { resolveCastStreamingQuality, type StreamingQualityPreset } from '../utils/streaming';
+import { describeOutput, describeSource, type AudioFormatLabel } from '../utils/audioFormat';
+import { useStreamFormat } from '../hooks/useStreamFormat';
 import {
   IconPrev,
   IconPlay,
@@ -115,45 +117,42 @@ const TitleTicker: React.FC<TitleTickerProps> = ({ text }) => {
 // Signal-chain chip
 // ──────────────────────────────────────────────────────────────────────────
 
-type ChainNode = { label: string; sub?: string };
+type ChainNode = AudioFormatLabel;
 
 const formatBitrate = (bitrate?: number) =>
   bitrate && bitrate > 0 ? `${Math.round(bitrate / 1000)} kbps` : null;
 
-const outputCodecForLoadPath = (
+/**
+ * The HLS quality a load path streams at, or null when the file itself is
+ * played (direct, prepared direct, lossless passthrough) and nothing is
+ * transcoded.
+ */
+const streamQualityForLoadPath = (
   loadPath: PlaybackLoadPath,
   streamingQuality: StreamingQualityPreset,
-  adaptiveActiveBitrateKbps: number | null,
 ): string | null => {
   switch (loadPath) {
-    case 'direct':
-      return null;
     case 'prepared-hls':
     case 'fallback-hls':
-      if (streamingQuality === 'auto') {
-        return adaptiveActiveBitrateKbps
-          ? `Auto · ${adaptiveActiveBitrateKbps} kbps`
-          : 'Auto';
-      }
-      return 'HLS · AAC';
+      return streamingQuality;
     case 'cast':
-      return 'HLS · AAC';
+      return resolveCastStreamingQuality(streamingQuality);
     default:
       return null;
   }
 };
 
 interface SignalChainProps {
-  sourceFormat: string | null;
-  sourceBitrate: string | null;
-  outputCodec: string | null;
+  /** What comes in: the file. */
+  source: ChainNode | null;
+  /** What goes out: the stream, when the file is transcoded or remuxed. */
+  output: ChainNode | null;
   deviceLabel: string;
 }
 
 const SignalChain: React.FC<SignalChainProps> = ({
-  sourceFormat,
-  sourceBitrate,
-  outputCodec,
+  source,
+  output,
   deviceLabel,
 }) => {
   const [open, setOpen] = useState(false);
@@ -175,15 +174,11 @@ const SignalChain: React.FC<SignalChainProps> = ({
 
   const nodes: ChainNode[] = useMemo(() => {
     const result: ChainNode[] = [];
-    if (sourceFormat) {
-      result.push({ label: sourceFormat, sub: sourceBitrate ?? undefined });
-    }
-    if (outputCodec) {
-      result.push({ label: outputCodec });
-    }
+    if (source) result.push(source);
+    if (output) result.push(output);
     result.push({ label: deviceLabel });
     return result;
-  }, [sourceFormat, sourceBitrate, outputCodec, deviceLabel]);
+  }, [source, output, deviceLabel]);
 
   return (
     <span
@@ -413,9 +408,25 @@ export const PlayerControls: React.FC = () => {
   }, []);
 
   // ── Signal-chain data derivation ──────────────────────────────────────
+  // What comes in (the file, as ffprobe reads it) and what goes out (the
+  // stream the server writes at this load path's quality).
+  const streamQuality = streamQualityForLoadPath(loadPath, streamingQuality);
+  const streamFormat = useStreamFormat(currentTrack?.id, streamQuality ?? 'source');
   const sourceFormat = currentTrack?.format?.toUpperCase() ?? null;
-  const sourceBitrate = formatBitrate(currentTrack?.bitrate);
-  const outputCodec = outputCodecForLoadPath(loadPath, streamingQuality, adaptiveActiveBitrateKbps);
+  const sourceNode = useMemo<ChainNode | null>(() => {
+    const described = streamFormat ? describeSource(streamFormat.source) : null;
+    if (described) return described;
+    if (!sourceFormat) return null;
+    const bitrate = formatBitrate(currentTrack?.bitrate);
+    return bitrate ? { label: sourceFormat, sub: bitrate } : { label: sourceFormat };
+  }, [streamFormat, sourceFormat, currentTrack?.bitrate]);
+  const outputNode = useMemo<ChainNode | null>(() => {
+    if (!streamQuality) return null;
+    if (streamFormat) return describeOutput(streamFormat.output, adaptiveActiveBitrateKbps);
+    return streamQuality === 'auto'
+      ? { label: adaptiveActiveBitrateKbps ? `Auto · AAC ${adaptiveActiveBitrateKbps}k` : 'Auto · AAC' }
+      : { label: 'AAC' };
+  }, [streamQuality, streamFormat, adaptiveActiveBitrateKbps]);
 
   let deviceLabel = 'Browser';
   if (castConnected && castDeviceName) {
@@ -479,9 +490,8 @@ export const PlayerControls: React.FC = () => {
                   (DeviceStrip); this device's own signal chain says nothing. */}
               {!followedDeviceLabel && (sourceFormat || castConnected || audioOutputActive) && (
                 <SignalChain
-                  sourceFormat={sourceFormat}
-                  sourceBitrate={sourceBitrate}
-                  outputCodec={outputCodec}
+                  source={sourceNode}
+                  output={outputNode}
                   deviceLabel={deviceLabel}
                 />
               )}

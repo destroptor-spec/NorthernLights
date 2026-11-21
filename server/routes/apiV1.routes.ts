@@ -178,6 +178,8 @@ import {
 } from '../services/browse.service';
 import type { BrowseAlbum, BrowseArtist } from '../../shared/api/v1';
 import { getTrackRays } from '../services/trackRays.service';
+import { hlsOutputSampleRate, probeSourceAudio } from '../services/sourceAudio.service';
+import { normalizeTargetCodec, planHlsOutput } from '../services/hlsStream.service';
 import { publishApiV1Event, replayApiV1Events, subscribeApiV1Events, noteClientListening, listConnectedDevices, isClientListening as isDeviceConnected } from '../services/apiV1Events.service';
 import { topUpSessionInfinity } from '../services/sessionInfinity.service';
 import { forgetSessionListen, noteSessionReport } from '../services/sessionListens.service';
@@ -877,6 +879,51 @@ router.get('/tracks/:id/lyrics', async (req, res) => {
     console.warn('[API v1] embedded lyrics read failed:', error instanceof Error ? error.message : error);
     dataResponse(req, res, { trackId: id, documents: [] });
   }
+});
+
+const STREAM_FORMAT_QUALITIES = new Set(['64k', '128k', '160k', '192k', '256k', '320k', 'source', 'auto']);
+const STREAM_FORMAT_CODECS = new Set(['aac', 'mp3', 'ac3', 'eac3']);
+
+// What comes in and what goes out: the file's own audio, and what the HLS
+// stream at this quality writes (the same plan the transcode follows).
+router.get('/tracks/:id/stream-format', async (req, res) => {
+  const id = routeParam(req, 'id');
+  const quality = typeof req.query.quality === 'string' && STREAM_FORMAT_QUALITIES.has(req.query.quality) ? req.query.quality : '128k';
+  const requestedCodec = typeof req.query.codec === 'string' && STREAM_FORMAT_CODECS.has(req.query.codec) ? req.query.codec : 'aac';
+  const db = await initDB();
+  const result = await db.query('SELECT id, path, bitrate, format, lossless FROM tracks WHERE id = $1', [id]);
+  const row = result.rows[0];
+  if (!row) return sendApiV1Error(req, res, 404, 'TRACK_NOT_FOUND', 'Track not found.');
+  const file = pathToBuffer(row.path);
+  if (!fs.existsSync(file) || !(await isPathAllowed(file))) {
+    return sendApiV1Error(req, res, 404, 'MEDIA_NOT_FOUND', 'The track media is unavailable.');
+  }
+  const probe = await probeSourceAudio(file.toString('utf8'));
+  const sourceBitrate = probe?.bitrate ?? (Number.isFinite(Number(row.bitrate)) && Number(row.bitrate) > 0 ? Number(row.bitrate) : null);
+  const source = {
+    codec: probe?.codec ?? null,
+    container: typeof row.format === 'string' ? row.format : null,
+    sampleRate: probe?.sampleRate ?? null,
+    bitDepth: probe?.bitDepth ?? null,
+    channels: probe?.channels ?? null,
+    bitrate: sourceBitrate,
+    lossless: probe?.lossless ?? (typeof row.lossless === 'boolean' ? row.lossless : null),
+  };
+  let output;
+  if (quality === 'auto') {
+    // Auto adapts between AAC renditions; all share one sample rate.
+    output = { quality, mode: 'transcode' as const, codec: 'aac', bitrate: null, sampleRate: hlsOutputSampleRate(probe?.sampleRate) };
+  } else {
+    const plan = planHlsOutput(quality, row.bitrate ?? null, row.format ?? null, normalizeTargetCodec(requestedCodec, quality), probe);
+    output = {
+      quality,
+      mode: plan.mode,
+      codec: plan.codec,
+      bitrate: plan.bitrateKbps ? plan.bitrateKbps * 1000 : null,
+      sampleRate: plan.sampleRate,
+    };
+  }
+  dataResponse(req, res, { trackId: id, source, output });
 });
 
 /** A search limit from the query string, clamped to 1–100; `fallback` when absent or unusable. */

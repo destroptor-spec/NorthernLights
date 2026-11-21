@@ -11981,7 +11981,7 @@ button.connect-line:disabled {
 
 .player-chain-chip:hover .player-chain-content,
 .player-chain-chip[aria-expanded="true"] .player-chain-content {
-  max-width: 520px;
+  max-width: 640px;
   padding-right: 12px;
   padding-left: 4px;
   opacity: 1;
@@ -11991,6 +11991,7 @@ button.connect-line:disabled {
   display: inline-flex;
   align-items: baseline;
   gap: 5px;
+  white-space: nowrap;
   font-size: 0.72rem;
   color: var(--color-text-primary);
   font-variant-numeric: tabular-nums;
