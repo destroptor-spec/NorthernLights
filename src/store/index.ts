@@ -1354,6 +1354,34 @@ export const usePlayerStore = create<PlayerState>()(
         }
       };
 
+      /**
+       * Signed out, or the login expired: nothing plays on without a
+       * signed-in user. Stops local audio (the prepared next track and the
+       * lock-screen controls too), ends this device's cast without handing it
+       * back here, cancels the sleep timer and empties the queue. The queue
+       * is the account's, not the device's: with "Sync playback across
+       * devices" on, the server's playback session brings it back after
+       * signing in (SessionFollower); with sync off it is gone.
+       */
+      const haltPlaybackForSignOut = (): Partial<PlayerState> => {
+        if (get().sleepTimerEndsAt) get().cancelSleepTimer();
+        if (castManager.isConnected()) castManager.stopCastingForSignOut();
+        playbackManager.haltForSignOut();
+        // Tell the playback session now, on this output's own credential:
+        // paused at this track and position, which is where signing in again
+        // picks it up. Clearing the user next lets the session go, and its
+        // timed report with it (other devices would show this one playing
+        // for a minute), so this report is the last.
+        set({ playbackState: 'paused', isBuffering: false });
+        sessionMirror.reportNow();
+        pendingLocalStart = null;
+        setPlaybackTimeState({ currentTime: 0, duration: 0 });
+        // The caller sets this with the user cleared, in one change: the
+        // session mirror lets go first and never sends the empty queue to
+        // the server as this user's.
+        return { playlist: [], currentIndex: null, queueSource: null, playbackState: 'stopped', isBuffering: false };
+      };
+
       let lastContinuitySnapshotAt = 0;
       const persistContinuitySnapshot = (force = false) => {
         const now = Date.now();
@@ -1769,9 +1797,11 @@ export const usePlayerStore = create<PlayerState>()(
         },
 
         clearAuthToken: () => {
+          const emptyQueue = haltPlaybackForSignOut();
           abortInFlightLibraryFetches();
           clearSessionAuth();
           set({
+            ...emptyQueue,
             isLibraryLoading: false,
             isPlaylistsLoading: false,
             authToken: null,
@@ -1784,6 +1814,7 @@ export const usePlayerStore = create<PlayerState>()(
             // The next account's own choice comes from the server.
             ...playbackSyncFrom(get().playbackSyncMode, false),
           });
+          persistContinuitySnapshot(true);
         },
 
         savePlaybackSyncMode: async (mode: PlaybackSyncMode) => {
@@ -1834,9 +1865,11 @@ export const usePlayerStore = create<PlayerState>()(
         expireAuthSession: (message = 'Your session expired. Log in again to continue.') => {
           // Cancel any in-flight library/playlist fetch so it can't resolve after
           // logout and repopulate state with the previous session's data.
+          const emptyQueue = haltPlaybackForSignOut();
           abortInFlightLibraryFetches();
           clearSessionAuth();
-          return set((state: PlayerState) => ({
+          set((state: PlayerState) => ({
+          ...emptyQueue,
           authToken: null,
           mediaAccessToken: null,
           sseAccessToken: null,
@@ -1855,6 +1888,7 @@ export const usePlayerStore = create<PlayerState>()(
           activeFiles: [],
           scanningFile: null,
         }));
+          persistContinuitySnapshot(true);
         },
 
         login: async (username: string, password: string, rememberDevice = true, turnstileToken?: string) => {
@@ -3183,6 +3217,8 @@ export const usePlayerStore = create<PlayerState>()(
         },
 
         resume: async () => {
+          // Signed out or expired: a media key must not start anything.
+          if (!get().authToken) return;
           if (routeToPlayingDevice({ type: 'play' }, () => get().resume())) return;
           sessionMirror.notePlayIntent();
           const follow = get().sessionFollow;

@@ -1420,6 +1420,14 @@ export class CastManager {
     private userCastIntentAt = 0;
 
     private afterSessionEnded(snapshot: CastEndSnapshot | null) {
+        // Signed out: no one is here to play it, whatever else ended the cast.
+        if (this.stoppedForSignOut) {
+            this.stoppedForSignOut = false;
+            this.takenOverSid = '';
+            this.resetCastEndIntent();
+            this.logCast('ok', 'cast-ended-handoff skipped', 'reason=signed-out');
+            return;
+        }
         if (this.takenOverSid) {
             this.takenOverSid = '';
             // Back here, paused where its own cast was: no toast, no message.
@@ -5553,6 +5561,30 @@ export class CastManager {
         }
     }
 
+    /**
+     * Signed out, or the login expired: stop this device's cast and close the
+     * receiver app, and hand nothing back to this device (no one is signed in
+     * to play it). A device only stays connected to its own cast: one it
+     * joined is left at once (leaveIfCastingElsewhere).
+     */
+    public stopCastingForSignOut(): boolean {
+        if (!this.castContext || !this.isConnected()) return false;
+        this.stoppedForSignOut = true;
+        this.logCast('ok', 'cast-stopped-signed-out');
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+        try {
+            this.suppressRemoteEndedDuringDisconnect = true;
+            this.stop();
+            this.endCastSession('signed-out');
+            return true;
+        } catch (error) {
+            this.stoppedForSignOut = false;
+            this.logCast('warn', 'cast-stop-signed-out-failed', this.describeError(error));
+            return false;
+        }
+    }
+
+    private stoppedForSignOut = false;
     private stoppedBecauseReplaced = false;
     /** A Cast session this device asked Chrome to end, waiting for its SESSION_ENDED. */
     private castEndWatch: { sid: string; timer: ReturnType<typeof setTimeout> } | null = null;
@@ -5574,7 +5606,7 @@ export class CastManager {
      * The desktop kept showing the cast, and Stop casting, Play here and Play
      * there all did nothing until a reload.
      */
-    private endCastSession(reason: 'user-stop' | 'replaced' | 'deaf-join') {
+    private endCastSession(reason: 'user-stop' | 'replaced' | 'deaf-join' | 'signed-out') {
         const sid = this.getCurrentSessionId();
         if (this.castEndWatch) clearTimeout(this.castEndWatch.timer);
         this.castEndWatch = sid
