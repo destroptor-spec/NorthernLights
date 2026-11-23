@@ -28,7 +28,8 @@ describe('Aurora app-key authentication', () => {
     initDBMock.mockResolvedValue(pool as any);
 
     const created = await createAuroraAppKey('user-1', 'Desktop', 'linux');
-    expect(created.key).toMatch(/^aurora_app_[A-Za-z0-9_-]{40,}$/);
+    // Exactly the shape verifyAuroraAppKey accepts (#260).
+    expect(created.key).toMatch(/^aurora_app_[A-Za-z0-9_-]{43}$/);
     expect(storedPrefix).toBe(created.key.slice(0, storedPrefix.length));
     expect(storedHash).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(storedHash).not.toContain(created.key);
@@ -36,7 +37,7 @@ describe('Aurora app-key authentication', () => {
   });
 
   it('accepts a matching digest and returns a listener-scoped client principal', async () => {
-    const key = 'aurora_app_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN';
+    const key = 'aurora_app_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ'; // 43 characters, as issued
     const keyHash = `sha256:${crypto.createHash('sha256').update(key).digest('hex')}`;
     const pool = {
       query: jest.fn(async (sql: string) => {
@@ -53,6 +54,17 @@ describe('Aurora app-key authentication', () => {
       userId: 'user-1', username: 'alice', role: 'user', clientId: 'client-1',
       clientName: 'Desktop', authKind: 'appKey', keyId: 'key-1',
     });
+  });
+
+  // #260: anyone can send a bearer token; only one shaped like an issued key costs a lookup.
+  it.each([
+    ['too short', 'aurora_app_abc'],
+    ['too long', `aurora_app_${'a'.repeat(44)}`],
+    ['not base64url', `aurora_app_${'a'.repeat(42)}!`],
+    ['wrong prefix', `aurora_api_${'a'.repeat(43)}`],
+  ])('refuses a key that is %s without touching the database', async (_label, key) => {
+    await expect(verifyAuroraAppKey(key)).resolves.toBeNull();
+    expect(initDBMock).not.toHaveBeenCalled();
   });
 });
 

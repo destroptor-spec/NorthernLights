@@ -4,6 +4,8 @@ import { initDB } from '../database';
 
 const APP_KEY_PREFIX = 'aurora_app_';
 const APP_KEY_LOOKUP_LENGTH = APP_KEY_PREFIX.length + 8;
+/** What createSecret makes: the prefix and 32 random bytes in base64url (43 characters). */
+const APP_KEY_SHAPE = /^aurora_app_[A-Za-z0-9_-]{43}$/;
 
 export interface AuroraAppPrincipal {
   userId: string;
@@ -160,7 +162,8 @@ export async function deleteRevokedAuroraAppKey(userId: string, keyId: string): 
 }
 
 export async function verifyAuroraAppKey(rawKey: string): Promise<AuroraAppPrincipal | null> {
-  if (!rawKey.startsWith(APP_KEY_PREFIX) || rawKey.length < APP_KEY_LOOKUP_LENGTH + 16) return null;
+  // Only the shape a key is issued in reaches the database (#260).
+  if (!APP_KEY_SHAPE.test(rawKey)) return null;
   const db = await initDB();
   const prefix = rawKey.slice(0, APP_KEY_LOOKUP_LENGTH);
   const result = await db.query(`

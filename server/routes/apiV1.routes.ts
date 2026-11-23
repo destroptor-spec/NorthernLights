@@ -61,7 +61,7 @@ import {
   generateArtistRadio,
   queueSmartHubRefreshForUser,
 } from '../services/smartHub.service';
-import { createRateLimiter } from '../middleware/rateLimit';
+import { createFailureRateLimiter, createRateLimiter } from '../middleware/rateLimit';
 import { getTrustedClientIp } from '../middleware/clientIp';
 import {
   apiV1RequestContext,
@@ -237,6 +237,21 @@ const sessionInviteLimiter = createRateLimiter({
 // needs its own. Range requests make it the highest-frequency endpoint here, and
 // its own bucket stops a heavy stream from consuming a client's API quota.
 const mediaLimiter = createRateLimiter({ keyPrefix: 'api-v1-media', windowMs: 60_000, max: 1800 });
+// Sign-in runs before the listener limiter (that one counts per user, and a
+// request has no user until it signs in), so failed sign-ins were never
+// counted, and a junk app key cost a database lookup each (#260). This counts
+// only 401s, per client IP, and refuses an IP with too many before it tries
+// again. 120 a minute is far above a household of stale tabs (an event stream
+// with a dead token retries every 15 s: 4 a minute) and caps a flood at two
+// lookups a second per address. Requests that sign in are never counted.
+const signInFailureLimiter = createFailureRateLimiter({
+  keyPrefix: 'api-v1-sign-in-failures',
+  windowMs: 60_000,
+  max: 120,
+  onLimited: (req, res) => {
+    sendApiV1Error(req, res, 429, 'TOO_MANY_FAILED_SIGN_INS', 'Too many requests with an invalid or expired credential. Try again later.');
+  },
+});
 // Stream format starts an ffprobe for a file not probed yet: its own bucket
 // per user keeps a client from spawning probes at the listener rate. The
 // player asks once per track change, and repeats come from the cache.
@@ -456,7 +471,7 @@ router.get('/media/tracks/:id', mediaLimiter, async (req, res) => {
 // A signed artwork link opens its one image with no credential (6a-4).
 router.use('/artwork', signedArtworkLinks(serveArtwork));
 
-router.use(requireApiV1Auth, listenerLimiter);
+router.use(signInFailureLimiter, requireApiV1Auth, listenerLimiter);
 
 // Playback sessions exist for "Sync playback across devices". When that is
 // off for the account (the admin's choice, or the user's where delegated),
