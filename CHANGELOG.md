@@ -54,6 +54,9 @@
 - **Old listener routes are logged before removal:** the web app gets every listener feature from API v1, so the older `/api` routes for the Hub, playlists, playback reports, Infinity, library browsing, search, loves and scrobbling (41 in all) are marked deprecated. Each call is logged in `production.log` with the client that made it, and the response carries a `Deprecation` header; once a week of logs shows nothing calls them, they go. The list and their API v1 replacements are in `docs/legacy-listener-routes.md`.
 - **Unused MusicBrainz proxy routes removed:** the seven `/api/providers/musicbrainz/…` lookup, search and token-refresh routes had no caller, and any signed-in user could use them to spend the server's shared MusicBrainz rate limit. Connecting, testing and disconnecting MusicBrainz are unchanged. Other routes nothing called (the old artist-duplicates tool, which the artist review replaced, and three status routes) and the unused `essentia.js` package are gone too.
 
+### Security
+- **Failed sign-ins to the API are limited:** a request to API v1 with a missing, wrong or expired credential was never counted towards any limit, and one with a made-up app key cost a database lookup each time. Now an address with more than 120 failed sign-ins in a minute is refused (429, `TOO_MANY_FAILED_SIGN_INS`) until the minute is up, before the next attempt is checked, and an app key that isn't shaped like one Aurora issued is refused without a lookup. Signed-in requests don't count, so a household of devices is never slowed by its own use.
+
 ## [v1.0.0-rc.7] - 2026-11-06
 
 ### Features
