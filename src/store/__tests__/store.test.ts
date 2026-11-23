@@ -15,7 +15,8 @@ import { getPlaybackTimeSnapshot, setPlaybackTimeState } from '../playbackTime';
 
 describe('Music Store Logic', () => {
   beforeEach(() => {
-    usePlayerStore.setState({ library: [], playlist: [] });
+    // Signed in: Play does nothing for no one (signOutPlayback.test.ts).
+    usePlayerStore.setState({ library: [], playlist: [], authToken: 'jwt' });
   });
   it('adds tracks to library', () => {
     usePlayerStore.setState({ library: [] });

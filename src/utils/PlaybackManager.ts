@@ -1478,6 +1478,39 @@ class PlaybackManager {
         }
     }
 
+    /**
+     * Signed out, or the login expired: nothing may go on playing or be
+     * resumed from here. Unlike stop(), this unloads the current and the
+     * prepared track, tears down hls.js and clears the lock-screen controls,
+     * so a media key or a stale element cannot start the old track again.
+     * Cast is the caller's to end (CastManager.stopCastingForSignOut).
+     */
+    public haltForSignOut(): void {
+        this.releaseWakeLock();
+        this.destroyHls();
+        this.destroyPreparedAudio();
+        this.audio.pause();
+        this.audio.removeAttribute('src');
+        this.audio.load();
+        this.currentUrl = null;
+        this.currentPlaylistUrl = null;
+        this.currentHlsAuthToken = '';
+        this.currentTitle = null;
+        this.currentArtist = null;
+        this.currentArtUrl = null;
+        this.currentAlbum = null;
+        this.currentFormat = null;
+        if ('mediaSession' in navigator) {
+            try {
+                navigator.mediaSession.metadata = null;
+                navigator.mediaSession.playbackState = 'none';
+            } catch {
+                // Older browsers may expose Media Session only in part.
+            }
+        }
+        this.onPlayStateChangeCallback?.('stopped');
+    }
+
     public seek(time: number): void {
         if (castManager.isConnected()) {
             castManager.seek(time);

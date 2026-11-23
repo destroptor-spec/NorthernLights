@@ -12,6 +12,8 @@ jest.mock('../../store', () => ({ usePlayerStore: { getState: () => mockStore, s
  */
 type Internals = {
   stopCastingBecauseReplaced(by: string): boolean;
+  stopCastingForSignOut(): boolean;
+  takenOverSid: string;
   disconnect(): Promise<void>;
   reconcileActiveSession(reason?: string): Promise<boolean>;
   hydrateSenderFromRemoteSession(media?: unknown, reason?: string): Promise<boolean>;
@@ -79,4 +81,15 @@ it('does nothing once the session has ended', () => {
   endSessionHere();
   jest.advanceTimersByTime(CAST_END_CONFIRM_MS);
   expect(markers()).not.toContain('cast-end-unconfirmed');
+});
+
+it('signed out: the cast and its receiver stop, and nothing is handed back here', () => {
+  const { m, endCurrentSession, markers } = harness();
+  m.takenOverSid = 'cast-77'; // even a takeover's paused handoff is skipped
+  expect(m.stopCastingForSignOut()).toBe(true);
+  expect(endCurrentSession).toHaveBeenCalledWith(true); // true: the receiver app closes
+  jest.advanceTimersByTime(CAST_END_CONFIRM_MS);
+  expect(markers()).toEqual(expect.arrayContaining(['cast-stopped-signed-out', 'cast-ended-handoff skipped']));
+  expect(m.isConnected()).toBe(false);
+  expect(mockStore.continueLocallyAfterCast).not.toHaveBeenCalled();
 });

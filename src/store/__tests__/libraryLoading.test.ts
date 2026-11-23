@@ -5,6 +5,7 @@ jest.mock('../../utils/PlaybackManager', () => ({
     play: jest.fn(),
     pause: jest.fn(),
     stop: jest.fn(),
+    haltForSignOut: jest.fn(),
     seek: jest.fn(),
     setVolume: jest.fn(),
     loadTrack: jest.fn(),
