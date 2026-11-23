@@ -1,7 +1,7 @@
 /** @jest-environment node */
 import { EventEmitter } from 'events';
 import type { NextFunction, Request, Response } from 'express';
-import { createFailureRateLimiter } from './rateLimit';
+import { createRateLimiter } from './rateLimit';
 
 function request(ip = '203.0.113.7') {
   return { headers: {}, socket: { remoteAddress: ip } } as unknown as Request;
@@ -21,7 +21,7 @@ function response() {
 }
 
 /** Runs one request through the limiter; the rest of the chain answers `status`. */
-function send(limiter: ReturnType<typeof createFailureRateLimiter>, status: number, ip?: string) {
+function send(limiter: ReturnType<typeof createRateLimiter>, status: number, ip?: string) {
   const res = response();
   let reached = false;
   const next: NextFunction = () => {
@@ -34,9 +34,10 @@ function send(limiter: ReturnType<typeof createFailureRateLimiter>, status: numb
 }
 
 let prefix = 0;
-const limiter = (max = 3) => createFailureRateLimiter({ keyPrefix: `test-${prefix++}`, windowMs: 60_000, max });
+const limiter = (max = 3) => createRateLimiter({ keyPrefix: `test-${prefix++}`, windowMs: 60_000, max, count: 'failures' });
+const everyRequest = (max = 3) => createRateLimiter({ keyPrefix: `test-${prefix++}`, windowMs: 60_000, max });
 
-describe('createFailureRateLimiter (#260)', () => {
+describe("createRateLimiter, count: 'failures' (#260)", () => {
   it('lets failures through up to the limit, then refuses before the chain runs', () => {
     const limit = limiter(3);
     expect([1, 2, 3].map(() => send(limit, 401).reached)).toEqual([true, true, true]);
@@ -59,6 +60,15 @@ describe('createFailureRateLimiter (#260)', () => {
     expect(send(limit, 401).reached).toBe(false);
   });
 
+  it('counts requests still in flight, and gives the count back once they succeed', () => {
+    const limit = limiter(2);
+    const pending = [response(), response()];
+    for (const res of pending) limit(request(), res as unknown as Response, () => undefined); // still signing in
+    expect(send(limit, 401).reached).toBe(false); // a burst can't slip past the in-flight two
+    for (const res of pending) { res.statusCode = 200; res.emit('finish'); }
+    expect(send(limit, 401).reached).toBe(true);
+  });
+
   it('keeps each client IP apart', () => {
     const limit = limiter(1);
     send(limit, 401, '198.51.100.1');
@@ -77,5 +87,13 @@ describe('createFailureRateLimiter (#260)', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+});
+
+describe('createRateLimiter, every request (the default)', () => {
+  it('counts every request, successful or not, and refuses past the limit', () => {
+    const limit = everyRequest(3);
+    expect([200, 401, 200].map((status) => send(limit, status).reached)).toEqual([true, true, true]);
+    expect(send(limit, 200)).toMatchObject({ reached: false, status: 429 });
   });
 });

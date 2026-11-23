@@ -61,7 +61,7 @@ import {
   generateArtistRadio,
   queueSmartHubRefreshForUser,
 } from '../services/smartHub.service';
-import { createFailureRateLimiter, createRateLimiter } from '../middleware/rateLimit';
+import { createRateLimiter } from '../middleware/rateLimit';
 import { getTrustedClientIp } from '../middleware/clientIp';
 import {
   apiV1RequestContext,
@@ -244,22 +244,16 @@ const mediaLimiter = createRateLimiter({ keyPrefix: 'api-v1-media', windowMs: 60
 // again. 120 a minute is far above a household of stale tabs (an event stream
 // with a dead token retries every 15 s: 4 a minute) and caps a flood at two
 // lookups a second per address. Requests that sign in are never counted.
-const signInFailureLimiter = createFailureRateLimiter({
+const signInFailureLimiter = createRateLimiter({
   keyPrefix: 'api-v1-sign-in-failures',
   windowMs: 60_000,
   max: 120,
+  count: 'failures',
+  // Explicitly the address: before sign-in there is no user to count by.
+  keyGenerator: (req) => `ip:${getTrustedClientIp(req)}`,
   onLimited: (req, res) => {
     sendApiV1Error(req, res, 429, 'TOO_MANY_FAILED_SIGN_INS', 'Too many requests with an invalid or expired credential. Try again later.');
   },
-});
-// Stream format starts an ffprobe for a file not probed yet: its own bucket
-// per user keeps a client from spawning probes at the listener rate. The
-// player asks once per track change, and repeats come from the cache.
-const streamFormatLimiter = createRateLimiter({
-  keyPrefix: 'api-v1-stream-format',
-  windowMs: 60_000,
-  max: 120,
-  keyGenerator: (req) => `user:${req.apiV1?.userId ?? 'unknown'}`,
 });
 
 function parseBody<T>(schema: ZodType<T>, req: Request, res: Response): T | null {
@@ -910,7 +904,7 @@ const STREAM_FORMAT_CODECS = new Set(['aac', 'mp3', 'ac3', 'eac3']);
 
 // What comes in and what goes out: the file's own audio, and what the HLS
 // stream at this quality writes (the same plan the transcode follows).
-router.get('/tracks/:id/stream-format', streamFormatLimiter, async (req, res) => {
+router.get('/tracks/:id/stream-format', async (req, res) => {
   const id = routeParam(req, 'id');
   const quality = typeof req.query.quality === 'string' && STREAM_FORMAT_QUALITIES.has(req.query.quality) ? req.query.quality : '128k';
   const requestedCodec = typeof req.query.codec === 'string' && STREAM_FORMAT_CODECS.has(req.query.codec) ? req.query.codec : 'aac';

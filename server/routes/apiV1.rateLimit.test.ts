@@ -1,6 +1,6 @@
 /** @jest-environment node */
-// The whole API v1 pipeline, as a request meets it: request context, auth,
-// the router-wide listener limiter, then a route's own limiter. CodeQL's
+// The whole API v1 pipeline, as a request meets it: request context, the
+// failed-sign-in limiter, auth, then the router-wide listener limiter. CodeQL's
 // js/missing-rate-limiting reads routes one by one and models neither
 // router.use() nor createRateLimiter, so it reports these routes as
 // unlimited; this pins that they are not.
@@ -52,18 +52,13 @@ async function hit(path: string, count: number): Promise<number[]> {
 }
 
 describe('API v1 rate limiting', () => {
-  it('stops stream-format at its own 120 a minute, before the handler touches the database', async () => {
-    const statuses = await hit('/tracks/t1/stream-format', 125);
-    expect(statuses.filter((s) => s === 404)).toHaveLength(120); // reached the handler: no such track
-    expect(statuses.filter((s) => s === 429)).toHaveLength(5);
-    expect(query).toHaveBeenCalledTimes(120);
-  });
-
-  it('limits a route with no limiter of its own through the router-wide listener limiter', async () => {
-    // stream-format above already spent 125 of this listener's 1,200 a minute.
-    const statuses = await hit('/tracks/t1/lyrics', 1080);
-    expect(statuses.filter((s) => s === 404)).toHaveLength(1075);
-    expect(statuses.filter((s) => s === 429)).toHaveLength(5);
-    expect(query).toHaveBeenCalledTimes(1075);
+  it('limits every signed-in route through the router-wide listener limiter, stream-format included', async () => {
+    // One listener's 1,200 a minute, shared by all routes.
+    const formats = await hit('/tracks/t1/stream-format', 600);
+    const lyrics = await hit('/tracks/t1/lyrics', 605);
+    expect(formats.every((s) => s === 404)).toBe(true); // reached the handler: no such track
+    expect(lyrics.filter((s) => s === 404)).toHaveLength(600);
+    expect(lyrics.filter((s) => s === 429)).toHaveLength(5);
+    expect(query).toHaveBeenCalledTimes(1200); // refused ones never reach the handler
   });
 });
