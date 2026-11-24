@@ -12338,6 +12338,31 @@ button.connect-line:disabled {
     radial-gradient(circle at 50% 50%, #2b2b2b 0%, #141414 58%, #070707 100%);
 }
 
+/* A CD, when the files are tagged as one (data-medium="cd"): the silver
+   data side with a faint rainbow sheen, a clear centre ring instead of a
+   printed label, and a CD's bigger centre hole. Same in both themes: a CD
+   is silver in any light. */
+.album-disc[data-synthetic="true"][data-medium="cd"],
+.dark .album-disc[data-synthetic="true"][data-medium="cd"] {
+  background:
+    conic-gradient(from 200deg at 50% 50%,
+      rgba(255, 80, 160, 0.16), rgba(255, 210, 80, 0.16), rgba(80, 230, 190, 0.16),
+      rgba(70, 150, 255, 0.18), rgba(190, 90, 255, 0.16), rgba(255, 80, 160, 0.16)),
+    radial-gradient(circle at 50% 50%, #f4f5f8 0%, #dadce3 55%, #b8bbc5 100%);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+}
+.album-disc[data-synthetic="true"][data-medium="cd"]::before {
+  width: 30%;
+  height: 30%;
+  background: radial-gradient(circle at 50% 50%,
+    rgba(255, 255, 255, 0.55) 0 55%, rgba(200, 205, 215, 0.7) 56% 100%);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+}
+.album-disc[data-medium="cd"]::after {
+  width: 12%;
+  height: 12%;
+}
+
 /* Center label = the cover art (synthetic discs only). */
 .album-disc[data-synthetic="true"]::before {
   content: "";
@@ -12385,6 +12410,37 @@ button.connect-line:disabled {
 }
 
 /* Desktop (≥md): the disc slides out to the right of a stationary cover. */
+/* The ℗ line after an album's last track, as on a record's back. */
+.album-copyright {
+  margin-top: 1rem;
+  padding: 0 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  opacity: 0.75;
+}
+@media (min-width: 768px) {
+  .album-copyright { padding: 0 1rem; }
+}
+
+/* The "E" beside an explicit track's title. */
+.explicit-badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 3px;
+  font-size: 0.625rem;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+  color: var(--color-background);
+  background: var(--color-text-secondary);
+  opacity: 0.85;
+}
+
 /* Room for the rolled-out disc beside the cover, so the title and buttons
    never sit over it. The disc is 92% of the cover (inset 4%) and rolls 38% of
    its own width: it ends 0.04 + 0.92 + 0.92 × 0.38 = 1.31 covers from the

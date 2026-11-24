@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AlbumArt } from '../AlbumArt';
 import { useDiscImage } from '../../hooks/useDiscImage';
+import { discKind } from '../../utils/albumSummary';
 
 /** Proxy an external (CAA) image through the server for CORS + caching. */
 function proxyImageUrl(externalUrl: string): string {
@@ -15,6 +16,8 @@ interface AlbumCoverDiscProps {
     album: string;
     /** Tailwind sizing classes for the square cover (must set both w and h). */
     sizeClassName?: string;
+    /** The release's medium as tagged ("CD", "12\" Vinyl"): a made-up disc looks like a CD for a CD. */
+    media?: string | null;
     /** Laid over the cover (the now-playing chip); positions itself. */
     children?: React.ReactNode;
 }
@@ -22,7 +25,8 @@ interface AlbumCoverDiscProps {
 /**
  * Album hero cover with a disc that rolls out from behind it. The disc shows a
  * real printed-medium scan (Cover Art Archive "Medium" image) when available,
- * otherwise a procedural vinyl label built from the cover art — so it works for
+ * otherwise a procedural disc built from the cover art: a vinyl record with
+ * the cover as its label, or a CD when the files are tagged as one. So it works for
  * every album, including when MusicBrainz is disabled. Motion is opt-in via the
  * prefers-reduced-motion convention (handled in CSS).
  */
@@ -32,6 +36,7 @@ export const AlbumCoverDisc: React.FC<AlbumCoverDiscProps> = ({
     artist,
     album,
     sizeClassName = 'w-48 h-48 md:w-60 md:h-60',
+    media,
     children,
 }) => {
     const { mediumUrl, frontUrl } = useDiscImage(albumId);
@@ -60,6 +65,7 @@ export const AlbumCoverDisc: React.FC<AlbumCoverDiscProps> = ({
                 <div
                     className="album-disc"
                     data-synthetic={!hasRealDisc}
+                    data-medium={!hasRealDisc && discKind(media) === 'cd' ? 'cd' : undefined}
                     aria-hidden="true"
                     style={{ ['--disc-art' as string]: `url("${discArt}")` }}
                 />

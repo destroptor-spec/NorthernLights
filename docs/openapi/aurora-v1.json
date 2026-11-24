@@ -262,6 +262,13 @@
           "lossless": {
             "type": "boolean"
           },
+          "explicit": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Explicit (true) or clean (false) as the file is rated (iTunes advisory); null when not rated."
+          },
           "fileSize": {
             "type": [
               "integer",
@@ -673,12 +680,104 @@
                   "string",
                   "null"
                 ]
+              },
+              "release": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "The record label, as most of its files tag it."
+                  },
+                  "releaseDate": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "This release's date as tagged: \"2011-04-12\", \"2011-04\" or \"2011\"."
+                  },
+                  "originalDate": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "When the music first came out, as tagged; differs from releaseDate for a reissue."
+                  },
+                  "media": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "The medium as tagged: \"CD\", \"12\\\" Vinyl\", \"Digital Media\"."
+                  },
+                  "catalogNumber": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "barcode": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "UPC or EAN, digits only."
+                  },
+                  "releaseStatus": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "MusicBrainz's release status, lowercase: official, promotion, bootleg, pseudo-release."
+                  },
+                  "copyright": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "The ℗ / © line."
+                  },
+                  "discSubtitles": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "disc": {
+                          "type": "integer"
+                        },
+                        "subtitle": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "disc",
+                        "subtitle"
+                      ]
+                    },
+                    "description": "Subtitles of the discs that have one (\"Disc 2: B-Sides\")."
+                  }
+                },
+                "required": [
+                  "label",
+                  "releaseDate",
+                  "originalDate",
+                  "media",
+                  "catalogNumber",
+                  "barcode",
+                  "releaseStatus",
+                  "copyright",
+                  "discSubtitles"
+                ],
+                "description": "The release as its files tag it; each field is what most of its tracks say. Null until the files have been read."
               }
             },
             "required": [
               "description",
               "musicBrainzId",
-              "editionLabel"
+              "editionLabel",
+              "release"
             ]
           },
           "tracks": {
@@ -3017,6 +3116,44 @@
           "names"
         ],
         "additionalProperties": false
+      },
+      "AlbumRecordingPlaces": {
+        "type": "object",
+        "properties": {
+          "places": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "area": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "tracks": {
+                  "type": "integer",
+                  "description": "How many of the album's tracks were recorded there."
+                }
+              },
+              "required": [
+                "name",
+                "area",
+                "tracks"
+              ]
+            },
+            "description": "MusicBrainz's \"recorded at\" places, most tracks first; [] when none are entered; null when it can't say now (MusicBrainz off or unreachable)."
+          }
+        },
+        "required": [
+          "places"
+        ]
       },
       "HubRegeneration": {
         "type": "object",
@@ -6346,6 +6483,61 @@
           },
           "500": {
             "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/albums/{id}/recording-places": {
+      "get": {
+        "summary": "Where an album was recorded",
+        "description": "MusicBrainz's \"recorded at\" places for the release its files name. The first request per album asks MusicBrainz (about a second); the answer is kept and asked again after 90 days.",
+        "tags": [
+          "Library"
+        ],
+        "security": [
+          {
+            "listenerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The places",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/AlbumRecordingPlaces"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such album",
             "content": {
               "application/json": {
                 "schema": {

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { deprecatedRoute } from '../middleware/deprecatedRoute';
 import { createRateLimiter } from '../middleware/rateLimit';
 import { randomBytes } from 'crypto';
-import { getSystemSetting, setSystemSetting, getUserSetting, setUserSetting, getRepresentativeReleaseMbid, getArtistVideosCache } from '../database';
+import { getSystemSetting, setSystemSetting, getUserSetting, setUserSetting, getRepresentativeReleaseMbid, getArtistVideosCache, getAlbumById, getAlbumReleaseGroupMbid } from '../database';
 import { caaGetReleaseImages, pickMediumImage, pickFrontImage } from '../services/metadata/providers/musicbrainz';
 import { testTheAudioDb } from '../services/metadata/providers/theaudiodb';
 import { testFanartTv } from '../services/metadata/providers/fanarttv';
@@ -29,6 +29,7 @@ import {
   clearExternalCache,
   RateLimitError,
   ProviderError,
+  getAlbumDiscArt,
 } from '../services/metadata';
 import {
   isYouTubeEnabled,
@@ -904,22 +905,38 @@ router.get('/providers/album/media-image', requireAuth, async (req, res) => {
   try {
     const albumId = req.query.albumId as string;
     if (!albumId) return res.status(400).json({ error: 'Missing albumId parameter' });
-    if (!(await checkMbEnabled())) return res.json({ releaseMbid: null, mediumUrl: null, frontUrl: null });
 
     const discIndex = Number(req.query.discIndex) || 0;
-    const releaseMbid = await getRepresentativeReleaseMbid(albumId);
-    if (!releaseMbid) return res.json({ releaseMbid: null, mediumUrl: null, frontUrl: null });
-
-    const images = await caaGetReleaseImages(releaseMbid);
-    const medium = pickMediumImage(images, discIndex);
-    const front = pickFrontImage(images);
-    res.json({
-      releaseMbid,
-      // 500px is ample for the hero disc (~240px, retina) and far lighter
-      // than the full-res scan; fall back up the ladder when absent.
-      mediumUrl: medium?.thumbnails?.['500'] || medium?.thumbnails?.['1200'] || medium?.image || null,
-      frontUrl: front?.thumbnails?.['500'] || front?.image || null,
-    });
+    // The Cover Art Archive's scan of the disc first, when MusicBrainz is on.
+    let releaseMbid: string | null = null;
+    let mediumUrl: string | null = null;
+    let frontUrl: string | null = null;
+    if (await checkMbEnabled()) {
+      releaseMbid = await getRepresentativeReleaseMbid(albumId);
+      if (releaseMbid) {
+        const images = await caaGetReleaseImages(releaseMbid);
+        const medium = pickMediumImage(images, discIndex);
+        const front = pickFrontImage(images);
+        // 500px is ample for the hero disc (~240px, retina) and far lighter
+        // than the full-res scan; fall back up the ladder when absent.
+        mediumUrl = medium?.thumbnails?.['500'] || medium?.thumbnails?.['1200'] || medium?.image || null;
+        frontUrl = front?.thumbnails?.['500'] || front?.image || null;
+      }
+    }
+    // Else a picture of the disc from fanart.tv or TheAudioDB (getAlbumDiscArt:
+    // the Album art providers, in the admin's order).
+    if (!mediumUrl) {
+      const album = await getAlbumById(albumId);
+      if (album) {
+        mediumUrl = await getAlbumDiscArt({
+          title: album.title,
+          artist: album.artist_name,
+          releaseGroupId: await getAlbumReleaseGroupMbid(albumId),
+          discIndex,
+        });
+      }
+    }
+    res.json({ releaseMbid, mediumUrl, frontUrl });
   } catch (err: any) {
     console.error('[ExternalMeta] media-image error:', err.message);
     res.status(502).json({ error: 'Failed to fetch disc art' });

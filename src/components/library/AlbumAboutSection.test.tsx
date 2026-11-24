@@ -38,3 +38,18 @@ it('leaves out what it has nothing for, and the whole card with neither text nor
   rerender(album());
   expect(screen.queryByRole('region', { name: 'About Wasting Light' })).toBeNull();
 });
+
+it('opens with At a glance, written from the release its files are tagged with', () => {
+  render(album({
+    description: 'The seventh studio album.',
+    release: { label: 'RCA Records', releaseDate: '2011-04-12', originalDate: '2011-04-12', media: 'CD' },
+  }));
+  expect(screen.getAllByRole('heading', { level: 4 }).map(h => h.textContent)).toEqual(['At a glance', 'Description']);
+  expect(screen.getByText(/^Wasting Light is an album/).textContent)
+    .toBe('Wasting Light is an album by Foo Fighters, released on 12 April 2011 by RCA Records. Your copy is the CD release.');
+});
+
+it('shows the card for release facts alone', () => {
+  render(album({ release: { label: null, releaseDate: null, originalDate: null, media: '12" Vinyl' } }));
+  expect(screen.getByText('Your copy is the 12″ vinyl release.')).toBeTruthy();
+});

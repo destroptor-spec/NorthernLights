@@ -49,6 +49,7 @@ import {
   artworkLinksSchema,
   artistImageLookupRequestSchema,
   artistImageLookupSchema,
+  albumRecordingPlacesSchema,
   connectedDeviceSchema,
   playbackCommandResultSchema,
   playbackOutputClaimResultSchema,
@@ -183,6 +184,7 @@ path({ method: 'post', path: '/artists/image-lookups', summary: 'Pictures for ar
 path({ method: 'get', path: '/artists/{id}', summary: 'Get an artist and tracks', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(schemas.ArtistDetail) });
 path({ method: 'get', path: '/albums', summary: 'List albums', tags: ['Library'], security: authed, request: { query: cursorQuery }, responses: paged(z.array(schemas.Album)) });
 path({ method: 'get', path: '/albums/{id}', summary: 'Get an album and tracks', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(schemas.AlbumDetail) });
+path({ method: 'get', path: '/albums/{id}/recording-places', summary: 'Where an album was recorded', description: "MusicBrainz's \"recorded at\" places for the release its files name. The first request per album asks MusicBrainz (about a second); the answer is kept and asked again after 90 days.", tags: ['Library'], security: authed, request: { params: idParams }, responses: { 200: { description: 'The places', content: json(z.object({ data: albumRecordingPlacesSchema })) }, 404: { description: 'No such album', content: json(schemas.ApiError) } } });
 path({ method: 'get', path: '/genres', summary: 'List genres', tags: ['Library'], security: authed, request: { query: cursorQuery }, responses: paged(z.array(schemas.Genre)) });
 path({ method: 'get', path: '/genres/{id}', summary: 'Get a genre and tracks', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(schemas.GenreDetail) });
 path({ method: 'get', path: '/tracks/{id}', summary: 'Get one path-free track resource', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(schemas.Track) });

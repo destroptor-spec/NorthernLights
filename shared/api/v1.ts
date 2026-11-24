@@ -90,6 +90,7 @@ export const trackSchema = z.object({
   bitrate: z.number().int().nonnegative().nullable(),
   format: z.string().nullable(),
   lossless: z.boolean(),
+  explicit: z.boolean().nullable().optional().describe('Explicit (true) or clean (false) as the file is rated (iTunes advisory); null when not rated.'),
   fileSize: z.number().int().nonnegative().nullable(),
   mediaEtag: z.string().nullable(),
   artistId: OPAQUE_ID.nullable(),
@@ -654,9 +655,28 @@ export const albumDetailSchema = z.object({
     tags: z.unknown().nullable(),
     musicBrainzId: z.string().nullable(),
     editionLabel: z.string().nullable(),
+    release: z.object({
+      label: z.string().nullable().describe('The record label, as most of its files tag it.'),
+      releaseDate: z.string().nullable().describe('This release\'s date as tagged: "2011-04-12", "2011-04" or "2011".'),
+      originalDate: z.string().nullable().describe('When the music first came out, as tagged; differs from releaseDate for a reissue.'),
+      media: z.string().nullable().describe('The medium as tagged: "CD", "12\\" Vinyl", "Digital Media".'),
+      catalogNumber: z.string().nullable(),
+      barcode: z.string().nullable().describe('UPC or EAN, digits only.'),
+      releaseStatus: z.string().nullable().describe('MusicBrainz\'s release status, lowercase: official, promotion, bootleg, pseudo-release.'),
+      copyright: z.string().nullable().describe('The ℗ / © line.'),
+      discSubtitles: z.array(z.object({ disc: z.number().int(), subtitle: z.string() })).describe('Subtitles of the discs that have one ("Disc 2: B-Sides").'),
+    }).describe('The release as its files tag it; each field is what most of its tracks say. Null until the files have been read.'),
   }),
   tracks: z.array(trackSchema),
 }).meta({ id: 'AlbumDetail' });
+
+export const albumRecordingPlacesSchema = z.object({
+  places: z.array(z.object({
+    name: z.string(),
+    area: z.string().nullable(),
+    tracks: z.number().int().describe('How many of the album\'s tracks were recorded there.'),
+  })).nullable().describe('MusicBrainz\'s "recorded at" places, most tracks first; [] when none are entered; null when it can\'t say now (MusicBrainz off or unreachable).'),
+}).meta({ id: 'AlbumRecordingPlaces' });
 
 export const genreDetailSchema = z.object({
   genre: genreSchema,
@@ -866,6 +886,7 @@ export type ArtistSummary = z.infer<typeof artistSummarySchema>;
 export type AlbumSummary = z.infer<typeof albumSummarySchema>;
 export type Genre = z.infer<typeof genreSchema>;
 export type ArtistDetail = z.infer<typeof artistDetailSchema>;
+export type AlbumRecordingPlaces = z.infer<typeof albumRecordingPlacesSchema>;
 export type AlbumDetail = z.infer<typeof albumDetailSchema>;
 export type GenreDetail = z.infer<typeof genreDetailSchema>;
 export type PlaylistGenerationSource = z.infer<typeof playlistGenerationSourceSchema>;

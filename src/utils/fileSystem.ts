@@ -33,6 +33,8 @@ export interface TrackInfo {
   bitrate?: number;
   format?: string;
   lossless?: boolean; // authoritative flag from music-metadata (server tracks.lossless)
+  /** Explicit (true) or clean (false) as the file is rated; undefined when not rated. */
+  explicit?: boolean;
   
   artistId?: string;
   albumId?: string;

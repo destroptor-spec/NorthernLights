@@ -14,6 +14,8 @@ export interface FanartImage {
   url?: string;
   likes?: string;
   lang?: string;
+  /** cdart only: which disc of the release it is ("1", "2"). */
+  disc?: string;
 }
 
 export interface FanartArtist {

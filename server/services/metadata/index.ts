@@ -1,4 +1,4 @@
-import { getSystemSetting, initDB } from '../../database';
+import { getRepresentativeReleaseMbid, getStoredRecordingPlaces, getSystemSetting, initDB, storeRecordingPlaces } from '../../database';
 import { mergeForDisplay, normaliseProviderTags, saveArtistTagsByName, type ProviderTag, type TagProvider, type WeightedTag } from '../genreTaxonomy/artistTags';
 import { scheduleTagMapping } from '../genreTaxonomy';
 import { RateLimitError, ProviderError, isRateLimitError, isProviderError } from './errors';
@@ -25,11 +25,11 @@ import {
   testLastFm,
 } from './providers/lastfm';
 import { geniusSearch, geniusGetArtist } from './providers/genius';
-import { extractMbLinks, extractMbMembers, mbGetArtist, mbGetAlbumCover, mbGetReleaseGroupCover, mbReleaseGroupOfRelease, mbSearchReleaseGroup } from './providers/musicbrainz';
+import { extractMbLinks, extractMbMembers, mbGetArtist, mbGetAlbumCover, mbGetReleaseGroupCover, mbReleaseGroupOfRelease, mbReleaseRecordingPlaces, mbSearchReleaseGroup, type RecordingPlace } from './providers/musicbrainz';
 import { countryCode } from '../../../shared/places';
 import { isGeniusPlaceholderImage, type MetadataItem, type MetadataProvider, type MetadataProviderPriority } from '../../../shared/metadataProviders';
 import { getMetadataProviderPriority } from './providerPriority';
-import { tadbArtistByMbid, tadbSearchArtist, tadbSearchAlbum, tadbImage, type TadbAlbum, type TadbArtist } from './providers/theaudiodb';
+import { tadbAlbumByReleaseGroup, tadbArtistByMbid, tadbSearchArtist, tadbSearchAlbum, tadbImage, type TadbAlbum, type TadbArtist } from './providers/theaudiodb';
 import { fanartArtist, fanartAlbum, bestFanartImage } from './providers/fanarttv';
 import { mergeLinks, sameArtistName, sameName, theAudioDbFacts, withDisplayTags } from './theAudioDbFacts';
 
@@ -607,6 +607,103 @@ export async function getAlbumData(
 /**
  * Fetch album art. Checks DB cache, falls back to external APIs.
  */
+// Where an album was recorded: asked of MusicBrainz when its page is first
+// opened (one request), kept on the album, and asked again after this long
+// (places get entered). Never in a background sweep: MusicBrainz is free and
+// rate-limited, and most albums' pages are never opened.
+const RECORDING_PLACES_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+/**
+ * The album's recording places, most tracks first; [] when MusicBrainz has
+ * none (or the files name no release), null when it can't say now
+ * (MusicBrainz off, or the lookup failed: asked again next time).
+ */
+export async function getAlbumRecordingPlaces(albumId: string): Promise<RecordingPlace[] | null> {
+  const settings = await getProviderSettings();
+  if (!settings.musicBrainzEnabled) return null;
+  const stored = await getStoredRecordingPlaces(albumId);
+  if (!stored) return null;
+  if (stored.readAt && Date.now() - new Date(stored.readAt).getTime() < RECORDING_PLACES_TTL_MS && Array.isArray(stored.places)) {
+    return stored.places as RecordingPlace[];
+  }
+  const releaseId = await getRepresentativeReleaseMbid(albumId);
+  if (!isMusicBrainzUuid(releaseId)) {
+    await storeRecordingPlaces(albumId, []);
+    return [];
+  }
+  try {
+    const places = await mbReleaseRecordingPlaces(releaseId);
+    await storeRecordingPlaces(albumId, places);
+    return places;
+  } catch (error) {
+    console.warn('[Metadata] Recording places lookup failed:', error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
+// Disc images found (or not) per album and disc: the album page asks on every
+// visit, and fanart.tv and TheAudioDB are rate-limited free APIs. A day, then
+// asked again (art gets added); a failed lookup isn't kept.
+const DISC_ART_TTL_MS = 24 * 60 * 60 * 1000;
+const DISC_ART_MAX = 2000;
+const discArtCache = new Map<string, { url: string | null; at: number }>();
+
+/** Test hook. */
+export function clearDiscArtCacheForTests(): void {
+  discArtCache.clear();
+}
+
+/**
+ * A picture of the disc itself (transparent PNG) for the disc that rolls out
+ * of the album's cover, when the Cover Art Archive has no scan of it: from
+ * fanart.tv (`cdart`, by release group, for this disc when it says) and
+ * TheAudioDB (`strAlbumCDart`), asked in the admin's Album art order, and only
+ * those on that list. Null when none has one.
+ */
+export async function getAlbumDiscArt(album: {
+  title: string;
+  artist: string;
+  releaseGroupId?: string | null;
+  /** 0 for the first disc. */
+  discIndex?: number;
+}): Promise<string | null> {
+  const discIndex = album.discIndex ?? 0;
+  const releaseGroupId = isMusicBrainzUuid(album.releaseGroupId) ? album.releaseGroupId : null;
+  const key = `${releaseGroupId || `${album.artist}\u0000${album.title}`.toLowerCase()}#${discIndex}`;
+  const cached = discArtCache.get(key);
+  if (cached && Date.now() - cached.at < DISC_ART_TTL_MS) return cached.url;
+
+  const settings = await getProviderSettings();
+  let failed = false;
+  let url: string | null = null;
+  for (const api of usableProviders(settings, 'albumArt')) {
+    try {
+      if (api === 'fanarttv' && releaseGroupId) {
+        const fanart = await fanartAlbum(releaseGroupId, settings.fanartTvApiKey);
+        const discs = fanart?.albums?.[releaseGroupId]?.cdart || [];
+        const thisDisc = discs.filter(d => Number(d.disc) === discIndex + 1);
+        url = bestFanartImage(thisDisc.length ? thisDisc : discs) ?? null;
+      } else if (api === 'theaudiodb') {
+        const hit = releaseGroupId
+          ? await tadbAlbumByReleaseGroup(releaseGroupId, settings.theAudioDbApiKey)
+          : (await tadbSearchAlbum(album.artist, album.title, settings.theAudioDbApiKey)).find(a => sameName(a.strAlbum, album.title)) ?? null;
+        url = tadbImage(hit?.strAlbumCDart) ?? null;
+      }
+    } catch (error) {
+      failed = true;
+      console.warn(`[Metadata] Disc art from ${api} failed:`, error instanceof Error ? error.message : error);
+    }
+    if (url) break;
+  }
+
+  if (url || !failed) {
+    discArtCache.delete(key);
+    discArtCache.set(key, { url, at: Date.now() });
+    while (discArtCache.size > DISC_ART_MAX) discArtCache.delete(discArtCache.keys().next().value as string);
+  }
+  return url;
+}
+
 export async function getAlbumImage(
   albumName: string,
   artistName: string,

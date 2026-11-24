@@ -1,17 +1,22 @@
 /**
  * @jest-environment node
  */
-import { getAlbumImage, getArtistData } from './index';
-import { getSystemSetting } from '../../database';
+import { clearDiscArtCacheForTests, getAlbumDiscArt, getAlbumImage, getAlbumRecordingPlaces, getArtistData } from './index';
+import { getRepresentativeReleaseMbid, getStoredRecordingPlaces, getSystemSetting, storeRecordingPlaces } from '../../database';
 import { getCachedAlbum, getCachedArtist, upsertAlbumCache, upsertArtistCache } from './cache';
 import { geniusSearch, geniusGetArtist } from './providers/genius';
 import { lastFmAlbumInfo, lastFmArtistInfo, lastFmArtistTopTags, extractLastFmImage } from './providers/lastfm';
-import { mbGetAlbumCover, mbGetArtist, mbGetReleaseGroupCover, mbReleaseGroupOfRelease, mbSearchReleaseGroup } from './providers/musicbrainz';
-import { tadbArtistByMbid, tadbSearchArtist, tadbSearchAlbum } from './providers/theaudiodb';
+import { mbGetAlbumCover, mbGetArtist, mbGetReleaseGroupCover, mbReleaseGroupOfRelease, mbReleaseRecordingPlaces, mbSearchReleaseGroup } from './providers/musicbrainz';
+import { tadbAlbumByReleaseGroup, tadbArtistByMbid, tadbSearchArtist, tadbSearchAlbum } from './providers/theaudiodb';
 import { fanartAlbum, fanartArtist } from './providers/fanarttv';
 import { ProviderError, RateLimitError } from './errors';
 
-jest.mock('../../database', () => ({ getSystemSetting: jest.fn() }));
+jest.mock('../../database', () => ({
+  getSystemSetting: jest.fn(),
+  getStoredRecordingPlaces: jest.fn(),
+  storeRecordingPlaces: jest.fn(async () => {}),
+  getRepresentativeReleaseMbid: jest.fn(),
+}));
 jest.mock('./cache', () => ({
   getCachedArtist: jest.fn(),
   upsertArtistCache: jest.fn(async () => {}),
@@ -34,12 +39,14 @@ jest.mock('./providers/musicbrainz', () => ({
   mbGetReleaseGroupCover: jest.fn(),
   mbSearchReleaseGroup: jest.fn(async () => []),
   mbReleaseGroupOfRelease: jest.fn(async () => null),
+  mbReleaseRecordingPlaces: jest.fn(async () => []),
 }));
 jest.mock('./providers/theaudiodb', () => ({
   ...jest.requireActual('./providers/theaudiodb'),
   tadbArtistByMbid: jest.fn(async () => null),
   tadbSearchArtist: jest.fn(async () => null),
   tadbSearchAlbum: jest.fn(async () => []),
+  tadbAlbumByReleaseGroup: jest.fn(async () => null),
 }));
 jest.mock('./providers/fanarttv', () => ({
   ...jest.requireActual('./providers/fanarttv'),
@@ -526,5 +533,108 @@ describe('TheAudioDB and fanart.tv', () => {
     expect(fanartAlbum).toHaveBeenCalledWith(GROUP, expect.anything());
     expect(mbReleaseGroupOfRelease).not.toHaveBeenCalled();
     expect(tadbSearchAlbum).not.toHaveBeenCalled();
+  });
+});
+
+describe('disc art for the rolling disc', () => {
+  const GROUP = '1dc4c347-a1db-32aa-b14f-bc9cc507b843';
+  const parachutes = { title: 'Parachutes', artist: 'Coldplay', releaseGroupId: GROUP };
+  const cdart = (url: string, disc: string, likes: string) => ({ url, disc, likes });
+
+  beforeEach(() => {
+    clearDiscArtCacheForTests();
+    Object.assign(settings, { theAudioDbApiKey: '123', fanartTvApiKey: 'fanart-key' });
+    jest.mocked(fanartAlbum).mockResolvedValue(null);
+    jest.mocked(tadbAlbumByReleaseGroup).mockResolvedValue(null);
+    jest.mocked(tadbSearchAlbum).mockResolvedValue([]);
+  });
+
+  it('asks the Album art providers in order, and only those listed', async () => {
+    priority({ albumArt: ['theaudiodb', 'fanarttv'] });
+    jest.mocked(tadbAlbumByReleaseGroup).mockResolvedValue({ strAlbumCDart: 'https://r2.theaudiodb.com/images/media/album/cdart/p.png' });
+    expect(await getAlbumDiscArt(parachutes)).toBe('https://r2.theaudiodb.com/images/media/album/cdart/p.png');
+    expect(fanartAlbum).not.toHaveBeenCalled();
+
+    clearDiscArtCacheForTests();
+    priority({ albumArt: ['musicbrainz', 'lastfm'] });
+    expect(await getAlbumDiscArt(parachutes)).toBeNull();
+    expect(tadbAlbumByReleaseGroup).toHaveBeenCalledTimes(1);
+  });
+
+  it('takes fanart.tv’s picture of this disc, the most liked', async () => {
+    priority({ albumArt: ['fanarttv'] });
+    jest.mocked(fanartAlbum).mockResolvedValue({ albums: { [GROUP]: { cdart: [
+      cdart('https://assets.fanart.tv/fanart/one-low.png', '1', '0'),
+      cdart('https://assets.fanart.tv/fanart/one-top.png', '1', '5'),
+      cdart('https://assets.fanart.tv/fanart/two.png', '2', '1'),
+    ] } } });
+    expect(await getAlbumDiscArt(parachutes)).toBe('https://assets.fanart.tv/fanart/one-top.png');
+    expect(await getAlbumDiscArt({ ...parachutes, discIndex: 1 })).toBe('https://assets.fanart.tv/fanart/two.png');
+    expect(fanartAlbum).toHaveBeenCalledWith(GROUP, 'fanart-key');
+  });
+
+  it('remembers what it found, but not a failed lookup', async () => {
+    priority({ albumArt: ['theaudiodb'] });
+    jest.mocked(tadbAlbumByReleaseGroup).mockRejectedValueOnce(new ProviderError('theaudiodb', 'HTTP 503', 503));
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(await getAlbumDiscArt(parachutes)).toBeNull();
+    jest.mocked(tadbAlbumByReleaseGroup).mockResolvedValue({ strAlbumCDart: 'https://r2.theaudiodb.com/images/media/album/cdart/p.png' });
+    expect(await getAlbumDiscArt(parachutes)).toBe('https://r2.theaudiodb.com/images/media/album/cdart/p.png');
+    expect(await getAlbumDiscArt(parachutes)).toBe('https://r2.theaudiodb.com/images/media/album/cdart/p.png');
+    expect(tadbAlbumByReleaseGroup).toHaveBeenCalledTimes(2);
+  });
+
+  it('finds TheAudioDB’s album by name without a release group', async () => {
+    priority({ albumArt: ['theaudiodb'] });
+    jest.mocked(tadbSearchAlbum).mockResolvedValue([{ strAlbum: 'Parachutes', strAlbumCDart: 'https://r2.theaudiodb.com/c.png' }]);
+    expect(await getAlbumDiscArt({ title: 'Parachutes', artist: 'Coldplay' })).toBe('https://r2.theaudiodb.com/c.png');
+    expect(tadbAlbumByReleaseGroup).not.toHaveBeenCalled();
+  });
+});
+
+describe('where an album was recorded', () => {
+  const RELEASE = 'f037f8ba-5263-497a-b36c-f83bf4dc0817';
+  const village = { name: 'The Village', area: 'Los Angeles', tracks: 6 };
+
+  beforeEach(() => {
+    Object.assign(settings, { musicBrainzEnabled: true });
+    jest.mocked(getRepresentativeReleaseMbid).mockResolvedValue(RELEASE);
+  });
+
+  it('asks MusicBrainz the first time and keeps the answer', async () => {
+    jest.mocked(getStoredRecordingPlaces).mockResolvedValue({ places: null, readAt: null });
+    jest.mocked(mbReleaseRecordingPlaces).mockResolvedValue([village]);
+    expect(await getAlbumRecordingPlaces('al1')).toEqual([village]);
+    expect(mbReleaseRecordingPlaces).toHaveBeenCalledWith(RELEASE);
+    expect(storeRecordingPlaces).toHaveBeenCalledWith('al1', [village]);
+  });
+
+  it('answers from the album while the answer is fresh, and asks again after 90 days', async () => {
+    jest.mocked(getStoredRecordingPlaces).mockResolvedValue({ places: [village], readAt: new Date() });
+    expect(await getAlbumRecordingPlaces('al1')).toEqual([village]);
+    expect(mbReleaseRecordingPlaces).not.toHaveBeenCalled();
+
+    jest.mocked(getStoredRecordingPlaces).mockResolvedValue({ places: [], readAt: new Date(Date.now() - 91 * 24 * 60 * 60 * 1000) });
+    jest.mocked(mbReleaseRecordingPlaces).mockResolvedValue([village]);
+    expect(await getAlbumRecordingPlaces('al1')).toEqual([village]);
+  });
+
+  it('keeps "none" without a release to ask about, asks nothing with MusicBrainz off, and keeps no failure', async () => {
+    jest.mocked(getStoredRecordingPlaces).mockResolvedValue({ places: null, readAt: null });
+    jest.mocked(getRepresentativeReleaseMbid).mockResolvedValue(null);
+    expect(await getAlbumRecordingPlaces('al1')).toEqual([]);
+    expect(storeRecordingPlaces).toHaveBeenCalledWith('al1', []);
+
+    Object.assign(settings, { musicBrainzEnabled: false });
+    expect(await getAlbumRecordingPlaces('al1')).toBeNull();
+
+    Object.assign(settings, { musicBrainzEnabled: true });
+    jest.mocked(getRepresentativeReleaseMbid).mockResolvedValue(RELEASE);
+    jest.mocked(storeRecordingPlaces).mockClear();
+    jest.mocked(mbReleaseRecordingPlaces).mockRejectedValueOnce(new ProviderError('musicbrainz', 'HTTP 503', 503));
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(await getAlbumRecordingPlaces('al1')).toBeNull();
+    expect(storeRecordingPlaces).not.toHaveBeenCalled();
+    expect(mbReleaseRecordingPlaces).toHaveBeenCalledTimes(1);
   });
 });

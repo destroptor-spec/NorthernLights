@@ -30,6 +30,7 @@ import {
   getSystemSetting,
   getTrackLoudnessByIds,
   getTracksByAlbum,
+  getAlbumReleaseFacts,
   getTracksByArtist,
   getUncreditedTracksOnOwnedAlbums,
   getAlbumsOwnedByArtistName,
@@ -93,6 +94,7 @@ import {
   OPAQUE_ID,
 } from '../../shared/api/v1';
 import { requestArtistImages } from '../services/artistImageEnrichment.service';
+import { getAlbumRecordingPlaces } from '../services/metadata';
 import {
   approvePairingRequest,
   cancelPairingRequest,
@@ -672,7 +674,10 @@ router.get('/albums', async (req, res) => {
 router.get('/albums/:id', async (req, res) => {
   const album = await getAlbumById(req.params.id);
   if (!album) return sendApiV1Error(req, res, 404, 'ALBUM_NOT_FOUND', 'Album not found.');
-  const rawTracks = await getTracksByAlbum(req.params.id, req.apiV1!.userId);
+  const [rawTracks, release] = await Promise.all([
+    getTracksByAlbum(req.params.id, req.apiV1!.userId),
+    getAlbumReleaseFacts(req.params.id),
+  ]);
   const tracks = await getApiV1TracksByIds(req.apiV1!.userId, rawTracks.map((track: any) => String(track.id)));
   dataResponse(req, res, {
     album: mapAlbumSummaryV1(album),
@@ -681,9 +686,18 @@ router.get('/albums/:id', async (req, res) => {
       tags: album.tags || null,
       musicBrainzId: album.mbid || album.mb_release_group_id || null,
       editionLabel: album.edition_label || null,
+      release,
     }),
     tracks,
   });
+});
+
+// Where the album was recorded. Its own request, after the album page has
+// loaded: the first one per album asks MusicBrainz (about a second).
+router.get('/albums/:id/recording-places', async (req, res) => {
+  const album = await getAlbumById(req.params.id);
+  if (!album) return sendApiV1Error(req, res, 404, 'ALBUM_NOT_FOUND', 'Album not found.');
+  dataResponse(req, res, { places: await getAlbumRecordingPlaces(req.params.id) });
 });
 
 router.get('/genres', async (req, res) => {
