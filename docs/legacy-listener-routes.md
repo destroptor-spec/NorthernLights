@@ -21,8 +21,6 @@ The line names the route as declared (never the ids in the URL), the last status
 
 | Route | Use instead |
 | --- | --- |
-| `GET /api/library/search` | `GET /api/v1/search` |
-| `POST /api/library/love` | `PUT /api/v1/tracks/:id/loved` |
 | `POST /api/providers/lastfm/scrobble`, `/now-playing` | `POST /api/v1/playback/reports` (the server scrobbles) |
 | `POST /api/providers/lastfm/love`, `/unlove` | `PUT /api/v1/tracks/:id/loved` (the server syncs Last.fm) |
 | `POST /api/providers/listenbrainz/scrobble`, `/now-playing` | `POST /api/v1/playback/reports` |
@@ -43,6 +41,7 @@ The week of 17–24 Nov 2026 logged no calls to any of the 41 routes (`productio
 | 24 Nov 2026 | `GET /api/artists`, `GET /api/artists/:id` | `GET /api/v1/artists`, `GET /api/v1/artists/:id` |
 | 24 Nov 2026 | `GET /api/albums`, `GET /api/albums/:id` | `GET /api/v1/albums`, `GET /api/v1/albums/:id` |
 | 24 Nov 2026 | `GET /api/genres`, `GET /api/genres/:id` | `GET /api/v1/genres`, `GET /api/v1/genres/:id` |
+| 24 Nov 2026 | `GET /api/library/search`, `POST /api/library/love` | `GET /api/v1/search` (and `/search/ranked`), `PUT /api/v1/tracks/:id/loved` |
 
 ## Checking
 

@@ -184,7 +184,7 @@ track list at boot**:
   lists. The Zustand `library` array stays empty in the main app.
 - **Per-entity tracks** — detail views fetch their tracks on demand
   (`/api/v1/artists/:id`, `/api/v1/albums/:id`, `/api/v1/genres/:id`) via the `useEntityTracks` hook.
-- **Server-side search** — `/api/library/search` uses trigram filtering with exact-first relevance. The live surface is debounced and grouped; the Enter-only `/search` route uses a confidence-bounded mixed list with keyset pagination.
+- **Server-side search** — `/api/v1/search` (and `/search/ranked`) uses trigram filtering with exact-first relevance. The live surface is debounced and grouped; the Enter-only `/search` route uses a confidence-bounded mixed list with keyset pagination.
 - **Queue** — persisted and rehydrated via `reconcileQueue()` +
   `POST /api/library/tracks/exists`; stream URLs rebuilt from `path`.
 - **On-demand full list** — only admin tools (Genre Matrix, Library Entities)

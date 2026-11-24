@@ -15,8 +15,9 @@ function isOn(value: unknown): boolean {
 /**
  * Set a track's loved state for a user and mirror it to connected providers.
  *
- * The one implementation behind both the web route (`POST /api/library/love`)
- * and API v1 (`PUT /api/v1/tracks/:id/loved`). v1 used to store the flag and
+ * The one implementation behind API v1's `PUT /api/v1/tracks/:id/loved` and
+ * the Subsonic star/unstar calls (the legacy `POST /api/library/love`, removed
+ * 24 Nov 2026, used it too). v1 used to store the flag and
  * stop there, so a client moved onto it would have silently stopped loving on
  * Last.fm and rating on MusicBrainz. The local write always lands first;
  * provider failures are reported per provider and never undo it.

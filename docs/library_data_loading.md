@@ -42,8 +42,8 @@ populated lazily for two admin tools (see [On-demand cache](#on-demand-full-libr
 | Album detail (`AlbumDetail`) | `GET /api/v1/albums/:id` | per-album |
 | Artist detail (`ArtistDetail`) | `GET /api/v1/artists/:id` + `GET /api/artists/:id/appears-on` | per-artist + collaborations |
 | Genre detail (`GenreDetail`) | `GET /api/v1/genres/:id` | per-genre |
-| Live search (`GlobalSearch`) | `GET /api/library/search?q=` | grouped matches only |
-| Search results page (`SearchResultsPage`) | `GET /api/library/search?mode=ranked&q=` | cursor-paged mixed matches |
+| Live search (`GlobalSearch`) | `GET /api/v1/search?q=` | grouped matches only |
+| Search results page (`SearchResultsPage`) | `GET /api/v1/search/ranked?q=` | cursor-paged mixed matches |
 | Hub (`Hub`) | `GET /api/v1/hub`, `/api/v1/hub/smart` (tracks embedded) | embedded |
 | Playlists / detail | `GET /api/v1/playlists`, `/api/v1/playlists/:id` | embedded |
 | Playlist suggestions | `GET /api/v1/playlists/:id/suggestions` (candidate pool) | pooled |
@@ -71,7 +71,7 @@ fields and only falls back to track derivation if they're absent.
 
 ## Server-side search
 
-`GET /api/library/search?q=` (`searchLibrary` in `server/database/index.ts`)
+`GET /api/v1/search?q=` (`searchLibrary` in `server/database/index.ts`)
 runs three trigram-indexed `ILIKE` queries for tracks, artists, and albums. It
 returns `{ artists, albums, tracks }` with per-user `is_loved`. Exact names are
 ranked before prefixes, word prefixes, and substring matches, including the
@@ -108,8 +108,8 @@ external APIs' term).
 | `GET /api/v1/artists/:id` | `{ data: { artist, details, tracks, ownedAlbums } }` |
 | `GET /api/artists/:id/appears-on` | `{ tracks }` — collaborations (artist in `artists[]`, not primary) |
 | `GET /api/v1/genres/:id` | `{ data: { genre, tracks } }` (matches `genre_id` + the genre name in multi-genre tags) |
-| `GET /api/library/search?q=` | `{ artists, albums, tracks }` |
-| `GET /api/library/search?mode=ranked&q=&limit=&cursor=` | `{ results, nextCursor }` |
+| `GET /api/v1/search?q=` | `{ data: { artists, albums, tracks } }` |
+| `GET /api/v1/search/ranked?q=&limit=&cursor=` | `{ data: { results, nextCursor } }` |
 | `GET /api/v1/playlists/:id/suggestions` | `{ data: tracks }` — bounded candidate pool |
 | `GET /api/library/tracks` | `{ tracks }` — full list, used only by the on-demand cache |
 | `GET /api/library/directories` | `{ directories }` |
