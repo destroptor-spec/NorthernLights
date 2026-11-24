@@ -45,8 +45,8 @@ populated lazily for two admin tools (see [On-demand cache](#on-demand-full-libr
 | Live search (`GlobalSearch`) | `GET /api/library/search?q=` | grouped matches only |
 | Search results page (`SearchResultsPage`) | `GET /api/library/search?mode=ranked&q=` | cursor-paged mixed matches |
 | Hub (`Hub`) | `GET /api/v1/hub`, `/api/v1/hub/smart` (tracks embedded) | embedded |
-| Playlists / detail | `GET /api/playlists`, `/api/playlists/:id` | embedded |
-| Playlist suggestions | `GET /api/playlists/:id/suggestions` (candidate pool) | pooled |
+| Playlists / detail | `GET /api/v1/playlists`, `/api/v1/playlists/:id` | embedded |
+| Playlist suggestions | `GET /api/v1/playlists/:id/suggestions` (candidate pool) | pooled |
 
 Detail views fetch + hydrate tracks via the shared `useEntityTracks` hook
 (`src/hooks/useEntityTracks.ts`), which calls the endpoint, builds stream/art
@@ -110,14 +110,14 @@ external APIs' term).
 | `GET /api/genres/:id` | `{ ...genre, tracks }` (matches `genre_id` + the genre name in multi-genre tags) |
 | `GET /api/library/search?q=` | `{ artists, albums, tracks }` |
 | `GET /api/library/search?mode=ranked&q=&limit=&cursor=` | `{ results, nextCursor }` |
-| `GET /api/playlists/:id/suggestions` | `{ tracks }` — bounded candidate pool |
+| `GET /api/v1/playlists/:id/suggestions` | `{ data: tracks }` — bounded candidate pool |
 | `GET /api/library/tracks` | `{ tracks }` — full list, used only by the on-demand cache |
 | `GET /api/library/directories` | `{ directories }` |
 | `POST /api/library/tracks/exists` | `{ ids }` — which of the supplied ids still exist (queue pruning) |
 
 ## Playlist suggestions
 
-`GET /api/playlists/:id/suggestions` (`getPlaylistSuggestionPool`) returns a
+`GET /api/v1/playlists/:id/suggestions` (`getPlaylistSuggestionPool`) returns a
 **bounded** pool (≤500) of tracks sharing the playlist's artists, genres, or
 album-artists, ordered so shared-artist matches survive the cap. The existing
 client overlap-scoring (`src/utils/playlistSuggestions.ts`) then ranks the pool —

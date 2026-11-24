@@ -21,7 +21,6 @@ The line names the route as declared (never the ids in the URL), the last status
 
 | Route | Use instead |
 | --- | --- |
-| Every route under `/api/playlists` (11) | the `/api/v1/playlists` routes |
 | `POST /api/playback/history`, `/record`, `/skip` | `POST /api/v1/playback/reports` |
 | `POST /api/recommend` | `POST /api/v1/recommendations/next` |
 | `GET /api/artists`, `GET /api/artists/:id` | `GET /api/v1/artists`, `GET /api/v1/artists/:id` |
@@ -43,6 +42,7 @@ The week of 17–24 Nov 2026 logged no calls to any of the 41 routes (`productio
 | Removed | Routes | Use instead |
 | --- | --- | --- |
 | 24 Nov 2026 | Every route under `/api/hub` (10) | `/api/v1/hub`, `/api/v1/hub/smart`, `/api/v1/hub/regenerate`, `/api/v1/hub/custom`, `/api/v1/hub/artist-radio` and its `/eligibility` |
+| 24 Nov 2026 | Every route under `/api/playlists` (11) | the `/api/v1/playlists` routes |
 
 ## Checking
 
