@@ -1,6 +1,4 @@
-import { deprecatedRoute } from '../middleware/deprecatedRoute';
 import { logScanner, logAnalyzer, logLoudness } from '../services/loggingConfig';
-import { setTrackLovedAndSync } from '../services/lovedTrack.service';
 import { decideStaleRemoval, partitionStaleByFailures, walkAudioFiles, type RemovalSkipReason, type WalkedFile } from '../services/libraryWalk';
 import { getLibraryDirectoryStats } from '../database';
 import { analysisWorkerCount } from '../services/analysisResources';
@@ -16,7 +14,7 @@ import { scanStatus, scanClients, broadcastScanStatus } from '../state';
 import { requireAdmin } from '../middleware/auth';
 import { enrichArtistImages, enrichArtistImagesInBackground } from '../services/artistImageEnrichment.service';
 import { resolveTrackArtists } from '../utils/trackArtists';
-import { refreshArtistAudioProfiles, searchLibrary, searchLibraryRanked, InvalidSearchCursorError, getExistingTrackIds } from '../database';
+import { refreshArtistAudioProfiles, getExistingTrackIds } from '../database';
 import { createRateLimiter } from '../middleware/rateLimit';
 import { areAnalysisModelsReady } from '../services/downloadModels';
 import { publishApiV1LibraryRevision } from '../services/apiV1Events.service';
@@ -353,30 +351,6 @@ router.post('/artist-images/enrich', requireAdmin, async (_req, res) => {
   } catch (err: any) {
     console.error('[ArtistImages] enrichment error:', err);
     res.status(500).json({ error: err?.message || 'Artist image enrichment failed' });
-  }
-});
-
-router.post('/love', deprecatedRoute('PUT /api/v1/tracks/:id/loved'), async (req, res) => {
-  try {
-    const userId = req.user?.userId;
-    if (!userId) return res.status(401).json({ error: 'Authentication required' });
-
-    const { trackId, loved } = req.body || {};
-    if (!trackId || typeof trackId !== 'string') {
-      return res.status(400).json({ error: 'trackId is required' });
-    }
-    if (typeof loved !== 'boolean') {
-      return res.status(400).json({ error: 'loved must be a boolean' });
-    }
-
-    // Shared with API v1, so every client syncs loves to providers the same way.
-    const providers = await setTrackLovedAndSync(userId, trackId, loved, { source: 'web' });
-    if (!providers) return res.status(404).json({ error: 'Track not found' });
-
-    res.json({ status: 'ok', loved, providers });
-  } catch (error: any) {
-    console.error('[Library] love toggle error:', error.message);
-    res.status(500).json({ error: 'Failed to update loved track' });
   }
 });
 
@@ -1540,37 +1514,6 @@ router.get('/tracks', async (req, res) => {
   } catch (error) {
     console.error('DB tracks fetch error:', error);
     res.status(500).json({ error: 'Failed to fetch tracks' });
-  }
-});
-
-// Global search across artists/albums/tracks (trigram ILIKE). Replaces the
-// client-side in-memory scan so search scales without the full track list.
-router.get('/search', deprecatedRoute('GET /api/v1/search'), async (req, res) => {
-  try {
-    const q = typeof req.query.q === 'string' ? req.query.q : '';
-    const userId = req.user?.userId || null;
-    const num = (v: unknown) => (typeof v === 'string' && v.trim() !== '' ? Number(v) : undefined);
-    if (req.query.mode === 'ranked') {
-      const result = await searchLibraryRanked(q, userId, {
-        limit: num(req.query.limit),
-        cursor: typeof req.query.cursor === 'string' ? req.query.cursor : undefined,
-      });
-      res.json(result);
-      return;
-    }
-    const result = await searchLibrary(q, userId, {
-      artistLimit: num(req.query.artistLimit),
-      albumLimit: num(req.query.albumLimit),
-      trackLimit: num(req.query.trackLimit),
-    });
-    res.json(result);
-  } catch (error) {
-    if (error instanceof InvalidSearchCursorError) {
-      res.status(400).json({ error: error.message });
-      return;
-    }
-    console.error('Library search error:', error);
-    res.status(500).json({ error: 'Search failed' });
   }
 });
 

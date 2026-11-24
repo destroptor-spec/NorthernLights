@@ -96,7 +96,7 @@ Pairing requests expire after ten minutes. Approval binds the request to the use
 
 `POST /recommendations/next` is the shared Infinity Mode endpoint. Its body is `{ sessionHistoryTrackIds?, exclude?, seedTrackIds?, settings? }` (all optional; history and exclusions capped at 200 IDs, seeds at 50): `sessionHistoryTrackIds` is the client's playback-start history (oldest → newest, including the playing track) and is merged after older server history for this request only — it never records plays; `exclude` lists queued/held track IDs; `seedTrackIds` is the end of the play queue (oldest → newest, ending with the track the recommendation will follow) — when present, its last 10 IDs steer the similarity centroid, energy/dance trend and style seed, so Infinity continues from the queue rather than from whatever played last; without it the engine seeds from history as before. Seeds are never recommended back. `settings` overrides saved `discoveryLevel`/`genreStrictness` (0–100) and `artistAmnesiaLimit` (integer 0–200; shown as "Repeat Protection" — it blocks the last N played *tracks*, not artists, and is never relaxed when the search widens). `genreStrictness` is the "Style match" setting: it sets β (0–0.2) in d − β·cos, so a candidate that shares the seed's genres and styles ranks a little closer; changing genre never counts against a track, and a seed with no genres or styles adds nothing. Returns `data: Track | null`; `null` means no eligible track remains.
 
-`PUT /tracks/:id/loved` stores the flag and then mirrors it to connected providers — a Last.fm love/unlove and a MusicBrainz rating of 100/0 — returning `data: { trackId, loved, providers }`, where each provider entry is `{ provider, status: 'ok' | 'skipped' | 'failed', reason?, error? }`. A provider failure never undoes the local write. The web route `POST /api/library/love` and this endpoint share one implementation. `POST /playback/reports` takes `{ eventId, trackId, kind: 'played' | 'skipped' | 'nowPlaying', occurredAt?, positionMs? }`; `eventId` must be a UUID and makes the report idempotent — a repeated id is answered with `status: 'duplicate'` and counted once. The server also scrobbles these reports to the Last.fm and ListenBrainz accounts the user has connected and switched on (Settings → Scrobbling), so a client needs no provider credentials: `nowPlaying` sends "now playing", and `played` scrobbles once per `eventId`, dated from when the listen started — the report's time (`occurredAt`, else receipt) minus `positionMs`. Send `nowPlaying` when a track starts and `played` with the position at which it counted as played. The web client reports plays, skips and now playing here and omits `occurredAt`, so the server stamps receipt time, but only for playback outside a playback session; a client playing a session must not also send these reports, or the listen is counted and scrobbled twice (see **Plays, skips and scrobbles** under Durable playback sessions).
+`PUT /tracks/:id/loved` stores the flag and then mirrors it to connected providers — a Last.fm love/unlove and a MusicBrainz rating of 100/0 — returning `data: { trackId, loved, providers }`, where each provider entry is `{ provider, status: 'ok' | 'skipped' | 'failed', reason?, error? }`. A provider failure never undoes the local write. `POST /playback/reports` takes `{ eventId, trackId, kind: 'played' | 'skipped' | 'nowPlaying', occurredAt?, positionMs? }`; `eventId` must be a UUID and makes the report idempotent — a repeated id is answered with `status: 'duplicate'` and counted once. The server also scrobbles these reports to the Last.fm and ListenBrainz accounts the user has connected and switched on (Settings → Scrobbling), so a client needs no provider credentials: `nowPlaying` sends "now playing", and `played` scrobbles once per `eventId`, dated from when the listen started — the report's time (`occurredAt`, else receipt) minus `positionMs`. Send `nowPlaying` when a track starts and `played` with the position at which it counted as played. The web client reports plays, skips and now playing here and omits `occurredAt`, so the server stamps receipt time, but only for playback outside a playback session; a client playing a session must not also send these reports, or the listen is counted and scrobbled twice (see **Plays, skips and scrobbles** under Durable playback sessions).
 
 `GET /me` returns `{ user: { id, username, role }, client: { id, name, authKind, scope } }` for whichever credential made the call: a web session (`jwt`), an app key (`appKey`) or a scoped token (`scoped`). The web client polls it to keep `currentUser` current.
 
@@ -727,16 +727,15 @@ Get the entire library structure (tracks, directories, artists, albums, genres).
   }
   ```
 
-### [GET] `/api/library/search`
-> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
-Search artists, albums, and tracks in the authenticated library.
+### Search (API v1)
+Search artists, albums, and tracks in the authenticated library: `GET /api/v1/search` and `GET /api/v1/search/ranked` (responses in v1's `data` envelope). The older `GET /api/library/search` was removed on 24 Nov 2026 after a week of deprecation logging showed no calls.
 
 - `q` is the required search text. An empty value returns empty results.
-- The default mode returns `{ artists, albums, tracks }` and accepts
+- `/search` returns `{ artists, albums, tracks }` and accepts
   `artistLimit`, `albumLimit`, and `trackLimit`.
 - Exact case-insensitive identity/title matches rank before prefix, word-prefix,
   and substring matches. Canonical artist identities are included.
-- `mode=ranked` returns one mixed result list for the routed search page. It
+- `/search/ranked` returns one mixed result list for the routed search page. It
   accepts `limit` (default 30, maximum 50) and an opaque `cursor`.
 - Ranked results have a minimum relevance of 50. `nextCursor: null` means there
   are no more confident matches. A malformed or cross-query cursor returns 400.
@@ -819,27 +818,7 @@ Get per-directory statistics.
 
 `analyzed` counts tracks with an acoustic vector at the current feature version or newer, using the same rule as incremental analysis. `missingAnalysis` counts absent acoustic vectors (including loudness-only rows); `outdatedAnalysis` counts existing acoustic vectors from older versions. Their sum is the backlog that a regular scan or **Analyze Pending** processes across the library. Current-version simulated fallback results count as processed and remain available in the separate fallback retry list.
 
-### [POST] `/api/library/love`
-> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
-Toggle loved status of a track for the current user, optionally syncing to Last.fm and/or MusicBrainz. The web client now uses `PUT /api/v1/tracks/:id/loved`, which shares this route's implementation; this route remains for compatibility. A failed provider is reported as `{ "provider": "lastfm", "status": "failed", "error": "…" }`.
-- **Example Request**:
-  ```json
-  {
-    "trackId": "uuid-v4",
-    "loved": true
-  }
-  ```
-- **Example Response**:
-  ```json
-  {
-    "status": "ok",
-    "loved": true,
-    "providers": [
-      { "provider": "lastfm", "status": "ok" },
-      { "provider": "musicbrainz", "status": "skipped", "reason": "not_connected_or_missing_recording_mbid" }
-    ]
-  }
-  ```
+Loving a track is API v1 only: `PUT /api/v1/tracks/:id/loved` (described above, with the providers it syncs). The older `POST /api/library/love` was removed on 24 Nov 2026 after a week of deprecation logging showed no calls.
 
 ### [POST] `/api/library/artists/manual-merge`
 Manually merge arbitrary artists not caught by the auto-detector (Admin only).
