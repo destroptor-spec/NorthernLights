@@ -1028,13 +1028,7 @@ Get similar artists in the library based on their audio profiles.
 
 ### Albums
 
-### [GET] `/api/albums`
-> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
-List all albums.
-
-### [GET] `/api/albums/:id`
-> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
-Get album details with tracks.
+The album list and an album with its tracks are API v1 only: `GET /api/v1/albums` and `GET /api/v1/albums/:id`. The older `GET /api/albums` and `GET /api/albums/:id` were removed on 24 Nov 2026 after a week of deprecation logging showed no calls; the album editions, merge and credits routes stay.
 
 ### Genres
 

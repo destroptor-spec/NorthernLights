@@ -25,7 +25,7 @@ linearly with library size:
 
 `fetchLibraryFromServer` (in `src/store/index.ts`) runs on login / reconnect:
 
-1. **Entity lists first** — fetches `/api/v1/artists`, `/api/albums`,
+1. **Entity lists first** — fetches `/api/v1/artists`, `/api/v1/albums`,
    `/api/genres`, and `/api/library/directories` in parallel, sets them in the
    store, and clears `isLibraryLoading`. The library views are now interactive.
 2. **Queue reconciliation** — `reconcileQueue()` prunes the restored play queue
@@ -39,8 +39,8 @@ populated lazily for two admin tools (see [On-demand cache](#on-demand-full-libr
 | View | Renders from | Tracks |
 | --- | --- | --- |
 | Artists / Albums / Genres grids (`LibraryHome`) | entity lists (`artists`/`albums`/`genres`) | none |
-| Album detail (`AlbumDetail`) | `GET /api/albums/:id` | per-album |
-| Artist detail (`ArtistDetail`) | `GET /api/artists/:id` + `GET /api/artists/:id/appears-on` | per-artist + collaborations |
+| Album detail (`AlbumDetail`) | `GET /api/v1/albums/:id` | per-album |
+| Artist detail (`ArtistDetail`) | `GET /api/v1/artists/:id` + `GET /api/artists/:id/appears-on` | per-artist + collaborations |
 | Genre detail (`GenreDetail`) | `GET /api/genres/:id` | per-genre |
 | Live search (`GlobalSearch`) | `GET /api/library/search?q=` | grouped matches only |
 | Search results page (`SearchResultsPage`) | `GET /api/library/search?mode=ranked&q=` | cursor-paged mixed matches |
@@ -103,8 +103,8 @@ external APIs' term).
 
 | Endpoint | Returns |
 | --- | --- |
-| `GET /api/v1/artists`, `/api/albums`, `/api/genres` | entity rows (albums include derived metadata + `art_hash`) |
-| `GET /api/albums/:id` | `{ ...album, tracks }` |
+| `GET /api/v1/artists`, `/api/v1/albums`, `/api/genres` | entity rows (albums include derived metadata + `art_hash`) |
+| `GET /api/v1/albums/:id` | `{ data: { album, details, tracks } }` |
 | `GET /api/v1/artists/:id` | `{ data: { artist, details, tracks, ownedAlbums } }` |
 | `GET /api/artists/:id/appears-on` | `{ tracks }` — collaborations (artist in `artists[]`, not primary) |
 | `GET /api/genres/:id` | `{ ...genre, tracks }` (matches `genre_id` + the genre name in multi-genre tags) |
