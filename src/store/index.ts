@@ -38,6 +38,7 @@ import { getCachedLoudness, fetchLoudness, invalidateLoudness, type TrackLoudnes
 import type { ToastType } from '../components/Toast';
 import { useListenTogetherStore } from './listenTogether';
 import { sessionTitle } from '../utils/listenTogetherText';
+import { normaliseMetadataProviderPriority, type MetadataProviderPriority } from '../../shared/metadataProviders';
 import {
   auroraApiAllPages,
   auroraApiRequest,
@@ -701,10 +702,11 @@ export interface PlayerState {
   musicBrainzClientSecret: string;
   musicBrainzConnected: boolean;
   musicBrainzRedirectUri: string;
-  providerArtistImage: 'lastfm' | 'genius' | 'musicbrainz';
-  providerArtistArtwork: 'genius' | 'none';
-  providerArtistBio: 'lastfm' | 'genius';
-  providerAlbumArt: 'lastfm' | 'genius' | 'musicbrainz';
+  /** Which providers to ask for each item, in order (admin, Settings → Metadata). */
+  metadataProviderPriority: MetadataProviderPriority;
+  /** TheAudioDB API key ("123" is its free key) and fanart.tv project / personal keys; admin only, not kept on the device. */
+  theAudioDbApiKey: string;
+  fanartTvApiKey: string;
   authToken: string | null; // Account JWT token
   mediaAccessToken: string | null; // Scoped token for HLS/art/Cast URLs
   sseAccessToken: string | null; // Scoped token for EventSource URLs
@@ -990,10 +992,6 @@ export interface PlayerState {
   setMusicBrainzClientSecret: (secret: string) => void;
   setMusicBrainzConnected: (connected: boolean) => void;
   setMusicBrainzRedirectUri: (uri: string) => void;
-  setProviderArtistImage: (provider: 'lastfm' | 'genius' | 'musicbrainz') => void;
-  setProviderArtistArtwork: (provider: 'genius' | 'none') => void;
-  setProviderArtistBio: (provider: 'lastfm' | 'genius') => void;
-  setProviderAlbumArt: (provider: 'lastfm' | 'genius' | 'musicbrainz') => void;
   setLlmConnected: (connected: boolean) => void;
 
   // Manager sync callbacks
@@ -1510,10 +1508,9 @@ export const usePlayerStore = create<PlayerState>()(
         musicBrainzClientSecret: '',
         musicBrainzConnected: false as boolean,
         musicBrainzRedirectUri: '',
-        providerArtistImage: 'lastfm' as 'lastfm' | 'genius' | 'musicbrainz',
-        providerArtistArtwork: 'genius' as 'genius' | 'none',
-        providerArtistBio: 'lastfm' as 'lastfm' | 'genius',
-        providerAlbumArt: 'lastfm' as 'lastfm' | 'genius' | 'musicbrainz',
+        metadataProviderPriority: normaliseMetadataProviderPriority(null),
+        theAudioDbApiKey: '',
+        fanartTvApiKey: '',
         jambaseEnabled: false as boolean,
         jambaseMaxSubscriptionsPerUser: 10,
         jambaseCacheTtlDays: 7,
@@ -2090,10 +2087,9 @@ export const usePlayerStore = create<PlayerState>()(
                 musicBrainzClientSecret: data.musicBrainzClientSecret || '',
                 musicBrainzConnected: data.musicBrainzConnected ?? false,
                 musicBrainzRedirectUri: data.musicBrainzRedirectUri || '',
-                providerArtistImage: data.providerArtistImage || 'lastfm',
-                providerArtistArtwork: data.providerArtistArtwork || 'genius',
-                providerArtistBio: data.providerArtistBio || 'lastfm',
-                providerAlbumArt: data.providerAlbumArt || 'lastfm',
+                metadataProviderPriority: normaliseMetadataProviderPriority(data.metadataProviderPriority),
+                theAudioDbApiKey: data.theAudioDbApiKey || '',
+                fanartTvApiKey: data.fanartTvApiKey || '',
                 autoFolderWalk: data.autoFolderWalk === 'true' || data.autoFolderWalk === true,
                 turnstileEnabled: data.turnstileEnabled === true,
                 turnstileSiteKey: data.turnstileSiteKey || '',
@@ -2206,10 +2202,9 @@ export const usePlayerStore = create<PlayerState>()(
                 musicBrainzClientId: state.musicBrainzClientId,
                 musicBrainzClientSecret: state.musicBrainzClientSecret,
                 musicBrainzRedirectUri: state.musicBrainzRedirectUri,
-                providerArtistImage: state.providerArtistImage,
-                providerArtistArtwork: state.providerArtistArtwork,
-                providerArtistBio: state.providerArtistBio,
-                providerAlbumArt: state.providerAlbumArt,
+                metadataProviderPriority: state.metadataProviderPriority,
+                theAudioDbApiKey: state.theAudioDbApiKey,
+                fanartTvApiKey: state.fanartTvApiKey,
                 autoFolderWalk: state.autoFolderWalk,
                 turnstileEnabled: state.turnstileEnabled,
                 turnstileSiteKey: state.turnstileSiteKey,
@@ -3585,10 +3580,6 @@ export const usePlayerStore = create<PlayerState>()(
         setMusicBrainzClientSecret: (secret: string) => set({ musicBrainzClientSecret: secret }),
         setMusicBrainzConnected: (connected: boolean) => set({ musicBrainzConnected: connected }),
         setMusicBrainzRedirectUri: (uri: string) => set({ musicBrainzRedirectUri: uri }),
-        setProviderArtistImage: (provider: 'lastfm' | 'genius' | 'musicbrainz') => set({ providerArtistImage: provider }),
-        setProviderArtistArtwork: (provider: 'genius' | 'none') => set({ providerArtistArtwork: provider }),
-        setProviderArtistBio: (provider: 'lastfm' | 'genius') => set({ providerArtistBio: provider }),
-        setProviderAlbumArt: (provider: 'lastfm' | 'genius' | 'musicbrainz') => set({ providerAlbumArt: provider }),
         setLlmConnected: (connected: boolean) => set({ llmConnected: connected }),
 
         recordPlay: (trackId: string, positionMs?: number) => {
@@ -3665,10 +3656,7 @@ export const usePlayerStore = create<PlayerState>()(
         musicBrainzConnected: state.musicBrainzConnected,
         musicBrainzRedirectUri: state.musicBrainzRedirectUri,
         llmConnected: state.llmConnected,
-        providerArtistImage: state.providerArtistImage,
-        providerArtistArtwork: state.providerArtistArtwork,
-        providerArtistBio: state.providerArtistBio,
-        providerAlbumArt: state.providerAlbumArt,
+        metadataProviderPriority: state.metadataProviderPriority,
         rememberDevice: state.rememberDevice,
         // Without "Remember me on this device", auth stays out of localStorage —
         // the session lives in sessionStorage instead (see utils/sessionAuth.ts).

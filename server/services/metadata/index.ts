@@ -25,8 +25,13 @@ import {
   testLastFm,
 } from './providers/lastfm';
 import { geniusSearch, geniusGetArtist } from './providers/genius';
-import { extractMbLinks, extractMbMembers, mbGetArtist, mbGetAlbumCover, mbSearchReleaseGroup } from './providers/musicbrainz';
+import { extractMbLinks, extractMbMembers, mbGetArtist, mbGetAlbumCover, mbGetReleaseGroupCover, mbReleaseGroupOfRelease, mbSearchReleaseGroup } from './providers/musicbrainz';
 import { countryCode } from '../../../shared/places';
+import { isGeniusPlaceholderImage, type MetadataItem, type MetadataProvider, type MetadataProviderPriority } from '../../../shared/metadataProviders';
+import { getMetadataProviderPriority } from './providerPriority';
+import { tadbArtistByMbid, tadbSearchArtist, tadbSearchAlbum, tadbImage, type TadbAlbum, type TadbArtist } from './providers/theaudiodb';
+import { fanartArtist, fanartAlbum, bestFanartImage } from './providers/fanarttv';
+import { mergeLinks, sameArtistName, sameName, theAudioDbFacts, withDisplayTags } from './theAudioDbFacts';
 
 // ─── Types ──────────────────────────────────────────────────────────
 export interface ArtistData {
@@ -48,7 +53,7 @@ export interface ArtistData {
 export interface CommunityTag {
   name: string;
   count: number;
-  providers: Array<'lastfm' | 'musicbrainz'>;
+  providers: Array<'lastfm' | 'musicbrainz' | 'theaudiodb'>;
 }
 
 export interface ArtistTopTrack {
@@ -79,14 +84,33 @@ interface ProviderSettings {
   lastFmApiKey: string;
   geniusApiKey: string;
   musicBrainzEnabled: boolean;
-  providerArtistImage: string;
-  providerArtistArtwork: string;
-  providerArtistBio: string;
-  providerAlbumArt: string;
+  theAudioDbApiKey: string;
+  fanartTvApiKey: string;
+  /** Each item's providers in the admin's order, set up or not. */
+  priority: MetadataProviderPriority;
+}
+
+/** The item's providers in order, leaving out the ones not set up. */
+function usableProviders(settings: ProviderSettings, item: MetadataItem): MetadataProvider[] {
+  return settings.priority[item].filter((provider) =>
+    provider === 'lastfm' ? !!settings.lastFmApiKey
+      : provider === 'genius' ? !!settings.geniusApiKey
+        : provider === 'theaudiodb' ? !!settings.theAudioDbApiKey
+          : provider === 'fanarttv' ? !!settings.fanartTvApiKey
+            : settings.musicBrainzEnabled);
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────
 const MUSICBRAINZ_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * A Genius artist name is this artist: the same name ignoring case, width and
+ * spacing, or that name with a note in brackets after it ("Name (UK)").
+ */
+function sameGeniusArtistName(geniusName: unknown, name: string): boolean {
+  if (typeof geniusName !== 'string') return false;
+  return sameName(geniusName, name) || sameName(geniusName.replace(/\s*\([^()]*\)\s*$/, ''), name);
+}
 
 function isMusicBrainzUuid(value: string | null | undefined): value is string {
   return typeof value === 'string' && MUSICBRAINZ_UUID_RE.test(value);
@@ -111,16 +135,15 @@ async function getProviderSettings(): Promise<ProviderSettings> {
     musicBrainzEnabled:
       (await getSystemSetting('musicBrainzEnabled')) === true ||
       (await getSystemSetting('musicBrainzEnabled')) === 'true',
-    providerArtistImage: (await getSystemSetting('providerArtistImage')) || 'lastfm',
-    providerArtistArtwork: (await getSystemSetting('providerArtistArtwork')) || 'genius',
-    providerArtistBio: (await getSystemSetting('providerArtistBio')) || 'lastfm',
-    providerAlbumArt: (await getSystemSetting('providerAlbumArt')) || 'lastfm',
+    theAudioDbApiKey: (await getSystemSetting('theAudioDbApiKey')) || '',
+    fanartTvApiKey: (await getSystemSetting('fanartTvApiKey')) || '',
+    priority: await getMetadataProviderPriority(),
   };
 }
 
 // ─── Public API ─────────────────────────────────────────────────────
 
-const ARTIST_NO_IMAGE_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
+export const ARTIST_NO_IMAGE_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * Fetch artist data (image, bio, MusicBrainz metadata).
@@ -134,17 +157,19 @@ export async function getArtistData(
 
   const settings = await getProviderSettings();
   const cached = await getCachedArtist(name);
-  const wantsGeniusArtwork = settings.providerArtistArtwork === 'genius' && !!settings.geniusApiKey;
 
   // A stamped row is a completed lookup (failed ones stay unstamped), so serve
   // it while fresh rather than asking every provider again on each page view:
   // the APIs are free and rate limited. Without a picture it is re-checked
   // weekly, so an artist that missed out during a provider outage recovers
   // soon; with one, after the usual 30 days.
-  if (cached && isCacheFresh(cached.last_updated, cached.image_url ? undefined : ARTIST_NO_IMAGE_RECHECK_MS)) {
+  // A Genius stock picture stored before it was recognised is no picture: look
+  // again (the save below clears it when nothing better turns up).
+  const cachedHasPlaceholder = isGeniusPlaceholderImage(cached?.image_url) || isGeniusPlaceholderImage(cached?.artwork_url);
+  if (cached && !cachedHasPlaceholder && isCacheFresh(cached.last_updated, cached.image_url ? undefined : ARTIST_NO_IMAGE_RECHECK_MS)) {
     return {
       imageUrl: cached.image_url || undefined,
-      artworkUrl: settings.providerArtistArtwork === 'none' ? undefined : cached.artwork_url || undefined,
+      artworkUrl: settings.priority.artistBanner.length === 0 ? undefined : cached.artwork_url || undefined,
       bio: cached.bio || undefined,
       disambiguation: cached.disambiguation || undefined,
       area: cached.area || undefined,
@@ -203,54 +228,71 @@ export async function getArtistData(
     }
   }
 
-  const seen = new Set<string>();
-  const apisToTry: string[] = [];
-  const pushApi = (api: string) => {
-    if (!seen.has(api)) {
-      seen.add(api);
-      apisToTry.push(api);
+  // Each item asks its providers in the admin's order and keeps the first one
+  // that has it (Settings → Metadata). A provider is asked once for everything
+  // it can give; once every item is decided (a provider has it and everyone
+  // ahead of that provider in its list has been asked), the rest are skipped,
+  // except TheAudioDB, which is always asked when set up for its facts (country,
+  // years, links, genre/style/mood).
+  type ArtistSource = 'genius' | 'lastfm' | 'theaudiodb' | 'fanarttv';
+  type ArtistField = 'imageUrl' | 'bio' | 'artworkUrl';
+  const FIELDS: ArtistField[] = ['imageUrl', 'artworkUrl', 'bio'];
+  const isArtistSource = (p: MetadataProvider): p is ArtistSource => p !== 'musicbrainz';
+  const lists: Record<ArtistField, ArtistSource[]> = {
+    imageUrl: usableProviders(settings, 'artistImage').filter(isArtistSource),
+    artworkUrl: usableProviders(settings, 'artistBanner').filter(isArtistSource),
+    bio: usableProviders(settings, 'artistBio').filter(isArtistSource),
+  };
+  const found: Record<ArtistField, Partial<Record<ArtistSource, string>>> = { imageUrl: {}, bio: {}, artworkUrl: {} };
+  // Who has answered for each item, found or not (a failure counts as answered).
+  const answered: Record<ArtistField, Set<ArtistSource>> = { imageUrl: new Set(), bio: new Set(), artworkUrl: new Set() };
+  const answerAll = (source: ArtistSource) => FIELDS.forEach((field) => answered[field].add(source));
+  const firstFound = (field: ArtistField) =>
+    lists[field].map((source) => found[field][source]).find(Boolean);
+  /** No provider ahead of `source` in the item's list has it (yet). */
+  const wouldUse = (field: ArtistField, source: ArtistSource) => {
+    for (const s of lists[field]) {
+      if (s === source) return true;
+      if (found[field][s]) return false;
     }
+    return false;
   };
-
-  const imgProvider = settings.providerArtistImage;
-  const artworkProvider = settings.providerArtistArtwork;
-  const bioProvider = settings.providerArtistBio;
-
-  if (imgProvider === 'genius' && settings.geniusApiKey) pushApi('genius');
-  if (artworkProvider === 'genius' && settings.geniusApiKey) pushApi('genius');
-  if (imgProvider === 'lastfm' && settings.lastFmApiKey) pushApi('lastfm');
-  if (bioProvider === 'genius' && settings.geniusApiKey) pushApi('genius');
-  if (bioProvider === 'lastfm' && settings.lastFmApiKey) pushApi('lastfm');
-  if (settings.lastFmApiKey) pushApi('lastfm');
-
-  if (imgProvider === 'lastfm' && !settings.lastFmApiKey && settings.geniusApiKey)
-    pushApi('genius');
-  if (imgProvider === 'genius' && !settings.geniusApiKey && settings.lastFmApiKey)
-    pushApi('lastfm');
-  if (bioProvider === 'lastfm' && !settings.lastFmApiKey && settings.geniusApiKey)
-    pushApi('genius');
-  if (bioProvider === 'genius' && !settings.geniusApiKey && settings.lastFmApiKey)
-    pushApi('lastfm');
-
-  // Each provider records what it found, and the configured provider wins after
-  // the loop, with the other one as the fallback. The asking order alone used to
-  // decide: the provider asked first supplied both the picture and the bio, so
-  // with Genius pictures a Last.fm bio preference was never used.
-  type ArtistSource = 'genius' | 'lastfm';
-  const otherSource = (source: ArtistSource): ArtistSource => (source === 'genius' ? 'lastfm' : 'genius');
-  const preferredSource = (choice: string): ArtistSource => {
-    const source: ArtistSource = choice === 'genius' ? 'genius' : 'lastfm';
-    const configured = source === 'genius' ? settings.geniusApiKey : settings.lastFmApiKey;
-    return configured ? source : otherSource(source);
+  /** Everyone ahead of `source` has answered without it: `source` decides the item now. */
+  const nextInLine = (field: ArtistField, source: ArtistSource) => {
+    for (const s of lists[field]) {
+      if (s === source) return true;
+      if (found[field][s] || !answered[field].has(s)) return false;
+    }
+    return false;
   };
-  const imagePreference = preferredSource(imgProvider);
-  const bioPreference = preferredSource(bioProvider);
-  const found = {
-    imageUrl: {} as Partial<Record<ArtistSource, string>>,
-    bio: {} as Partial<Record<ArtistSource, string>>,
+  const decided = (field: ArtistField) => {
+    for (const s of lists[field]) {
+      if (found[field][s]) return true;
+      if (!answered[field].has(s)) return false;
+    }
+    return true;
   };
-  const pick = (field: keyof typeof found, preference: ArtistSource) =>
-    found[field][preference] ?? found[field][otherSource(preference)];
+  const sourceName: Record<ArtistSource, string> = { genius: 'Genius', lastfm: 'Last.fm', theaudiodb: 'TheAudioDB', fanarttv: 'fanart.tv' };
+
+  // fanart.tv only knows artists by MusicBrainz id. The files' id comes first;
+  // without one, TheAudioDB's name match may supply one for this lookup only
+  // (never stored: a same-name mix-up must not stick to the artist).
+  const knownMbid = [cached?.mbid, mbArtistId].find(isMusicBrainzUuid);
+  let lookupMbid: string | undefined = knownMbid;
+
+  const apisToTry: ArtistSource[] = [];
+  for (const source of [...lists.imageUrl, ...lists.artworkUrl, ...lists.bio]) {
+    if (!apisToTry.includes(source)) apisToTry.push(source);
+  }
+  // Last.fm's tags feed genres and styles; it is asked last when nothing else needs it.
+  if (settings.lastFmApiKey && !apisToTry.includes('lastfm')) apisToTry.push('lastfm');
+  if (settings.theAudioDbApiKey && !apisToTry.includes('theaudiodb')) apisToTry.push('theaudiodb');
+  if (!knownMbid && apisToTry.includes('fanarttv') && apisToTry.includes('theaudiodb')
+    && apisToTry.indexOf('theaudiodb') > apisToTry.indexOf('fanarttv')) {
+    // Ask TheAudioDB first, for the id.
+    apisToTry.splice(apisToTry.indexOf('theaudiodb'), 1);
+    apisToTry.splice(apisToTry.indexOf('fanarttv'), 0, 'theaudiodb');
+  }
 
   let wasRateLimited = false;
   let lastError: string | undefined;
@@ -258,91 +300,75 @@ export async function getArtistData(
   // Genius 429). The artist must not be stamped as fetched, or the image
   // backfill never asks again.
   let imageLookupFailed = false;
+  let geniusArtistId: number | undefined;
+  let geniusArtistFetched = false;
+  let tadbArtist: TadbArtist | null = null;
+
+  // The Genius artist record holds the bio, header artwork and avatar.
+  const fetchGeniusArtist = async (artistId: number) => {
+    geniusArtistFetched = true;
+    const artistJson = await geniusGetArtist(artistId, settings.geniusApiKey);
+    const artist = artistJson?.response?.artist;
+    if (!artist) return;
+    const artworkUrl = artist.header_image_url;
+    const artistImageUrl = artist.image_url;
+    if (artworkUrl && !found.artworkUrl.genius && !isGeniusPlaceholderImage(artworkUrl)) {
+      found.artworkUrl.genius = artworkUrl;
+    }
+    if (artistImageUrl && !found.imageUrl.genius && !isGeniusPlaceholderImage(artistImageUrl)) {
+      found.imageUrl.genius = artistImageUrl;
+    }
+    const bioPlain = artist.description?.plain;
+    if (typeof bioPlain === 'string' && bioPlain.trim().length > 0 && bioPlain !== '?') {
+      found.bio.genius = bioPlain;
+    }
+  };
 
   for (const api of apisToTry) {
+    if (api !== 'theaudiodb' && FIELDS.every(decided)) continue;
     try {
-      if (api === 'genius' && settings.geniusApiKey) {
+      if (api === 'genius') {
         const json = await geniusSearch(name, settings.geniusApiKey);
         if (json) {
           const hits = json.response?.hits;
           if (hits && hits.length > 0) {
-            let match = hits.find(
-              (h: any) =>
-                h.type === 'song' &&
-                h.result?.primary_artist?.name?.toLowerCase() === name.toLowerCase()
-            );
-
-            if (!match) {
-              match = hits.find(
-                (h: any) =>
-                  h.type === 'song' &&
-                  h.result?.primary_artist?.name
-                    ?.toLowerCase()
-                    .includes(name.toLowerCase())
-              );
-            }
+            // A song whose artist has this very name. Not one whose name
+            // merely contains it: "Demon Hunter" found only songs by the
+            // "KPop Demon Hunters Cast" and took their picture.
+            const isThisArtist = (h: any) => h.type === 'song' && sameGeniusArtistName(h.result?.primary_artist?.name, name);
+            const match = hits.find(isThisArtist);
 
             // No song by this artist in the hits: leave it unmatched rather
             // than borrowing the first hit's artist, whose picture and bio
             // belong to someone else (e.g. Electrypnose → Seed Nation).
 
-            const artistId = match?.result?.primary_artist?.id;
+            geniusArtistId = match?.result?.primary_artist?.id;
             const imageUrl = match?.result?.primary_artist?.image_url;
             const fallbackArtworkUrl = match?.result?.header_image_url;
 
-            if (
-              imageUrl &&
-              !found.imageUrl.genius &&
-              !imageUrl.includes('default_cover_image.png')
-            ) {
+            if (imageUrl && !found.imageUrl.genius && !isGeniusPlaceholderImage(imageUrl)) {
               found.imageUrl.genius = imageUrl;
             }
 
-            if (wantsGeniusArtwork && fallbackArtworkUrl && !data.artworkUrl && !fallbackArtworkUrl.includes('default_cover_image.png')) {
-              data.artworkUrl = fallbackArtworkUrl;
+            if (fallbackArtworkUrl && !found.artworkUrl.genius && !isGeniusPlaceholderImage(fallbackArtworkUrl)) {
+              found.artworkUrl.genius = fallbackArtworkUrl;
             }
 
-            // The artist record holds the bio, header artwork and avatar; skip
-            // the call when none of them is still wanted from Genius. Its bio
-            // is only wanted when Genius is the bio provider: Last.fm has one
-            // for most artists, and the call is half of the Genius traffic.
+            // Skip the artist call when nothing still wanted from Genius is in
+            // it. Its bio waits until the providers ahead of Genius in the bio
+            // list have answered (after the loop): they have one for most
+            // artists, and the call is half of the Genius traffic.
             const wantsGeniusArtist =
-              (wantsGeniusArtwork && !data.artworkUrl) ||
-              !found.imageUrl.genius ||
-              (!found.bio.genius && (bioPreference === 'genius' || !settings.lastFmApiKey));
-            if (artistId && wantsGeniusArtist) {
-              const artistJson = await geniusGetArtist(
-                artistId,
-                settings.geniusApiKey
-              );
-              if (artistJson) {
-                const artist = artistJson.response?.artist;
-                const artworkUrl = artist?.header_image_url;
-                const artistImageUrl = artist?.image_url;
-                if (wantsGeniusArtwork && artworkUrl && !data.artworkUrl && !artworkUrl.includes('default_avatar')) {
-                  data.artworkUrl = artworkUrl;
-                }
-                if (
-                  artistImageUrl &&
-                  !found.imageUrl.genius &&
-                  !artistImageUrl.includes('default_avatar')
-                ) {
-                  found.imageUrl.genius = artistImageUrl;
-                }
-                const bioPlain =
-                  artist?.description?.plain;
-                if (
-                  typeof bioPlain === 'string' &&
-                  bioPlain.trim().length > 0 &&
-                  bioPlain !== '?'
-                ) {
-                  found.bio.genius = bioPlain;
-                }
-              }
-            }
+              (!found.artworkUrl.genius && wouldUse('artworkUrl', 'genius')) ||
+              (!found.imageUrl.genius && wouldUse('imageUrl', 'genius')) ||
+              (!found.bio.genius && nextInLine('bio', 'genius'));
+            if (geniusArtistId && wantsGeniusArtist) await fetchGeniusArtist(geniusArtistId);
           }
         }
-      } else if (api === 'lastfm' && settings.lastFmApiKey) {
+        answered.imageUrl.add('genius');
+        answered.artworkUrl.add('genius');
+        if (!geniusArtistId || geniusArtistFetched) answered.bio.add('genius');
+      } else if (api === 'lastfm') {
         try {
           const artist = await lastFmArtistInfo(name, settings.lastFmApiKey);
           if (artist) {
@@ -367,10 +393,12 @@ export async function getArtistData(
               providerTags.lastfm = [];
             }
           }
+          answerAll('lastfm');
         } catch (err) {
           if (isRateLimitError(err)) {
             wasRateLimited = true;
             lastError = 'Rate limited by Last.fm';
+            answerAll('lastfm');
             continue;
           }
           if (isProviderError(err)) {
@@ -378,27 +406,74 @@ export async function getArtistData(
           }
           throw err;
         }
+      } else if (api === 'theaudiodb') {
+        // By the files' MusicBrainz id when there is one; else by name, kept
+        // only when the name is the same (the free key returns a single hit).
+        tadbArtist = knownMbid
+          ? await tadbArtistByMbid(knownMbid, settings.theAudioDbApiKey)
+          : await tadbSearchArtist(name, settings.theAudioDbApiKey);
+        if (tadbArtist && !knownMbid && !sameArtistName(tadbArtist, name)) tadbArtist = null;
+        if (tadbArtist) {
+          if (!lookupMbid && isMusicBrainzUuid(tadbArtist.strMusicBrainzID)) lookupMbid = tadbArtist.strMusicBrainzID;
+          const thumb = tadbImage(tadbArtist.strArtistThumb);
+          if (thumb) found.imageUrl.theaudiodb = thumb;
+          const banner = [tadbArtist.strArtistFanart, tadbArtist.strArtistFanart2, tadbArtist.strArtistFanart3, tadbArtist.strArtistFanart4, tadbArtist.strArtistWideThumb]
+            .map(tadbImage).find(Boolean);
+          if (banner) found.artworkUrl.theaudiodb = banner;
+          const bio = (tadbArtist.strBiography || tadbArtist.strBiographyEN || '').trim();
+          if (bio) found.bio.theaudiodb = bio;
+        }
+        answerAll('theaudiodb');
+      } else if (api === 'fanarttv') {
+        if (lookupMbid) {
+          const fanart = await fanartArtist(lookupMbid, settings.fanartTvApiKey);
+          const thumb = bestFanartImage(fanart?.artistthumb);
+          if (thumb) found.imageUrl.fanarttv = thumb;
+          const background = bestFanartImage(fanart?.artistbackground);
+          if (background) found.artworkUrl.fanarttv = background;
+        }
+        answerAll('fanarttv');
       }
-      if (found.imageUrl[imagePreference] && found.bio[bioPreference]) break;
     } catch (e) {
-      if (api === 'genius' || imgProvider === 'lastfm') {
+      answerAll(api);
+      if (lists.imageUrl.includes(api)) {
         imageLookupFailed = true;
         if (isRateLimitError(e)) wasRateLimited = true;
         lastError = isRateLimitError(e)
-          ? `Rate limited by ${api === 'genius' ? 'Genius' : 'Last.fm'}`
+          ? `Rate limited by ${sourceName[api]}`
           : lastError || `${api}: ${e instanceof Error ? e.message : String(e)}`;
       }
       console.warn(`[Metadata] Failed fetching from ${api}:`, e);
     }
   }
 
-  data.imageUrl = pick('imageUrl', imagePreference);
-  data.bio = pick('bio', bioPreference);
+  // The Genius bio, when every provider ahead of it in the bio list came up empty.
+  if (geniusArtistId && !geniusArtistFetched && !found.bio.genius && nextInLine('bio', 'genius')) {
+    try {
+      await fetchGeniusArtist(geniusArtistId);
+    } catch (e) {
+      console.warn('[Metadata] Failed fetching the Genius artist:', e);
+    }
+  }
+
+  data.imageUrl = firstFound('imageUrl');
+  data.artworkUrl = firstFound('artworkUrl');
+  data.bio = firstFound('bio');
+  // TheAudioDB's facts fill what MusicBrainz didn't give.
+  let tadbTags: CommunityTag[] = [];
+  if (tadbArtist) {
+    const facts = theAudioDbFacts(tadbArtist);
+    data.area ??= facts.area;
+    mbCountry ??= facts.country ?? null;
+    data.lifeSpan ??= facts.lifeSpan;
+    if (facts.links.length > 0) data.links = mergeLinks(data.links, facts.links);
+    tadbTags = facts.tags;
+  }
   const weightedTags: Partial<Record<TagProvider, WeightedTag[]>> = {};
   for (const provider of Object.keys(providerTags) as TagProvider[]) {
     weightedTags[provider] = normaliseProviderTags(providerTags[provider] || []);
   }
-  data.communityTags = mergeForDisplay(weightedTags);
+  data.communityTags = withDisplayTags(mergeForDisplay(weightedTags), tadbTags);
 
   if (!wasRateLimited || data.imageUrl || data.bio) {
     const extras: ArtistCacheExtras = {
@@ -535,7 +610,8 @@ export async function getAlbumData(
 export async function getAlbumImage(
   albumName: string,
   artistName: string,
-  mbAlbumId?: string | null
+  mbAlbumId?: string | null,
+  mbReleaseGroupId?: string | null
 ): Promise<string | undefined> {
   if (!albumName || !artistName) return undefined;
 
@@ -550,89 +626,73 @@ export async function getAlbumImage(
     return cached.image_url;
   }
 
-  if (settings.musicBrainzEnabled && (mbAlbumId || cached?.mbid)) {
-    const mbid = mbAlbumId || cached?.mbid;
-    if (isMusicBrainzUuid(mbid)) {
-      try {
-        const coverUrl = `https://coverartarchive.org/release/${encodeURIComponent(mbid)}/front-500`;
-        const coverRes = await fetch(coverUrl, { method: 'HEAD' });
-        if (coverRes.ok) {
-          await upsertAlbumCache(albumName, artistName, coverUrl, mbid);
-          return coverUrl;
-        }
-      } catch {
-        /* fall through */
-      }
+  // The admin's order (Settings → Metadata → Album art); the first cover wins.
+  let wasRateLimited = false;
+  const releaseId = [mbAlbumId, cached?.mbid].find(isMusicBrainzUuid);
+  // TheAudioDB's album search, made at most once per lookup.
+  let tadbAlbumHit: TadbAlbum | null | undefined;
+  const findTadbAlbum = async () => {
+    if (tadbAlbumHit === undefined) {
+      const hits = await tadbSearchAlbum(artistName, albumName, settings.theAudioDbApiKey);
+      tadbAlbumHit = hits.find((hit) => sameName(hit.strAlbum, albumName)) ?? null;
     }
-  }
+    return tadbAlbumHit;
+  };
+  // The release group the files name (tag MUSICBRAINZ_RELEASEGROUPID, kept on
+  // the track and the album row): no lookup needed.
+  const taggedReleaseGroupId = [mbReleaseGroupId, cached?.mb_release_group_id].find(isMusicBrainzUuid) ?? null;
+  // fanart.tv knows albums by release group: the files' own, else asked of
+  // MusicBrainz for the files' release, else TheAudioDB's match.
+  let releaseGroupId: string | null | undefined = taggedReleaseGroupId ?? undefined;
+  const resolveReleaseGroup = async () => {
+    if (releaseGroupId !== undefined) return releaseGroupId;
+    releaseGroupId = null;
+    if (releaseId && settings.musicBrainzEnabled) {
+      releaseGroupId = await mbReleaseGroupOfRelease(releaseId).catch(() => null);
+    }
+    if (!releaseGroupId && settings.theAudioDbApiKey) {
+      const hit = await findTadbAlbum().catch(() => null);
+      if (isMusicBrainzUuid(hit?.strMusicBrainzID)) releaseGroupId = hit!.strMusicBrainzID!;
+    }
+    return releaseGroupId;
+  };
 
-  if (
-    settings.musicBrainzEnabled &&
-    settings.providerAlbumArt === 'musicbrainz' &&
-    !mbAlbumId
-  ) {
+  for (const api of usableProviders(settings, 'albumArt')) {
     try {
-      const searchQuery = `${artistName} ${albumName}`;
-      const mbResult = await mbSearchReleaseGroup(searchQuery);
-      const hits = mbResult;
-      if (hits && hits.length > 0) {
-        const match =
-          hits.find(
-            (h: any) =>
-              h.title?.toLowerCase() === albumName.toLowerCase()
-          ) || hits[0];
-        if (match?.id) {
-          const coverUrl = await mbGetAlbumCover(match.id);
+      if (api === 'musicbrainz') {
+        // The Cover Art Archive: by the release the files name, then their
+        // release group; only without either, by searching MusicBrainz.
+        if (releaseId) {
+          const coverUrl = await mbGetAlbumCover(releaseId);
           if (coverUrl) {
-            await upsertAlbumCache(albumName, artistName, coverUrl, match.id);
+            await upsertAlbumCache(albumName, artistName, coverUrl, releaseId);
             return coverUrl;
           }
         }
-      }
-    } catch {
-      /* fall through */
-    }
-  }
-
-  const apisToTry: string[] = [];
-  const pushApi = (api: string) => {
-    if (!apisToTry.includes(api)) apisToTry.push(api);
-  };
-  const albumProvider = settings.providerAlbumArt;
-
-  if (albumProvider === 'genius' && settings.geniusApiKey) pushApi('genius');
-  if (albumProvider === 'lastfm' && settings.lastFmApiKey) pushApi('lastfm');
-  if (albumProvider === 'musicbrainz' && settings.musicBrainzEnabled)
-    pushApi('musicbrainz');
-
-  if (albumProvider === 'lastfm' && !settings.lastFmApiKey && settings.geniusApiKey)
-    pushApi('genius');
-  if (albumProvider === 'genius' && !settings.geniusApiKey && settings.lastFmApiKey)
-    pushApi('lastfm');
-  if (albumProvider === 'musicbrainz' && !settings.musicBrainzEnabled) {
-    if (settings.lastFmApiKey) pushApi('lastfm');
-    if (settings.geniusApiKey) pushApi('genius');
-  }
-
-  let wasRateLimited = false;
-
-  for (const api of apisToTry) {
-    try {
-      if (api === 'lastfm' && settings.lastFmApiKey) {
-        try {
-          const album = await lastFmAlbumInfo(
-            albumName,
-            artistName,
-            settings.lastFmApiKey
-          );
-          if (album) {
-            if (album.image) {
-              const imageUrl = extractLastFmImage(album.image);
-              if (imageUrl) {
-                await upsertAlbumCache(albumName, artistName, imageUrl, null);
-                return imageUrl;
-              }
+        if (taggedReleaseGroupId) {
+          const coverUrl = await mbGetReleaseGroupCover(taggedReleaseGroupId);
+          if (coverUrl) {
+            await upsertAlbumCache(albumName, artistName, coverUrl, releaseId ?? null);
+            return coverUrl;
+          }
+        } else if (!releaseId) {
+          const hits = await mbSearchReleaseGroup(`${artistName} ${albumName}`);
+          const match = hits.find((h) => h.title?.toLowerCase() === albumName.toLowerCase()) || hits[0];
+          if (match?.id) {
+            const coverUrl = await mbGetReleaseGroupCover(match.id);
+            if (coverUrl) {
+              await upsertAlbumCache(albumName, artistName, coverUrl, null);
+              return coverUrl;
             }
+          }
+        }
+      } else if (api === 'lastfm') {
+        try {
+          const album = await lastFmAlbumInfo(albumName, artistName, settings.lastFmApiKey);
+          const imageUrl = album?.image ? extractLastFmImage(album.image) : undefined;
+          if (imageUrl) {
+            await upsertAlbumCache(albumName, artistName, imageUrl, null);
+            return imageUrl;
           }
         } catch (err) {
           if (isRateLimitError(err)) {
@@ -641,24 +701,39 @@ export async function getAlbumImage(
           }
           throw err;
         }
-      } else if (api === 'genius' && settings.geniusApiKey) {
+      } else if (api === 'theaudiodb') {
+        const coverUrl = tadbImage((await findTadbAlbum())?.strAlbumThumb);
+        if (coverUrl) {
+          await upsertAlbumCache(albumName, artistName, coverUrl, null);
+          return coverUrl;
+        }
+      } else if (api === 'fanarttv') {
+        const groupId = await resolveReleaseGroup();
+        if (groupId) {
+          const fanart = await fanartAlbum(groupId, settings.fanartTvApiKey);
+          const coverUrl = bestFanartImage(fanart?.albums?.[groupId]?.albumcover);
+          if (coverUrl) {
+            await upsertAlbumCache(albumName, artistName, coverUrl, null);
+            return coverUrl;
+          }
+        }
+      } else if (api === 'genius') {
         const query = `${artistName} ${albumName}`;
         const json = await geniusSearch(query, settings.geniusApiKey);
-        if (json) {
-          const hits = json.response?.hits;
-          if (hits && hits.length > 0) {
-            const songHit = hits.find((h: any) => h.type === 'song');
-            const imageUrl =
-              songHit?.result?.song_art_image_url ||
-              songHit?.result?.header_image_url;
-            if (imageUrl && !imageUrl.includes('default_cover_image.png')) {
-              await upsertAlbumCache(albumName, artistName, imageUrl, null);
-              return imageUrl;
-            }
+        const hits = json?.response?.hits;
+        if (hits && hits.length > 0) {
+          const songHit = hits.find((h: any) => h.type === 'song');
+          const imageUrl =
+            songHit?.result?.song_art_image_url ||
+            songHit?.result?.header_image_url;
+          if (imageUrl && !isGeniusPlaceholderImage(imageUrl)) {
+            await upsertAlbumCache(albumName, artistName, imageUrl, null);
+            return imageUrl;
           }
         }
       }
     } catch (e) {
+      if (isRateLimitError(e)) wasRateLimited = true;
       console.warn(`[Metadata] Failed fetching album image from ${api}:`, e);
     }
   }
@@ -788,7 +863,7 @@ export async function getLyrics(
       songUrl: song.url || '',
       title: song.title || trackName,
       artist: song.primary_artist?.name || artistName,
-      thumbnailUrl: thumbnailUrl?.includes('default_cover_image.png')
+      thumbnailUrl: isGeniusPlaceholderImage(thumbnailUrl)
         ? undefined
         : thumbnailUrl,
     };

@@ -7,10 +7,10 @@ import { getArtistData } from './metadata';
 //
 // LIBRARY IS CANON: this never runs unless the user has actually configured a
 // metadata provider. No provider → no images, just initials, and the batch
-// no-ops. getArtistData() itself reads the user's chosen artist-image provider
-// (providerArtistImage in Settings → Metadata) and only fetches from configured
-// providers, so this service just decides *which* artists to feed it and when to
-// stop — it never overrides the provider preference.
+// no-ops. getArtistData() itself follows the admin's provider order for artist
+// images (metadataProviderPriority, Settings → Metadata) and only fetches from
+// configured providers, so this service just decides *which* artists to feed it
+// and when to stop — it never overrides the provider order.
 //
 // getArtistData() writes image_url via upsertArtistCache and is throttled per
 // provider (Last.fm / Genius / MusicBrainz token buckets in metadata/rateLimiter
@@ -53,6 +53,10 @@ async function anyMetadataProviderConfigured(): Promise<boolean> {
   if (typeof lastFmApiKey === 'string' && lastFmApiKey.length > 0) return true;
   const geniusApiKey = await getSystemSetting('geniusApiKey');
   if (typeof geniusApiKey === 'string' && geniusApiKey.length > 0) return true;
+  for (const key of ['theAudioDbApiKey', 'fanartTvApiKey']) {
+    const value = await getSystemSetting(key);
+    if (typeof value === 'string' && value.length > 0) return true;
+  }
   const mb = await getSystemSetting('musicBrainzEnabled');
   if (mb === true || mb === 'true') return true;
   return false;

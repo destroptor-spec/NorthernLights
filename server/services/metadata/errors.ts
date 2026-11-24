@@ -1,5 +1,5 @@
 export class RateLimitError extends Error {
-  constructor(public provider: 'lastfm' | 'genius' | 'musicbrainz', retryAfter?: number) {
+  constructor(public provider: 'lastfm' | 'genius' | 'musicbrainz' | 'theaudiodb' | 'fanarttv', retryAfter?: number) {
     super(`${provider} rate limited${retryAfter ? `, retry after ${retryAfter}s` : ''}`);
     this.name = 'RateLimitError';
   }

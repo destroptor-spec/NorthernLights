@@ -4,6 +4,9 @@ import { createRateLimiter } from '../middleware/rateLimit';
 import { randomBytes } from 'crypto';
 import { getSystemSetting, setSystemSetting, getUserSetting, setUserSetting, getRepresentativeReleaseMbid, getArtistVideosCache } from '../database';
 import { caaGetReleaseImages, pickMediumImage, pickFrontImage } from '../services/metadata/providers/musicbrainz';
+import { testTheAudioDb } from '../services/metadata/providers/theaudiodb';
+import { testFanartTv } from '../services/metadata/providers/fanarttv';
+import { isRateLimitError } from '../services/metadata/errors';
 import { lfmFetch, updateNowPlaying, loveTrack, unloveTrack } from '../services/lastfm.service';
 import {
   validateToken as validateLbToken,
@@ -128,6 +131,8 @@ function isAllowedProxyImageUrl(parsed: URL): boolean {
     'filepicker-images.genius.com',
     'assets.genius.com',
     'coverartarchive.org',
+    'theaudiodb.com', // r2.theaudiodb.com, www.theaudiodb.com
+    'fanart.tv', // assets.fanart.tv
     'e.snmc.io',
     'is1-ssl.mzstatic.com',
     'is2-ssl.mzstatic.com',
@@ -391,6 +396,29 @@ router.post('/providers/genius/test', async (req, res) => {
     }
   } catch (err: any) {
     res.status(502).json({ status: 'error', error: err.message || 'Network error' });
+  }
+});
+
+// TheAudioDB and fanart.tv: test the key typed in Settings (or the stored one).
+router.post('/providers/theaudiodb/test', requireAdmin, async (req, res) => {
+  try {
+    const apiKey = typeof req.body?.apiKey === 'string' && req.body.apiKey ? req.body.apiKey : await getSystemSetting('theAudioDbApiKey');
+    if (!apiKey) return res.status(400).json({ status: 'error', error: 'No API key configured' });
+    const { artist } = await testTheAudioDb(apiKey);
+    res.json({ status: 'ok', artist });
+  } catch (err: any) {
+    res.status(isRateLimitError(err) ? 429 : 502).json({ status: 'error', error: err?.message || 'Network error' });
+  }
+});
+
+router.post('/providers/fanarttv/test', requireAdmin, async (req, res) => {
+  try {
+    const apiKey = typeof req.body?.apiKey === 'string' && req.body.apiKey ? req.body.apiKey : await getSystemSetting('fanartTvApiKey');
+    if (!apiKey) return res.status(400).json({ status: 'error', error: 'No API key configured' });
+    const { artist } = await testFanartTv(apiKey);
+    res.json({ status: 'ok', artist });
+  } catch (err: any) {
+    res.status(isRateLimitError(err) ? 429 : 502).json({ status: 'error', error: err?.message || 'Network error' });
   }
 });
 

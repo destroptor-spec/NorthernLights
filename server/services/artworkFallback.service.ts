@@ -5,6 +5,7 @@ export interface ArtworkProviderContext {
   album?: string | null;
   artist?: string | null;
   mbAlbumId?: string | null;
+  mbReleaseGroupId?: string | null;
   cachedImageUrl?: string | null;
 }
 
@@ -37,7 +38,7 @@ export async function resolveProviderArtworkUrl(context: ArtworkProviderContext)
   if (existing && existing.expiresAt > now) return existing.promise;
 
   pruneLookups(now);
-  const promise = getAlbumImage(context.album, context.artist, context.mbAlbumId).catch((error) => {
+  const promise = getAlbumImage(context.album, context.artist, context.mbAlbumId, context.mbReleaseGroupId).catch((error) => {
     lookups.delete(key);
     throw error;
   });

@@ -4,8 +4,9 @@ import { useProviderConnectionTest } from '../../hooks/useProviderConnectionTest
 import { useToast } from '../../hooks/useToast';
 import { Trash2, Sparkles, Image as ImageIcon, BookOpen, Disc3, FileText, User, Heart, Tags, Headphones, Star, Ticket, MapPin, Calendar, AlertTriangle, Users, Video } from 'lucide-react';
 import { DependencyBadge, DependencyGroup, DependencyInfoBox } from '../DependencyBadge';
+import { ProviderOrderEditor } from './ProviderOrderEditor';
 
-type MetadataSubTab = 'overview' | 'lastfm' | 'genius' | 'musicbrainz' | 'jambase' | 'youtube';
+type MetadataSubTab = 'overview' | 'lastfm' | 'genius' | 'musicbrainz' | 'theaudiodb' | 'fanarttv' | 'jambase' | 'youtube';
 
 type JambaseStatusResp = {
   enabled: boolean;
@@ -123,10 +124,9 @@ export const MetadataTab: React.FC = () => {
     const setMusicBrainzConnected = usePlayerStore(state => state.setMusicBrainzConnected);
     const musicBrainzRedirectUri = usePlayerStore(state => state.musicBrainzRedirectUri);
     const setMusicBrainzRedirectUri = usePlayerStore(state => state.setMusicBrainzRedirectUri);
-    const providerArtistImage = usePlayerStore(state => state.providerArtistImage);
-    const providerArtistArtwork = usePlayerStore(state => state.providerArtistArtwork);
-    const providerArtistBio = usePlayerStore(state => state.providerArtistBio);
-    const providerAlbumArt = usePlayerStore(state => state.providerAlbumArt);
+    const metadataProviderPriority = usePlayerStore(state => state.metadataProviderPriority);
+    const theAudioDbApiKey = usePlayerStore(state => state.theAudioDbApiKey);
+    const fanartTvApiKey = usePlayerStore(state => state.fanartTvApiKey);
     const jambaseEnabled = usePlayerStore(state => state.jambaseEnabled);
     const jambaseMaxSubscriptionsPerUser = usePlayerStore(state => state.jambaseMaxSubscriptionsPerUser);
     const jambaseCacheTtlDays = usePlayerStore(state => state.jambaseCacheTtlDays);
@@ -239,6 +239,12 @@ export const MetadataTab: React.FC = () => {
         testLastFm,
         testGenius,
         testMusicBrainz,
+        theAudioDbStatus,
+        theAudioDbMessage,
+        fanartTvStatus,
+        fanartTvMessage,
+        testTheAudioDb,
+        testFanartTv,
     } = useProviderConnectionTest();
 
     const lastFmBadge = (
@@ -260,6 +266,20 @@ export const MetadataTab: React.FC = () => {
             label="MusicBrainz Application"
             status={musicBrainzConnected ? 'available' : (musicBrainzEnabled ? 'partial' : 'unavailable')}
             message={musicBrainzConnected ? 'Ready for metadata, tags, and rating sync' : (musicBrainzEnabled ? 'Requires OAuth Authorization' : 'Integration currently disabled')}
+        />
+    );
+    const theAudioDbBadge = (
+        <DependencyBadge
+            label="TheAudioDB Integration"
+            status={theAudioDbApiKey ? 'available' : 'unavailable'}
+            message={theAudioDbApiKey ? 'Ready for artist pictures, banners, bios, album covers and artist facts' : 'Requires an API key'}
+        />
+    );
+    const fanartTvBadge = (
+        <DependencyBadge
+            label="fanart.tv Integration"
+            status={fanartTvApiKey ? 'available' : 'unavailable'}
+            message={fanartTvApiKey ? 'Ready for artist banners, pictures and album covers' : 'Requires an API key'}
         />
     );
     const jambaseBadge = (
@@ -321,6 +341,18 @@ export const MetadataTab: React.FC = () => {
                     MusicBrainz
                 </button>
                 <button
+                    onClick={() => setMetadataTab('theaudiodb')}
+                    className={`btn-tab ${metadataTab === 'theaudiodb' ? 'active' : ''}`}
+                >
+                    TheAudioDB
+                </button>
+                <button
+                    onClick={() => setMetadataTab('fanarttv')}
+                    className={`btn-tab ${metadataTab === 'fanarttv' ? 'active' : ''}`}
+                >
+                    fanart.tv
+                </button>
+                <button
                     onClick={() => setMetadataTab('jambase')}
                     className={`btn-tab ${metadataTab === 'jambase' ? 'active' : ''}`}
                 >
@@ -341,6 +373,8 @@ export const MetadataTab: React.FC = () => {
                             {lastFmBadge}
                             {geniusBadge}
                             {musicBrainzBadge}
+                            {theAudioDbBadge}
+                            {fanartTvBadge}
                             {jambaseBadge}
                             {youtubeBadge}
                         </DependencyGroup>
@@ -348,37 +382,16 @@ export const MetadataTab: React.FC = () => {
 
                     {/* Default Provider Configuration */}
                     <div className="mt-8 pt-6 border-t border-[var(--glass-border)]">
-                        <h4 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">API Hierarchy Preferences</h4>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-                            <div>
-                                <label className="block text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider mb-2">Artist Images</label>
-                                <select disabled={!lastFmApiKey && !geniusApiKey} value={providerArtistImage} onChange={e => setSettings({ providerArtistImage: e.target.value as 'lastfm' | 'genius' })} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-background text-[var(--color-text-primary)] text-sm shadow-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors disabled:opacity-50">
-                                    <option value="lastfm" disabled={!lastFmApiKey}>Last.fm {!lastFmApiKey && '(Not Configured)'}</option>
-                                    <option value="genius" disabled={!geniusApiKey}>Genius {!geniusApiKey && '(Not Configured)'}</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider mb-2">Artist Artwork</label>
-                                <select value={providerArtistArtwork} onChange={e => setSettings({ providerArtistArtwork: e.target.value as 'genius' | 'none' })} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-background text-[var(--color-text-primary)] text-sm shadow-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors">
-                                    <option value="genius" disabled={!geniusApiKey}>Genius {!geniusApiKey && '(Not Configured)'}</option>
-                                    <option value="none">None</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider mb-2">Artist Bios</label>
-                                <select disabled={!lastFmApiKey && !geniusApiKey} value={providerArtistBio} onChange={e => setSettings({ providerArtistBio: e.target.value as 'lastfm' | 'genius' })} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-background text-[var(--color-text-primary)] text-sm shadow-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors disabled:opacity-50">
-                                    <option value="lastfm" disabled={!lastFmApiKey}>Last.fm {!lastFmApiKey && '(Not Configured)'}</option>
-                                    <option value="genius" disabled={!geniusApiKey}>Genius {!geniusApiKey && '(Not Configured)'}</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider mb-2">Album Art</label>
-                                <select disabled={!lastFmApiKey && !geniusApiKey && !musicBrainzEnabled} value={providerAlbumArt} onChange={e => setSettings({ providerAlbumArt: e.target.value as 'lastfm' | 'genius' | 'musicbrainz' })} className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-background text-[var(--color-text-primary)] text-sm shadow-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors disabled:opacity-50">
-                                    <option value="lastfm" disabled={!lastFmApiKey}>Last.fm {!lastFmApiKey && '(Not Configured)'}</option>
-                                    <option value="genius" disabled={!geniusApiKey}>Genius {!geniusApiKey && '(Not Configured)'}</option>
-                                    <option value="musicbrainz" disabled={!musicBrainzEnabled}>MusicBrainz {!musicBrainzEnabled && '(Disabled)'}</option>
-                                </select>
-                            </div>
+                        <h4 className="text-lg font-semibold text-[var(--color-text-primary)] mb-1">Provider order</h4>
+                        <p className="text-sm text-[var(--color-text-muted)] mb-4">
+                            Aurora asks each item’s providers from the top and keeps the first one that has it. Drag to reorder. New order applies to new lookups; clear the cache below to look everything up again.
+                        </p>
+                        <div className="mb-6">
+                            <ProviderOrderEditor
+                                priority={metadataProviderPriority}
+                                connected={{ lastfm: !!lastFmApiKey, genius: !!geniusApiKey, musicbrainz: musicBrainzEnabled, theaudiodb: !!theAudioDbApiKey, fanarttv: !!fanartTvApiKey }}
+                                onChange={(next) => setSettings({ metadataProviderPriority: next })}
+                            />
                         </div>
                         <button
                             onClick={async () => {
@@ -733,6 +746,78 @@ export const MetadataTab: React.FC = () => {
                                 </div>
                             </div>
                         )}
+                    </div>
+                </div>
+            )}
+
+            {metadataTab === 'theaudiodb' && (
+                <div>
+                    <div className="mb-6 space-y-4">
+                        <DependencyGroup title="Provider Status">
+                            {theAudioDbBadge}
+                        </DependencyGroup>
+                    </div>
+
+                    <div className="mb-6">
+                        <div className="flex items-center gap-2 mb-3">
+                            <Sparkles className="w-4 h-4 text-[var(--color-primary)]" />
+                            <span className="text-sm font-medium text-[var(--color-text-primary)]">What TheAudioDB adds</span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <DependencyInfoBox title="Artist pictures and banners" description="Artist photos, and fanart for the wide picture across the top of an artist’s page" icon={<ImageIcon size={16} />} />
+                            <DependencyInfoBox title="Artist bios" description="English biographies for artist pages" icon={<BookOpen size={16} />} />
+                            <DependencyInfoBox title="Album covers" description="Covers for albums without art in their files" icon={<Disc3 size={16} />} />
+                            <DependencyInfoBox title="Artist facts" description="Country, years active and links where MusicBrainz has none; genre, style and mood shown with the artist’s tags (they don’t change genres or playlists)" icon={<Tags size={16} />} />
+                        </div>
+                    </div>
+
+                    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 flex flex-col gap-3 shadow-sm">
+                        <div className="flex gap-2">
+                            <input type="text" value={theAudioDbApiKey} onChange={e => setSettings({ theAudioDbApiKey: e.target.value.trim() })} placeholder="API key" aria-label="TheAudioDB API key" className="flex-1 min-w-0 p-3 rounded-xl border border-[var(--glass-border)] bg-background text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" />
+                            <button onClick={() => testTheAudioDb(theAudioDbApiKey)} disabled={theAudioDbStatus === 'testing' || !theAudioDbApiKey} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">{theAudioDbStatus === 'testing' ? 'Testing...' : 'Test Connection'}</button>
+                        </div>
+                        <p className="text-xs text-[var(--color-text-muted)]">
+                            <code>123</code> is TheAudioDB’s free key: 30 lookups a minute, meant for personal and development use. A premium key from theaudiodb.com allows more. Aurora asks TheAudioDB about every artist it looks up while a key is set, so the artist picture backfill runs at about one artist every two seconds.
+                        </p>
+                        {theAudioDbStatus === 'success' && <span className="text-green-500 font-semibold text-xs">✓ {theAudioDbMessage}</span>}
+                        {theAudioDbStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {theAudioDbMessage}</span>}
+                    </div>
+                </div>
+            )}
+
+            {metadataTab === 'fanarttv' && (
+                <div>
+                    <div className="mb-6 space-y-4">
+                        <DependencyGroup title="Provider Status">
+                            {fanartTvBadge}
+                        </DependencyGroup>
+                    </div>
+
+                    <div className="mb-6">
+                        <div className="flex items-center gap-2 mb-3">
+                            <Sparkles className="w-4 h-4 text-[var(--color-primary)]" />
+                            <span className="text-sm font-medium text-[var(--color-text-primary)]">What fanart.tv adds</span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <DependencyInfoBox title="Artist banners" description="High-resolution artist backgrounds for the top of artist pages" icon={<ImageIcon size={16} />} />
+                            <DependencyInfoBox title="Artist pictures" description="Artist thumbnails picked by fanart.tv’s community" icon={<User size={16} />} />
+                            <DependencyInfoBox title="Album covers" description="Covers for albums without art in their files" icon={<Disc3 size={16} />} />
+                        </div>
+                        <p className="text-xs text-[var(--color-text-muted)] mt-3">
+                            fanart.tv finds artists and albums by their MusicBrainz id, which most tagged files carry. Artists without one are skipped unless TheAudioDB finds the same name.
+                        </p>
+                    </div>
+
+                    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 flex flex-col gap-3 shadow-sm">
+                        <div className="flex flex-col sm:flex-row gap-2">
+                            <input type="text" value={fanartTvApiKey} onChange={e => setSettings({ fanartTvApiKey: e.target.value.trim() })} placeholder="Project API key" aria-label="fanart.tv project API key" className="flex-1 min-w-0 p-3 rounded-xl border border-[var(--glass-border)] bg-background text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" />
+                            <button onClick={() => testFanartTv(fanartTvApiKey)} disabled={fanartTvStatus === 'testing' || !fanartTvApiKey} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">{fanartTvStatus === 'testing' ? 'Testing...' : 'Test Connection'}</button>
+                        </div>
+                        <p className="text-xs text-[var(--color-text-muted)]">
+                            Get a project API key at fanart.tv (free account). It covers the whole server: listeners don't need keys of their own.
+                        </p>
+                        {fanartTvStatus === 'success' && <span className="text-green-500 font-semibold text-xs">✓ {fanartTvMessage}</span>}
+                        {fanartTvStatus === 'error' && <span className="text-red-500 font-semibold text-xs">✗ {fanartTvMessage}</span>}
                     </div>
                 </div>
             )}
