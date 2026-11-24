@@ -68,6 +68,7 @@
 - **Old Hub routes removed:** a week of logging (17–24 Nov) showed nothing calls the ten `/api/hub` routes, so they're gone; the Hub is on API v1 (`/api/v1/hub`). The other old listener routes follow, one file at a time.
 - **Old playlist routes removed:** the same week showed nothing calls the eleven `/api/playlists` routes either; playlists are on API v1 (`/api/v1/playlists`).
 - **Old playback report routes removed:** `/api/playback/history`, `/record` and `/skip`; plays and skips go to `POST /api/v1/playback/reports`.
+- **Old Infinity route removed:** `POST /api/recommend`; the next track comes from `POST /api/v1/recommendations/next`.
 - **Unused MusicBrainz proxy routes removed:** the seven `/api/providers/musicbrainz/…` lookup, search and token-refresh routes had no caller, and any signed-in user could use them to spend the server's shared MusicBrainz rate limit. Connecting, testing and disconnecting MusicBrainz are unchanged. Other routes nothing called (the old artist-duplicates tool, which the artist review replaced, and three status routes) and the unused `essentia.js` package are gone too.
 
 ### Security
