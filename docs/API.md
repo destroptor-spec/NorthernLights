@@ -917,24 +917,7 @@ Playlists are API v1 only: `GET /api/v1/playlists`, `GET /api/v1/playlists/disco
 
 ## ✨ Playback & History
 
-### [POST] `/api/playback/history`
-> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
-Record a track as "Played" in the current session.
-- **Payload**: `{ "trackId": "uuid" }`
-- **Role**: Influences the Infinity Mode decay centroid.
-
-### [POST] `/api/playback/record`
-> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
-Record a successful playback (increments database play count).
-- **Example Request**:
-  ```json
-  { "trackId": "track-v4-id" }
-  ```
-
-### [POST] `/api/playback/skip`
-> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
-Record a track skip.
-- **Payload**: `{ "trackId": "uuid" }`
+Playback reports are API v1 only: `POST /api/v1/playback/reports` records plays and skips (and scrobbles). The older `/api/playback/history`, `/record` and `/skip` were removed on 24 Nov 2026 after a week of deprecation logging showed no calls ([legacy-listener-routes.md](./legacy-listener-routes.md)).
 
 ### [POST] `/api/recommend`
 > **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
