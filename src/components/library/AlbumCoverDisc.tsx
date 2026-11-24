@@ -15,6 +15,8 @@ interface AlbumCoverDiscProps {
     album: string;
     /** Tailwind sizing classes for the square cover (must set both w and h). */
     sizeClassName?: string;
+    /** Laid over the cover (the now-playing chip); positions itself. */
+    children?: React.ReactNode;
 }
 
 /**
@@ -30,6 +32,7 @@ export const AlbumCoverDisc: React.FC<AlbumCoverDiscProps> = ({
     artist,
     album,
     sizeClassName = 'w-48 h-48 md:w-60 md:h-60',
+    children,
 }) => {
     const { mediumUrl, frontUrl } = useDiscImage(albumId);
     const [rolled, setRolled] = useState(false);
@@ -63,6 +66,7 @@ export const AlbumCoverDisc: React.FC<AlbumCoverDiscProps> = ({
             )}
             <div className="album-cover-disc__cover absolute inset-0 z-10 rounded-2xl shadow-2xl overflow-hidden bg-black/10 dark:bg-white/5">
                 <AlbumArt artUrl={artUrl} artist={artist} album={album} size={640} className="w-full h-full object-cover rounded-2xl" />
+                {children}
             </div>
         </div>
     );

@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
-import { StyleProfileChips } from '../browse/StyleProfileChips';
 import { usePlayerStore } from '../../store/index';
 import { TrackInfo } from '../../utils/fileSystem';
 import { normalizeArtistIdentityKey, parseArtistsForDisplay, trackMatchesArtist } from '../../utils/artistUtils';
@@ -16,8 +15,10 @@ import { AlbumCard, AlbumCardSkeleton } from './AlbumCard';
 import { BackButton } from './BackButton';
 import { FadedHeroImage } from './FadedHeroImage';
 import { ArtistInitial } from './ArtistInitial';
-import { formatDuration, formatTime } from '../../utils/formatTime';
-import { ExternalLink, Globe, Users, Mic2, Calendar, Sparkles, Music2, Clock, BookOpen, Play, Headphones, Link2, Disc3, Radio, Tag, MoreHorizontal } from 'lucide-react';
+import { ArtistAboutSection } from './ArtistAboutSections';
+import { StyleProfileSection } from '../browse/StyleProfileSection';
+import { formatTime } from '../../utils/formatTime';
+import { ExternalLink, Users, Play, Headphones, Link2, Disc3, Radio, MoreHorizontal } from 'lucide-react';
 import { ContextMenuTarget } from '../ContextMenuTarget';
 import { ContextMenuFrame, ContextMenuHeader, ContextMenuLink, ContextMenuList, ContextMenuPortal } from '../ContextMenu';
 import { useArtistConcerts, OnTourSticker, UpcomingShows } from './ArtistConcerts';
@@ -191,7 +192,6 @@ const SimilarArtistsSection: React.FC<{ artists: SimilarArtist[]; loading: boole
         return (
             <section className="mb-12">
                 <h3 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2 flex items-center gap-2">
-                    <Users className="w-4 h-4 text-[var(--color-primary)] opacity-60" />
                     Similar artists
                 </h3>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
@@ -208,7 +208,6 @@ const SimilarArtistsSection: React.FC<{ artists: SimilarArtist[]; loading: boole
     return (
         <section className="mb-12">
             <h3 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2 flex items-center gap-2">
-                <Users className="w-4 h-4 text-[var(--color-primary)] opacity-60" />
                 Similar artists
             </h3>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
@@ -226,7 +225,7 @@ const ArtistDetailSkeleton: React.FC<{ onBack: () => void; hero?: ArtistHeroStat
         <div className="artist-detail page-container relative">
             <div className="relative z-10">
                 <BackButton onClick={onBack} />
-                <section className="flex flex-col md:flex-row items-center md:items-end gap-8 mb-10 md:mb-14">
+                <section className="flex flex-col md:flex-row items-center gap-8 mb-10 md:mb-14">
                     {hasHero && hero?.imageUrl ? (
                         <div
                             className="w-48 h-48 md:w-64 md:h-64 rounded-full overflow-hidden shrink-0 shadow-[var(--shadow-md)] border-4 border-[var(--glass-border)] bg-[var(--glass-bg)]"
@@ -250,22 +249,16 @@ const ArtistDetailSkeleton: React.FC<{ onBack: () => void; hero?: ArtistHeroStat
                                 <h1 className="font-bold text-4xl md:text-5xl lg:text-6xl tracking-tight leading-tight text-[var(--color-text-primary)] line-clamp-2">
                                     {hero?.name}
                                 </h1>
-                                <div className="h-4 w-56 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mx-auto md:mx-0" />
+                                <div className="h-12 w-56 rounded-full bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mx-auto md:mx-0" />
                             </>
                         ) : (
                             <>
                                 <div className="h-12 md:h-16 w-3/4 max-w-xl rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mx-auto md:mx-0" />
-                                <div className="h-4 w-56 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mx-auto md:mx-0" />
-                                <div className="h-10 w-36 rounded-full bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mx-auto md:mx-0" />
+                                <div className="h-12 w-56 rounded-full bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mx-auto md:mx-0" />
                             </>
                         )}
                     </div>
                 </section>
-                <div className="mb-12 max-w-3xl space-y-2">
-                    <div className="h-4 w-full rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
-                    <div className="h-4 w-5/6 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
-                    <div className="h-4 w-2/3 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
-                </div>
                 <div className="album-grid">
                     {Array.from({ length: 6 }).map((_, i) => <AlbumCardSkeleton key={i} />)}
                 </div>
@@ -375,7 +368,6 @@ export const ArtistDetail: React.FC = () => {
         enabled: !!artistName,
         limit: 30,
     });
-    const [bioExpanded, setBioExpanded] = useState(false);
     const [linksMenuOpen, setLinksMenuOpen] = useState(false);
     const [popularExpanded, setPopularExpanded] = useState(false);
     const [similarArtists, setSimilarArtists] = useState<SimilarArtist[]>([]);
@@ -855,7 +847,11 @@ export const ArtistDetail: React.FC = () => {
             <div className="relative z-10">
                 <BackButton onClick={() => navigate(-1)} />
 
-                <div className="flex flex-col md:flex-row gap-8 items-start mb-8 md:mb-12">
+                <div className="flex flex-col md:flex-row gap-8 items-start md:items-center mb-8 md:mb-12">
+                    {/* The portrait clips to its circle; the now-playing chip sits
+                        outside that clip, centred at its foot, and may reach
+                        past the circle's edge. */}
+                    <div className="relative shrink-0">
                     {imageUrl ? (
                         <div
                             className="w-48 h-48 md:w-64 md:h-64 rounded-full overflow-hidden shrink-0 shadow-[var(--shadow-md)] border-4 border-[var(--glass-border)] bg-[var(--glass-bg)]"
@@ -869,6 +865,10 @@ export const ArtistDetail: React.FC = () => {
                             <ArtistInitial name={artistName} lookup={false} />
                         </div>
                     )}
+                    {isArtistPlaying && playbackState !== 'stopped' && (
+                        <NowPlayingBadge state={playbackState === 'playing' ? 'playing' : 'paused'} className="np-badge--on-portrait" />
+                    )}
+                    </div>
 
                     <div className="flex-1">
                         <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -876,93 +876,7 @@ export const ArtistDetail: React.FC = () => {
                                 {artistName}
                             </h1>
                             <OnTourSticker visible={onTour} />
-                            {isArtistPlaying && playbackState !== 'stopped' && (
-                                <NowPlayingBadge state={playbackState === 'playing' ? 'playing' : 'paused'} className="self-end mb-1.5 shrink-0" />
-                            )}
                         </div>
-
-                        {/* Band members */}
-                        {members && members.length > 0 && (
-                            <div className="flex flex-wrap items-center gap-1 mb-3">
-                                <span className="text-xs text-[var(--color-text-muted)] mr-1">Members:</span>
-                                {members.map((m, i) => (
-                                    <span key={m} className="text-xs text-[var(--color-text-secondary)]">
-                                        {m}{i < members.length - 1 ? ',' : ''}
-                                    </span>
-                                ))}
-                            </div>
-                        )}
-
-                        {/* Artist meta line — roles from on-disk credits sit
-                            alongside the MusicBrainz-sourced type / area /
-                            lifespan items, in the same style. Roles take the
-                            lead position so they sit right under the name. */}
-                        {(rolesInLibrary.length > 1 || disambiguation || type || area || lifeSpan?.begin) && (
-                            <div className="flex flex-wrap items-center gap-3 mb-3 text-xs text-[var(--color-text-muted)]">
-                                {rolesInLibrary.length > 1 && (
-                                    <span className="inline-flex items-center gap-1">
-                                        <Tag className="w-3 h-3" />
-                                        {rolesInLibrary.map(r => r.role).join(' · ')}
-                                    </span>
-                                )}
-                                {type && (
-                                    <span className="inline-flex items-center gap-1">
-                                        {type === 'Group' ? <Users className="w-3 h-3" /> : type === 'Person' ? <Mic2 className="w-3 h-3" /> : <Globe className="w-3 h-3" />}
-                                        {type}
-                                        {disambiguation && (
-                                            <span className="italic text-[var(--color-text-muted)]">
-                                                {' – '}{disambiguation}
-                                            </span>
-                                        )}
-                                    </span>
-                                )}
-                                {!type && disambiguation && (
-                                    <span className="italic text-[var(--color-text-muted)]">{disambiguation}</span>
-                                )}
-                                {area && (
-                                    <span className="inline-flex items-center gap-1">
-                                        <Globe className="w-3 h-3" />
-                                        {area}
-                                    </span>
-                                )}
-                                {lifeSpan?.begin && (
-                                    <span className="inline-flex items-center gap-1">
-                                        <Calendar className="w-3 h-3" />
-                                        {lifeSpan.begin}{lifeSpan.end ? ` – ${lifeSpan.end}` : ' – present'}
-                                    </span>
-                                )}
-                            </div>
-                        )}
-
-                        {/* Local library stats */}
-                        {(libraryStats.totalTracks > 0 || listeners) && (
-                            <div className="flex items-center gap-3 mb-3 text-xs text-[var(--color-text-muted)]">
-                                {libraryStats.totalTracks > 0 && (
-                                    <span className="inline-flex items-center gap-1">
-                                        <Music2 className="w-3 h-3" />
-                                        {libraryStats.totalTracks} track{libraryStats.totalTracks !== 1 ? 's' : ''}
-                                    </span>
-                                )}
-                                {libraryStats.totalAlbums > 0 && (
-                                    <span className="inline-flex items-center gap-1">
-                                        <BookOpen className="w-3 h-3" />
-                                        {libraryStats.totalAlbums} album{libraryStats.totalAlbums !== 1 ? 's' : ''}
-                                    </span>
-                                )}
-                                {libraryStats.totalDuration > 60 && (
-                                    <span className="inline-flex items-center gap-1">
-                                        <Clock className="w-3 h-3" />
-                                        {formatDuration(libraryStats.totalDuration)}
-                                    </span>
-                                )}
-                                {listeners && (
-                                    <span className="inline-flex items-center gap-1">
-                                        <Headphones className="w-3 h-3" />
-                                        {formatListeners(listeners)}
-                                    </span>
-                                )}
-                            </div>
-                        )}
 
                         <div className="mt-4 mb-4 flex flex-wrap items-center gap-3">
                             <button
@@ -1041,52 +955,6 @@ export const ArtistDetail: React.FC = () => {
                             </ContextMenuPortal>
                         </div>
 
-                        {bio && (
-                            <div className="mt-1">
-                                <p className={`text-sm md:text-base text-[var(--color-text-secondary)] leading-relaxed max-w-3xl ${bioExpanded ? '' : 'line-clamp-4'}`}>
-                                    {bio}
-                                </p>
-                                <button
-                                    onClick={() => setBioExpanded(!bioExpanded)}
-                                    className="text-xs font-medium text-[var(--color-primary)] hover:text-[var(--color-primary-dark)] mt-1 transition-colors motion-reduce:transition-none"
-                                >
-                                    {bioExpanded ? 'Show less' : 'Read more'}
-                                </button>
-                            </div>
-                        )}
-                        {artistLoading && !bio && (
-                            <div className="mt-1 space-y-2 max-w-3xl">
-                                <div className="h-4 w-full rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
-                                <div className="h-4 w-5/6 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
-                                <div className="h-4 w-2/3 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
-                            </div>
-                        )}
-
-                        <StyleProfileChips kind="artist" id={artistId} className="mt-4" />
-
-                        {mergedTags.length > 0 && (
-                            <div className="mt-4 flex flex-wrap gap-1.5">
-                                {mergedTags.map(tag => (
-                                    tag.isCommunity ? (
-                                        <span
-                                            key={tag.name}
-                                            title={`From ${(tag.providers || []).map(p => p === 'lastfm' ? 'Last.fm' : p === 'theaudiodb' ? 'TheAudioDB' : 'MusicBrainz').join(' + ')}${tag.count && !(tag.providers || []).every(p => p === 'theaudiodb') ? ` · ${tag.count}` : ''}`}
-                                            className="px-2.5 py-1 rounded-full text-[11px] font-semibold uppercase tracking-[0.16em] bg-emerald-500/10 text-[var(--color-primary)] border border-emerald-500/20"
-                                        >
-                                            {tag.name}
-                                        </span>
-                                    ) : (
-                                        <span
-                                            key={tag.name}
-                                            className="px-2 py-0.5 rounded-full text-xs font-medium bg-[var(--color-surface-variant)] text-[var(--color-text-muted)] border border-[var(--glass-border)]"
-                                        >
-                                            {tag.name}
-                                        </span>
-                                    )
-                                ))}
-                            </div>
-                        )}
-
                     </div>
                 </div>
 
@@ -1094,7 +962,6 @@ export const ArtistDetail: React.FC = () => {
                     <section className="mb-12">
                         <div className="flex items-center justify-between gap-4 mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2">
                             <h3 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] flex items-center gap-2">
-                                <Sparkles className="w-4 h-4 text-[var(--color-primary)] opacity-70" />
                                 Popular in your library
                             </h3>
                         </div>
@@ -1330,7 +1197,7 @@ export const ArtistDetail: React.FC = () => {
             ].length > 0 && (
                 <div className="mb-12">
                     <h3 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2 flex items-center gap-2">
-                        <Sparkles className="w-4 h-4 text-[var(--color-primary)] opacity-60" /> Also appears on
+                        Also appears on
                     </h3>
                     <div className="album-grid">
                         {[
@@ -1356,7 +1223,25 @@ export const ArtistDetail: React.FC = () => {
                 </div>
             )}
 
+            <ArtistAboutSection
+                artistName={artistName}
+                imageUrl={imageUrl}
+                bio={bio}
+                loading={artistLoading}
+                members={members}
+                roles={rolesInLibrary}
+                type={type}
+                disambiguation={disambiguation}
+                area={area}
+                lifeSpan={lifeSpan}
+                stats={libraryStats}
+                listeners={listeners}
+                tags={mergedTags}
+            />
+
             <SimilarArtistsSection artists={similarArtists} loading={similarArtistsLoading} />
+
+            <StyleProfileSection kind="artist" id={artistId} name={artistName} />
             </div>
         </div>
     );

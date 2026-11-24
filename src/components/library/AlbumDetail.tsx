@@ -12,7 +12,8 @@ import { useContextMenuTrigger } from '../../hooks/useContextMenuTrigger';
 import { formatDuration, formatTime } from '../../utils/formatTime';
 import { scrollToAlbumTrackTarget } from '../../utils/albumTrackFocus';
 import { buildArtistLinkMap } from '../../utils/artistLinks';
-import { StyleProfileChips } from '../browse/StyleProfileChips';
+import { StyleProfileSection } from '../browse/StyleProfileSection';
+import { AlbumAboutSection } from './AlbumAboutSection';
 import { BackButton } from './BackButton';
 import { useAlbumData } from '../../hooks/useAlbumData';
 import { LoveButton } from '../LoveButton';
@@ -101,13 +102,13 @@ const AlbumDetailSkeleton: React.FC<{ onBack: () => void; hero?: AlbumHeroState 
             <div className="flex flex-col md:flex-row gap-6 md:gap-8 mb-8 md:mb-12 items-center md:items-end text-center md:text-left">
                 {hasHero ? (
                     <div
-                        className="w-48 h-48 md:w-60 md:h-60 shrink-0 rounded-2xl border border-black/10 dark:border-white/10 shadow-2xl relative overflow-hidden bg-black/10 dark:bg-white/5"
+                        className="album-cover-disc-room w-48 h-48 md:w-60 md:h-60 shrink-0 rounded-2xl border border-black/10 dark:border-white/10 shadow-2xl relative overflow-hidden bg-black/10 dark:bg-white/5"
                     >
                         <AlbumArt artUrl={hero?.artUrl} artist={hero?.artist} size={640} className="w-full h-full object-cover rounded-2xl" />
                     </div>
                 ) : (
                     <div
-                        className="w-48 h-48 md:w-60 md:h-60 shrink-0 rounded-2xl bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none"
+                        className="album-cover-disc-room w-48 h-48 md:w-60 md:h-60 shrink-0 rounded-2xl bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none"
                     />
                 )}
                 <div className="flex-1 space-y-3">
@@ -900,7 +901,12 @@ export const AlbumDetail: React.FC = () => {
             <div className="shrink-0 mb-6"><BackButton onClick={() => navigate(-1)} /></div>
 
             <div className="shrink-0 flex flex-col md:flex-row gap-6 md:gap-8 mb-8 md:mb-12 items-center md:items-end text-center md:text-left">
-                <AlbumCoverDisc albumId={albumId} artUrl={artUrl} artist={albumArtist} album={albumTitle} />
+                <AlbumCoverDisc albumId={albumId} artUrl={artUrl} artist={albumArtist} album={albumTitle}>
+                    {/* Playing this album: the chip sits on the cover's bottom-left corner. */}
+                    {isAlbumPlaying && playbackState !== 'stopped' && (
+                        <NowPlayingBadge state={playbackState === 'playing' ? 'playing' : 'paused'} className="np-badge--on-art" />
+                    )}
+                </AlbumCoverDisc>
                 {/* isolate lifts the title above the disc that rolls out from
                     behind the cover, without becoming the positioning anchor
                     for the absolutely-positioned action buttons inside it —
@@ -911,9 +917,6 @@ export const AlbumDetail: React.FC = () => {
 
                     <div className="flex flex-wrap items-center gap-3 my-2">
                         <h1 className="font-bold text-4xl md:text-5xl lg:text-6xl tracking-tight leading-tight text-[var(--color-text-primary)] line-clamp-2" title={albumTitle}>{albumTitle}</h1>
-                        {isAlbumPlaying && playbackState !== 'stopped' && (
-                            <NowPlayingBadge state={playbackState === 'playing' ? 'playing' : 'paused'} className="self-center shrink-0" />
-                        )}
                     </div>
 
                     <div className="text-base md:text-xl text-[var(--color-text-secondary)] flex flex-wrap justify-center md:justify-start items-center gap-2 mb-3 w-full">
@@ -976,8 +979,6 @@ export const AlbumDetail: React.FC = () => {
                             </>
                         )}
                     </div>
-
-                    <StyleProfileChips kind="album" id={albumId} className="mb-3 justify-center md:justify-start" />
 
                     <div className="mt-2 flex flex-wrap justify-center md:justify-start gap-3 w-full md:w-auto">
                         <button
@@ -1187,36 +1188,6 @@ export const AlbumDetail: React.FC = () => {
                 </div>
             </div>
 
-            {lfmDescription && (
-                <p className="shrink-0 text-sm text-[var(--color-text-secondary)] leading-relaxed mb-4 mt-2 line-clamp-3 max-w-3xl">
-                    {lfmDescription}
-                </p>
-            )}
-
-            {(allGenres.length > 0 || (lfmTags && lfmTags.length > 0)) && (
-                <div className="shrink-0 mb-4 space-y-2">
-                    {allGenres.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5">
-                            {allGenres.map(g => (
-                                <span key={g} className="inline-block text-xs font-semibold uppercase tracking-widest px-3 py-1 rounded-full border border-[var(--glass-border)] bg-[var(--color-surface-variant)] text-[var(--color-primary)] backdrop-blur-sm">
-                                    {g}
-                                </span>
-                            ))}
-                        </div>
-                    )}
-
-                    {lfmTags && lfmTags.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5">
-                            {lfmTags.slice(0, 5).map(tag => (
-                                <span key={tag} className="inline-block text-xs font-semibold uppercase tracking-widest px-3 py-1 rounded-full border border-[var(--glass-border)] bg-[var(--color-surface-variant)] text-[var(--color-text-secondary)] backdrop-blur-sm">
-                                    {tag}
-                                </span>
-                            ))}
-                        </div>
-                    )}
-                </div>
-            )}
-
             <div className="mt-4 flex-1 min-h-0 flex flex-col pb-6">
                 <div className="grid grid-cols-[30px_1fr_40px] md:grid-cols-[40px_1fr_100px] px-2 md:px-4 py-3 border-b border-black/5 dark:border-white/10 font-semibold text-xs uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
                     <div className="text-center md:text-left">#</div>
@@ -1286,6 +1257,20 @@ export const AlbumDetail: React.FC = () => {
                             />
                         ))
                     )}
+                    {/* At the foot of the list, which is the page's scroller:
+                        reached by scrolling past the last track. */}
+                    <StyleProfileSection kind="album" id={albumId} name={albumTitle} className="mt-10" />
+                    <AlbumAboutSection
+                        title={albumTitle}
+                        artist={albumArtist}
+                        releaseType={releaseType}
+                        year={albumYear}
+                        artUrl={artUrl}
+                        description={lfmDescription}
+                        genres={allGenres}
+                        tags={lfmTags}
+                        className="mt-10"
+                    />
                 </div>
             </div>
 
