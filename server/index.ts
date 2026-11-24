@@ -42,7 +42,6 @@ import adminRoutes from './routes/admin.routes';
 import libraryRoutes from './routes/library.routes';
 import playbackRoutes from './routes/playback.routes';
 import settingsRoutes from './routes/settings.routes';
-import playlistsRoutes from './routes/playlists.routes';
 import publicRoutes from './routes/public.routes';
 import artistsRoutes from './routes/artists.routes';
 import albumsRoutes from './routes/albums.routes';
@@ -426,9 +425,6 @@ app.use('/api/playback', playbackRoutes);
 
 // Settings
 app.use('/api', settingsRoutes);
-
-// Playlists
-app.use('/api/playlists', playlistsRoutes);
 
 // Entities (artists, albums, genres)
 app.use('/api/artists', artistsRoutes);

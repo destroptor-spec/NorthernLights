@@ -911,52 +911,7 @@ Filter library albums using logical group conditions.
 
 ## 🎵 Playlists
 
-### [GET] `/api/playlists`
-> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
-List all playlists owned by or pinned by the current user.
-- **Example Response**:
-  ```json
-  {
-    "playlists": [
-      {
-        "id": "user_1711968000000",
-        "title": "My Chill Mix",
-        "description": "Chill vibes for coding",
-        "isLlmGenerated": false,
-        "isPinned": false,
-        "tracks": [{ "id": "...", "title": "..." }]
-      }
-    ]
-  }
-  ```
-
-### [POST] `/api/playlists`
-> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
-Create a new playlist.
-- **Example Request**:
-  ```json
-  { "title": "My Summer Hits", "description": "Upbeat tracks for summer" }
-  ```
-
-### [POST] `/api/playlists/:id/tracks`
-> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
-Add tracks to an existing playlist.
-- **Example Request**:
-  ```json
-  { "trackIds": ["track-v4-id-1", "track-v4-id-2"] }
-  ```
-
-### [DELETE] `/api/playlists/:id`
-> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
-Delete a playlist (owner or admin).
-
-### [PATCH] `/api/playlists/:id/pin`
-> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
-Pin or unpin a playlist.
-- **Example Request**:
-  ```json
-  { "pinned": true }
-  ```
+Playlists are API v1 only: `GET /api/v1/playlists`, `GET /api/v1/playlists/discover`, `GET /api/v1/playlists/:id` and its `/suggestions`, `POST /api/v1/playlists`, `PUT /api/v1/playlists/:id/tracks`, `PATCH /api/v1/playlists/:id` and its `/state` (pin, privacy), `POST /api/v1/playlists/:id/share` and `DELETE /api/v1/playlists/:id` (see the API v1 reference above and [openapi/aurora-v1.json](./openapi/aurora-v1.json)). The older `/api/playlists` routes were removed on 24 Nov 2026 after a week of deprecation logging showed no calls ([legacy-listener-routes.md](./legacy-listener-routes.md)).
 
 ---
 
