@@ -1016,17 +1016,7 @@ The Hub is API v1 only: `GET /api/v1/hub`, `GET /api/v1/hub/smart`, `POST /api/v
 
 ### Artists
 
-### [GET] `/api/artists`
-> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
-List all artists.
-- **Example Response**:
-  ```json
-  [{ "id": "uuid", "name": "Led Zeppelin", "trackCount": 42 }]
-  ```
-
-### [GET] `/api/artists/:id`
-> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
-Get artist details with tracks.
+The artist list and an artist with its tracks are API v1 only: `GET /api/v1/artists` and `GET /api/v1/artists/:id`. The older `GET /api/artists` and `GET /api/artists/:id` were removed on 24 Nov 2026 after a week of deprecation logging showed no calls; the routes below stay.
 
 ### [GET] `/api/artists/:id/similar`
 Get similar artists in the library based on their audio profiles.

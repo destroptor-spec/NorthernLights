@@ -21,7 +21,6 @@ The line names the route as declared (never the ids in the URL), the last status
 
 | Route | Use instead |
 | --- | --- |
-| `GET /api/artists`, `GET /api/artists/:id` | `GET /api/v1/artists`, `GET /api/v1/artists/:id` |
 | `GET /api/albums`, `GET /api/albums/:id` | `GET /api/v1/albums`, `GET /api/v1/albums/:id` |
 | `GET /api/genres`, `GET /api/genres/:id` | `GET /api/v1/genres`, `GET /api/v1/genres/:id` |
 | `GET /api/library/search` | `GET /api/v1/search` |
@@ -43,6 +42,7 @@ The week of 17–24 Nov 2026 logged no calls to any of the 41 routes (`productio
 | 24 Nov 2026 | Every route under `/api/playlists` (11) | the `/api/v1/playlists` routes |
 | 24 Nov 2026 | `POST /api/playback/history`, `/record`, `/skip` | `POST /api/v1/playback/reports` |
 | 24 Nov 2026 | `POST /api/recommend` | `POST /api/v1/recommendations/next` |
+| 24 Nov 2026 | `GET /api/artists`, `GET /api/artists/:id` | `GET /api/v1/artists`, `GET /api/v1/artists/:id` |
 
 ## Checking
 
