@@ -25,7 +25,7 @@ linearly with library size:
 
 `fetchLibraryFromServer` (in `src/store/index.ts`) runs on login / reconnect:
 
-1. **Entity lists first** — fetches `/api/artists`, `/api/albums`,
+1. **Entity lists first** — fetches `/api/v1/artists`, `/api/albums`,
    `/api/genres`, and `/api/library/directories` in parallel, sets them in the
    store, and clears `isLibraryLoading`. The library views are now interactive.
 2. **Queue reconciliation** — `reconcileQueue()` prunes the restored play queue
@@ -103,9 +103,9 @@ external APIs' term).
 
 | Endpoint | Returns |
 | --- | --- |
-| `GET /api/artists` `/api/albums` `/api/genres` | entity rows (albums include derived metadata + `art_hash`) |
+| `GET /api/v1/artists`, `/api/albums`, `/api/genres` | entity rows (albums include derived metadata + `art_hash`) |
 | `GET /api/albums/:id` | `{ ...album, tracks }` |
-| `GET /api/artists/:id` | `{ ...artist, tracks, rolesInLibrary }` |
+| `GET /api/v1/artists/:id` | `{ data: { artist, details, tracks, ownedAlbums } }` |
 | `GET /api/artists/:id/appears-on` | `{ tracks }` — collaborations (artist in `artists[]`, not primary) |
 | `GET /api/genres/:id` | `{ ...genre, tracks }` (matches `genre_id` + the genre name in multi-genre tags) |
 | `GET /api/library/search?q=` | `{ artists, albums, tracks }` |
