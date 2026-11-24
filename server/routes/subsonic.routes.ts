@@ -1030,6 +1030,7 @@ async function sendCoverArt(req: Request, res: Response, id: string, userId: str
     album: artworkInfo.album,
     artist: artworkInfo.artist,
     mbAlbumId: artworkInfo.mbAlbumId,
+    mbReleaseGroupId: artworkInfo.mbReleaseGroupId,
     cachedImageUrl: artworkInfo.cachedImageUrl,
   }) : undefined;
   if (providerUrl) return res.redirect(302, providerArtworkProxyPath(providerUrl));

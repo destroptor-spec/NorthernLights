@@ -1,39 +1,66 @@
 /**
  * @jest-environment node
  */
-import { getArtistData } from './index';
+import { getAlbumImage, getArtistData } from './index';
 import { getSystemSetting } from '../../database';
-import { getCachedArtist, upsertArtistCache } from './cache';
+import { getCachedAlbum, getCachedArtist, upsertAlbumCache, upsertArtistCache } from './cache';
 import { geniusSearch, geniusGetArtist } from './providers/genius';
-import { lastFmArtistInfo, lastFmArtistTopTags, extractLastFmImage } from './providers/lastfm';
+import { lastFmAlbumInfo, lastFmArtistInfo, lastFmArtistTopTags, extractLastFmImage } from './providers/lastfm';
+import { mbGetAlbumCover, mbGetArtist, mbGetReleaseGroupCover, mbReleaseGroupOfRelease, mbSearchReleaseGroup } from './providers/musicbrainz';
+import { tadbArtistByMbid, tadbSearchArtist, tadbSearchAlbum } from './providers/theaudiodb';
+import { fanartAlbum, fanartArtist } from './providers/fanarttv';
 import { ProviderError, RateLimitError } from './errors';
 
 jest.mock('../../database', () => ({ getSystemSetting: jest.fn() }));
 jest.mock('./cache', () => ({
   getCachedArtist: jest.fn(),
   upsertArtistCache: jest.fn(async () => {}),
+  getCachedAlbum: jest.fn(async () => null),
+  upsertAlbumCache: jest.fn(async () => {}),
   isCacheFresh: jest.requireActual('./cache').isCacheFresh,
 }));
 jest.mock('./providers/genius', () => ({ geniusSearch: jest.fn(), geniusGetArtist: jest.fn() }));
 jest.mock('./providers/lastfm', () => ({
   lastFmArtistInfo: jest.fn(),
   lastFmArtistTopTags: jest.fn(),
+  lastFmAlbumInfo: jest.fn(),
   extractLastFmImage: jest.fn(() => undefined),
 }));
 jest.mock('./providers/musicbrainz', () => ({
   mbGetArtist: jest.fn(),
   extractMbLinks: jest.fn(() => []),
   extractMbMembers: jest.fn(() => []),
+  mbGetAlbumCover: jest.fn(),
+  mbGetReleaseGroupCover: jest.fn(),
+  mbSearchReleaseGroup: jest.fn(async () => []),
+  mbReleaseGroupOfRelease: jest.fn(async () => null),
+}));
+jest.mock('./providers/theaudiodb', () => ({
+  ...jest.requireActual('./providers/theaudiodb'),
+  tadbArtistByMbid: jest.fn(async () => null),
+  tadbSearchArtist: jest.fn(async () => null),
+  tadbSearchAlbum: jest.fn(async () => []),
+}));
+jest.mock('./providers/fanarttv', () => ({
+  ...jest.requireActual('./providers/fanarttv'),
+  fanartArtist: jest.fn(async () => null),
+  fanartAlbum: jest.fn(async () => null),
 }));
 
 const settings: Record<string, unknown> = {
   lastFmApiKey: 'lastfm-key',
   geniusApiKey: 'genius-key',
   musicBrainzEnabled: false,
-  providerArtistImage: 'genius',
-  providerArtistArtwork: 'genius',
-  providerArtistBio: 'lastfm',
+  metadataProviderPriority: {
+    artistImage: ['genius', 'lastfm'],
+    artistBanner: ['genius'],
+    artistBio: ['lastfm', 'genius'],
+    albumArt: ['musicbrainz', 'lastfm', 'genius'],
+  },
 };
+function priority(patch: Record<string, string[]>) {
+  settings.metadataProviderPriority = { ...(defaultSettings.metadataProviderPriority as object), ...patch };
+}
 
 const songBy = (artist: { id: number; name: string; image_url?: string }, header?: string) => ({
   type: 'song',
@@ -57,6 +84,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  for (const key of ['providerArtistImage', 'providerArtistBio', 'theAudioDbApiKey', 'fanartTvApiKey']) delete settings[key];
   Object.assign(settings, defaultSettings);
   jest.restoreAllMocks();
 });
@@ -87,6 +115,26 @@ it.each([
   expect(jest.mocked(upsertArtistCache).mock.calls[0][2]).toBe('A bio.');
 });
 
+it('takes only an artist with the same name, not one whose name contains it', async () => {
+  jest.mocked(geniusSearch).mockResolvedValue({ response: { hits: [
+    songBy({ id: 1, name: 'HUNTR/X', image_url: 'https://images.genius.com/huntrx.png' }),
+    songBy({ id: 2, name: 'KPop Demon Hunters Cast', image_url: 'https://images.genius.com/kpop.png' }),
+  ] } } as never);
+
+  const data = await getArtistData('Demon Hunter');
+
+  expect(data.imageUrl).toBeUndefined();
+  expect(geniusGetArtist).not.toHaveBeenCalled();
+});
+
+it('matches a Genius name with a note in brackets after it, ignoring case', async () => {
+  jest.mocked(geniusSearch).mockResolvedValue({ response: { hits: [
+    songBy({ id: 3, name: 'DEMON HUNTER (USA)', image_url: 'https://images.genius.com/band.png' }),
+  ] } } as never);
+
+  expect((await getArtistData('Demon Hunter')).imageUrl).toBe('https://images.genius.com/band.png');
+});
+
 it('does not borrow another artist from the first search hit', async () => {
   jest.mocked(geniusSearch).mockResolvedValue({ response: { hits: [songBy({ id: 9, name: 'Seed Nation', image_url: 'https://images.genius.com/seed.png' })] } } as never);
 
@@ -98,7 +146,17 @@ it('does not borrow another artist from the first search hit', async () => {
   expect(stamped()).toBe(true);
 });
 
-it('does not hold back the fetch stamp for a Last.fm failure when Last.fm is not the picture source', async () => {
+it('holds back the fetch stamp when the picture list’s fallback fails without a picture', async () => {
+  jest.mocked(geniusSearch).mockResolvedValue({ response: { hits: [] } } as never);
+  jest.mocked(lastFmArtistInfo).mockRejectedValue(new ProviderError('lastfm', 'HTTP 500', 500));
+
+  await getArtistData('Usher');
+
+  expect(stamped()).toBe(false);
+});
+
+it('does not hold back the fetch stamp for a Last.fm failure when Last.fm is not in the picture list', async () => {
+  priority({ artistImage: ['genius'] });
   jest.mocked(geniusSearch).mockResolvedValue({ response: { hits: [] } } as never);
   jest.mocked(lastFmArtistInfo).mockRejectedValue(new ProviderError('lastfm', 'HTTP 500', 500));
 
@@ -166,7 +224,7 @@ describe('provider choice', () => {
   });
 
   it('takes the picture from Last.fm when it is the picture provider', async () => {
-    Object.assign(settings, { providerArtistImage: 'lastfm' });
+    priority({ artistImage: ['lastfm', 'genius'] });
     jest.mocked(extractLastFmImage).mockReturnValue('https://lastfm.freetls.fastly.net/i/u/usher.png');
     jest.mocked(geniusSearch).mockResolvedValue({ response: { hits: [songBy(usher)] } } as never);
     jest.mocked(geniusGetArtist).mockResolvedValue(geniusArtist as never);
@@ -178,7 +236,7 @@ describe('provider choice', () => {
   });
 
   it('stops before Last.fm when Genius is the provider for both and supplied both', async () => {
-    Object.assign(settings, { providerArtistBio: 'genius' });
+    priority({ artistBio: ['genius', 'lastfm'] });
     jest.mocked(geniusSearch).mockResolvedValue({ response: { hits: [songBy(usher)] } } as never);
     jest.mocked(geniusGetArtist).mockResolvedValue(geniusArtist as never);
 
@@ -186,5 +244,287 @@ describe('provider choice', () => {
 
     expect(data).toMatchObject({ imageUrl: usher.image_url, bio: 'Genius bio.' });
     expect(lastFmArtistInfo).not.toHaveBeenCalled();
+  });
+
+  it('never asks a provider left off every list, except Last.fm for its tags', async () => {
+    priority({ artistImage: ['lastfm'], artistBanner: [], artistBio: ['lastfm'] });
+    jest.mocked(extractLastFmImage).mockReturnValue('https://lastfm.freetls.fastly.net/i/u/usher.png');
+    jest.mocked(lastFmArtistInfo).mockResolvedValue({ bio: { summary: '' }, image: [{}] } as never);
+
+    const data = await getArtistData('Usher');
+
+    expect(data.imageUrl).toBe('https://lastfm.freetls.fastly.net/i/u/usher.png');
+    expect(data.bio).toBeUndefined();
+    expect(geniusSearch).not.toHaveBeenCalled();
+  });
+
+  it('asks Genius for the banner even when Last.fm decided the picture and the bio', async () => {
+    priority({ artistImage: ['lastfm'], artistBio: ['lastfm'] });
+    jest.mocked(extractLastFmImage).mockReturnValue('https://lastfm.freetls.fastly.net/i/u/usher.png');
+    jest.mocked(lastFmArtistInfo).mockResolvedValue({ bio: { summary: 'A bio.' }, image: [{}] } as never);
+    jest.mocked(geniusSearch).mockResolvedValue({ response: { hits: [songBy(usher)] } } as never);
+    jest.mocked(geniusGetArtist).mockResolvedValue(geniusArtist as never);
+
+    const data = await getArtistData('Usher');
+
+    expect(data).toMatchObject({ imageUrl: 'https://lastfm.freetls.fastly.net/i/u/usher.png', bio: 'A bio.', artworkUrl: 'https://images.genius.com/artist-header.png' });
+  });
+
+  it('skips a provider that is not set up and takes the next one', async () => {
+    Object.assign(settings, { geniusApiKey: '' });
+    jest.mocked(extractLastFmImage).mockReturnValue('https://lastfm.freetls.fastly.net/i/u/usher.png');
+    jest.mocked(lastFmArtistInfo).mockResolvedValue({ bio: { summary: 'A bio.' }, image: [{}] } as never);
+
+    const data = await getArtistData('Usher');
+
+    expect(data.imageUrl).toBe('https://lastfm.freetls.fastly.net/i/u/usher.png');
+    expect(geniusSearch).not.toHaveBeenCalled();
+  });
+
+  it('does not let a failing bio-only provider hold back the fetch stamp', async () => {
+    priority({ artistImage: ['lastfm'], artistBanner: [], artistBio: ['genius', 'lastfm'] });
+    jest.mocked(extractLastFmImage).mockReturnValue('https://lastfm.freetls.fastly.net/i/u/usher.png');
+    jest.mocked(lastFmArtistInfo).mockResolvedValue({ bio: { summary: 'A bio.' }, image: [{}] } as never);
+    jest.mocked(geniusSearch).mockRejectedValue(new ProviderError('genius', 'HTTP 503', 503));
+
+    const data = await getArtistData('Usher');
+
+    expect(data).toMatchObject({ imageUrl: 'https://lastfm.freetls.fastly.net/i/u/usher.png', bio: 'A bio.' });
+    expect(stamped()).toBe(true);
+  });
+
+  it('follows the old single choice until the order is saved', async () => {
+    Object.assign(settings, { metadataProviderPriority: undefined, providerArtistImage: 'lastfm', providerArtistBio: 'lastfm' });
+    jest.mocked(extractLastFmImage).mockReturnValue('https://lastfm.freetls.fastly.net/i/u/usher.png');
+    jest.mocked(lastFmArtistInfo).mockResolvedValue({ bio: { summary: 'A bio.' }, image: [{}] } as never);
+    jest.mocked(geniusSearch).mockResolvedValue({ response: { hits: [songBy(usher)] } } as never);
+
+    const data = await getArtistData('Usher');
+
+    expect(data.imageUrl).toBe('https://lastfm.freetls.fastly.net/i/u/usher.png');
+  });
+});
+
+describe('album art', () => {
+  const RELEASE = '0b2c7a3e-6f0e-4d3c-9b8e-1a2b3c4d5e6f';
+  const caa = `https://coverartarchive.org/release/${RELEASE}/front-500`;
+  const lastFmCover = 'https://lastfm.freetls.fastly.net/i/u/album.png';
+
+  beforeEach(() => {
+    Object.assign(settings, { musicBrainzEnabled: true });
+    jest.mocked(lastFmAlbumInfo).mockResolvedValue({ image: [{}] } as never);
+    jest.mocked(extractLastFmImage).mockReturnValue(lastFmCover);
+  });
+
+  it('takes the Cover Art Archive first for a release the files name', async () => {
+    jest.mocked(mbGetAlbumCover).mockResolvedValue(caa);
+
+    expect(await getAlbumImage('Confessions', 'Usher', RELEASE)).toBe(caa);
+    expect(lastFmAlbumInfo).not.toHaveBeenCalled();
+  });
+
+  it('goes down the list when a provider has no cover', async () => {
+    jest.mocked(mbGetAlbumCover).mockResolvedValue(null);
+
+    expect(await getAlbumImage('Confessions', 'Usher', RELEASE)).toBe(lastFmCover);
+  });
+
+  it('asks in the admin’s order and never asks a provider left off', async () => {
+    priority({ albumArt: ['lastfm'] });
+
+    expect(await getAlbumImage('Confessions', 'Usher', RELEASE)).toBe(lastFmCover);
+    expect(mbGetAlbumCover).not.toHaveBeenCalled();
+  });
+
+  it('looks a search hit up as a release group, not a release', async () => {
+    jest.mocked(mbSearchReleaseGroup).mockResolvedValue([{ id: 'rg-1', title: 'Confessions' }]);
+    jest.mocked(mbGetReleaseGroupCover).mockResolvedValue('https://coverartarchive.org/release-group/rg-1/front-500');
+
+    expect(await getAlbumImage('Confessions', 'Usher')).toBe('https://coverartarchive.org/release-group/rg-1/front-500');
+    expect(mbGetReleaseGroupCover).toHaveBeenCalledWith('rg-1');
+    expect(jest.mocked(upsertAlbumCache).mock.calls[0][3]).toBeNull();
+  });
+
+  it('takes the release group the files name without searching MusicBrainz', async () => {
+    const GROUP = '72087170-41c6-4371-a87c-47061feeda10';
+    const groupCover = `https://coverartarchive.org/release-group/${GROUP}/front-500`;
+    jest.mocked(mbGetReleaseGroupCover).mockResolvedValue(groupCover);
+
+    expect(await getAlbumImage('Confessions', 'Usher', null, GROUP)).toBe(groupCover);
+    expect(mbSearchReleaseGroup).not.toHaveBeenCalled();
+
+    // A release without a cover of its own falls back to its group's.
+    jest.mocked(mbGetAlbumCover).mockResolvedValue(null);
+    expect(await getAlbumImage('Confessions', 'Usher', RELEASE, GROUP)).toBe(groupCover);
+    expect(mbGetAlbumCover).toHaveBeenCalledWith(RELEASE);
+    expect(mbSearchReleaseGroup).not.toHaveBeenCalled();
+  });
+
+  it('looks nothing up with an empty list', async () => {
+    priority({ albumArt: [] });
+
+    expect(await getAlbumImage('Confessions', 'Usher', RELEASE)).toBeUndefined();
+    expect(mbGetAlbumCover).not.toHaveBeenCalled();
+    expect(lastFmAlbumInfo).not.toHaveBeenCalled();
+  });
+});
+
+describe('TheAudioDB and fanart.tv', () => {
+  const MBID = 'cc197bad-dc9c-440d-a5b5-d52ba2e14234';
+  const tadb = {
+    strArtist: 'Coldplay',
+    strArtistThumb: 'https://r2.theaudiodb.com/images/media/artist/thumb/a.jpg',
+    strArtistFanart: 'https://r2.theaudiodb.com/images/media/artist/fanart/b.jpg',
+    strBiography: 'TheAudioDB bio.',
+    strGenre: 'Alternative Rock',
+    strMood: 'Happy',
+    strWebsite: 'www.coldplay.com',
+    strTwitter: '1',
+    strCountry: 'London, England',
+    strCountryCode: 'GB',
+    intFormedYear: '1996',
+    strMusicBrainzID: MBID,
+  };
+  const fanart = {
+    name: 'Coldplay',
+    artistthumb: [{ url: 'https://assets.fanart.tv/fanart/music/x/artistthumb/t.jpg', likes: '1' }],
+    artistbackground: [
+      { url: 'https://assets.fanart.tv/fanart/music/x/artistbackground/low.jpg', likes: '1' },
+      { url: 'https://assets.fanart.tv/fanart/music/x/artistbackground/top.jpg', likes: '9' },
+    ],
+  };
+
+  beforeEach(() => {
+    Object.assign(settings, { theAudioDbApiKey: '123', fanartTvApiKey: 'fanart-key' });
+    for (const mock of [tadbArtistByMbid, tadbSearchArtist, fanartArtist, fanartAlbum]) jest.mocked(mock).mockResolvedValue(null);
+    jest.mocked(tadbSearchAlbum).mockResolvedValue([]);
+    jest.mocked(geniusSearch).mockResolvedValue({ response: { hits: [] } } as never);
+  });
+
+  it('takes the banner from fanart.tv by the files’ MusicBrainz id, the most liked one', async () => {
+    priority({ artistBanner: ['fanarttv', 'theaudiodb'] });
+    jest.mocked(fanartArtist).mockResolvedValue(fanart);
+    jest.mocked(tadbArtistByMbid).mockResolvedValue(tadb);
+
+    const data = await getArtistData('Coldplay', MBID);
+
+    expect(fanartArtist).toHaveBeenCalledWith(MBID, 'fanart-key');
+    expect(data.artworkUrl).toBe('https://assets.fanart.tv/fanart/music/x/artistbackground/top.jpg');
+  });
+
+  it('falls back to TheAudioDB’s fanart, then uses its picture and bio where it ranks first', async () => {
+    priority({ artistImage: ['theaudiodb'], artistBanner: ['fanarttv', 'theaudiodb'], artistBio: ['theaudiodb', 'lastfm'] });
+    jest.mocked(tadbArtistByMbid).mockResolvedValue(tadb);
+
+    const data = await getArtistData('Coldplay', MBID);
+
+    expect(data).toMatchObject({ imageUrl: tadb.strArtistThumb, artworkUrl: tadb.strArtistFanart, bio: 'TheAudioDB bio.' });
+  });
+
+  it('treats Genius’s stock picture as no picture and goes on to the next provider', async () => {
+    const stock = 'https://assets.genius.com/images/default_cover_image.png?1700000000';
+    priority({ artistImage: ['genius', 'theaudiodb', 'lastfm'], artistBanner: ['genius'] });
+    jest.mocked(geniusSearch).mockResolvedValue({ response: { hits: [songBy({ id: 7, name: 'Coldplay', image_url: stock })] } } as never);
+    jest.mocked(geniusGetArtist).mockResolvedValue({ response: { artist: { image_url: stock, header_image_url: stock } } } as never);
+    jest.mocked(tadbArtistByMbid).mockResolvedValue(tadb);
+
+    const data = await getArtistData('Coldplay', MBID);
+
+    expect(data.imageUrl).toBe(tadb.strArtistThumb);
+    expect(data.artworkUrl).toBeUndefined();
+  });
+
+  it('looks again for an artist whose stored picture is Genius’s stock picture', async () => {
+    jest.mocked(getCachedArtist).mockResolvedValueOnce({
+      name: 'Coldplay', mbid: MBID, last_updated: Math.floor(Date.now() / 1000),
+      image_url: 'https://assets.genius.com/images/default_cover_image.png',
+    });
+    priority({ artistImage: ['theaudiodb'] });
+    jest.mocked(tadbArtistByMbid).mockResolvedValue(tadb);
+
+    expect((await getArtistData('Coldplay', MBID)).imageUrl).toBe(tadb.strArtistThumb);
+  });
+
+  it('asks TheAudioDB for its facts even when nothing else needs it, filling what MusicBrainz lacks', async () => {
+    jest.mocked(tadbArtistByMbid).mockResolvedValue(tadb);
+
+    const data = await getArtistData('Coldplay', MBID);
+
+    expect(tadbArtistByMbid).toHaveBeenCalledWith(MBID, '123');
+    expect(data.area).toBe('London, England');
+    expect(data.lifeSpan).toEqual({ begin: '1996', end: undefined });
+    expect(data.links).toEqual([{ url: 'https://www.coldplay.com/', type: 'official homepage' }]);
+    expect(data.communityTags?.map((t) => [t.name, t.providers])).toEqual([['Alternative Rock', ['theaudiodb']], ['Happy', ['theaudiodb']]]);
+    expect(jest.mocked(upsertArtistCache).mock.calls[0][5]).toMatchObject({ country: 'GB', area: 'London, England' });
+  });
+
+  it('keeps MusicBrainz’s facts over TheAudioDB’s', async () => {
+    Object.assign(settings, { musicBrainzEnabled: true });
+    jest.mocked(mbGetArtist).mockResolvedValue({ area: { name: 'United Kingdom' }, country: 'GB', 'life-span': { begin: '1997' } } as never);
+    jest.mocked(tadbArtistByMbid).mockResolvedValue(tadb);
+
+    const data = await getArtistData('Coldplay', MBID);
+
+    expect(data.area).toBe('United Kingdom');
+    expect(data.lifeSpan?.begin).toBe('1997');
+  });
+
+  it('without a MusicBrainz id, uses a same-name TheAudioDB hit’s id for fanart.tv but never stores it', async () => {
+    priority({ artistBanner: ['fanarttv'] });
+    jest.mocked(tadbSearchArtist).mockResolvedValue(tadb);
+    jest.mocked(fanartArtist).mockResolvedValue(fanart);
+
+    const data = await getArtistData('Coldplay');
+
+    expect(jest.mocked(tadbSearchArtist).mock.invocationCallOrder[0]).toBeLessThan(jest.mocked(fanartArtist).mock.invocationCallOrder[0]);
+    expect(fanartArtist).toHaveBeenCalledWith(MBID, expect.anything());
+    expect(data.artworkUrl).toBe('https://assets.fanart.tv/fanart/music/x/artistbackground/top.jpg');
+    expect(jest.mocked(upsertArtistCache).mock.calls[0][3]).toBeNull(); // the mbid argument
+  });
+
+  it('ignores a TheAudioDB name hit for another artist', async () => {
+    priority({ artistImage: ['theaudiodb'], artistBanner: ['fanarttv'] });
+    jest.mocked(tadbSearchArtist).mockResolvedValue({ ...tadb, strArtist: 'Coldplay Tribute Band' });
+
+    const data = await getArtistData('Coldplay');
+
+    expect(data.imageUrl).toBeUndefined();
+    expect(data.area).toBeUndefined();
+    expect(fanartArtist).not.toHaveBeenCalled();
+  });
+
+  it('finds an album cover on TheAudioDB by name, and on fanart.tv by the release group of the files’ release', async () => {
+    const RELEASE = '0b2c7a3e-6f0e-4d3c-9b8e-1a2b3c4d5e6f';
+    const GROUP = '72087170-41c6-4371-a87c-47061feeda10';
+    Object.assign(settings, { musicBrainzEnabled: true });
+
+    priority({ albumArt: ['theaudiodb'] });
+    jest.mocked(tadbSearchAlbum).mockResolvedValue([{ strAlbum: 'Parachutes', strAlbumThumb: 'https://r2.theaudiodb.com/images/media/album/thumb/p.jpg' }]);
+    expect(await getAlbumImage('parachutes', 'Coldplay', RELEASE)).toBe('https://r2.theaudiodb.com/images/media/album/thumb/p.jpg');
+
+    priority({ albumArt: ['fanarttv'] });
+    jest.mocked(mbReleaseGroupOfRelease).mockResolvedValue(GROUP);
+    jest.mocked(fanartAlbum).mockResolvedValue({ albums: { [GROUP]: { albumcover: [{ url: 'https://assets.fanart.tv/fanart/music/x/albumcover/c.jpg', likes: '2' }] } } });
+    expect(await getAlbumImage('Parachutes', 'Coldplay', RELEASE)).toBe('https://assets.fanart.tv/fanart/music/x/albumcover/c.jpg');
+    expect(mbReleaseGroupOfRelease).toHaveBeenCalledWith(RELEASE);
+  });
+
+  it('asks fanart.tv by the files’ own release group, with no MusicBrainz call', async () => {
+    const GROUP = '72087170-41c6-4371-a87c-47061feeda10';
+    const cover = 'https://assets.fanart.tv/fanart/music/x/albumcover/c.jpg';
+    Object.assign(settings, { musicBrainzEnabled: false });
+    priority({ albumArt: ['fanarttv'] });
+    jest.mocked(fanartAlbum).mockResolvedValue({ albums: { [GROUP]: { albumcover: [{ url: cover, likes: '2' }] } } });
+
+    // Passed in by the art routes (the track's tag)…
+    expect(await getAlbumImage('Parachutes', 'Coldplay', '0b2c7a3e-6f0e-4d3c-9b8e-1a2b3c4d5e6f', GROUP)).toBe(cover);
+    // …or read off the album row, for the app's album-art lookup by name.
+    jest.mocked(getCachedAlbum).mockResolvedValueOnce({ mb_release_group_id: GROUP, last_updated: null });
+    expect(await getAlbumImage('Parachutes', 'Coldplay')).toBe(cover);
+
+    expect(fanartAlbum).toHaveBeenCalledTimes(2);
+    expect(fanartAlbum).toHaveBeenCalledWith(GROUP, expect.anything());
+    expect(mbReleaseGroupOfRelease).not.toHaveBeenCalled();
+    expect(tadbSearchAlbum).not.toHaveBeenCalled();
   });
 });

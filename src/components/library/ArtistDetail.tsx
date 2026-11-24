@@ -1070,7 +1070,7 @@ export const ArtistDetail: React.FC = () => {
                                     tag.isCommunity ? (
                                         <span
                                             key={tag.name}
-                                            title={`From ${(tag.providers || []).map(p => p === 'lastfm' ? 'Last.fm' : 'MusicBrainz').join(' + ')}${tag.count ? ` · ${tag.count}` : ''}`}
+                                            title={`From ${(tag.providers || []).map(p => p === 'lastfm' ? 'Last.fm' : p === 'theaudiodb' ? 'TheAudioDB' : 'MusicBrainz').join(' + ')}${tag.count && !(tag.providers || []).every(p => p === 'theaudiodb') ? ` · ${tag.count}` : ''}`}
                                             className="px-2.5 py-1 rounded-full text-[11px] font-semibold uppercase tracking-[0.16em] bg-emerald-500/10 text-[var(--color-primary)] border border-emerald-500/20"
                                         >
                                             {tag.name}

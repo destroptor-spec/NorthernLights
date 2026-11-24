@@ -10,7 +10,7 @@ interface ArtistData {
     lifeSpan?: { begin?: string; end?: string };
     links?: { url: string; type: string }[];
     genres?: string[];
-    communityTags?: { name: string; count: number; providers: Array<'lastfm' | 'musicbrainz'> }[];
+    communityTags?: { name: string; count: number; providers: Array<'lastfm' | 'musicbrainz' | 'theaudiodb'> }[];
     listeners?: string;
     members?: string[];
 }

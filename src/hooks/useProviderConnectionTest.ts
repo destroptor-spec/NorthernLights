@@ -10,6 +10,44 @@ export const useProviderConnectionTest = () => {
   const [geniusMessage, setGeniusMessage] = useState('');
   const [musicBrainzStatus, setMusicBrainzStatus] = useState<ConnectionStatus>('idle');
   const [musicBrainzMessage, setMusicBrainzMessage] = useState('');
+  const [theAudioDbStatus, setTheAudioDbStatus] = useState<ConnectionStatus>('idle');
+  const [theAudioDbMessage, setTheAudioDbMessage] = useState('');
+  const [fanartTvStatus, setFanartTvStatus] = useState<ConnectionStatus>('idle');
+  const [fanartTvMessage, setFanartTvMessage] = useState('');
+
+  /** POSTs the typed keys to the provider's test route; ok answers name the artist looked up. */
+  const testKeys = useCallback(async (
+    path: string,
+    body: Record<string, string>,
+    setStatus: (status: ConnectionStatus) => void,
+    setMessage: (message: string) => void,
+  ) => {
+    setStatus('testing');
+    setMessage('');
+    try {
+      const res = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...usePlayerStore.getState().getAuthHeader() },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.status === 'ok') {
+        setStatus('success');
+        setMessage(data.artist ? `Connection OK (found ${data.artist})` : 'Connection OK');
+      } else {
+        setStatus('error');
+        setMessage(data.error || `Connection failed (HTTP ${res.status})`);
+      }
+    } catch (err: any) {
+      setStatus('error');
+      setMessage(err.message || 'Network error');
+    }
+  }, []);
+
+  const testTheAudioDb = useCallback((apiKey: string) =>
+    testKeys('/api/providers/theaudiodb/test', { apiKey }, setTheAudioDbStatus, setTheAudioDbMessage), [testKeys]);
+  const testFanartTv = useCallback((apiKey: string) =>
+    testKeys('/api/providers/fanarttv/test', { apiKey }, setFanartTvStatus, setFanartTvMessage), [testKeys]);
 
   const testLastFm = useCallback(async (apiKey?: string) => {
     setLastFmStatus('testing');
@@ -102,5 +140,11 @@ export const useProviderConnectionTest = () => {
     testLastFm,
     testGenius,
     testMusicBrainz,
+    theAudioDbStatus,
+    theAudioDbMessage,
+    fanartTvStatus,
+    fanartTvMessage,
+    testTheAudioDb,
+    testFanartTv,
   };
 };

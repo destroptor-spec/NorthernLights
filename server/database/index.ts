@@ -1,5 +1,6 @@
 import { Pool, type PoolClient } from 'pg';
 import { MOOD_SCORE_VERSION, type AudioMood } from '../../shared/audioMoods';
+import { GENIUS_PLACEHOLDER_IMAGE_PATTERN } from '../../shared/metadataProviders';
 import { databaseHost } from './dbHost';
 import path from 'path';
 import crypto from 'crypto';
@@ -2088,6 +2089,7 @@ export interface ArtworkInfo {
   album: string | null;
   artist: string | null;
   mbAlbumId: string | null;
+  mbReleaseGroupId: string | null;
   cachedImageUrl: string | null;
 }
 
@@ -2101,6 +2103,7 @@ export async function getArtworkInfoForPath(b64Path: string): Promise<ArtworkInf
       COALESCE(a.title, t.album) AS album,
       COALESCE(a.artist_name, t.album_artist, t.artist) AS artist,
       COALESCE(t.mb_album_id, a.mbid) AS mb_album_id,
+      COALESCE(t.mb_release_group_id, a.mb_release_group_id) AS mb_release_group_id,
       a.image_url
     FROM tracks t
     LEFT JOIN albums a ON a.id = t.album_id
@@ -2116,6 +2119,7 @@ export async function getArtworkInfoForPath(b64Path: string): Promise<ArtworkInf
     album: row.album || null,
     artist: row.artist || null,
     mbAlbumId: row.mb_album_id || null,
+    mbReleaseGroupId: row.mb_release_group_id || null,
     cachedImageUrl: row.image_url || null,
   };
 }
@@ -3955,15 +3959,18 @@ export async function getArtistsNeedingImage(limit: number) {
     `SELECT a.id, a.name, a.mbid
        FROM artists a
       WHERE a.merged_into IS NULL
-        AND (a.image_url IS NULL OR a.image_url = '')
-        AND (COALESCE(a.last_updated, 0) = 0
-             OR (a.last_updated < EXTRACT(EPOCH FROM NOW() - INTERVAL '30 days')
-                 AND EXISTS (SELECT 1 FROM tracks t WHERE t.artist_id = a.id)))
+        AND (
+          -- Genius's stock picture, saved before it was recognised: no picture.
+          a.image_url ~* $2
+          OR ((a.image_url IS NULL OR a.image_url = '')
+              AND (COALESCE(a.last_updated, 0) = 0
+                   OR (a.last_updated < EXTRACT(EPOCH FROM NOW() - INTERVAL '30 days')
+                       AND EXISTS (SELECT 1 FROM tracks t WHERE t.artist_id = a.id)))))
         AND lower(btrim(a.name)) NOT IN ('', 'unknown artist', 'various artists', '???')
       ORDER BY (COALESCE(a.last_updated, 0) = 0) DESC,
                (SELECT count(*) FROM tracks t WHERE t.artist_id = a.id) DESC, a.name ASC
       LIMIT $1`,
-    [safeLimit]
+    [safeLimit, GENIUS_PLACEHOLDER_IMAGE_PATTERN]
   );
   return res.rows as Array<{ id: string; name: string; mbid: string | null }>;
 }

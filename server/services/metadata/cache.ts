@@ -1,4 +1,10 @@
 import { initDB } from '../../database';
+import { GENIUS_PLACEHOLDER_IMAGE_PATTERN } from '../../../shared/metadataProviders';
+
+// A new picture wins; with none, a stored one is kept unless it is Genius's
+// stock picture (saved before it was recognised as no picture).
+const keepArtistImage = (param: string, column: string) =>
+  `COALESCE(${param}, CASE WHEN ${column} ~* '${GENIUS_PLACEHOLDER_IMAGE_PATTERN}' THEN NULL ELSE ${column} END)`;
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days in ms
 
@@ -48,8 +54,8 @@ export async function upsertArtistCache(
       `INSERT INTO artists (id, name, image_url, artwork_url, bio, mbid, last_updated, disambiguation, area, artist_type, lifespan_begin, lifespan_end, links, genres, community_tags, listeners, members, country)
        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
        ON CONFLICT (name) DO UPDATE SET
-         image_url = COALESCE($2, artists.image_url),
-         artwork_url = COALESCE($3, artists.artwork_url),
+         image_url = ${keepArtistImage('$2', 'artists.image_url')},
+         artwork_url = ${keepArtistImage('$3', 'artists.artwork_url')},
          bio = COALESCE($4, artists.bio),
          mbid = COALESCE(artists.mbid, $5),
          last_updated = $6,
@@ -82,8 +88,8 @@ export async function upsertArtistCache(
       `INSERT INTO artists (id, name, image_url, artwork_url, bio, mbid, last_updated)
        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, 0)
        ON CONFLICT (name) DO UPDATE SET
-         image_url = COALESCE($2, artists.image_url),
-         artwork_url = COALESCE($3, artists.artwork_url),
+         image_url = ${keepArtistImage('$2', 'artists.image_url')},
+         artwork_url = ${keepArtistImage('$3', 'artists.artwork_url')},
          bio = COALESCE($4, artists.bio),
          mbid = COALESCE(artists.mbid, $5)`,
       [name, imageUrl, extras.artworkUrl ?? null, bio, mbid]

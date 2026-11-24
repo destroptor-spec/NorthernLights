@@ -11,7 +11,7 @@ interface ArtistDataState {
   lifeSpan: { begin?: string; end?: string } | undefined;
   links: { url: string; type: string }[] | undefined;
   genres: string[] | undefined;
-  communityTags: { name: string; count: number; providers: Array<'lastfm' | 'musicbrainz'> }[] | undefined;
+  communityTags: { name: string; count: number; providers: Array<'lastfm' | 'musicbrainz' | 'theaudiodb'> }[] | undefined;
   listeners: string | undefined;
   members: string[] | undefined;
   isLoading: boolean;
@@ -30,7 +30,7 @@ export const useArtistData = (artistName: string, mbArtistId?: string | null, op
   const [lifeSpan, setLifeSpan] = useState<{ begin?: string; end?: string } | undefined>();
   const [links, setLinks] = useState<{ url: string; type: string }[] | undefined>();
   const [genres, setGenres] = useState<string[] | undefined>();
-  const [communityTags, setCommunityTags] = useState<{ name: string; count: number; providers: Array<'lastfm' | 'musicbrainz'> }[] | undefined>();
+  const [communityTags, setCommunityTags] = useState<{ name: string; count: number; providers: Array<'lastfm' | 'musicbrainz' | 'theaudiodb'> }[] | undefined>();
   const [listeners, setListeners] = useState<string | undefined>();
   const [members, setMembers] = useState<string[] | undefined>();
   const [isLoading, setIsLoading] = useState(false);

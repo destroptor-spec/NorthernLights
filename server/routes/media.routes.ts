@@ -911,6 +911,7 @@ router.get('/art', async (req, res) => {
         album: artworkInfo.album,
         artist: artworkInfo.artist,
         mbAlbumId: artworkInfo.mbAlbumId,
+        mbReleaseGroupId: artworkInfo.mbReleaseGroupId,
         cachedImageUrl: artworkInfo.cachedImageUrl,
       }).catch((err) => {
         console.warn('[Art] Provider fallback failed:', err?.message || err);

@@ -66,6 +66,30 @@ export async function mbGetAlbumCover(mbid: string): Promise<string | null> {
   }
 }
 
+/** The front cover of a release group (what a MusicBrainz search finds), or null. */
+export async function mbGetReleaseGroupCover(releaseGroupId: string): Promise<string | null> {
+  try {
+    const coverUrl = `https://coverartarchive.org/release-group/${encodeURIComponent(releaseGroupId)}/front-500`;
+    const res = await fetch(coverUrl, { method: 'HEAD' });
+    if (res.ok) return coverUrl;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** The release group a release belongs to (fanart.tv and TheAudioDB key albums by it), or null. */
+export async function mbReleaseGroupOfRelease(releaseId: string): Promise<string | null> {
+  try {
+    const release = await mbFetch(`https://musicbrainz.org/ws/2/release/${encodeURIComponent(releaseId)}?inc=release-groups&fmt=json`);
+    const id = release?.['release-group']?.id;
+    return typeof id === 'string' ? id : null;
+  } catch (err: any) {
+    if (err instanceof ProviderError) throw err;
+    throw new ProviderError('musicbrainz', messageWithCause(err));
+  }
+}
+
 // ─── Cover Art Archive typed images (front, Medium/disc, …) ────────────────
 //
 // CAA is a public, no-auth service (separate origin from the MB API, so it

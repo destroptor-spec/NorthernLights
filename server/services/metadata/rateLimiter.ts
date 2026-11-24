@@ -63,6 +63,11 @@ export class ProviderThrottle {
 
 export const geniusThrottle  = new ProviderThrottle(250);  // 4 req/s
 export const lastFmThrottle  = new ProviderThrottle(210);  // ~4.7 req/s
+// TheAudioDB: 30 requests a minute on the free key (100 on premium); a 429
+// means waiting a minute. One request per 2.1 s keeps the free key under it.
+export const theAudioDbThrottle = new ProviderThrottle(2100);
+// fanart.tv: no published limit; a gentle 2 req/s.
+export const fanartTvThrottle = new ProviderThrottle(500);
 
 // ─── fetchWithRetry ───────────────────────────────────────────────────────────
 
