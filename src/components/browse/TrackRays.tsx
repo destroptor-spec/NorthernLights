@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { mostVivid } from '../../utils/vividColor';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Check, ChevronDown, Loader2, Pause, Play, User2, X } from 'lucide-react';
 import { HorizontalScrollRail } from '../HorizontalScrollRail';
@@ -221,26 +222,6 @@ const ProfileChips: React.FC<{ entries: StyleProfileEntry[] }> = ({ entries }) =
   </ul>
 );
 
-/**
- * The cover colour with the most light in it: saturation weighted towards
- * mid lightness, so neither near-black nor near-white wins. Undefined when
- * the cover has no colour worth glowing (the CSS falls back to emerald).
- */
-function mostVivid(hexes: string[]): string | undefined {
-  let best: { hex: string; score: number } | undefined;
-  for (const hex of hexes) {
-    const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
-    if (!m) continue;
-    const [r, g, b] = [m[1], m[2], m[3]].map(v => parseInt(v, 16) / 255);
-    const max = Math.max(r, g, b);
-    const min = Math.min(r, g, b);
-    const lightness = (max + min) / 2;
-    const chroma = max - min;
-    const score = chroma * (1 - Math.abs(2 * lightness - 1) * 0.6);
-    if (!best || score > best.score) best = { hex, score };
-  }
-  return best && best.score >= 0.12 ? best.hex : undefined;
-}
 
 /**
  * Lets the bars inside rise once, when the block is well inside the view

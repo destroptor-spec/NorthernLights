@@ -38,7 +38,6 @@ export const LyricsPanel: React.FC<LyricsPanelProps> = ({ trackName, artistName,
     <div className="lyrics-panel animate-in slide-in-from-right-4 fade-in duration-300">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider flex items-center gap-2">
-          <Music2 size={14} />
           Lyrics
         </h3>
         <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-[var(--glass-bg-hover)] text-[var(--color-text-muted)] transition-colors">

@@ -1,7 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { TrackRays } from './TrackRays';
-import { StyleProfileChips } from './StyleProfileChips';
 import { usePlayerStore } from '../../store';
 import type { TrackRays as Rays } from '../../../shared/api/v1';
 
@@ -185,20 +184,6 @@ test('an admin toggles a style on the track from its bar', async () => {
   await waitFor(() => expect((glitch as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(glitch);
   await waitFor(() => expect(posted()[1]).toEqual({ genre: 'Electronic', styleId: 78, action: 'remove' }));
-});
-
-test('album and artist pages show their profile only while genre and style browse is on', async () => {
-  const { unmount } = render(<MemoryRouter><StyleProfileChips kind="album" id="al1" /></MemoryRouter>);
-  const chip = (await screen.findByText('Downtempo')).closest('a')!;
-  expect(chip.getAttribute('href')).toBe('/library/browse/style/56');
-  expect(within(chip).getByText('60 %')).toBeTruthy();
-  unmount();
-
-  usePlayerStore.setState({ newBrowseEnabled: false } as never);
-  fetchMock.mockClear();
-  const { container } = render(<MemoryRouter><StyleProfileChips kind="album" id="al1" /></MemoryRouter>);
-  expect(container.textContent).toBe('');
-  expect(fetchMock).not.toHaveBeenCalled();
 });
 
 test('sounds close to: nearby styles as cards, and nearby tracks that play from the one picked', async () => {

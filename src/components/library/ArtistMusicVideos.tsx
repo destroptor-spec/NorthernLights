@@ -215,7 +215,6 @@ export const MusicVideos: React.FC<MusicVideosProps> = ({ videos, loading, stale
             <section className="mb-12">
                 <div className="mb-4 flex items-center justify-between gap-4 border-b border-[var(--glass-border)] pb-2 md:mb-6">
                     <h3 className="flex items-center gap-2 text-xl font-semibold tracking-wide text-[var(--color-text-secondary)]">
-                        <Video className="h-4 w-4 text-[var(--color-primary)] opacity-70" />
                         Music videos
                     </h3>
                 </div>
@@ -237,7 +236,6 @@ export const MusicVideos: React.FC<MusicVideosProps> = ({ videos, loading, stale
         <section className="mb-12">
             <div className="mb-4 flex items-center justify-between gap-4 border-b border-[var(--glass-border)] pb-2 md:mb-6">
                 <h3 className="flex items-center gap-2 text-xl font-semibold tracking-wide text-[var(--color-text-secondary)]">
-                    <Video className="h-4 w-4 text-[var(--color-primary)] opacity-70" />
                     Music videos
                     <span className="ml-1 text-xs font-normal tabular-nums text-[var(--color-text-muted)]">
                         ({videos.length})

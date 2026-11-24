@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { usePlayerStore } from '../../store/index';
-import { Ticket, MapPin, Calendar, ArrowRight, AlertTriangle } from 'lucide-react';
+import { Ticket, MapPin, ArrowRight, AlertTriangle } from 'lucide-react';
 import { HorizontalScrollRail } from '../HorizontalScrollRail';
 
 export type ArtistEvent = {
@@ -229,7 +229,6 @@ export const UpcomingShows: React.FC<UpcomingShowsProps> = ({ events, loading, s
             <section className="mb-12">
                 <div className="flex items-center justify-between gap-4 mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2">
                     <h3 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] flex items-center gap-2">
-                        <Calendar className="w-4 h-4 text-[var(--color-primary)] opacity-70" />
                         Upcoming shows
                     </h3>
                 </div>
@@ -252,7 +251,6 @@ export const UpcomingShows: React.FC<UpcomingShowsProps> = ({ events, loading, s
         <section className="mb-12">
             <div className="flex items-center justify-between gap-4 mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2">
                 <h3 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] flex items-center gap-2">
-                    <Calendar className="w-4 h-4 text-[var(--color-primary)] opacity-70" />
                     Upcoming shows
                     <span className="text-xs font-normal text-[var(--color-text-muted)] ml-1 tabular-nums">
                         ({events.length})
