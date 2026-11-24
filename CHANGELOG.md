@@ -73,6 +73,7 @@
 - **Old album list and detail routes removed:** `GET /api/albums` and `GET /api/albums/:id`; they're on API v1. Editions, merges and credits stay.
 - **Old genre list and detail routes removed:** `GET /api/genres` and `GET /api/genres/:id`; they're on API v1. The genre taxonomy route stays.
 - **Old search and love routes removed:** `GET /api/library/search` and `POST /api/library/love`; search and loves are on API v1 (`/api/v1/search`, `PUT /api/v1/tracks/:id/loved`).
+- **Old scrobbling routes removed:** the Last.fm scrobble, now-playing, love and unlove routes and the ListenBrainz status, scrobble and now-playing routes; the server scrobbles from `POST /api/v1/playback/reports` and syncs loves from `PUT /api/v1/tracks/:id/loved`. That's the last of the 41 old listener routes.
 - **Unused MusicBrainz proxy routes removed:** the seven `/api/providers/musicbrainz/…` lookup, search and token-refresh routes had no caller, and any signed-in user could use them to spend the server's shared MusicBrainz rate limit. Connecting, testing and disconnecting MusicBrainz are unchanged. Other routes nothing called (the old artist-duplicates tool, which the artist review replaced, and three status routes) and the unused `essentia.js` package are gone too.
 
 ### Security
