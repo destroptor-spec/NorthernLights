@@ -8,16 +8,15 @@ jest.mock('../services/apiV1Dto.service', () => ({
 }));
 import type { Request, Response } from 'express';
 import router from './apiV1.routes';
-import legacyRouter from './recommend.routes';
 import { getUserSetting } from '../database';
 import { getSessionHistory, addToSessionHistory } from '../state';
 import { calculateNextInfinityTrack } from '../services/recommendation.service';
 import { getApiV1TrackById, mapTrackV1 } from '../services/apiV1Dto.service';
 
-async function request(body: unknown, legacy = false) {
-  const layer = (legacy ? legacyRouter : router).stack.find(layer => layer.route?.path === (legacy ? '/recommend' : '/recommendations/next'))!;
+async function request(body: unknown) {
+  const layer = router.stack.find(layer => layer.route?.path === '/recommendations/next')!;
   const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
-  const handlers = layer.route!.stack; // the legacy route has the deprecation log in front
+  const handlers = layer.route!.stack;
   await handlers[handlers.length - 1].handle({ body, apiV1: { userId: 'listener' }, user: { userId: 'listener' }, requestId: 'request-1' } as unknown as Request, res as unknown as Response, jest.fn());
   return res;
 }
@@ -71,14 +70,6 @@ test.each([
   expect(res.status).toHaveBeenCalledWith(400);
   expect(res.json).toHaveBeenCalledWith({ error: expect.objectContaining({ code: 'VALIDATION_FAILED', requestId: 'request-1' }) });
   expect(calculateNextInfinityTrack).not.toHaveBeenCalled();
-});
-
-test('legacy adapter and v1 resolve identical engine arguments', async () => {
-  jest.mocked(getUserSetting).mockResolvedValue(25);
-  await request({ sessionHistoryTrackIds: ['playing'], exclude: ['queued'], seedTrackIds: ['playing', 'queued'] });
-  await request({ sessionHistoryTrackIds: ['playing'], excludeTrackIds: ['queued'], seedTrackIds: ['playing', 'queued'] }, true);
-  const calls = jest.mocked(calculateNextInfinityTrack).mock.calls;
-  expect(calls[0]).toEqual(calls[1]);
 });
 
 test('exhaustion returns data null without a DTO lookup', async () => {

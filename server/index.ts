@@ -28,7 +28,6 @@ import { createRateLimiter } from './middleware/rateLimit';
 import { createFrontendStaticRouter } from './middleware/frontendStatic';
 import { initDatabaseConnection } from './state';
 import { logScanner } from './services/loggingConfig';
-import recommendRoutes from './routes/recommend.routes';
 import {
   getConfiguredAllowedOrigins,
   isCorsOriginAllowed,
@@ -436,9 +435,6 @@ app.use('/api', providersRoutes);
 // Concerts / Jambase
 app.use('/api', concertsRoutes);
 app.use('/api/filter', filterRoutes);
-
-// Recommend (Infinity Mode next track)
-app.use('/api', recommendRoutes);
 
 // Health check. Polled by every client; keep it fast (healthCheck.service).
 const healthContainerStatus = cachedLookup((name: string): Promise<{ status: string; image?: string }> =>
