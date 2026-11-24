@@ -2,6 +2,10 @@ import { lastFmThrottle, fetchWithRetry } from '../rateLimiter';
 import { RateLimitError, ProviderError, messageWithCause } from '../errors';
 
 const LASTFM_API = 'https://ws.audioscrobbler.com/2.0/';
+// "The artist you supplied could not be found" / "Album not found": Last.fm
+// has no such entry. A normal miss, not a failure: a failure keeps the artist
+// unstamped and stops the image backfill (it stopped after ~100 artists).
+const LASTFM_NOT_FOUND = 6;
 
 export interface LastFmArtistInfo {
   name: string;
@@ -78,8 +82,9 @@ export async function lastFmArtistInfo(
     }
     const json = await res.json();
     if (json.error) {
-      console.warn(`[Last.fm] API error for "${artist}": ${json.message} (code ${json.error})`);
+      if (json.error !== LASTFM_NOT_FOUND) console.warn(`[Last.fm] API error for "${artist}": ${json.message} (code ${json.error})`);
       if (json.error === 29) throw new RateLimitError('lastfm');
+      if (json.error === LASTFM_NOT_FOUND) return null;
       throw new ProviderError('lastfm', json.message, json.error);
     }
     return json.artist || null;
@@ -105,6 +110,7 @@ export async function lastFmAlbumInfo(
     }
     const json = await res.json();
     if (json.error === 29) throw new RateLimitError('lastfm');
+    if (json.error === LASTFM_NOT_FOUND) return null;
     if (json.error) throw new ProviderError('lastfm', json.message, json.error);
     return json.album || null;
   }).catch((err: any) => {
@@ -127,6 +133,7 @@ export async function lastFmArtistTopTags(
     }
     const json = await res.json();
     if (json.error === 29) throw new RateLimitError('lastfm');
+    if (json.error === LASTFM_NOT_FOUND) return null;
     if (json.error) throw new ProviderError('lastfm', json.message, json.error);
     return json.toptags || null;
   }).catch((err: any) => {
@@ -151,6 +158,7 @@ export async function lastFmArtistTopTracks(
     }
     const json = await res.json();
     if (json.error === 29) throw new RateLimitError('lastfm');
+    if (json.error === LASTFM_NOT_FOUND) return [];
     if (json.error) throw new ProviderError('lastfm', json.message, json.error);
     const rawTracks = (json.toptracks as LastFmArtistTopTracks | undefined)?.track;
     if (!rawTracks) return [];

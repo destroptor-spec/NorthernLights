@@ -47,6 +47,8 @@ import {
   onlineUserSchema,
   artworkLinksRequestSchema,
   artworkLinksSchema,
+  artistImageLookupRequestSchema,
+  artistImageLookupSchema,
   connectedDeviceSchema,
   playbackCommandResultSchema,
   playbackOutputClaimResultSchema,
@@ -177,6 +179,7 @@ path({ method: 'post', path: '/auth/scoped-token', summary: 'Mint a short-lived 
 
 path({ method: 'get', path: '/me/recently-played', summary: "The user's recently played tracks, newest first: each once, at its last play on any device (`lastPlayedAt`)", tags: ['Library'], security: authed, request: { query: cursorQuery }, responses: paged(z.array(schemas.Track)) });
 path({ method: 'get', path: '/artists', summary: 'List artists', tags: ['Library'], security: authed, request: { query: cursorQuery }, responses: paged(z.array(schemas.Artist)) });
+path({ method: 'post', path: '/artists/image-lookups', summary: 'Pictures for artists shown without one', description: "For artists a client shows without a picture: each one's picture when Aurora has one; else it is looked up in the background, ahead of the rest of the library, at the providers' slow pace (`queued`: ask again in a few seconds while it is still on screen). Only names in the library are looked up.", tags: ['Library'], security: authed, request: { body: { required: true, content: json(artistImageLookupRequestSchema) } }, responses: { 200: { description: 'Each artist with its picture or lookup status', content: json(z.object({ data: artistImageLookupSchema })) }, 400: { description: 'Invalid names', content: json(schemas.ApiError) } } });
 path({ method: 'get', path: '/artists/{id}', summary: 'Get an artist and tracks', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(schemas.ArtistDetail) });
 path({ method: 'get', path: '/albums', summary: 'List albums', tags: ['Library'], security: authed, request: { query: cursorQuery }, responses: paged(z.array(schemas.Album)) });
 path({ method: 'get', path: '/albums/{id}', summary: 'Get an album and tracks', tags: ['Library'], security: authed, request: { params: idParams }, responses: ok(schemas.AlbumDetail) });

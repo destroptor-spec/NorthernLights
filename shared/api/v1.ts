@@ -556,6 +556,19 @@ export const artworkLinksSchema = z.object({
   links: z.record(z.string(), z.string()).describe('Each artwork ID with its signed link (`/api/v1/artwork/<id>?sig=…`), which opens that one image with no credential.'),
 }).meta({ id: 'ArtworkLinks' });
 
+export const artistImageLookupRequestSchema = z.object({
+  names: z.array(z.string().trim().min(1).max(500)).min(1).max(100)
+    .describe('Artists the client shows without a picture, by name as the library lists them.'),
+}).strict().meta({ id: 'ArtistImageLookupRequest' });
+
+export const artistImageLookupSchema = z.object({
+  artists: z.array(z.object({
+    name: z.string(),
+    status: z.enum(['found', 'queued', 'none', 'unknown']).describe('found: imageUrl is its picture. queued: it is looked up in the background; ask again later. none: no provider has one (asked again after a week). unknown: no such artist.'),
+    imageUrl: z.string().nullable(),
+  })),
+}).meta({ id: 'ArtistImageLookups' });
+
 export const playbackTransferRequestSchema = z.object({
   targetClientId: z.string().min(8).max(128).describe('A device from GET /devices: it takes the session over and plays it from where it is.'),
 }).strict().meta({ id: 'PlaybackTransferRequest' });
@@ -876,5 +889,7 @@ export type PlaybackCommandRequest = z.infer<typeof playbackCommandRequestSchema
 export type ConnectedDevice = z.infer<typeof connectedDeviceSchema>;
 export type PlaybackTransferRequest = z.infer<typeof playbackTransferRequestSchema>;
 export type ArtworkLinks = z.infer<typeof artworkLinksSchema>;
+export type ArtistImageLookups = z.infer<typeof artistImageLookupSchema>;
+export type ArtistImageLookupStatus = ArtistImageLookups['artists'][number]['status'];
 export type ListenerPreferences = z.infer<typeof listenerPreferencesSchema>;
 export type NextRecommendationRequest = z.input<typeof nextRecommendationSchema>;

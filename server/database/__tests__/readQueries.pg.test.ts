@@ -917,6 +917,7 @@ describeDb('database read queries', () => {
         getTrackPathsByIds: [[`${TRACK_ID}0`]],
         getTracksForMoveMatching: [["eC5mbGFj"]],
         getArtistReviewPreview: ['artist-joined:none'],
+        getArtistImageStates: [['Test Artist']],
       });
 
       const args = argsFor();

@@ -3952,6 +3952,21 @@ export function runArtistCreditSplitInBackground(): Promise<void> {
 // thousands of them every month only spends the provider's rate limit.
 // Never-fetched artists first, then by track count so the artists you actually
 // own the most of get pictures first.
+/** Artists by exact name (not merged away), for on-screen picture lookups. */
+export async function getArtistImageStates(names: string[]) {
+  if (names.length === 0) return [];
+  const db = await initDB();
+  const res = await db.query(
+    `SELECT id, name, mbid, image_url, COALESCE(last_updated, 0)::bigint AS last_updated
+       FROM artists WHERE name = ANY($1::text[]) AND merged_into IS NULL`,
+    [names]
+  );
+  return res.rows.map((row) => ({
+    id: String(row.id), name: String(row.name), mbid: (row.mbid as string | null) ?? null,
+    imageUrl: (row.image_url as string | null) || null, lastUpdated: Number(row.last_updated) || 0,
+  }));
+}
+
 export async function getArtistsNeedingImage(limit: number) {
   const db = await initDB();
   const safeLimit = Math.max(1, Math.min(20000, Math.floor(limit) || 0));

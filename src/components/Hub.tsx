@@ -15,6 +15,7 @@ import { NowPlayingBadge } from './now-playing/NowPlayingBadge';
 import { useResumeContext, useNowPlayingState } from '../hooks/useNowPlaying';
 import { prefetchAlbumDetail, prefetchArtistDetail, prefetchPlaylistDetail } from '../utils/routePrefetch';
 import type { AlbumHeroState, ArtistHeroState, PlaylistHeroState } from '../utils/heroState';
+import { useArtistImageLookup } from '../utils/artistImageLookups';
 
 function getTimeAwareWordmark(now: Date = new Date()): string {
   const hour = now.getHours();
@@ -487,6 +488,9 @@ const JumpTileCard: React.FC<JumpTileCardProps> = ({
   const fallback = getJumpTileFallback(tile.type);
   const FallbackIcon = fallback.Icon;
   const handlePrefetch = useCallback(() => prefetchForTileType(tile.type), [tile.type]);
+  // An artist without a picture asks for one in the background (as ArtistInitial does).
+  const lookedUpImage = useArtistImageLookup(tile.type === 'artist' && !tile.imageUrl ? tile.title : null);
+  const imageUrl = tile.imageUrl || lookedUpImage;
   return (
     <div
       onClick={() => onActivate(tile)}
@@ -507,8 +511,8 @@ const JumpTileCard: React.FC<JumpTileCardProps> = ({
       <div
         className="relative h-[64px] w-[56px] shrink-0 overflow-hidden sm:h-[80px] sm:w-[80px]"
       >
-        {tile.imageUrl ? (
-          <img src={tile.imageUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
+        {imageUrl ? (
+          <img src={imageUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
         ) : (
           <>
             <div className="absolute inset-0" style={{ background: fallback.gradient }} />
