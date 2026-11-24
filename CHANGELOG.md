@@ -70,6 +70,7 @@
 - **Old playback report routes removed:** `/api/playback/history`, `/record` and `/skip`; plays and skips go to `POST /api/v1/playback/reports`.
 - **Old Infinity route removed:** `POST /api/recommend`; the next track comes from `POST /api/v1/recommendations/next`.
 - **Old artist list and detail routes removed:** `GET /api/artists` and `GET /api/artists/:id`; they're on API v1. Similar artists, credits and appears-on stay.
+- **Old album list and detail routes removed:** `GET /api/albums` and `GET /api/albums/:id`; they're on API v1. Editions, merges and credits stay.
 - **Unused MusicBrainz proxy routes removed:** the seven `/api/providers/musicbrainz/…` lookup, search and token-refresh routes had no caller, and any signed-in user could use them to spend the server's shared MusicBrainz rate limit. Connecting, testing and disconnecting MusicBrainz are unchanged. Other routes nothing called (the old artist-duplicates tool, which the artist review replaced, and three status routes) and the unused `essentia.js` package are gone too.
 
 ### Security
