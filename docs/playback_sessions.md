@@ -812,8 +812,6 @@ everything it needs (`aurora.queue.insert`, CAF queue).
   kills it. Error 310 with `Missing exact session … active variants=[]` seconds
   after a successful segment is consistent with this during a deploy. That is a
   hypothesis for #72; the pm2 logs will confirm or rule it out.
-- **Legacy `POST /api/playback/skip`** lowers the track's star rating by one. No
-  current client calls it, but anything that does will silently change ratings.
 - **`isInfinityMode` is not persisted** and defaults to `true`, so turning
   Infinity off does not survive a reload.
 - **Preload ignores shuffle and repeat-all wrap**: it always prepares

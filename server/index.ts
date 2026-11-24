@@ -40,7 +40,6 @@ import {
 import authRoutes from './routes/auth.routes';
 import adminRoutes from './routes/admin.routes';
 import libraryRoutes from './routes/library.routes';
-import playbackRoutes from './routes/playback.routes';
 import settingsRoutes from './routes/settings.routes';
 import publicRoutes from './routes/public.routes';
 import artistsRoutes from './routes/artists.routes';
@@ -419,9 +418,6 @@ app.use('/api/admin', adminRoutes);
 
 // Library (scan, add, remove, list)
 app.use('/api/library', libraryRoutes);
-
-// Playback (history, record, skip, recommend)
-app.use('/api/playback', playbackRoutes);
 
 // Settings
 app.use('/api', settingsRoutes);
