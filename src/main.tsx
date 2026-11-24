@@ -23,6 +23,7 @@ import { CastStatusStream } from './utils/castStatusStream';
 import { getPlaybackTimeSnapshot, setPlaybackTimeState } from './store/playbackTime';
 import { describeThisDevice } from './utils/deviceName';
 import { logPlaybackInfo } from './utils/playbackDebug';
+import { setArtistImageLookupAuth } from './utils/artistImageLookups';
 
 // The session's queue as playable tracks, each keeping its session entry ID.
 const sessionQueueTracks = (session: PlaybackSession) => toPlayableTracks(session.queue.map((entry) => entry.track))
@@ -67,6 +68,8 @@ sessionMirror.start(usePlayerStore, {
     if (action !== 'none' && state.playbackState === 'playing') state.pause();
   },
 });
+// Pictures for artists shown without one (ArtistInitial, the Hub's artist tile).
+setArtistImageLookupAuth(() => (usePlayerStore.getState().currentUser ? usePlayerStore.getState().getAuthHeader() : null));
 sessionFollower.start(usePlayerStore, {
   clientId: getAuroraClientId,
   clientName: describeThisDevice,

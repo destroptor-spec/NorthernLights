@@ -87,10 +87,12 @@ import {
   sessionInviteCreateSchema,
   sessionInvitePromptSchema,
   artworkLinksRequestSchema,
+  artistImageLookupRequestSchema,
   playbackOutputRefreshSchema,
   playbackOutputReportSchema,
   OPAQUE_ID,
 } from '../../shared/api/v1';
+import { requestArtistImages } from '../services/artistImageEnrichment.service';
 import {
   approvePairingRequest,
   cancelPairingRequest,
@@ -496,6 +498,19 @@ router.post('/artwork/links', (req, res) => {
   const links: Record<string, string> = {};
   for (const id of new Set(input.ids)) links[id] = artworkUrlFor(id);
   dataResponse(req, res, { links });
+});
+
+// Artists the client shows without a picture: their pictures, or a place in
+// the background lookup (a few seconds per artist; ask again for the queued).
+router.post('/artists/image-lookups', async (req, res) => {
+  const input = parseBody(artistImageLookupRequestSchema, req, res);
+  if (!input) return;
+  try {
+    dataResponse(req, res, { artists: await requestArtistImages(input.names) });
+  } catch (err) {
+    console.error('[API v1] artist image lookups failed:', err);
+    sendApiV1Error(req, res, 500, 'ARTIST_IMAGE_LOOKUP_FAILED', 'Could not look up artist pictures.');
+  }
 });
 
 router.get('/artwork/:hash', (req, res) => {

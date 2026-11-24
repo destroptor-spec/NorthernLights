@@ -237,7 +237,7 @@ const ArtistDetailSkeleton: React.FC<{ onBack: () => void; hero?: ArtistHeroStat
                         <div
                             className="w-48 h-48 md:w-64 md:h-64 rounded-full overflow-hidden shrink-0 shadow-[var(--shadow-md)] border-4 border-[var(--glass-border)] bg-[var(--glass-bg)] flex items-center justify-center"
                         >
-                            <ArtistInitial name={hero.name || ''} />
+                            <ArtistInitial name={hero.name || ''} lookup={false} />
                         </div>
                     ) : (
                         <div
@@ -866,7 +866,7 @@ export const ArtistDetail: React.FC = () => {
                         <div
                             className={`w-48 h-48 md:w-64 md:h-64 rounded-full overflow-hidden shrink-0 shadow-[var(--shadow-md)] border-4 border-[var(--glass-border)] bg-[var(--glass-bg)] flex items-center justify-center ${artistLoading ? 'animate-pulse motion-reduce:animate-none' : ''}`}
                         >
-                            <ArtistInitial name={artistName} />
+                            <ArtistInitial name={artistName} lookup={false} />
                         </div>
                     )}
 

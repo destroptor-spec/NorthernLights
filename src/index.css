@@ -2074,6 +2074,16 @@ a:focus-visible > .genre-card .genre-card__label {
   gap: 0.5rem;
 }
 
+/* A picture that arrived for an artist shown with initials (ArtistInitial):
+   fills the card's frame like the card's own picture. */
+.artist-initial-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+
 .rays-avatar {
   display: inline-flex;
   flex: none;

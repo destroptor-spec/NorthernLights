@@ -2958,6 +2958,66 @@
         ],
         "additionalProperties": false
       },
+      "ArtistImageLookups": {
+        "type": "object",
+        "properties": {
+          "artists": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "found",
+                    "queued",
+                    "none",
+                    "unknown"
+                  ],
+                  "description": "found: imageUrl is its picture. queued: it is looked up in the background; ask again later. none: no provider has one (asked again after a week). unknown: no such artist."
+                },
+                "imageUrl": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "status",
+                "imageUrl"
+              ]
+            }
+          }
+        },
+        "required": [
+          "artists"
+        ]
+      },
+      "ArtistImageLookupRequest": {
+        "type": "object",
+        "properties": {
+          "names": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Artists the client shows without a picture, by name as the library lists them."
+          }
+        },
+        "required": [
+          "names"
+        ],
+        "additionalProperties": false
+      },
       "HubRegeneration": {
         "type": "object",
         "properties": {
@@ -5851,6 +5911,60 @@
           },
           "500": {
             "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/artists/image-lookups": {
+      "post": {
+        "summary": "Pictures for artists shown without one",
+        "description": "For artists a client shows without a picture: each one's picture when Aurora has one; else it is looked up in the background, ahead of the rest of the library, at the providers' slow pace (`queued`: ask again in a few seconds while it is still on screen). Only names in the library are looked up.",
+        "tags": [
+          "Library"
+        ],
+        "security": [
+          {
+            "listenerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArtistImageLookupRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Each artist with its picture or lookup status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ArtistImageLookups"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid names",
             "content": {
               "application/json": {
                 "schema": {
