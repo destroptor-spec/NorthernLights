@@ -1237,21 +1237,7 @@ Disconnect user.
 ### [GET] `/api/providers/lastfm/status`
 Check scrobble and connection status.
 
-### [POST] `/api/providers/lastfm/scrobble`
-> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
-Scrobble track playbacks. Kept for older clients; the web app and API v1 clients scrobble through `POST /api/v1/playback/reports`.
-- **Example Request**:
-  ```json
-  { "tracks": [{ "artist": "Radiohead", "track": "Creep", "timestamp": 1711968000 }] }
-  ```
-
-### [POST] `/api/providers/lastfm/now-playing`
-> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
-Update Last.fm now-playing card.
-
-### [POST] `/api/providers/lastfm/love` (or `unlove`)
-> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
-Love/unlove a track.
+Scrobbling, now-playing and Last.fm loves are API v1 only: `POST /api/v1/playback/reports` (the server scrobbles to Last.fm and ListenBrainz) and `PUT /api/v1/tracks/:id/loved` (the server syncs Last.fm). The older `/api/providers/lastfm/scrobble`, `/now-playing`, `/love` and `/unlove` were removed on 24 Nov 2026 after a week of deprecation logging showed no calls.
 
 ### [POST] `/api/providers/lastfm/test`
 Test key config.
@@ -1265,17 +1251,7 @@ Connect using user token.
 ### [POST] `/api/providers/listenbrainz/disconnect`
 Disconnect integration.
 
-### [GET] `/api/providers/listenbrainz/status`
-> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
-Check scrobble status.
-
-### [POST] `/api/providers/listenbrainz/scrobble`
-> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
-Scrobble track playbacks. Kept for older clients; the web app and API v1 clients scrobble through `POST /api/v1/playback/reports`.
-
-### [POST] `/api/providers/listenbrainz/now-playing`
-> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
-Update now-playing status.
+ListenBrainz scrobbles and now-playing go through `POST /api/v1/playback/reports`. The older `/api/providers/listenbrainz/status`, `/scrobble` and `/now-playing` were removed on 24 Nov 2026 after a week of deprecation logging showed no calls; Settings → Scrobbling shows the connection status.
 
 ### Genius
 

@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { deprecatedRoute } from '../middleware/deprecatedRoute';
 import { createRateLimiter } from '../middleware/rateLimit';
 import { randomBytes } from 'crypto';
 import { getSystemSetting, setSystemSetting, getUserSetting, setUserSetting, getRepresentativeReleaseMbid, getArtistVideosCache, getAlbumById, getAlbumReleaseGroupMbid } from '../database';
@@ -7,13 +6,9 @@ import { caaGetReleaseImages, pickMediumImage, pickFrontImage } from '../service
 import { testTheAudioDb } from '../services/metadata/providers/theaudiodb';
 import { testFanartTv } from '../services/metadata/providers/fanarttv';
 import { isRateLimitError } from '../services/metadata/errors';
-import { lfmFetch, updateNowPlaying, loveTrack, unloveTrack } from '../services/lastfm.service';
-import {
-  validateToken as validateLbToken,
-  updateNowPlaying as lbUpdateNowPlaying,
-} from '../services/listenbrainz.service';
+import { lfmFetch } from '../services/lastfm.service';
+import { validateToken as validateLbToken } from '../services/listenbrainz.service';
 import { requireAuth, requireAdmin } from '../middleware/auth';
-import { scrobbleWithRetry } from '../services/scrobbleRetry.service';
 import { mbFetch, checkMbEnabled } from '../services/musicbrainz.service';
 import { writeDebugLog } from '../services/debugLogger.service';
 import { enrichArtistImagesInBackground } from '../services/artistImageEnrichment.service';
@@ -145,16 +140,6 @@ function isAllowedProxyImageUrl(parsed: URL): boolean {
 
   const hostname = parsed.hostname.toLowerCase();
   return allowedHosts.some((host) => hostname === host || hostname.endsWith(`.${host}`));
-}
-
-// Scrobbling / now-playing are best-effort. A provider or transport failure
-// (e.g. the origin can't reach the provider API — UND_ERR_SOCKET, timeout, 5xx)
-// must not surface as a gateway 502 or block playback telemetry. Log with the
-// underlying cause and soft-fail with 200 so the client — and any CDN in front —
-// see a clean response instead of a scary error page.
-function scrobbleSoftFail(res: import('express').Response, tag: string, err: any) {
-  console.error(`${tag} error:`, err?.message, '| cause:', err?.cause?.code || err?.cause?.message || 'n/a');
-  res.status(200).json({ ok: false, error: err?.message || 'request failed' });
 }
 
 function finishLastFmCallback(
@@ -636,90 +621,6 @@ router.get('/providers/lastfm/status', async (req, res) => {
   }
 });
 
-router.post('/providers/lastfm/scrobble', deprecatedRoute('POST /api/v1/playback/reports'), async (req, res) => {
-  try {
-    const userId = req.user?.userId;
-    if (!userId) return res.status(401).json({ error: 'Authentication required' });
-
-    const connected = await getUserSetting(userId, 'lastFmConnected');
-    if (connected !== true && connected !== 'true') {
-      return res.status(400).json({ error: 'Last.fm not connected' });
-    }
-
-    const { tracks } = req.body;
-    if (!tracks || !Array.isArray(tracks) || tracks.length === 0) {
-      return res.status(400).json({ error: 'Missing tracks array' });
-    }
-
-    const result = await scrobbleWithRetry('lastfm', userId, tracks);
-    res.json(result);
-  } catch (err: any) {
-    scrobbleSoftFail(res, '[Last.fm] scrobble', err);
-  }
-});
-
-router.post('/providers/lastfm/now-playing', deprecatedRoute('POST /api/v1/playback/reports'), async (req, res) => {
-  try {
-    const userId = req.user?.userId;
-    if (!userId) return res.status(401).json({ error: 'Authentication required' });
-
-    const connected = await getUserSetting(userId, 'lastFmConnected');
-    if (connected !== true && connected !== 'true') {
-      return res.status(400).json({ error: 'Last.fm not connected' });
-    }
-
-    const { artist, track, album, albumArtist, duration, trackNumber, mbid } = req.body;
-    if (!artist || !track) return res.status(400).json({ error: 'Missing artist or track' });
-
-    const result = await updateNowPlaying(userId, { artist, track, album, albumArtist, duration, trackNumber, mbid });
-    res.json(result);
-  } catch (err: any) {
-    scrobbleSoftFail(res, '[Last.fm] now-playing', err);
-  }
-});
-
-router.post('/providers/lastfm/love', deprecatedRoute('PUT /api/v1/tracks/:id/loved'), async (req, res) => {
-  try {
-    const userId = req.user?.userId;
-    if (!userId) return res.status(401).json({ error: 'Authentication required' });
-
-    const connected = await getUserSetting(userId, 'lastFmConnected');
-    if (connected !== true && connected !== 'true') {
-      return res.status(400).json({ error: 'Last.fm not connected' });
-    }
-
-    const { artist, track } = req.body;
-    if (!artist || !track) return res.status(400).json({ error: 'Missing artist or track' });
-
-    const result = await loveTrack(userId, artist, track);
-    res.json(result);
-  } catch (err: any) {
-    console.error('[Last.fm] love error:', err.message);
-    res.status(502).json({ error: err.message });
-  }
-});
-
-router.post('/providers/lastfm/unlove', deprecatedRoute('PUT /api/v1/tracks/:id/loved'), async (req, res) => {
-  try {
-    const userId = req.user?.userId;
-    if (!userId) return res.status(401).json({ error: 'Authentication required' });
-
-    const connected = await getUserSetting(userId, 'lastFmConnected');
-    if (connected !== true && connected !== 'true') {
-      return res.status(400).json({ error: 'Last.fm not connected' });
-    }
-
-    const { artist, track } = req.body;
-    if (!artist || !track) return res.status(400).json({ error: 'Missing artist or track' });
-
-    const result = await unloveTrack(userId, artist, track);
-    res.json(result);
-  } catch (err: any) {
-    console.error('[Last.fm] unlove error:', err.message);
-    res.status(502).json({ error: err.message });
-  }
-});
-
 // ─── Last.fm Test (server-side, consistent with Genius/MusicBrainz) ──
 router.post('/providers/lastfm/test', async (req, res) => {
   try {
@@ -776,67 +677,6 @@ router.post('/providers/listenbrainz/disconnect', async (req, res) => {
     res.json({ status: 'ok' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
-  }
-});
-
-router.get('/providers/listenbrainz/status', deprecatedRoute('nothing (Settings → Scrobbling has its own status)'), async (req, res) => {
-  try {
-    const userId = req.user?.userId;
-    if (!userId) return res.status(401).json({ error: 'Authentication required' });
-
-    const connected = await getUserSetting(userId, 'listenBrainzConnected');
-    const username = await getUserSetting(userId, 'listenBrainzUsername');
-    const scrobbleEnabled = await getUserSetting(userId, 'listenBrainzScrobbleEnabled');
-
-    res.json({
-      connected: connected === true || connected === 'true',
-      username: username || null,
-      scrobbleEnabled: scrobbleEnabled === true || scrobbleEnabled === 'true',
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-router.post('/providers/listenbrainz/scrobble', deprecatedRoute('POST /api/v1/playback/reports'), async (req, res) => {
-  try {
-    const userId = req.user?.userId;
-    if (!userId) return res.status(401).json({ error: 'Authentication required' });
-
-    const connected = await getUserSetting(userId, 'listenBrainzConnected');
-    if (connected !== true && connected !== 'true') {
-      return res.status(400).json({ error: 'ListenBrainz not connected' });
-    }
-
-    const { tracks } = req.body;
-    if (!tracks || !Array.isArray(tracks) || tracks.length === 0) {
-      return res.status(400).json({ error: 'Missing tracks array' });
-    }
-
-    const result = await scrobbleWithRetry('listenbrainz', userId, tracks);
-    res.json(result);
-  } catch (err: any) {
-    scrobbleSoftFail(res, '[ListenBrainz] scrobble', err);
-  }
-});
-
-router.post('/providers/listenbrainz/now-playing', deprecatedRoute('POST /api/v1/playback/reports'), async (req, res) => {
-  try {
-    const userId = req.user?.userId;
-    if (!userId) return res.status(401).json({ error: 'Authentication required' });
-
-    const connected = await getUserSetting(userId, 'listenBrainzConnected');
-    if (connected !== true && connected !== 'true') {
-      return res.status(400).json({ error: 'ListenBrainz not connected' });
-    }
-
-    const { artist, track, album, duration, trackNumber, mbid } = req.body;
-    if (!artist || !track) return res.status(400).json({ error: 'Missing artist or track' });
-
-    const result = await lbUpdateNowPlaying(userId, { artist, track, album, duration, trackNumber, mbid });
-    res.json(result);
-  } catch (err: any) {
-    scrobbleSoftFail(res, '[ListenBrainz] now-playing', err);
   }
 });
 
