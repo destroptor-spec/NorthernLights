@@ -1032,13 +1032,7 @@ The album list and an album with its tracks are API v1 only: `GET /api/v1/albums
 
 ### Genres
 
-### [GET] `/api/genres`
-> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
-List the genres tracks are in: Aurora's genres and styles ("Grunge", "Rock"), derived from the fused results, not the file tags. Each row includes `track_count` across a track's styles and genres and `alias_count`. Grouped alias rows and tag spellings without tracks are hidden.
-
-### [GET] `/api/genres/:id`
-> **Deprecated** (17 Nov 2026): the web app uses API v1 instead. Calls are logged until the route is removed; see [legacy-listener-routes.md](./legacy-listener-routes.md).
-Get a genre or style with its tracks. A grouped alias ID redirects to its canonical genre, and membership includes every track with that genre or style (not only the strongest).
+The genre list and a genre with its tracks are API v1 only: `GET /api/v1/genres` and `GET /api/v1/genres/:id`. Genres there are Aurora's genres and styles ("Grunge", "Rock"), derived from the fused results, not the file tags; grouped alias rows and tag spellings without tracks are hidden, a grouped alias ID resolves to its canonical genre, and a genre's tracks are every track with that genre or style (not only the strongest). The older `GET /api/genres` and `GET /api/genres/:id` were removed on 24 Nov 2026 after a week of deprecation logging showed no calls; `GET /api/genres/taxonomy` stays.
 
 ### Genre review queue (admin)
 Settings → Library Entities → Genres. Each entry is one question about an original genre tag that the tag mapping can't settle by name (no match, a style name under two genres, a MusicBrainz-parent guess, several genres in one tag), or two spellings of a genre in the genre list. Every answer stores the affected tags' state from before, so it can be undone for 30 days, newest first per tag. Types: `shared/genreReview.ts`. Errors a user can act on (a stale entry, an unknown style, a later decision to undo first) return `409` with `error` and, for spellings in different parts of the genre tree, `code: "GENRE_TAXONOMY_CONFLICT"`. Admin only.

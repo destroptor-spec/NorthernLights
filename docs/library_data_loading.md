@@ -26,7 +26,7 @@ linearly with library size:
 `fetchLibraryFromServer` (in `src/store/index.ts`) runs on login / reconnect:
 
 1. **Entity lists first** — fetches `/api/v1/artists`, `/api/v1/albums`,
-   `/api/genres`, and `/api/library/directories` in parallel, sets them in the
+   `/api/v1/genres`, and `/api/library/directories` in parallel, sets them in the
    store, and clears `isLibraryLoading`. The library views are now interactive.
 2. **Queue reconciliation** — `reconcileQueue()` prunes the restored play queue
    (see [Play queue](#play-queue)). No track list is loaded.
@@ -41,7 +41,7 @@ populated lazily for two admin tools (see [On-demand cache](#on-demand-full-libr
 | Artists / Albums / Genres grids (`LibraryHome`) | entity lists (`artists`/`albums`/`genres`) | none |
 | Album detail (`AlbumDetail`) | `GET /api/v1/albums/:id` | per-album |
 | Artist detail (`ArtistDetail`) | `GET /api/v1/artists/:id` + `GET /api/artists/:id/appears-on` | per-artist + collaborations |
-| Genre detail (`GenreDetail`) | `GET /api/genres/:id` | per-genre |
+| Genre detail (`GenreDetail`) | `GET /api/v1/genres/:id` | per-genre |
 | Live search (`GlobalSearch`) | `GET /api/library/search?q=` | grouped matches only |
 | Search results page (`SearchResultsPage`) | `GET /api/library/search?mode=ranked&q=` | cursor-paged mixed matches |
 | Hub (`Hub`) | `GET /api/v1/hub`, `/api/v1/hub/smart` (tracks embedded) | embedded |
@@ -103,11 +103,11 @@ external APIs' term).
 
 | Endpoint | Returns |
 | --- | --- |
-| `GET /api/v1/artists`, `/api/v1/albums`, `/api/genres` | entity rows (albums include derived metadata + `art_hash`) |
+| `GET /api/v1/artists`, `/api/v1/albums`, `/api/v1/genres` | entity rows (albums include derived metadata + `art_hash`) |
 | `GET /api/v1/albums/:id` | `{ data: { album, details, tracks } }` |
 | `GET /api/v1/artists/:id` | `{ data: { artist, details, tracks, ownedAlbums } }` |
 | `GET /api/artists/:id/appears-on` | `{ tracks }` — collaborations (artist in `artists[]`, not primary) |
-| `GET /api/genres/:id` | `{ ...genre, tracks }` (matches `genre_id` + the genre name in multi-genre tags) |
+| `GET /api/v1/genres/:id` | `{ data: { genre, tracks } }` (matches `genre_id` + the genre name in multi-genre tags) |
 | `GET /api/library/search?q=` | `{ artists, albums, tracks }` |
 | `GET /api/library/search?mode=ranked&q=&limit=&cursor=` | `{ results, nextCursor }` |
 | `GET /api/v1/playlists/:id/suggestions` | `{ data: tracks }` — bounded candidate pool |

@@ -12,7 +12,7 @@ interface EntityTracksState<M> {
 
 /**
  * Fetches `{ ...meta, tracks }` from a per-entity endpoint (e.g.
- * `/api/albums/:id`, `/api/genres/:id`) and hydrates the tracks with stream/art
+ * `/api/artists/:id/appears-on`) and hydrates the tracks with stream/art
  * URLs. Replaces filtering the in-memory `library` array in detail views.
  */
 export function useEntityTracks<M = Record<string, unknown>>(path: string | null): EntityTracksState<M> {

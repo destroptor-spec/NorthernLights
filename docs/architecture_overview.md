@@ -180,10 +180,10 @@ The client is built to scale to 100k+ tracks, so it **never loads the full
 track list at boot**:
 
 - **Entity-first** — views render from lightweight `/api/v1/artists`, `/api/v1/albums`
-  (with server-precomputed genre/year/type/art metadata), and `/api/genres`
+  (with server-precomputed genre/year/type/art metadata), and `/api/v1/genres`
   lists. The Zustand `library` array stays empty in the main app.
 - **Per-entity tracks** — detail views fetch their tracks on demand
-  (`/api/v1/artists/:id`, `/api/v1/albums/:id`, `/api/genres/:id`) via the `useEntityTracks` hook.
+  (`/api/v1/artists/:id`, `/api/v1/albums/:id`, `/api/v1/genres/:id`) via the `useEntityTracks` hook.
 - **Server-side search** — `/api/library/search` uses trigram filtering with exact-first relevance. The live surface is debounced and grouped; the Enter-only `/search` route uses a confidence-bounded mixed list with keyset pagination.
 - **Queue** — persisted and rehydrated via `reconcileQueue()` +
   `POST /api/library/tracks/exists`; stream URLs rebuilt from `path`.
