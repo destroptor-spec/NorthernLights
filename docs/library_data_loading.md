@@ -44,7 +44,7 @@ populated lazily for two admin tools (see [On-demand cache](#on-demand-full-libr
 | Genre detail (`GenreDetail`) | `GET /api/genres/:id` | per-genre |
 | Live search (`GlobalSearch`) | `GET /api/library/search?q=` | grouped matches only |
 | Search results page (`SearchResultsPage`) | `GET /api/library/search?mode=ranked&q=` | cursor-paged mixed matches |
-| Hub (`Hub`) | `GET /api/hub`, `/api/hub/smart` (tracks embedded) | embedded |
+| Hub (`Hub`) | `GET /api/v1/hub`, `/api/v1/hub/smart` (tracks embedded) | embedded |
 | Playlists / detail | `GET /api/playlists`, `/api/playlists/:id` | embedded |
 | Playlist suggestions | `GET /api/playlists/:id/suggestions` (candidate pool) | pooled |
 
