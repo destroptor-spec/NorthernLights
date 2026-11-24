@@ -272,14 +272,14 @@ export const MetadataTab: React.FC = () => {
         <DependencyBadge
             label="TheAudioDB Integration"
             status={theAudioDbApiKey ? 'available' : 'unavailable'}
-            message={theAudioDbApiKey ? 'Ready for artist pictures, banners, bios, album covers and artist facts' : 'Requires an API key'}
+            message={theAudioDbApiKey ? 'Ready for artist pictures, banners, bios, album covers, CD art and artist facts' : 'Requires an API key'}
         />
     );
     const fanartTvBadge = (
         <DependencyBadge
             label="fanart.tv Integration"
             status={fanartTvApiKey ? 'available' : 'unavailable'}
-            message={fanartTvApiKey ? 'Ready for artist banners, pictures and album covers' : 'Requires an API key'}
+            message={fanartTvApiKey ? 'Ready for artist banners, pictures, album covers and CD art' : 'Requires an API key'}
         />
     );
     const jambaseBadge = (
@@ -469,6 +469,16 @@ export const MetadataTab: React.FC = () => {
                                 description="Representative images powering the genre browser tiles"
                                 icon={<ImageIcon size={16} />}
                             />
+                            <DependencyInfoBox
+                                title="Album Descriptions & Tags"
+                                description="The description and tags in an album's About card"
+                                icon={<FileText size={16} />}
+                            />
+                            <DependencyInfoBox
+                                title="Listener Counts"
+                                description="How many listen to an artist (in its At a glance) and to an album (listeners and plays on its page)"
+                                icon={<Headphones size={16} />}
+                            />
                         </div>
                     </div>
 
@@ -588,7 +598,7 @@ export const MetadataTab: React.FC = () => {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                             <DependencyInfoBox
                                 title="High-Resolution Album Art"
-                                description="Cover Art Archive images used as the highest-quality album artwork source"
+                                description="Cover Art Archive covers as the highest-quality album artwork, and scans of the disc for the record that rolls out of an album's cover"
                                 icon={<Disc3 size={16} />}
                             />
                             <DependencyInfoBox
@@ -597,9 +607,14 @@ export const MetadataTab: React.FC = () => {
                                 icon={<User size={16} />}
                             />
                             <DependencyInfoBox
-                                title="Release Metadata"
-                                description="Original release dates, catalog numbers, and track positions for your albums"
+                                title="Release Groups"
+                                description="Which release group an album belongs to, so fanart.tv and TheAudioDB can find it when its files name only the release"
                                 icon={<FileText size={16} />}
+                            />
+                            <DependencyInfoBox
+                                title="Recording Studios"
+                                description="Where an album was recorded, in its At a glance. Asked the first time an album is opened, then kept for 90 days"
+                                icon={<MapPin size={16} />}
                             />
                             <DependencyInfoBox
                                 title="Favorite Rating Sync"
@@ -767,6 +782,7 @@ export const MetadataTab: React.FC = () => {
                             <DependencyInfoBox title="Artist pictures and banners" description="Artist photos, and fanart for the wide picture across the top of an artist’s page" icon={<ImageIcon size={16} />} />
                             <DependencyInfoBox title="Artist bios" description="English biographies for artist pages" icon={<BookOpen size={16} />} />
                             <DependencyInfoBox title="Album covers" description="Covers for albums without art in their files" icon={<Disc3 size={16} />} />
+                            <DependencyInfoBox title="CD art" description="A picture of the disc for the record that rolls out of an album's cover, when the Cover Art Archive has no scan of it (with TheAudioDB in your Album art providers)" icon={<Disc3 size={16} />} />
                             <DependencyInfoBox title="Artist facts" description="Country, years active and links where MusicBrainz has none; genre, style and mood shown with the artist’s tags (they don’t change genres or playlists)" icon={<Tags size={16} />} />
                         </div>
                     </div>
@@ -802,6 +818,7 @@ export const MetadataTab: React.FC = () => {
                             <DependencyInfoBox title="Artist banners" description="High-resolution artist backgrounds for the top of artist pages" icon={<ImageIcon size={16} />} />
                             <DependencyInfoBox title="Artist pictures" description="Artist thumbnails picked by fanart.tv’s community" icon={<User size={16} />} />
                             <DependencyInfoBox title="Album covers" description="Covers for albums without art in their files" icon={<Disc3 size={16} />} />
+                            <DependencyInfoBox title="CD art" description="fanart.tv's picture of each disc for the record that rolls out of an album's cover, when the Cover Art Archive has no scan of it (with fanart.tv in your Album art providers)" icon={<Disc3 size={16} />} />
                         </div>
                         <p className="text-xs text-[var(--color-text-muted)] mt-3">
                             fanart.tv finds artists and albums by their MusicBrainz id, which most tagged files carry. Artists without one are skipped unless TheAudioDB finds the same name.

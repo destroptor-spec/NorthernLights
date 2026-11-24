@@ -67,6 +67,7 @@ export function mapTrackV1(row: any): Track {
     bitrate: nullableInt(row.bitrate),
     format: nullableString(row.format),
     lossless: Boolean(row.lossless),
+    explicit: typeof row.explicit === 'boolean' ? row.explicit : null,
     fileSize: nullableInt(row.fileSize ?? row.file_size),
     mediaEtag: mediaEtagForTrack(row),
     artistId: nullableString(row.artistId ?? row.artist_id),

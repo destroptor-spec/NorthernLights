@@ -641,6 +641,11 @@ export async function initDB(): Promise<Pool> {
           ALTER TABLE albums ADD COLUMN IF NOT EXISTS is_compilation BOOLEAN DEFAULT FALSE;
         EXCEPTION WHEN OTHERS THEN null;
         END $$;
+        -- Where the album was recorded (MusicBrainz "recorded at" places,
+        -- [{name, area, tracks}]), looked up when its page is first opened;
+        -- read_at says when, so it's asked again after a while.
+        ALTER TABLE albums ADD COLUMN IF NOT EXISTS recording_places JSONB;
+        ALTER TABLE albums ADD COLUMN IF NOT EXISTS recording_places_read_at TIMESTAMPTZ;
         CREATE INDEX IF NOT EXISTS albums_release_group_id_idx ON albums(release_group_id);
         CREATE INDEX IF NOT EXISTS albums_mb_release_group_id_idx ON albums(mb_release_group_id);
         CREATE INDEX IF NOT EXISTS albums_normalized_title_idx ON albums(normalized_title);
@@ -938,9 +943,29 @@ export async function initDB(): Promise<Pool> {
         ALTER TABLE tracks ADD COLUMN IF NOT EXISTS origin_read_at TIMESTAMPTZ;
         -- The original release year (Picard's ORIGINALDATE): a 2021 remaster of
         -- a 1991 song is 1991. origin_read_version: which extra tags were read
-        -- (1: country and language; 2: also the original year).
+        -- (1: country and language; 2: also the original year; 3: also the
+        -- label, release dates, medium and links; 4: also catalog number,
+        -- barcode, release status, ℗ line, disc subtitle and explicit).
         ALTER TABLE tracks ADD COLUMN IF NOT EXISTS original_year INTEGER;
         ALTER TABLE tracks ADD COLUMN IF NOT EXISTS origin_read_version SMALLINT;
+        -- The release as the files tag it, for the album page (version 3):
+        -- the record label, the release date and the original release date
+        -- as tagged ("2011-04-12", "2011-04", "2011"), and the medium ("CD",
+        -- "12\" Vinyl", "Digital Media").
+        ALTER TABLE tracks ADD COLUMN IF NOT EXISTS label TEXT;
+        ALTER TABLE tracks ADD COLUMN IF NOT EXISTS release_date TEXT;
+        ALTER TABLE tracks ADD COLUMN IF NOT EXISTS original_date TEXT;
+        ALTER TABLE tracks ADD COLUMN IF NOT EXISTS media TEXT;
+        -- Version 4: the catalog number, barcode, release status (official,
+        -- promotion, bootleg …) and ℗ line of the release; the subtitle of
+        -- the track's disc; whether the track is explicit (true), clean
+        -- (false) or not rated (null).
+        ALTER TABLE tracks ADD COLUMN IF NOT EXISTS catalog_number TEXT;
+        ALTER TABLE tracks ADD COLUMN IF NOT EXISTS barcode TEXT;
+        ALTER TABLE tracks ADD COLUMN IF NOT EXISTS release_status TEXT;
+        ALTER TABLE tracks ADD COLUMN IF NOT EXISTS copyright TEXT;
+        ALTER TABLE tracks ADD COLUMN IF NOT EXISTS disc_subtitle TEXT;
+        ALTER TABLE tracks ADD COLUMN IF NOT EXISTS explicit BOOLEAN;
         -- Some MP3s carry a header that misstates their length (a 4-minute song
         -- read as 20). The analysis measures the real length and stores it as
         -- duration; header_duration keeps what the header claims, so a rescan
@@ -1587,11 +1612,19 @@ const SNAKE_DUP_COLUMNS = [
   'mb_release_group_id', 'mb_work_id', 'art_hash', 'artwork_version', 'playlist_added_at', 'is_loved', 'raw_urls', 'canonical_genre',
   // Read by trackOrigin.service only; no track payload needs them.
   'release_country', 'lyrics_language', 'origin_read_at', 'original_year', 'origin_read_version',
+  // Read by the album endpoint's release facts only.
+  'label', 'release_date', 'original_date', 'media', 'catalog_number', 'barcode', 'release_status', 'copyright', 'disc_subtitle',
   'header_duration',
 ];
 
-/** Which extra tags a scan reads (trackOrigin.service re-reads older files): 2 adds the original year. */
-export const ORIGIN_READ_VERSION = 2;
+/**
+ * Which extra tags a scan reads (trackOrigin.service re-reads older files):
+ * 2 adds the original year; 3 the label, release dates, medium, and links
+ * from tags that hold just a link (DISCOGS.COM, ALLMUSIC.COM …); 4 the
+ * catalog number, barcode, release status, ℗ line, disc subtitle, explicit;
+ * 5 says a doubled ℗ line ("2024 X 2024 X") once.
+ */
+export const ORIGIN_READ_VERSION = 5;
 
 function mapTrackRow(row: any) {
   const mapped: any = {
@@ -2266,8 +2299,8 @@ export async function addTrack(track: any): Promise<string> {
   const sanitizeArray = (arr: any) => Array.isArray(arr) ? arr.map(sanitizeString) : arr;
 
   await db.query(`
-    INSERT INTO tracks (id, title, artist, album_artist, artists, album, genre, duration, track_number, disc_number, year, release_type, is_compilation, path, bitrate, format, artist_id, album_id, genre_id, genres, isrc, mb_recording_id, mb_track_id, mb_album_id, mb_artist_id, mb_album_artist_id, mb_release_group_id, mb_work_id, raw_urls, art_hash, artwork_version, file_mtime, file_size, decoded_path, lossless, release_country, lyrics_language, origin_read_at, original_year, origin_read_version)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, decode($14, 'base64'), $34, $35, $36, CASE WHEN $37::boolean THEN NOW() END, $38, CASE WHEN $37::boolean THEN $39::smallint END)
+    INSERT INTO tracks (id, title, artist, album_artist, artists, album, genre, duration, track_number, disc_number, year, release_type, is_compilation, path, bitrate, format, artist_id, album_id, genre_id, genres, isrc, mb_recording_id, mb_track_id, mb_album_id, mb_artist_id, mb_album_artist_id, mb_release_group_id, mb_work_id, raw_urls, art_hash, artwork_version, file_mtime, file_size, decoded_path, lossless, release_country, lyrics_language, origin_read_at, original_year, origin_read_version, label, release_date, original_date, media, catalog_number, barcode, release_status, copyright, disc_subtitle, explicit)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, decode($14, 'base64'), $34, $35, $36, CASE WHEN $37::boolean THEN NOW() END, $38, CASE WHEN $37::boolean THEN $39::smallint END, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49)
     ON CONFLICT (id) DO UPDATE SET
       title = EXCLUDED.title,
       artist = EXCLUDED.artist,
@@ -2314,6 +2347,16 @@ export async function addTrack(track: any): Promise<string> {
       lyrics_language = CASE WHEN EXCLUDED.origin_read_at IS NOT NULL THEN EXCLUDED.lyrics_language ELSE tracks.lyrics_language END,
       origin_read_at = COALESCE(EXCLUDED.origin_read_at, tracks.origin_read_at),
       original_year = CASE WHEN EXCLUDED.origin_read_at IS NOT NULL THEN EXCLUDED.original_year ELSE tracks.original_year END,
+      label = CASE WHEN EXCLUDED.origin_read_at IS NOT NULL THEN EXCLUDED.label ELSE tracks.label END,
+      release_date = CASE WHEN EXCLUDED.origin_read_at IS NOT NULL THEN EXCLUDED.release_date ELSE tracks.release_date END,
+      original_date = CASE WHEN EXCLUDED.origin_read_at IS NOT NULL THEN EXCLUDED.original_date ELSE tracks.original_date END,
+      media = CASE WHEN EXCLUDED.origin_read_at IS NOT NULL THEN EXCLUDED.media ELSE tracks.media END,
+      catalog_number = CASE WHEN EXCLUDED.origin_read_at IS NOT NULL THEN EXCLUDED.catalog_number ELSE tracks.catalog_number END,
+      barcode = CASE WHEN EXCLUDED.origin_read_at IS NOT NULL THEN EXCLUDED.barcode ELSE tracks.barcode END,
+      release_status = CASE WHEN EXCLUDED.origin_read_at IS NOT NULL THEN EXCLUDED.release_status ELSE tracks.release_status END,
+      copyright = CASE WHEN EXCLUDED.origin_read_at IS NOT NULL THEN EXCLUDED.copyright ELSE tracks.copyright END,
+      disc_subtitle = CASE WHEN EXCLUDED.origin_read_at IS NOT NULL THEN EXCLUDED.disc_subtitle ELSE tracks.disc_subtitle END,
+      explicit = CASE WHEN EXCLUDED.origin_read_at IS NOT NULL THEN EXCLUDED.explicit ELSE tracks.explicit END,
       origin_read_version = COALESCE(EXCLUDED.origin_read_version, tracks.origin_read_version)
     WHERE
       tracks.title IS DISTINCT FROM EXCLUDED.title OR
@@ -2355,6 +2398,16 @@ export async function addTrack(track: any): Promise<string> {
         OR tracks.release_country IS DISTINCT FROM EXCLUDED.release_country
         OR tracks.lyrics_language IS DISTINCT FROM EXCLUDED.lyrics_language
         OR tracks.original_year IS DISTINCT FROM EXCLUDED.original_year
+        OR tracks.label IS DISTINCT FROM EXCLUDED.label
+        OR tracks.release_date IS DISTINCT FROM EXCLUDED.release_date
+        OR tracks.original_date IS DISTINCT FROM EXCLUDED.original_date
+        OR tracks.media IS DISTINCT FROM EXCLUDED.media
+        OR tracks.catalog_number IS DISTINCT FROM EXCLUDED.catalog_number
+        OR tracks.barcode IS DISTINCT FROM EXCLUDED.barcode
+        OR tracks.release_status IS DISTINCT FROM EXCLUDED.release_status
+        OR tracks.copyright IS DISTINCT FROM EXCLUDED.copyright
+        OR tracks.disc_subtitle IS DISTINCT FROM EXCLUDED.disc_subtitle
+        OR tracks.explicit IS DISTINCT FROM EXCLUDED.explicit
         OR tracks.origin_read_version IS DISTINCT FROM EXCLUDED.origin_read_version))
   `, [
     id,
@@ -2398,6 +2451,16 @@ export async function addTrack(track: any): Promise<string> {
     track.originRead === true,
     track.originRead && Number(track.originalYear) > 0 ? Math.round(Number(track.originalYear)) : null,
     ORIGIN_READ_VERSION,
+    track.originRead ? sanitizeString(track.label) || null : null,
+    track.originRead ? sanitizeString(track.releaseDate) || null : null,
+    track.originRead ? sanitizeString(track.originalDate) || null : null,
+    track.originRead ? sanitizeString(track.media) || null : null,
+    track.originRead ? sanitizeString(track.catalogNumber) || null : null,
+    track.originRead ? sanitizeString(track.barcode) || null : null,
+    track.originRead ? sanitizeString(track.releaseStatus) || null : null,
+    track.originRead ? sanitizeString(track.copyright) || null : null,
+    track.originRead ? sanitizeString(track.discSubtitle) || null : null,
+    track.originRead && typeof track.explicit === 'boolean' ? track.explicit : null,
   ]);
 
   const associationNames = Array.isArray(track.genres) && track.genres.length > 0
@@ -3439,6 +3502,33 @@ export async function getReleaseGroupEditions(releaseGroupId: string) {
 // (tracks.mb_album_id, from the MUSICBRAINZ_ALBUMID tag). Pick the modal
 // value across the album's tracks — the pressing the user most owns — which
 // is what Cover Art Archive keys release-level art (front + Medium) on.
+/** Where an album was recorded, as last looked up, and when; null when never. */
+export async function getStoredRecordingPlaces(albumId: string): Promise<{ places: unknown; readAt: Date | null } | null> {
+  const db = await initDB();
+  const res = await db.query('SELECT recording_places, recording_places_read_at FROM albums WHERE id = $1', [albumId]);
+  if (!res.rows[0]) return null;
+  return { places: res.rows[0].recording_places, readAt: res.rows[0].recording_places_read_at };
+}
+
+export async function storeRecordingPlaces(albumId: string, places: unknown[]): Promise<void> {
+  const db = await initDB();
+  await db.query('UPDATE albums SET recording_places = $2::jsonb, recording_places_read_at = NOW() WHERE id = $1', [albumId, JSON.stringify(places)]);
+}
+
+/** The album's MusicBrainz release group: the album row's, else most of its tracks'. */
+export async function getAlbumReleaseGroupMbid(albumId: string): Promise<string | null> {
+  const db = await initDB();
+  const res = await db.query(
+    `SELECT COALESCE(
+       (SELECT mb_release_group_id FROM albums WHERE id = $1),
+       (SELECT mb_release_group_id FROM tracks WHERE album_id = $1 AND mb_release_group_id IS NOT NULL
+         GROUP BY mb_release_group_id ORDER BY COUNT(*) DESC, mb_release_group_id LIMIT 1)
+     ) AS rg`,
+    [albumId]
+  );
+  return res.rows[0]?.rg || null;
+}
+
 export async function getRepresentativeReleaseMbid(albumId: string): Promise<string | null> {
   const db = await initDB();
   const res = await db.query(
@@ -4414,6 +4504,53 @@ export async function getSimilarArtistsByAudioProfile(artistId: string, limit: n
     distance: typeof row.distance === 'number' ? row.distance : Number(row.distance),
     matchScore: row.match_score || 0,
   }));
+}
+
+/**
+ * The release as an album's files tag it (label, release and original release
+ * dates, medium, catalog number, barcode, status, ℗ line, disc subtitles):
+ * each the value most of its tracks carry, so one odd track doesn't decide
+ * it. Nulls until the files have been read (scan or re-read).
+ */
+export async function getAlbumReleaseFacts(albumId: string): Promise<{
+  label: string | null; releaseDate: string | null; originalDate: string | null; media: string | null;
+  catalogNumber: string | null; barcode: string | null; releaseStatus: string | null; copyright: string | null;
+  discSubtitles: Array<{ disc: number; subtitle: string }>;
+}> {
+  const db = await initDB();
+  const [facts, discs] = await Promise.all([
+    db.query(
+      `SELECT mode() WITHIN GROUP (ORDER BY label) AS label,
+              mode() WITHIN GROUP (ORDER BY release_date) AS release_date,
+              mode() WITHIN GROUP (ORDER BY original_date) AS original_date,
+              mode() WITHIN GROUP (ORDER BY media) AS media,
+              mode() WITHIN GROUP (ORDER BY catalog_number) AS catalog_number,
+              mode() WITHIN GROUP (ORDER BY barcode) AS barcode,
+              mode() WITHIN GROUP (ORDER BY release_status) AS release_status,
+              mode() WITHIN GROUP (ORDER BY copyright) AS copyright
+         FROM tracks WHERE album_id = $1`,
+      [albumId]
+    ),
+    // Each disc's subtitle, as most of its tracks tag it.
+    db.query(
+      `SELECT disc_number AS disc, mode() WITHIN GROUP (ORDER BY disc_subtitle) AS subtitle
+         FROM tracks WHERE album_id = $1 AND disc_number IS NOT NULL AND disc_subtitle IS NOT NULL
+        GROUP BY disc_number ORDER BY disc_number`,
+      [albumId]
+    ),
+  ]);
+  const row = facts.rows[0] || {};
+  return {
+    label: row.label ?? null,
+    releaseDate: row.release_date ?? null,
+    originalDate: row.original_date ?? null,
+    media: row.media ?? null,
+    catalogNumber: row.catalog_number ?? null,
+    barcode: row.barcode ?? null,
+    releaseStatus: row.release_status ?? null,
+    copyright: row.copyright ?? null,
+    discSubtitles: discs.rows.map((disc: any) => ({ disc: Number(disc.disc), subtitle: String(disc.subtitle) })),
+  };
 }
 
 export async function getTracksByAlbum(albumId: string, userId: string | null = null) {

@@ -78,6 +78,54 @@ export async function mbGetReleaseGroupCover(releaseGroupId: string): Promise<st
   }
 }
 
+export interface RecordingPlace {
+  name: string;
+  /** The place's area ("Los Angeles", "Port Antonio"), when MusicBrainz has one. */
+  area: string | null;
+  /** How many of the release's tracks were recorded there. */
+  tracks: number;
+}
+
+/**
+ * Where a release was recorded: MusicBrainz's "recorded at" places, on the
+ * release itself or on its recordings, most tracks first. One request
+ * (recordings and their place relations inline). [] when none are entered.
+ */
+export async function mbReleaseRecordingPlaces(releaseId: string): Promise<RecordingPlace[]> {
+  try {
+    const release = await mbFetch(`https://musicbrainz.org/ws/2/release/${encodeURIComponent(releaseId)}?inc=place-rels+recordings+recording-level-rels&fmt=json`);
+    const media: any[] = Array.isArray(release?.media) ? release.media : [];
+    const recordings = media.flatMap((medium: any) => (Array.isArray(medium?.tracks) ? medium.tracks : []))
+      .map((track: any) => track?.recording).filter(Boolean);
+    const places = new Map<string, RecordingPlace>();
+    const note = (relation: any, tracks: number) => {
+      if (relation?.['target-type'] !== 'place' || relation?.type !== 'recorded at') return;
+      const place = relation.place;
+      if (!place?.name) return;
+      const key = place.id || place.name;
+      const entry = places.get(key) ?? { name: String(place.name), area: place.area?.name ? String(place.area.name) : null, tracks: 0 };
+      entry.tracks += tracks;
+      places.set(key, entry);
+    };
+    // A release-level relation covers every track.
+    for (const relation of release?.relations ?? []) note(relation, recordings.length || 1);
+    for (const recording of recordings) {
+      // One count per recording, however many sessions it lists for a place.
+      const seen = new Set<string>();
+      for (const relation of recording.relations ?? []) {
+        const key = relation?.place?.id || relation?.place?.name;
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        note(relation, 1);
+      }
+    }
+    return [...places.values()].sort((a, b) => b.tracks - a.tracks || a.name.localeCompare(b.name));
+  } catch (err: any) {
+    if (err instanceof ProviderError) throw err;
+    throw new ProviderError('musicbrainz', messageWithCause(err));
+  }
+}
+
 /** The release group a release belongs to (fanart.tv and TheAudioDB key albums by it), or null. */
 export async function mbReleaseGroupOfRelease(releaseId: string): Promise<string | null> {
   try {

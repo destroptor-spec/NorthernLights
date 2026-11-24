@@ -7,6 +7,7 @@ jest.mock('../database', () => ({
   getAlbumsOwnedByArtistName: jest.fn(),
   getAlbumById: jest.fn(),
   getTracksByAlbum: jest.fn(),
+  getAlbumReleaseFacts: jest.fn(),
 }));
 jest.mock('../services/apiV1Dto.service', () => ({
   ...jest.requireActual('../services/apiV1Dto.service'),
@@ -15,7 +16,7 @@ jest.mock('../services/apiV1Dto.service', () => ({
 import type { Request, Response } from 'express';
 import router from './apiV1.routes';
 import {
-  getAlbumById, getAlbumsOwnedByArtistName, getArtistById, getTracksByAlbum, getTracksByArtist, getUncreditedTracksOnOwnedAlbums,
+  getAlbumById, getAlbumReleaseFacts, getAlbumsOwnedByArtistName, getArtistById, getTracksByAlbum, getTracksByArtist, getUncreditedTracksOnOwnedAlbums,
 } from '../database';
 import { getApiV1TracksByIds, mapTrackV1 } from '../services/apiV1Dto.service';
 import { albumDetailSchema, artistDetailSchema, trackSchema } from '../../shared/api/v1';
@@ -89,8 +90,16 @@ describe('GET /albums/:id', () => {
   it('matches the AlbumDetail schema, edition label included', async () => {
     jest.mocked(getAlbumById).mockResolvedValue({ id: 'al1', title: 'Hits', artist_name: 'X', edition_label: 'Remaster' } as never);
     jest.mocked(getTracksByAlbum).mockResolvedValue(rows('t1') as never);
+    const release = {
+      label: 'RCA Records', releaseDate: '2011-04-12', originalDate: '2011-04-12', media: 'CD',
+      catalogNumber: '88697-85613-2', barcode: '886978561326', releaseStatus: 'official',
+      copyright: '℗ 2011 Roswell Records', discSubtitles: [{ disc: 2, subtitle: 'Bonus' }],
+    };
+    jest.mocked(getAlbumReleaseFacts).mockResolvedValue(release);
     const body = data(await get('/albums/:id', 'al1'));
     expect(body.album.editionLabel).toBe('Remaster');
+    expect(body.details.release).toEqual(release);
+    expect(getAlbumReleaseFacts).toHaveBeenCalledWith('al1');
     expect(albumDetailSchema.safeParse(body).success).toBe(true);
   });
 });

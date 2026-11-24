@@ -1,6 +1,8 @@
 import { workerLog } from './workerLog';
 import { firstTagValue, joinTagValues, splitTagValues } from '../utils/tagValues';
 import { albumArtistPeople, trackArtistPeople } from '../utils/tagPeople';
+import { extractUrlTags } from '../utils/fileLinks';
+import { releaseTags } from '../utils/releaseTags';
 import * as mm from 'music-metadata';
 import sharp from 'sharp';
 import { hashArt, resolveArtwork, encodeArt, artExists, ART_SIZES, ARTWORK_EXTRACTION_VERSION } from '../services/artCache';
@@ -30,90 +32,6 @@ async function processArtwork(metadata: mm.IAudioMetadata, audioPath: string, kn
   if (hash === knownArtHash && allPresent) return hash;
   if (!allPresent) await encodeArt(artwork.data, hash);
   return hash;
-}
-
-function sanitizeUrl(raw: string): string | null {
-  if (typeof raw !== 'string') return null;
-  // Strip null bytes, BOM, and ASCII control characters (except tab)
-  const cleaned = raw
-    .replace(/\x00/g, '')           // null bytes (crash Postgres)
-    .replace(/\uFEFF/g, '')         // BOM
-    .replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '') // control chars
-    .trim();
-  if (!cleaned) return null;
-  // Must be http(s) and a plausible length
-  if (!/^https?:\/\/.{3,}/i.test(cleaned)) return null;
-  if (cleaned.length > 2048) return null;
-  // Validate parseable by URL constructor
-  try { new URL(cleaned); } catch { return null; }
-  return cleaned;
-}
-
-function extractUrlTags(native: Record<string, any[]>): { url: string; type: string }[] {
-  const results: { url: string; type: string }[] = [];
-  const seen = new Set<string>();
-
-  const add = (raw: string, type: string) => {
-    const url = sanitizeUrl(raw);
-    if (!url) return;
-    if (seen.has(url)) return;
-    seen.add(url);
-    results.push({ url, type });
-  };
-
-  for (const [format, tags] of Object.entries(native || {})) {
-    if (!Array.isArray(tags)) continue;
-
-    if (format === 'vorbis') {
-      for (const tag of tags) {
-        const id = (tag.id || '').toUpperCase();
-        const val = typeof tag.value === 'string' ? tag.value : '';
-        switch (id) {
-          case 'URL_OFFICIAL_ARTIST_SITE':
-          case 'WEBSITE': add(val, 'official homepage'); break;
-          case 'URL_OFFICIAL_RELEASE_SITE': add(val, 'official audio source'); break;
-          case 'URL_DISCOGS_ARTIST_PAGE':
-          case 'URL_DISCOGS_RELEASE_PAGE': add(val, 'discogs'); break;
-          case 'URL_SOUNDCLOUD': add(val, 'soundcloud'); break;
-          case 'URL_YOUTUBE': add(val, 'youtube'); break;
-          case 'URL_WIKIPEDIA_ARTIST':
-          case 'URL_WIKIPEDIA_RELEASE': add(val, 'wikipedia'); break;
-          case 'URL_SPOTIFY_ARTIST':
-          case 'URL_SPOTIFY_ALBUM': add(val, 'spotify'); break;
-          case 'URL_BANDCAMP': add(val, 'bandcamp'); break;
-        }
-      }
-    } else if (format.startsWith('ID3v2')) {
-      for (const tag of tags) {
-        const id = tag.id || '';
-        const val = tag.value;
-        switch (id) {
-          case 'WOAR': if (typeof val === 'string') add(val, 'official homepage'); break;
-          case 'WOAS': if (typeof val === 'string') add(val, 'official audio source'); break;
-          case 'WORS': if (typeof val === 'string') add(val, 'streaming'); break;
-          case 'WPUB': if (typeof val === 'string') add(val, 'official homepage'); break;
-          case 'WCOM': if (typeof val === 'string') add(val, 'commercial'); break;
-          case 'WXXX': {
-            if (typeof val === 'object' && val?.url) {
-              const desc = (val.description || '').toLowerCase();
-              let type = 'other';
-              if (desc.includes('spotify')) type = 'spotify';
-              else if (desc.includes('youtube')) type = 'youtube';
-              else if (desc.includes('instagram') || desc.includes('facebook') || desc.includes('twitter') || desc.includes('x.com')) type = 'social network';
-              else if (desc.includes('discogs')) type = 'discogs';
-              else if (desc.includes('bandcamp')) type = 'bandcamp';
-              else if (desc.includes('soundcloud')) type = 'soundcloud';
-              else if (desc.includes('wikipedia')) type = 'wikipedia';
-              add(val.url, type);
-            }
-            break;
-          }
-        }
-      }
-    }
-  }
-
-  return results;
 }
 
 export interface ExtractedCredit {
@@ -436,6 +354,7 @@ process.stdin.on('data', async (chunk: string) => {
             releaseCountry: metadata.common.releasecountry || null,
             originalYear: metadata.common.originalyear || null,
             lyricsLanguage: firstTagValue(metadata.common.language) || null,
+            ...releaseTags(metadata),
             rawUrls: rawUrls.length > 0 ? rawUrls : null,
             credits: extractCredits(metadata, (artistPeople || []).map(person => person.name)),
         }

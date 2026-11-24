@@ -28,6 +28,8 @@ import { countryCode, languageCode, placeFromTag } from '../../shared/places';
 import { descriptorOf } from '../../shared/descriptors';
 import { firstTagValue } from '../utils/tagValues';
 import { ORIGIN_READ_VERSION } from '../database';
+import { releaseTags, type ReleaseTags } from '../utils/releaseTags';
+import { extractUrlTags } from '../utils/fileLinks';
 
 /** A tag counts from this weight (Last.fm's are relative to the artist's top tag). */
 const PLACE_TAG_MIN_WEIGHT = 0.2;
@@ -157,9 +159,11 @@ let fileBackfill: Promise<void> | null = null;
 let stopRequested = false;
 
 /**
- * Reads the release country, lyrics language and original year of files
- * scanned before Aurora stored them (origin_read_version older than the
- * scanner's), a batch at a time, then rebuilds track_origin. Local files
+ * Reads the extra tags of files scanned before Aurora stored them
+ * (origin_read_version older than the scanner's): release country, lyrics
+ * language and original year; since version 3 also the label, release dates,
+ * medium and the file's links; since 4 the catalog number, barcode, release
+ * status, ℗ line, disc subtitle and explicit flag. A batch at a time, then rebuilds track_origin. Local files
  * only; resumes where it stopped. A file that can't be read is stamped too,
  * so it isn't retried every start.
  */
@@ -180,16 +184,38 @@ export function startFileOriginBackfill(getDb: () => Promise<Pool>): Promise<voi
       for (let i = 0; i < rows.length; i += FILE_CONCURRENCY) {
         results.push(...await Promise.all(rows.slice(i, i + FILE_CONCURRENCY).map(readFileOrigin)));
       }
+      // A file that couldn't be read (readable: false) keeps what it had.
       await db.query(`
-        UPDATE tracks t SET release_country = r.country, lyrics_language = r.language, original_year = r.original_year,
+        UPDATE tracks t SET
+               release_country = CASE WHEN r.readable THEN r.country ELSE t.release_country END,
+               lyrics_language = CASE WHEN r.readable THEN r.language ELSE t.lyrics_language END,
+               original_year = CASE WHEN r.readable THEN r.original_year ELSE t.original_year END,
+               label = CASE WHEN r.readable THEN r.label ELSE t.label END,
+               release_date = CASE WHEN r.readable THEN r.release_date ELSE t.release_date END,
+               original_date = CASE WHEN r.readable THEN r.original_date ELSE t.original_date END,
+               media = CASE WHEN r.readable THEN r.media ELSE t.media END,
+               catalog_number = CASE WHEN r.readable THEN r.catalog_number ELSE t.catalog_number END,
+               barcode = CASE WHEN r.readable THEN r.barcode ELSE t.barcode END,
+               release_status = CASE WHEN r.readable THEN r.release_status ELSE t.release_status END,
+               copyright = CASE WHEN r.readable THEN r.copyright ELSE t.copyright END,
+               disc_subtitle = CASE WHEN r.readable THEN r.disc_subtitle ELSE t.disc_subtitle END,
+               explicit = CASE WHEN r.readable THEN r.explicit ELSE t.explicit END,
+               raw_urls = CASE WHEN r.readable THEN r.raw_urls ELSE t.raw_urls END,
                origin_read_at = NOW(), origin_read_version = $5
-        FROM unnest($1::text[], $2::text[], $3::text[], $4::int[]) AS r(id, country, language, original_year)
+        FROM unnest($1::text[], $2::text[], $3::text[], $4::int[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], $11::boolean[],
+                    $12::text[], $13::text[], $14::text[], $15::text[], $16::text[], $17::boolean[])
+          AS r(id, country, language, original_year, label, release_date, original_date, media, raw_urls, readable,
+               catalog_number, barcode, release_status, copyright, disc_subtitle, explicit)
         WHERE t.id = r.id`,
-      [results.map(r => r.id), results.map(r => r.country), results.map(r => r.language), results.map(r => r.originalYear), ORIGIN_READ_VERSION]);
+      [results.map(r => r.id), results.map(r => r.country), results.map(r => r.language), results.map(r => r.originalYear), ORIGIN_READ_VERSION,
+        results.map(r => r.label), results.map(r => r.releaseDate), results.map(r => r.originalDate), results.map(r => r.media),
+        results.map(r => (r.rawUrls.length ? JSON.stringify(r.rawUrls) : null)), results.map(r => r.readable),
+        results.map(r => r.catalogNumber), results.map(r => r.barcode), results.map(r => r.releaseStatus),
+        results.map(r => r.copyright), results.map(r => r.discSubtitle), results.map(r => r.explicit)]);
       read += rows.length;
-      if (read % 5000 < FILE_BATCH) log(`Read release country, language and original year from ${read} files`);
+      if (read % 5000 < FILE_BATCH) log(`Read release, origin and link tags from ${read} files`);
     }
-    if (read > 0) log(`Read release country, language and original year from ${read} files in ${Math.round((Date.now() - started) / 1000)} s`);
+    if (read > 0) log(`Read release, origin and link tags from ${read} files in ${Math.round((Date.now() - started) / 1000)} s`);
     const built = await rebuildTrackOrigin(db);
     if (read > 0) log(`Placed ${built} tracks`);
   })().catch(error => console.error('[TrackOrigin] File backfill failed:', error?.message || error))
@@ -201,11 +227,23 @@ export function stopFileOriginBackfill() {
   stopRequested = true;
 }
 
-interface FileOrigin { id: string; country: string | null; language: string | null; originalYear: number | null }
+interface FileOrigin extends ReleaseTags {
+  id: string;
+  /** False when the file couldn't be read: its stored values stay. */
+  readable: boolean;
+  country: string | null;
+  language: string | null;
+  originalYear: number | null;
+  rawUrls: Array<{ url: string; type: string }>;
+}
 
 async function readFileOrigin(row: { id: string; path: string }): Promise<FileOrigin> {
   const file = Buffer.from(row.path, 'base64').toString('utf8');
-  const none = { id: row.id, country: null, language: null, originalYear: null };
+  const none: FileOrigin = {
+    id: row.id, readable: false, country: null, language: null, originalYear: null,
+    label: null, releaseDate: null, originalDate: null, media: null, catalogNumber: null, barcode: null,
+    releaseStatus: null, copyright: null, discSubtitle: null, explicit: null, rawUrls: [],
+  };
   try {
     if (!fs.existsSync(file)) return none;
     // Loaded on first use: music-metadata is ESM-only.
@@ -214,9 +252,12 @@ async function readFileOrigin(row: { id: string; path: string }): Promise<FileOr
     const originalYear = Number(metadata.common.originalyear);
     return {
       id: row.id,
+      readable: true,
       country: metadata.common.releasecountry || null,
       language: firstTagValue(metadata.common.language) || null,
       originalYear: Number.isInteger(originalYear) && originalYear > 0 ? originalYear : null,
+      ...releaseTags(metadata),
+      rawUrls: extractUrlTags(metadata.native as Record<string, any[]>),
     };
   } catch {
     return none;

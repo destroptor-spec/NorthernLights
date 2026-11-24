@@ -40,6 +40,8 @@ export interface TadbAlbum {
   strAlbum?: string | null;
   strArtist?: string | null;
   strAlbumThumb?: string | null;
+  /** The disc itself, a transparent PNG. */
+  strAlbumCDart?: string | null;
   strMusicBrainzID?: string | null;
 }
 

@@ -6,6 +6,7 @@ import { usePlayerStore } from '../../store/index';
 import { AlbumArt } from '../AlbumArt';
 import { AlbumCoverDisc } from './AlbumCoverDisc';
 import { useApiV1EntityTracks } from '../../hooks/useApiV1TrackList';
+import { auroraApiRequest } from '../../api/auroraApi';
 import { parseArtistsForDisplay } from '../../utils/artistUtils';
 import { useKnownArtistKeys } from '../../hooks/useKnownArtistKeys';
 import { useContextMenuTrigger } from '../../hooks/useContextMenuTrigger';
@@ -14,6 +15,7 @@ import { scrollToAlbumTrackTarget } from '../../utils/albumTrackFocus';
 import { buildArtistLinkMap } from '../../utils/artistLinks';
 import { StyleProfileSection } from '../browse/StyleProfileSection';
 import { AlbumAboutSection } from './AlbumAboutSection';
+import { ExplicitBadge } from '../ExplicitBadge';
 import { BackButton } from './BackButton';
 import { useAlbumData } from '../../hooks/useAlbumData';
 import { LoveButton } from '../LoveButton';
@@ -26,6 +28,10 @@ import { NowPlayingBars } from '../now-playing/NowPlayingBars';
 import { MoreHorizontal, Play, Clock, ExternalLink, Headphones, BarChart2, Link2, Music2, Calendar, Gauge, Disc3, X, Search, Plus, Users, Layers, Settings } from 'lucide-react';
 import type { AlbumInfo, TrackCredit } from '../../store/index';
 import { readAlbumHeroState, type AlbumHeroState } from '../../utils/heroState';
+import { getLinkLabel, isArtistPageUrl } from '../../utils/linkLabels';
+import type { AlbumDetail as AlbumDetailResponse, AlbumRecordingPlaces } from '../../../shared/api/v1';
+
+type AlbumDetailMeta = Omit<AlbumDetailResponse, 'tracks'>;
 
 interface EditionRow extends AlbumInfo {
     track_count?: number;
@@ -57,24 +63,6 @@ function formatCount(raw: string | undefined): string | null {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
     if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
     return n.toLocaleString();
-}
-
-function getLinkLabel(url: string, type: string): string {
-    const u = url.toLowerCase();
-    if (u.includes('spotify.com')) return 'Spotify';
-    if (u.includes('youtube.com') || u.includes('youtu.be')) return 'YouTube';
-    if (u.includes('bandcamp.com')) return 'Bandcamp';
-    if (u.includes('soundcloud.com')) return 'SoundCloud';
-    if (u.includes('discogs.com')) return 'Discogs';
-    if (u.includes('allmusic.com')) return 'AllMusic';
-    if (u.includes('wikipedia.org')) return 'Wikipedia';
-    if (u.includes('last.fm') || u.includes('lastfm.')) return 'Last.fm';
-    if (u.includes('apple.com') || u.includes('music.apple')) return 'Apple Music';
-    if (u.includes('tidal.com')) return 'Tidal';
-    if (u.includes('deezer.com')) return 'Deezer';
-    if (u.includes('musicbrainz.org')) return 'MusicBrainz';
-    if (type === 'official homepage' || type === 'official audio source') return 'Official Site';
-    return type || 'Link';
 }
 
 // ─── Skeleton ────────────────────────────────────────────────────────────────
@@ -176,9 +164,14 @@ const INLINE_ROLE_ORDER = ['remixer', 'composer', 'producer', 'conductor', 'lyri
 type InlineRole = typeof INLINE_ROLE_ORDER[number];
 const INLINE_ROLE_SET = new Set<string>(INLINE_ROLE_ORDER);
 
-const AlbumDiscHeader = memo(({ disc }: { disc: number }) => (
-    <div className="px-2 md:px-4 pt-4 pb-1 text-xs font-semibold uppercase tracking-widest text-[var(--color-primary)] border-b border-black/5 dark:border-white/10 mb-1">
-        Disc {disc}
+// A disc with its own title (as its files tag it: "B-Sides & Bonus Tracks")
+// shows that instead of "Disc 2"; screen readers still hear the number.
+const AlbumDiscHeader = memo(({ disc, subtitle }: { disc: number; subtitle?: string }) => (
+    <div
+        className="px-2 md:px-4 pt-4 pb-1 text-xs font-semibold uppercase tracking-widest text-[var(--color-primary)] border-b border-black/5 dark:border-white/10 mb-1 truncate"
+        title={subtitle ? `Disc ${disc}` : undefined}
+    >
+        {subtitle ? <><span className="sr-only">Disc {disc}: </span>{subtitle}</> : `Disc ${disc}`}
     </div>
 ));
 
@@ -231,7 +224,10 @@ const AlbumTrackRow = memo(({
                 )}
             </div>
             <div className="font-medium truncate text-[var(--color-text-primary)] group-hover:text-[var(--color-primary)] transition-colors min-w-0">
-                <span className="block truncate text-sm md:text-base">{track.title || track.path.split(/[\/\\]/).pop()}</span>
+                <span className="flex items-center gap-1.5 min-w-0">
+                    <span className="truncate text-sm md:text-base">{track.title || track.path.split(/[\/\\]/).pop()}</span>
+                    {track.explicit && <ExplicitBadge />}
+                </span>
                 {(artistNames.length > 0 || (inlineCredits && inlineCredits.length > 0)) && (
                     <span className="block text-xs text-[var(--color-text-muted)] mt-0.5 truncate">
                         {artistNames.map((a, j) => {
@@ -525,8 +521,26 @@ export const AlbumDetail: React.FC = () => {
 
     // Album tracks come from the per-album endpoint instead of filtering the
     // in-memory library, so the album view no longer depends on the full track set.
-    const { tracks: albumTracks, loading: albumTracksLoading } = useApiV1EntityTracks(
+    const { tracks: albumTracks, meta: albumMeta, loading: albumTracksLoading } = useApiV1EntityTracks<AlbumDetailMeta>(
         albumId ? `/albums/${encodeURIComponent(albumId)}` : null,
+    );
+    // The release as its files tag it (label, dates, medium), for At a glance and the disc.
+    const release = albumMeta?.details?.release ?? null;
+    // Where it was recorded: its own request after the page has loaded (the
+    // first per album asks MusicBrainz, about a second); nothing shown until then.
+    const [recordedAt, setRecordedAt] = useState<AlbumRecordingPlaces['places']>(null);
+    useEffect(() => {
+        setRecordedAt(null);
+        if (!albumId) return;
+        let live = true;
+        auroraApiRequest<AlbumRecordingPlaces>(`/albums/${encodeURIComponent(albumId)}/recording-places`, usePlayerStore.getState().getAuthHeader())
+            .then(result => { if (live) setRecordedAt(result?.places ?? null); })
+            .catch(() => {});
+        return () => { live = false; };
+    }, [albumId]);
+    const discSubtitles = useMemo(
+        () => new Map((release?.discSubtitles ?? []).map(d => [d.disc, d.subtitle] as const)),
+        [release],
     );
     const albums = usePlayerStore(state => state.albums);
     const artists = usePlayerStore(state => state.artists);
@@ -861,13 +875,15 @@ export const AlbumDetail: React.FC = () => {
         enabled: !!(primaryAlbumTitle && primaryArtist),
     });
 
-    // Aggregate file-embedded URLs from all tracks, deduplicated
+    // Aggregate file-embedded URLs from all tracks, deduplicated, release links only
     const fileLinks = useMemo(() => {
         const seen = new Set<string>();
         const result: { url: string; type: string }[] = [];
         for (const t of sortedTracks) {
             for (const link of (t.rawUrls || [])) {
-                if (!seen.has(link.url)) {
+                // Files link to the artist as well as the release; the
+                // artist's links belong on the artist page.
+                if (!seen.has(link.url) && !isArtistPageUrl(link.url)) {
                     seen.add(link.url);
                     result.push(link);
                 }
@@ -901,7 +917,7 @@ export const AlbumDetail: React.FC = () => {
             <div className="shrink-0 mb-6"><BackButton onClick={() => navigate(-1)} /></div>
 
             <div className="shrink-0 flex flex-col md:flex-row gap-6 md:gap-8 mb-8 md:mb-12 items-center md:items-end text-center md:text-left">
-                <AlbumCoverDisc albumId={albumId} artUrl={artUrl} artist={albumArtist} album={albumTitle}>
+                <AlbumCoverDisc albumId={albumId} artUrl={artUrl} artist={albumArtist} album={albumTitle} media={release?.media}>
                     {/* Playing this album: the chip sits on the cover's bottom-left corner. */}
                     {isAlbumPlaying && playbackState !== 'stopped' && (
                         <NowPlayingBadge state={playbackState === 'playing' ? 'playing' : 'paused'} className="np-badge--on-art" />
@@ -1221,7 +1237,7 @@ export const AlbumDetail: React.FC = () => {
                                         }}
                                     >
                                         {row.type === 'disc' ? (
-                                            <AlbumDiscHeader disc={row.disc} />
+                                            <AlbumDiscHeader disc={row.disc} subtitle={discSubtitles.get(row.disc)} />
                                         ) : (
                                             <AlbumTrackRow
                                                 track={row.track}
@@ -1241,7 +1257,7 @@ export const AlbumDetail: React.FC = () => {
                         </div>
                     ) : (
                         albumListRows.map((row) => row.type === 'disc' ? (
-                            <AlbumDiscHeader key={`disc-${row.disc}`} disc={row.disc} />
+                            <AlbumDiscHeader key={`disc-${row.disc}`} disc={row.disc} subtitle={discSubtitles.get(row.disc)} />
                         ) : (
                             <AlbumTrackRow
                                 key={row.track.id}
@@ -1258,7 +1274,9 @@ export const AlbumDetail: React.FC = () => {
                         ))
                     )}
                     {/* At the foot of the list, which is the page's scroller:
-                        reached by scrolling past the last track. */}
+                        reached by scrolling past the last track. The ℗ line
+                        first, as on a record's back. */}
+                    {release?.copyright && <p className="album-copyright">{release.copyright}</p>}
                     <StyleProfileSection kind="album" id={albumId} name={albumTitle} className="mt-10" />
                     <AlbumAboutSection
                         title={albumTitle}
@@ -1269,6 +1287,8 @@ export const AlbumDetail: React.FC = () => {
                         description={lfmDescription}
                         genres={allGenres}
                         tags={lfmTags}
+                        release={release}
+                        recordedAt={recordedAt}
                         className="mt-10"
                     />
                 </div>

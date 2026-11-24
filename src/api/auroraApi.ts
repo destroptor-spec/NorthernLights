@@ -158,6 +158,7 @@ export function toLegacyTrack(track: Track, mediaToken: string, quality: string)
     bitrate: track.bitrate || undefined,
     format: track.format || undefined,
     lossless: track.lossless,
+    explicit: track.explicit ?? undefined,
     artistId: track.artistId || undefined,
     albumId: track.albumId || undefined,
     genreId: track.genreId || undefined,
