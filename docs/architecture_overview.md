@@ -146,11 +146,11 @@ When reranking collapses despite healthy admissible candidates, the engine falls
 
 ## 6. Hub Lifecycle
 
-- `GET /api/hub`
+- `GET /api/v1/hub`
   - Fetch existing saved Hub playlists
-- `POST /api/hub/regenerate`
+- `POST /api/v1/hub/regenerate`
   - Generate fresh concepts and playlists
-- `POST /api/hub/generate-custom`
+- `POST /api/v1/hub/custom`
   - Build a playlist from a single natural-language prompt
 
 Each generated playlist now emits diagnostics including:

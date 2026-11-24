@@ -95,14 +95,14 @@ Hub generation is intentionally split into **fetch** and **regenerate**.
 
 ### 4.1 Fetch
 
-- `GET /api/hub`
+- `GET /api/v1/hub`
 - Reads existing saved LLM playlists for the user.
 - Does not call the LLM.
 - Does not rebuild playlists on demand.
 
 ### 4.2 Regenerate
 
-- `POST /api/hub/regenerate`
+- `POST /api/v1/hub/regenerate`
 - Deletes stale LLM playlists for the requesting user.
 - Reads recent listening history to provide time-of-day context and short-term taste context to the LLM.
 - Loads the current LLM tuning settings for the user.

@@ -132,4 +132,4 @@ Unchanged. `persistSmart()` in `smartHub.service.ts` writes the result to `playl
 
 - `server/services/candidatePool.service.ts` — shared primitive.
 - `server/services/smartHub.service.ts` — `generateArtistRadioFresh`, `computeDaylistFresh`, plus the surrounding cache / TTL / LLM-concept glue.
-- `server/routes/hub.routes.ts` — `POST /api/hub/artist-radio`, `GET /api/hub/daylist`, `GET /api/hub/smart`.
+- `server/routes/apiV1.routes.ts` — `POST /api/v1/hub/artist-radio` (and its `/eligibility`), `GET /api/v1/hub/smart` (the daylist is part of the smart Hub).

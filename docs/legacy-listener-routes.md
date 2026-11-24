@@ -21,7 +21,6 @@ The line names the route as declared (never the ids in the URL), the last status
 
 | Route | Use instead |
 | --- | --- |
-| Every route under `/api/hub` (10) | `/api/v1/hub`, `/api/v1/hub/smart`, `/api/v1/hub/regenerate`, `/api/v1/hub/custom`, `/api/v1/hub/artist-radio` and its `/eligibility` |
 | Every route under `/api/playlists` (11) | the `/api/v1/playlists` routes |
 | `POST /api/playback/history`, `/record`, `/skip` | `POST /api/v1/playback/reports` |
 | `POST /api/recommend` | `POST /api/v1/recommendations/next` |
@@ -36,6 +35,14 @@ The line names the route as declared (never the ids in the URL), the last status
 | `GET /api/providers/listenbrainz/status` | nothing; Settings → Scrobbling has its own status |
 
 The other routes in `artists`, `albums`, `genres`, `library` and `providers` (similar artists, credits, editions, merges, the genre taxonomy, connecting and testing providers) are still used by the web app and are not marked.
+
+## Removed
+
+The week of 17–24 Nov 2026 logged no calls to any of the 41 routes (`production.log` covered the whole week, from 15 Nov, and held 1,397 other warnings). They're removed one route file at a time:
+
+| Removed | Routes | Use instead |
+| --- | --- | --- |
+| 24 Nov 2026 | Every route under `/api/hub` (10) | `/api/v1/hub`, `/api/v1/hub/smart`, `/api/v1/hub/regenerate`, `/api/v1/hub/custom`, `/api/v1/hub/artist-radio` and its `/eligibility` |
 
 ## Checking
 
