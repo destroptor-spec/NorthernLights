@@ -1,8 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { usePlayerStore } from '../store';
-import { MapPin, Calendar, ArrowRight, Headphones, AlertTriangle } from 'lucide-react';
+import { MapPin, Calendar, ArrowRight, Headphones, AlertTriangle, Play } from 'lucide-react';
 import { HorizontalScrollRail } from './HorizontalScrollRail';
+import { auroraApiRequest, type Track } from '../api/auroraApi';
+import { toPlayableTracks } from '../utils/playableTracks';
+import { shuffled } from '../utils/shuffle';
+import { eventProximity } from '../utils/eventProximity';
 
 type HubEvent = {
     jambase_event_id: string;
@@ -79,14 +83,69 @@ interface TicketCardProps {
     event: HubEvent;
 }
 
+/**
+ * Warm up: the artist's own tracks from the library, shuffled, so the listener
+ * can play them before the show. On the ticket's stub; revealed on hover where
+ * there is a pointer, always there on touch screens (`.concert-warmup`).
+ */
+export const WarmUpButton: React.FC<{ artistId: string; artistName: string }> = ({ artistId, artistName }) => {
+    const setPlaylist = usePlayerStore(s => s.setPlaylist);
+    const addToast = usePlayerStore(s => s.addToast);
+    const [loading, setLoading] = useState(false);
+
+    const warmUp = async () => {
+        if (loading) return;
+        setLoading(true);
+        try {
+            const data = await auroraApiRequest<{ tracks: Track[] }>(
+                `/artists/${encodeURIComponent(artistId)}`, usePlayerStore.getState().getAuthHeader(),
+            );
+            const all = toPlayableTracks(data?.tracks ?? []);
+            // Their own tracks: the endpoint also returns DJ-mix tracks they only appear on.
+            const own = all.filter(track => track.artistId === artistId);
+            const tracks = shuffled(own.length ? own : all);
+            if (tracks.length === 0) {
+                addToast(`No tracks by ${artistName} in your library`, 'info');
+                return;
+            }
+            await setPlaylist(tracks, 0, { kind: 'artist', id: artistId, name: `${artistName} warm-up` });
+        } catch {
+            addToast(`Could not play ${artistName}`, 'error', { actionLabel: 'Retry', onAction: () => void warmUp() });
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <button
+            type="button"
+            className="btn-fab concert-warmup"
+            onClick={warmUp}
+            aria-label={`Warm up: shuffle ${artistName} from your library`}
+            title={`Warm up: shuffle ${artistName}`}
+            aria-busy={loading || undefined}
+        >
+            {loading
+                ? <span className="h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                : <Play className="h-4 w-4 ml-0.5" fill="currentColor" aria-hidden="true" />}
+        </button>
+    );
+};
+
 const TicketCard: React.FC<TicketCardProps> = ({ event }) => {
     const { weekday, date, time } = formatEventDate(event.event_date, event.event_datetime);
     const price = formatPrice(event.price_min, event.price_max, event.price_currency);
     const venue = venueLine(event);
+    // "tonight", "tomorrow", "this saturday", "in 9 days"; nothing further out.
+    const soon = eventProximity(event.event_date, event.event_datetime);
+    const imminent = soon === 'tonight' || soon === 'today' || soon === 'tomorrow';
+    // "this saturday" and the first three name the day already.
+    const showWeekday = !soon || soon.startsWith('in ');
 
     return (
         <article
             className="
+                concert-ticket
                 relative flex-shrink-0 snap-start
                 w-[85vw] max-w-[380px] sm:w-[340px] md:w-[380px]
                 bg-[var(--color-surface)]
@@ -95,7 +154,7 @@ const TicketCard: React.FC<TicketCardProps> = ({ event }) => {
                 transition-all duration-200
                 hover:-translate-y-0.5
             "
-            aria-label={`${event.artist_name} on ${weekday} ${date} at ${event.venue_name || 'venue'}`}
+            aria-label={`${event.artist_name}${soon ? `, ${soon},` : ''} on ${weekday} ${date} at ${event.venue_name || 'venue'}`}
         >
             {/* Subtle warm wash to distinguish from regular cards — ticket vibe */}
             <div
@@ -108,31 +167,34 @@ const TicketCard: React.FC<TicketCardProps> = ({ event }) => {
             />
 
             <div className="relative flex">
-                {/* Stub: artist image */}
-                <Link
-                    to={`/library/artist/${event.artist_id}`}
-                    className="relative shrink-0 w-24 sm:w-28 group"
-                    aria-label={`Open ${event.artist_name}`}
-                >
-                    <div className="absolute inset-0 bg-background" />
-                    {event.artist_image_url ? (
-                        <img
-                            src={event.artist_image_url}
-                            alt=""
-                            loading="lazy"
-                            className="relative w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                {/* Stub: artist image, with Warm up beside the link (a button can't sit inside one) */}
+                <div className="relative shrink-0 w-24 sm:w-28">
+                    <Link
+                        to={`/library/artist/${event.artist_id}`}
+                        className="group relative block h-full w-full"
+                        aria-label={`Open ${event.artist_name}`}
+                    >
+                        <div className="absolute inset-0 bg-[var(--color-surface-variant)]" />
+                        {event.artist_image_url ? (
+                            <img
+                                src={event.artist_image_url}
+                                alt=""
+                                loading="lazy"
+                                className="relative w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                            />
+                        ) : (
+                            <div className="relative w-full h-full flex items-center justify-center text-[var(--color-text-muted)]">
+                                <Headphones size={28} />
+                            </div>
+                        )}
+                        {/* Subtle dimming gradient at the perforation edge for depth */}
+                        <div
+                            className="absolute inset-y-0 right-0 w-4 bg-gradient-to-r from-transparent to-black/[0.05] dark:to-white/[0.04]"
+                            aria-hidden="true"
                         />
-                    ) : (
-                        <div className="relative w-full h-full flex items-center justify-center text-[var(--color-text-muted)]">
-                            <Headphones size={28} />
-                        </div>
-                    )}
-                    {/* Subtle dimming gradient at the perforation edge for depth */}
-                    <div
-                        className="absolute inset-y-0 right-0 w-4 bg-gradient-to-r from-transparent to-black/[0.05] dark:to-white/[0.04]"
-                        aria-hidden="true"
-                    />
-                </Link>
+                    </Link>
+                    <WarmUpButton artistId={event.artist_id} artistName={event.artist_name} />
+                </div>
 
                 {/* Perforation between stub and body */}
                 <div className="shrink-0 self-stretch border-l border-dashed border-[var(--glass-border)]" aria-hidden="true" />
@@ -142,10 +204,18 @@ const TicketCard: React.FC<TicketCardProps> = ({ event }) => {
                 <div className="flex-1 min-w-0 p-4 flex flex-col gap-2">
                     <div className="flex items-baseline gap-2">
                         <Calendar size={14} className="text-[var(--color-primary)] flex-shrink-0 self-center" />
-                        <div className="flex items-baseline gap-1.5 min-w-0">
-                            <span className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] tabular-nums">
-                                {weekday}
-                            </span>
+                        <div className="flex flex-wrap items-baseline gap-x-1.5 min-w-0">
+                            {soon && (
+                                <span className={`concert-soon whitespace-nowrap text-xs font-semibold ${imminent ? 'text-[var(--color-primary-fill)]' : 'text-[var(--color-text-secondary)]'}`}>
+                                    {soon}
+                                </span>
+                            )}
+                            {soon && <span className="text-xs text-[var(--color-text-muted)]" aria-hidden="true">·</span>}
+                            {showWeekday && (
+                                <span className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] tabular-nums">
+                                    {weekday}
+                                </span>
+                            )}
                             <span className="text-sm font-bold text-[var(--color-text-primary)] tabular-nums">
                                 {date}
                             </span>
