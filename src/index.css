@@ -3620,24 +3620,20 @@ html.reduced-motion .rays-rise .rays-bar__fill {
   font-size: 0.75rem;
 }
 
-/* Phones: as the style rows, each meter is its bar. The groove fills the
-   row, the fill grows behind the label and the two ends, translucent enough
-   to read through. */
+/* Phones: as the style rows, the bar fills its row, with the two ends inside
+   it over a translucent fill; the meter's name stays above the bar. The bar
+   and the ends share one grid cell, so no positioning is needed. */
 @media (max-width: 520px) {
-  .rays-sound { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .rays-sound { grid-template-columns: minmax(0, 1fr); gap: 0.75rem; }
   .rays-meter {
-    position: relative;
-    isolation: isolate;
-    gap: 0.15rem;
-    padding: 0.55rem 0.75rem;
-    border-radius: var(--radius-sm);
-    overflow: hidden;
+    grid-template-areas: "label" "bar";
+    gap: 0.35rem;
   }
+  .rays-meter__label { grid-area: label; }
   .rays-meter__bar {
-    position: absolute;
-    inset: 0;
-    z-index: -1;
+    grid-area: bar;
     height: auto;
+    min-height: 2.25rem;
     border-radius: var(--radius-sm);
     background: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
   }
@@ -3645,7 +3641,13 @@ html.reduced-motion .rays-rise .rays-bar__fill {
     border-radius: 0;
     opacity: 0.38;
   }
-  .rays-meter__label { color: var(--color-text-primary); }
+  .rays-meter__ends {
+    grid-area: bar;
+    align-self: center;
+    position: relative;
+    padding: 0 0.75rem;
+    pointer-events: none;
+  }
 }
 .rays-fact {
   margin: 1.25rem 0 0;
