@@ -536,6 +536,8 @@ const TrackRaysContent = ({ trackId }: { trackId: string }) => {
               <span className="rays-hero__glow" aria-hidden="true" />
               <div className="rays-hero__cover">
                 <AlbumArt artUrl={cover} album={rays.album?.title || track.album} artist={track.artist} size={400} className="w-full h-full object-cover" />
+                {/* Playing this track: the chip sits on the cover's bottom-left corner, as on the album page. */}
+                {isCurrent && <NowPlayingBadge state={isPlayingHere ? 'playing' : 'paused'} className="np-badge--on-art" />}
               </div>
             </div>
             <div className="rays-hero__text">
@@ -559,7 +561,6 @@ const TrackRaysContent = ({ trackId }: { trackId: string }) => {
                     ? <><Pause size={16} fill="currentColor" aria-hidden="true" /> Pause</>
                     : <><Play size={16} fill="currentColor" aria-hidden="true" /> {isCurrent ? 'Resume' : 'Play'}</>}
                 </button>
-                {isCurrent && <NowPlayingBadge state={isPlayingHere ? 'playing' : 'paused'} />}
               </div>
             </div>
           </header>
