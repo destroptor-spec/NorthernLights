@@ -74,7 +74,7 @@ const SelectBox: React.FC<{ state: 'on' | 'partial' | 'off' }> = ({ state }) => 
   <span
     className={`w-4 h-4 rounded-md border flex items-center justify-center flex-shrink-0 transition-colors ${
       state === 'on'
-        ? 'bg-[var(--color-primary)] border-[var(--color-primary)] text-white'
+        ? 'bg-[var(--color-primary-fill)] border-[var(--color-primary-fill)] text-[var(--color-on-primary)]'
         : state === 'partial'
           ? 'border-[var(--color-primary)] text-[var(--color-primary)]'
           : 'border-[var(--glass-border)]'

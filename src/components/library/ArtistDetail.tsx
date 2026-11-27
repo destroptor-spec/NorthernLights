@@ -1067,9 +1067,9 @@ const ArtistPage = ({ artistId }: { artistId?: string }) => {
                                     key={r.role}
                                     type="button"
                                     onClick={() => setSelectedRole(r.role)}
-                                    className={`text-[10px] font-bold uppercase tracking-[0.15em] px-2.5 py-1 rounded-full backdrop-blur-sm border transition-ui ${
+                                    className={`text-[11px] font-bold uppercase tracking-[0.15em] px-2.5 py-1 rounded-full backdrop-blur-sm border transition-ui ${
                                         isActive
-                                            ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
+                                            ? 'bg-[var(--color-primary-fill)] text-[var(--color-on-primary)] border-[var(--color-primary-fill)]'
                                             : 'bg-black/5 dark:bg-white/5 text-[var(--color-text-secondary)] border-[var(--glass-border)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]'
                                     }`}
                                     aria-pressed={isActive}

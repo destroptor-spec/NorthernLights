@@ -317,7 +317,7 @@ const FacetOptionRow: React.FC<{
     <span
       className={`w-4 h-4 rounded-md border flex items-center justify-center flex-shrink-0 transition-colors ${
         selected
-          ? 'bg-[var(--color-primary)] border-[var(--color-primary)] text-white'
+          ? 'bg-[var(--color-primary-fill)] border-[var(--color-primary-fill)] text-[var(--color-on-primary)]'
           : 'border-[var(--glass-border)]'
       }`}
     >

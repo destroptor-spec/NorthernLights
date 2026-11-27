@@ -197,8 +197,8 @@ const TicketCard: React.FC<TicketCardProps> = ({ event }) => {
                                     inline-flex items-center gap-1.5
                                     min-h-[36px] px-3 py-1.5
                                     text-xs font-semibold uppercase tracking-wider
-                                    text-white bg-[var(--color-primary)]
-                                    hover:bg-[var(--color-primary-dark)]
+                                    text-[var(--color-on-primary)] bg-[var(--color-primary-fill)]
+                                    hover:brightness-110
                                     rounded-full
                                     shadow-sm
                                     transition-colors

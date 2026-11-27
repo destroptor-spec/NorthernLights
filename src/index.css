@@ -21,6 +21,11 @@
   --color-surface-variant: rgba(255, 255, 255, 0.8);
   --color-primary: #059669; /* Emerald 600 - Readable on light */
   --color-primary-dark: #047857; 
+  /* A filled emerald surface (active chip, checked box, Play) and what sits on
+     it: white on the deeper green here, night on the bright green in dark.
+     Both meet WCAG AA (5.5:1, 9.6:1); white on --color-primary does not. */
+  --color-primary-fill: #047857;
+  --color-on-primary: #fff;
   --color-secondary: #E5E5EA; /* Light grey */
   --color-text-primary: #1C1C1E; /* Almost black */
   --color-text-secondary: #3a3a48;
@@ -180,6 +185,8 @@
   --color-surface-variant: rgba(14, 11, 32, 0.5);
   --color-primary: #22C983; /* Oxygen Green */
   --color-primary-dark: #10B981;
+  --color-primary-fill: #22C983;
+  --color-on-primary: #030208;
   --color-secondary: #0ea5e9; /* Sky Blue */
   --color-text-primary: #d8d8e8;
   --color-text-secondary: #c6c6da;
@@ -577,17 +584,13 @@ button :where(span),
    (white on #22c983 was 2.2:1). Combine with .btn: `btn btn-play`. */
 .btn-play,
 .dark .btn-play {
-  background: var(--color-primary-dark);
+  background: var(--color-primary-fill);
   border-color: transparent;
-  color: #fff;
+  color: var(--color-on-primary);
   border-radius: var(--radius-pill);
   padding: 14px 32px;
   text-transform: uppercase;
   box-shadow: var(--aurora-play-glow);
-}
-.dark .btn-play {
-  background: var(--color-primary);
-  color: var(--color-background);
 }
 /* Hover stays at AA: darker under white (light), the deeper green (dark). */
 .btn-play:hover:not(:disabled) {
