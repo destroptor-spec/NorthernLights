@@ -1057,10 +1057,12 @@ export const Hub: React.FC = () => {
       };
       navigate(`/playlists/${tile.id}`, { state: hero });
     } else if (tile.type === 'artist') {
+      // The tile may fall back to album art; the artist page's portrait takes
+      // only a real artist picture.
       const hero: ArtistHeroState = {
         kind: 'artist',
         name: tile.title,
-        imageUrl: tileImage || undefined,
+        imageUrl: tile.imageUrl || artists.find((a) => a.id === tile.id)?.image_url || undefined,
         backLabel: 'Back to Hub',
       };
       navigate(`/library/artist/${tile.id}`, { state: hero });
@@ -1318,10 +1320,10 @@ export const Hub: React.FC = () => {
             };
             navigate(`/library/album/${track.albumId}`, { state: hero });
           } else if (track.artistId) {
+            // No imageUrl: the track's art is an album cover, not the artist.
             const hero: ArtistHeroState = {
               kind: 'artist',
               name: track.artist || undefined,
-              imageUrl: track.artUrl || undefined,
               backLabel: 'Back to Hub',
             };
             navigate(`/library/artist/${track.artistId}`, { state: hero });

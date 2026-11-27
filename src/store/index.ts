@@ -230,6 +230,9 @@ const settingsBaseline = (state: PlayerState) => ({
 let savedSettings: ReturnType<typeof settingsBaseline>;
 let settingsSaveQueue: Promise<void> = Promise.resolve();
 let settingsLoadGeneration = 0;
+// Bumped when a settings save starts and again when it ends. A load whose GET
+// overlapped a save may hold values from before it, so it reads again.
+let settingsSaveCount = 0;
 
 // In-flight dedup + cancellation for the library/playlist fetches. The init
 // sequence and the 10s health poller both fire these unawaited; without dedup a
@@ -2064,15 +2067,23 @@ export const usePlayerStore = create<PlayerState>()(
 
         loadSettings: async () => {
           const generation = ++settingsLoadGeneration;
-          const initial = get();
+          const token = get().authToken;
+          // Only the newest load for this sign-in applies its result.
+          const superseded = () => generation !== settingsLoadGeneration || token !== get().authToken;
           try {
-            await settingsSaveQueue;
-            if (generation !== settingsLoadGeneration || initial.authToken !== get().authToken) return;
-            const authHeaders = get().getAuthHeader();
-            const res = await fetch('/api/settings', { headers: authHeaders });
-            if (res.ok) {
+            for (let attempt = 0; ; attempt++) {
+              await settingsSaveQueue;
+              if (superseded()) return;
+              const initial = get();
+              const saves = settingsSaveCount;
+              const authHeaders = get().getAuthHeader();
+              const res = await fetch('/api/settings', { headers: authHeaders });
+              if (!res.ok) return;
               const data = await res.json();
-              if (generation !== settingsLoadGeneration || initial.authToken !== get().authToken) return;
+              if (superseded()) return;
+              // A save overlapped the GET: read again rather than apply values
+              // from before it (or drop the load). After three tries, apply.
+              if (saves !== settingsSaveCount && attempt < 2) continue;
               const loaded = {
                 discoveryLevel: data.discoveryLevel !== undefined ? data.discoveryLevel : 50,
                 genreStrictness: data.genreStrictness !== undefined ? data.genreStrictness : 50,
@@ -2176,6 +2187,7 @@ export const usePlayerStore = create<PlayerState>()(
                   set({ llmConnected: false });
                 }
               }
+              return;
             }
           } catch (e) {
             console.error('Failed to load DB settings', e);
@@ -2220,11 +2232,16 @@ export const usePlayerStore = create<PlayerState>()(
               .filter(key => JSON.stringify(state[key]) !== baseline.values[key])
               .map(key => [key, state[key]]));
             if (!Object.keys(patch).length) return;
-            ++settingsLoadGeneration;
-            const res = await fetch('/api/settings', {
-              method: 'POST', headers: { 'Content-Type': 'application/json', ...state.getAuthHeader() },
-              body: JSON.stringify(patch),
-            });
+            ++settingsSaveCount;
+            let res: Response;
+            try {
+              res = await fetch('/api/settings', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', ...state.getAuthHeader() },
+                body: JSON.stringify(patch),
+              });
+            } finally {
+              ++settingsSaveCount;
+            }
             if (!res.ok) throw new Error(await getResponseError(res, 'Could not save settings'));
             if (get().authToken !== token || savedSettings?.token !== token) return;
             for (const key of Object.keys(patch)) savedSettings.values[key] = JSON.stringify(patch[key]);

@@ -644,14 +644,14 @@ describe('where an album was recorded', () => {
 describe('shared Last.fm ranking', () => {
   const tracks = [{ name: 'First' }];
   it('reads a fresh database entry without a provider request', async () => {
-    const query = jest.fn().mockResolvedValue({ rows: [{ api_key: 'test-key', revision: '42', tracks, fetched_at: new Date() }] });
+    const query = jest.fn().mockResolvedValue({ rows: [{ value: '"test-key"', revision: '42', tracks, fetched_at: new Date() }] });
     jest.mocked(initDB).mockResolvedValue({ query } as never);
     expect(await getArtistTopTracks('Artist')).toEqual(tracks);
     expect(lastFmArtistTopTracks).not.toHaveBeenCalled();
   });
 
   it('serves expired data during a single refresh and retains it on provider failure', async () => {
-    const query = jest.fn().mockResolvedValue({ rows: [{ api_key: 'test-key', revision: '42', tracks, fetched_at: new Date(0) }] });
+    const query = jest.fn().mockResolvedValue({ rows: [{ value: '"test-key"', revision: '42', tracks, fetched_at: new Date(0) }] });
     jest.mocked(initDB).mockResolvedValue({ query } as never);
     let fail!: (reason: Error) => void;
     jest.mocked(lastFmArtistTopTracks).mockReturnValue(new Promise((_, reject) => { fail = reject; }));
@@ -662,5 +662,21 @@ describe('shared Last.fm ranking', () => {
     expect(await getArtistTopTracks('Same')).toEqual(tracks);
     expect(lastFmArtistTopTracks).toHaveBeenCalledTimes(1);
     expect(query.mock.calls.every(([sql]) => sql.startsWith('SELECT'))).toBe(true);
+  });
+
+  it('reads a stored key that is not JSON as unset instead of failing', async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [{ value: 'not json', revision: '42', tracks: null, fetched_at: null }] });
+    jest.mocked(initDB).mockResolvedValue({ query } as never);
+    expect(await getArtistTopTracks('Artist')).toEqual([]);
+    expect(lastFmArtistTopTracks).not.toHaveBeenCalled();
+  });
+
+  it('reports its own back-off as a rate limit when nothing is cached', async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [{ value: '"test-key"', revision: '43', tracks: null, fetched_at: null }] });
+    jest.mocked(initDB).mockResolvedValue({ query } as never);
+    jest.mocked(lastFmArtistTopTracks).mockRejectedValueOnce(new Error('provider offline'));
+    await expect(getArtistTopTracks('Backoff')).rejects.toThrow('provider offline');
+    await expect(getArtistTopTracks('Backoff')).rejects.toBeInstanceOf(RateLimitError);
+    expect(lastFmArtistTopTracks).toHaveBeenCalledTimes(1);
   });
 });

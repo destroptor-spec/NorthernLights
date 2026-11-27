@@ -311,14 +311,17 @@ const ArtistPage = ({ artistId }: { artistId?: string }) => {
     }, [artistTracks, library, artistId]);
 
     const { imageUrl: providerImageUrl, artworkUrl, bio, disambiguation, area, type, lifeSpan, links, genres, communityTags, listeners, members, isLoading: artistLoading } = useArtistData(artistName, mbArtistId);
+    // Callers only pass a real artist portrait as the hero image (never album
+    // art), so it can stand in until, or instead of, the provider's.
     const imageUrl = providerImageUrl || heroState?.imageUrl;
     const { onTour, events: upcomingEvents, loading: concertsLoading, stale: concertsStale } = useArtistConcerts(artistId);
     const { videos: musicVideos, loading: musicVideosLoading, stale: musicVideosStale } = useArtistMusicVideos(artistId);
     const lastFmAvailable = usePlayerStore(s => s.currentUser?.role === 'admin' ? !!s.lastFmApiKey : s.hasLastFmKey);
     const videosAvailable = usePlayerStore(s => s.youtubeEnabled && (s.currentUser?.role === 'admin' ? !!s.youtubeApiKey.trim() : s.hasYouTubeKey));
     const showsAvailable = usePlayerStore(s => s.jambaseEnabled && s.hasJamBaseKey);
-    const topTrackArtist = artistName || heroState?.name || '';
-    const { tracks: externalTopTracks, isLoading: topTracksLoading } = useArtistTopTracks(topTrackArtist, {
+    // Ask Last.fm only for the resolved name: a hero name can be a whole credit
+    // ("A feat. B"), which would cost a wasted call on the free budget.
+    const { tracks: externalTopTracks, isLoading: topTracksLoading } = useArtistTopTracks(artistName || '', {
         enabled: lastFmAvailable !== false,
         limit: 30,
     });
@@ -778,8 +781,8 @@ const ArtistPage = ({ artistId }: { artistId?: string }) => {
     const hasAnyContent = primaryTracks.length > 0 || collaborationTracks.length > 0 || featuredTracks.length > 0
         || (artistMeta?.ownedAlbums?.length || 0) > 0 || hasCreditContent;
 
-    const popularLoading = lastFmAvailable && topTrackArtist !== 'Unknown Artist' && (
-        !topTrackArtist || topTracksLoading || (artistTracksLoading && externalTopTracks.length > 0)
+    const popularLoading = lastFmAvailable && (artistName || heroState?.name) !== 'Unknown Artist' && (
+        !artistName || topTracksLoading || (artistTracksLoading && externalTopTracks.length > 0)
     );
     // Disabled providers can still return saved shows and videos. Only reserve
     // their rail in advance when live lookup is available.

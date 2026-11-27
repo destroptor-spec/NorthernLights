@@ -528,22 +528,28 @@ export async function getArtistTopTracks(name: string, limit: number = 25): Prom
   // Changing the configured credential creates a new PostgreSQL row version.
   // Use that version to invalidate rankings without deriving a token from the secret.
   const { rows: [provider] } = await db.query<{
-    api_key: string; revision: string; tracks: ArtistTopTrack[] | null; fetched_at: Date | null;
+    value: string | null; revision: string; tracks: ArtistTopTrack[] | null; fetched_at: Date | null;
   }>(
-    `SELECT s.value::jsonb #>> '{}' AS api_key, s.xmin::text AS revision, c.tracks, c.fetched_at
+    `SELECT s.value, s.xmin::text AS revision, c.tracks, c.fetched_at
        FROM system_settings s LEFT JOIN artist_top_tracks_cache c
          ON c.artist_key = $1 AND c.result_limit = $2 AND c.provider_key = s.xmin::text
       WHERE s.key = 'lastFmApiKey'`,
     [artistKey, safeLimit],
   );
-  if (!provider?.api_key) return [];
-  const { api_key: lastFmApiKey, revision } = provider;
+  // Parsed here, not cast in SQL, so a stored value that isn't valid JSON reads
+  // as unset (as getSystemSetting does) instead of failing every request.
+  let lastFmApiKey: unknown = null;
+  try { lastFmApiKey = provider?.value ? JSON.parse(provider.value) : null; } catch { /* unset */ }
+  if (typeof lastFmApiKey !== 'string' || !lastFmApiKey.trim()) return [];
+  const { revision } = provider;
   const key = JSON.stringify([artistKey, safeLimit, revision]);
   const cached = provider.tracks && provider.fetched_at ? { tracks: provider.tracks, fetched_at: provider.fetched_at } : null;
   if (cached && Date.now() - cached.fetched_at.getTime() < (cached.tracks.length ? 3600000 : 300000)) return cached.tracks;
   if ((rankingRetryAfter.get(key) ?? 0) > Date.now()) {
     if (cached) return cached.tracks;
-    throw new Error('Last.fm ranking is temporarily unavailable');
+    // Our own back-off after a failed refresh: reported like a rate limit, so
+    // the route answers 503 quietly instead of logging every artist page.
+    throw new RateLimitError('lastfm', Math.ceil(((rankingRetryAfter.get(key) ?? 0) - Date.now()) / 1000));
   }
   let refresh = rankingRefreshes.get(key);
   if (!refresh) {

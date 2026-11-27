@@ -466,7 +466,8 @@ export const LibraryHome: React.FC<{ section?: 'artists' | 'albums' | 'genres' }
                                     const artistHero: ArtistHeroState = {
                                         kind: 'artist',
                                         name: artistName,
-                                        imageUrl: (entity as any).image_url || (entity as any).artwork_url || undefined,
+                                        // Not artwork_url: that is the wide banner, not a portrait.
+                                        imageUrl: (entity as any).image_url || undefined,
                                         backLabel: 'Back to Library',
                                     };
                                     return (

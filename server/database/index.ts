@@ -6608,7 +6608,10 @@ export async function saveSettingsBatch(userId: string | undefined, system: Reco
       INSERT INTO system_settings (key, value)
       SELECT key, value::text FROM jsonb_each($1::jsonb) ORDER BY key
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-      WHERE system_settings.value::jsonb IS DISTINCT FROM EXCLUDED.value::jsonb
+      -- Compare as text: a stored value that isn't valid JSON (an old or hand-
+      -- written row) must not fail the whole save. EXCLUDED is jsonb's canonical
+      -- text, so a row differs at most once, on its first save from here.
+      WHERE system_settings.value IS DISTINCT FROM EXCLUDED.value
       RETURNING key
     ), hub_stamp AS (
       INSERT INTO system_settings (key, value)
@@ -6618,7 +6621,7 @@ export async function saveSettingsBatch(userId: string | undefined, system: Reco
     INSERT INTO user_settings (user_id, key, value)
     SELECT $2, key, value::text FROM jsonb_each($3::jsonb) ORDER BY key
     ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value
-    WHERE user_settings.value::jsonb IS DISTINCT FROM EXCLUDED.value::jsonb
+    WHERE user_settings.value IS DISTINCT FROM EXCLUDED.value
   `, [JSON.stringify(system), userId, JSON.stringify(user), String(Date.now())]);
   for (const key of Object.keys(system)) systemSettingCache.delete(key);
   if ('systemPlaylistConfig' in system) systemSettingCache.delete('systemPlaylistConfigUpdatedAt');

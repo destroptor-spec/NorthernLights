@@ -42,7 +42,7 @@ export function RaysLoading() {
           <p className="rays-hero__meta min-h-6">
             <span>{hero?.artist}</span>
             {hero?.album && <><span aria-hidden="true">·</span><span>{hero.album}</span></>}
-            {hero?.year && <><span aria-hidden="true">·</span><span>{hero.year}</span></>}
+            {hero?.year ? <><span aria-hidden="true">·</span><span>{hero.year}</span></> : null}
           </p>
           <div className="browse-hero__actions" aria-hidden="true"><span className="btn btn-primary invisible"><Play size={16} />Play</span></div>
         </div>
