@@ -145,34 +145,23 @@ const TicketCard: React.FC<TicketCardProps> = ({ event }) => {
     return (
         <article
             className="
-                concert-ticket
+                concert-ticket card-hover
                 relative flex-shrink-0 snap-start
                 w-[85vw] max-w-[380px] sm:w-[340px] md:w-[380px]
                 bg-[var(--color-surface)]
                 rounded-2xl overflow-hidden
-                shadow-sm hover:shadow-md
-                transition-all duration-200
-                hover:-translate-y-0.5
             "
             aria-label={`${event.artist_name}${soon ? `, ${soon},` : ''} on ${weekday} ${date} at ${event.venue_name || 'venue'}`}
         >
-            {/* Subtle warm wash to distinguish from regular cards — ticket vibe */}
-            <div
-                className="absolute inset-0 pointer-events-none opacity-60"
-                aria-hidden="true"
-                style={{
-                    background:
-                        'linear-gradient(135deg, rgba(245, 158, 11, 0.04) 0%, transparent 35%, rgba(16, 185, 129, 0.03) 100%)',
-                }}
-            />
-
             <div className="relative flex">
                 {/* Stub: artist image, with Warm up beside the link (a button can't sit inside one) */}
                 <div className="relative shrink-0 w-24 sm:w-28">
+                    {/* The artist's name is the keyboard and screen-reader link; this is the pointer's. */}
                     <Link
                         to={`/library/artist/${event.artist_id}`}
                         className="group relative block h-full w-full"
-                        aria-label={`Open ${event.artist_name}`}
+                        tabIndex={-1}
+                        aria-hidden="true"
                     >
                         <div className="absolute inset-0 bg-[var(--color-surface-variant)]" />
                         {event.artist_image_url ? (
@@ -243,7 +232,8 @@ const TicketCard: React.FC<TicketCardProps> = ({ event }) => {
                         </div>
                     )}
 
-                    <div className="flex items-center justify-between gap-2 mt-auto pt-2">
+                    {/* As tall as the tickets button with or without one, so every ticket in the rail matches. */}
+                    <div className="flex min-h-[44px] items-center justify-between gap-2 mt-auto pt-2">
                         {price ? (
                             <span className="text-xs font-semibold text-[var(--color-text-secondary)] tabular-nums">
                                 {price}
@@ -258,28 +248,19 @@ const TicketCard: React.FC<TicketCardProps> = ({ event }) => {
                             </span>
                         )}
                         {event.ticket_url ? (
+                            // A quiet action: emerald is the music's (Warm up), tickets leave the app.
                             <a
                                 href={event.ticket_url}
                                 target="_blank"
                                 rel="noreferrer noopener"
-                                className="
-                                    inline-flex items-center gap-1.5
-                                    min-h-[36px] px-3 py-1.5
-                                    text-xs font-semibold uppercase tracking-wider
-                                    text-[var(--color-on-primary)] bg-[var(--color-primary-fill)]
-                                    hover:brightness-110
-                                    rounded-full
-                                    shadow-sm
-                                    transition-colors
-                                    focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]
-                                "
-                                aria-label={`get tickets for ${event.artist_name} on ${weekday} ${date}`}
+                                className="btn btn-sm !rounded-full min-h-[36px] shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
+                                aria-label={`get tickets for ${event.artist_name} on ${weekday} ${date} (opens the ticket site)`}
                             >
                                 get tickets
                                 <ArrowRight size={12} />
                             </a>
                         ) : (
-                            <span className="text-xs text-[var(--color-text-muted)] italic">no ticket link</span>
+                            <span className="text-xs text-[var(--color-text-muted)]">no ticket link</span>
                         )}
                     </div>
                 </div>
@@ -291,13 +272,13 @@ const TicketCard: React.FC<TicketCardProps> = ({ event }) => {
 const LiveConcertsSkeleton: React.FC = () => (
     <section aria-hidden="true">
         <div className="mb-4">
-            <div className="h-5 w-44 rounded bg-[var(--color-surface-variant)] animate-pulse" />
+            <div className="h-5 w-44 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
         </div>
         <div className="flex gap-3 sm:gap-4 overflow-hidden hide-scrollbar pb-2">
             {Array.from({ length: 3 }).map((_, i) => (
                 <div
                     key={i}
-                    className="w-[85vw] max-w-[380px] sm:w-[340px] shrink-0 h-44 rounded-[var(--radius)] bg-[var(--color-surface-variant)] animate-pulse"
+                    className="w-[85vw] max-w-[380px] sm:w-[340px] md:w-[380px] shrink-0 h-[157px] rounded-2xl bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none"
                 />
             ))}
         </div>
@@ -310,7 +291,7 @@ const LiveConcertsHeader: React.FC<{ stale?: boolean }> = ({ stale }) => (
             favourites live near you
         </h2>
         {stale && (
-            <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-warning)]">
+            <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-warning)]">
                 <AlertTriangle size={12} />
                 may be out of date
             </span>
@@ -378,7 +359,7 @@ export const LiveConcertsHubSection: React.FC = () => {
         return (
             <section aria-labelledby="live-concerts-heading">
                 <LiveConcertsHeader />
-                <p className="text-sm text-[var(--color-text-muted)] italic">
+                <p className="text-sm text-[var(--color-text-muted)]">
                     no upcoming shows from your favourite artists nearby. set your location in settings → live music to widen the search.
                 </p>
             </section>
