@@ -277,7 +277,7 @@ export const QueueList = forwardRef<QueueListHandle, QueueListProps>(function Qu
                   >
                     <div className="presence-fold-inner">
                       <div className="queue-section-heading">
-                        <h4>{row.label}</h4>
+                        <h3>{row.label}</h3>
                       </div>
                     </div>
                   </li>

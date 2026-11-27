@@ -13,7 +13,7 @@ export function GenreLoading() {
   return <div className="genre-detail page-container relative">
     <BackButton onClick={() => navigate(-1)} />
     <h1 className={genreHeadingClass}>{name || <span className="block w-48 rounded bg-[var(--color-surface-variant)]">&nbsp;</span>}</h1>
-    <h3 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2">Albums in this Genre</h3>
+    <h2 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2">Albums in this Genre</h2>
     <div className="album-grid" aria-hidden="true">
       {Array.from({ length: 6 }, (_, i) => <div key={i}>
         <div className="aspect-square rounded-2xl mb-3 bg-[var(--color-surface-variant)]" />

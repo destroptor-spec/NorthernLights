@@ -108,9 +108,9 @@ const VideoCard: React.FC<{ video: MusicVideo; onOpen: (v: MusicVideo) => void }
                 </span>
             </div>
             <div className="mt-2">
-                <h4 className="line-clamp-1 text-sm font-semibold text-[var(--color-text-primary)] transition-colors group-hover:text-[var(--color-primary)]">
+                <h3 className="line-clamp-1 text-sm font-semibold text-[var(--color-text-primary)] transition-colors group-hover:text-[var(--color-primary)]">
                     {video.title || 'Untitled'}
-                </h4>
+                </h3>
                 {credit && (
                     <p className="line-clamp-1 text-xs text-[var(--color-text-muted)]">{credit}</p>
                 )}
@@ -189,7 +189,7 @@ const VideoModal: React.FC<{ video: MusicVideo; onClose: () => void }> = ({ vide
                 </div>
                 {video.title && (
                     <div className="mt-3">
-                        <h3 className="text-base font-semibold text-white line-clamp-1">{video.title}</h3>
+                        <h2 className="text-base font-semibold text-white line-clamp-1">{video.title}</h2>
                         {artistsLabel(video) && (
                             <p className="text-sm text-white/60 line-clamp-1">{artistsLabel(video)}</p>
                         )}
@@ -214,9 +214,9 @@ export const MusicVideos: React.FC<MusicVideosProps> = ({ videos, loading, stale
         return (
             <section className="mb-12">
                 <div className="mb-4 flex items-center justify-between gap-4 border-b border-[var(--glass-border)] pb-2 md:mb-6">
-                    <h3 className="flex items-center gap-2 text-xl font-semibold tracking-wide text-[var(--color-text-secondary)]">
+                    <h2 className="flex items-center gap-2 text-xl font-semibold tracking-wide text-[var(--color-text-secondary)]">
                         Music videos
-                    </h3>
+                    </h2>
                 </div>
                 <div className="flex gap-4 overflow-x-auto pb-1 hide-scrollbar">
                     {[0, 1, 2, 3].map(i => (
@@ -238,12 +238,12 @@ export const MusicVideos: React.FC<MusicVideosProps> = ({ videos, loading, stale
     return (
         <section className="mb-12">
             <div className="mb-4 flex items-center justify-between gap-4 border-b border-[var(--glass-border)] pb-2 md:mb-6">
-                <h3 className="flex items-center gap-2 text-xl font-semibold tracking-wide text-[var(--color-text-secondary)]">
+                <h2 className="flex items-center gap-2 text-xl font-semibold tracking-wide text-[var(--color-text-secondary)]">
                     Music videos
                     <span className="ml-1 text-xs font-normal tabular-nums text-[var(--color-text-muted)]">
                         ({videos.length})
                     </span>
-                </h3>
+                </h2>
                 {stale && (
                     <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">
                         <AlertTriangle size={12} />

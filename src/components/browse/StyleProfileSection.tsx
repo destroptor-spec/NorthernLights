@@ -38,9 +38,9 @@ export const StyleProfileSection: React.FC<{
     const backLabel = `Back to ${name}`;
     return (
         <section className={className} aria-label="Genres and styles">
-            <h3 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2">
+            <h2 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2">
                 Genres and styles
-            </h3>
+            </h2>
             <div className="browse-card-grid browse-card-grid--compact">
                 {entries.map(entry => {
                     const isStyle = entry.styleId !== null;

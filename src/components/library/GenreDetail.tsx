@@ -91,9 +91,9 @@ export const GenreDetail: React.FC = () => {
                 <h1 className={genreHeadingClass}>
                     {genreName}
                 </h1>
-                <h3 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2">
+                <h2 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2">
                     Albums in this Genre ({albums.length})
-                </h3>
+                </h2>
                 <div className="album-grid">
                     {albums.map(album => (
                         <AlbumCard

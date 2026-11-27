@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import PlayerControls from './PlayerControls';
 import { usePlayerPlacement } from '../hooks/usePlayerPlacement';
@@ -12,6 +12,22 @@ const PlayerShellInner: React.FC = () => {
   const [placement, , togglePlacement] = usePlayerPlacement();
   const [edgeHover, setEdgeHover] = useState(false);
   const closeTimer = useRef<number | null>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const shownPlacement = useRef(placement);
+
+  // The layout switches in one step; the bar then settles into its new place
+  // with a composited slide (the 20px float gap) and fade, which also hides
+  // the width change. `translate` composes with the float's centring transform.
+  useLayoutEffect(() => {
+    if (shownPlacement.current === placement) return;
+    shownPlacement.current = placement;
+    const shell = shellRef.current;
+    if (!shell?.animate || window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) return;
+    shell.animate(
+      [{ translate: `0 ${placement === 'dock' ? -20 : 20}px`, opacity: 0.4 }, { translate: '0 0', opacity: 1 }],
+      { duration: 240, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' },
+    );
+  }, [placement]);
 
   const handleEdgeEnter = () => {
     if (closeTimer.current) window.clearTimeout(closeTimer.current);
@@ -31,6 +47,7 @@ const PlayerShellInner: React.FC = () => {
 
   return (
     <div
+      ref={shellRef}
       className={`player-shell player-shell--${placement} ${edgeHover ? 'is-edge-hover' : ''}`}
       data-placement={placement}
     >

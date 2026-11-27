@@ -33,7 +33,7 @@ export const AboutCard: React.FC<{
 
     return (
         <section className={className} aria-label={title}>
-            <h3 className={sectionTitle}>{title}</h3>
+            <h2 className={sectionTitle}>{title}</h2>
             <div className="about-card" style={glow ? ({ '--about-glow': glow } as React.CSSProperties) : undefined}>
                 <div className="flex items-start gap-4 md:items-center md:gap-5">
                     <div className="about-card__portrait-wrap">
@@ -54,7 +54,7 @@ export const AboutCard: React.FC<{
 /** A block in the card under a small heading. */
 export const AboutBlock: React.FC<{ heading: string; children: React.ReactNode }> = ({ heading, children }) => (
     <div className="about-card__block">
-        <h4 className="about-card__heading">{heading}</h4>
+        <h3 className="about-card__heading">{heading}</h3>
         {children}
     </div>
 );

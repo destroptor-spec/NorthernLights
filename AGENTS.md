@@ -53,6 +53,7 @@ Use the global button classes — do NOT write inline Tailwind button strings. C
 | `.btn-tab` | Sub-tab toggle (use `.active` modifier) |
 | `.btn-dashed` | Full-width dashed add/create |
 | `.btn-icon` | Icon-only (combine with `.btn-danger` for red icons) |
+| `.btn-play` | Hero playback action (Play album/playlist/artist, artist radio): emerald pill with the play glow, AA label in both themes |
 
 Example: `<button className="btn btn-primary btn-sm">Rescan</button>`
 

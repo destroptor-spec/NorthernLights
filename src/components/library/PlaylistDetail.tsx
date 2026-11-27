@@ -993,7 +993,7 @@ export const PlaylistDetail: React.FC = () => {
               <button
                 onClick={() => handlePlayFromIndex(0)}
                 disabled={playlistTracks.length === 0}
-                className="btn btn-primary btn-lg"
+                className="btn btn-play"
               >
                 <span className="inline-flex items-center gap-2">
                   <Play size={18} fill="currentColor" />
@@ -1143,7 +1143,7 @@ export const PlaylistDetail: React.FC = () => {
           <div className="pt-2">
             <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
               <div className="min-w-0">
-                <h3 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)]">Suggested Tracks</h3>
+                <h2 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)]">Suggested Tracks</h2>
                 <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
                   Nearby picks from your library based on the artists, albums, and genre clusters already in this playlist.
                 </p>

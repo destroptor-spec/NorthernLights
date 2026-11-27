@@ -122,9 +122,9 @@ const SimilarArtistsSection: React.FC<{ artists: SimilarArtist[]; loading: boole
     if (loading) {
         return (
             <section className="mb-12">
-                <h3 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2 flex items-center gap-2">
+                <h2 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2 flex items-center gap-2">
                     Similar artists
-                </h3>
+                </h2>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
                     {[0, 1, 2, 3].map(i => (
                         <div key={i} className="h-[154px] rounded-xl bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
@@ -138,9 +138,9 @@ const SimilarArtistsSection: React.FC<{ artists: SimilarArtist[]; loading: boole
 
     return (
         <section className="mb-12">
-            <h3 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2 flex items-center gap-2">
+            <h2 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2 flex items-center gap-2">
                 Similar artists
-            </h3>
+            </h2>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
                 {artists.map(artist => (
                     <SimilarArtistRow key={artist.id} artist={artist} />
@@ -152,7 +152,7 @@ const SimilarArtistsSection: React.FC<{ artists: SimilarArtist[]; loading: boole
 
 const PopularTracksLoading = () => (
     <section className="mb-12" aria-label="Loading popular tracks" aria-busy="true">
-        <h3 className="mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2 font-semibold text-xl tracking-wide text-[var(--color-text-secondary)]">Popular in your library</h3>
+        <h2 className="mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2 font-semibold text-xl tracking-wide text-[var(--color-text-secondary)]">Popular in your library</h2>
         <div className="h-10 mb-1 border-b border-[var(--glass-border)]" />
         {Array.from({ length: 5 }, (_, i) => (
             <div key={i} aria-hidden="true" className="my-0.5 flex items-center gap-3 py-2 pl-9 md:pl-16 border-b border-[var(--glass-border)]">
@@ -865,10 +865,10 @@ const ArtistPage = ({ artistId }: { artistId?: string }) => {
                                     : 'Play a mix inspired by this artist'
                                 }
                                 aria-label={hasPopularInLibrary ? 'Play artist radio' : undefined}
-                                className={`${hasPopularInLibrary ? 'h-12 w-12 px-0 shrink-0' : 'w-full px-8 sm:w-auto'} flex items-center justify-center gap-2 py-3.5 bg-[var(--color-primary)] text-white font-bold text-sm tracking-widest uppercase rounded-full shadow-[0_4px_24px_rgba(16,185,129,0.22)] hover:bg-[var(--color-primary-dark)] active:scale-[0.98] disabled:opacity-55 disabled:cursor-not-allowed transition-ui`}
+                                className={`btn btn-play ${hasPopularInLibrary ? 'h-12 w-12 !p-0 shrink-0' : 'w-full sm:w-auto'}`}
                             >
                                 {radioLoading ? (
-                                    <span className="w-[18px] h-[18px] rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                                    <span className="w-[18px] h-[18px] rounded-full border-2 border-current border-t-transparent animate-spin motion-reduce:animate-none" />
                                 ) : (
                                     <Radio size={18} />
                                 )}
@@ -879,7 +879,7 @@ const ArtistPage = ({ artistId }: { artistId?: string }) => {
                                 <button
                                     type="button"
                                     onClick={() => handlePlayPopularTracks(0)}
-                                    className="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-full bg-[var(--color-primary)] px-6 py-3.5 text-sm font-bold uppercase tracking-widest text-white shadow-[0_4px_24px_rgba(16,185,129,0.22)] transition-ui hover:bg-[var(--color-primary-dark)] active:scale-[0.98] sm:flex-none"
+                                    className="btn btn-play min-w-0 flex-1 !px-6 sm:flex-none"
                                 >
                                     <Play className="h-4 w-4 shrink-0" fill="currentColor" />
                                     <span className="truncate">Play {artistName}</span>
@@ -937,9 +937,9 @@ const ArtistPage = ({ artistId }: { artistId?: string }) => {
                 {hasPopularInLibrary && (
                     <section className="mb-12">
                         <div className="flex items-center justify-between gap-4 mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2">
-                            <h3 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] flex items-center gap-2">
+                            <h2 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] flex items-center gap-2">
                                 Popular in your library
-                            </h3>
+                            </h2>
                         </div>
 
                         {/* Column headers */}
@@ -1091,7 +1091,7 @@ const ArtistPage = ({ artistId }: { artistId?: string }) => {
                         { title: 'Compilations', data: compilationReleases }
                     ].map((section) => section.data.length > 0 && (
                         <div key={section.title} className="mb-12">
-                            <h3 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2">{section.title}</h3>
+                            <h2 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2">{section.title}</h2>
                             <div className="album-grid">
                                 {section.data.map(album => {
                                     const trackCount = album.trackCount ?? album.tracks.length;
@@ -1118,9 +1118,9 @@ const ArtistPage = ({ artistId }: { artistId?: string }) => {
                        where this artist holds the selected role. The
                        backend has already pre-sorted by year DESC, title. */
                     <div className="mb-12">
-                        <h3 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2">
+                        <h2 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2">
                             {selectedRole} credits
-                        </h3>
+                        </h2>
                         {(albumsByRole[selectedRole] || []).length === 0 ? (
                             <div className="text-sm text-[var(--color-text-muted)]">No albums with this credit.</div>
                         ) : (
@@ -1162,9 +1162,9 @@ const ArtistPage = ({ artistId }: { artistId?: string }) => {
                 ...featuredGroups.compilations,
             ].length > 0 && (
                 <div className="mb-12">
-                    <h3 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2 flex items-center gap-2">
+                    <h2 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2 flex items-center gap-2">
                         Also appears on
-                    </h3>
+                    </h2>
                     <div className="album-grid">
                         {[
                             ...featuredGroups.albums,
