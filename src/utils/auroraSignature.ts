@@ -129,7 +129,12 @@ function filament(fold: string, veil: string, soft: number) {
   return ctx.canvas;
 }
 
-export function makeAurora(w: number, h: number, track: AuroraSound, { landscape = true }: { landscape?: boolean } = {}) {
+/**
+ * `sky: false` leaves the night out of each frame (the lights then paint on a
+ * transparent canvas); the night is still built and returned as `.sky`, for a
+ * caller that layers and fades the two apart.
+ */
+export function makeAurora(w: number, h: number, track: AuroraSound, { landscape = true, sky = true }: { landscape?: boolean; sky?: boolean } = {}) {
   const random = randomFor(track.id);
   const background = night(w, h, random, landscape);
   const palette = track.mix.slice(0, 2);
@@ -193,9 +198,9 @@ export function makeAurora(w: number, h: number, track: AuroraSound, { landscape
     rear.globalCompositeOperation = 'screen';
     for (let layer = streams - 1; layer > 0; layer--) rear.drawImage(curtain(layer), 0, 0);
   }
-  return (ctx: CanvasRenderingContext2D, time: number) => {
+  const paint = (ctx: CanvasRenderingContext2D, time: number) => {
     const phase = time * (track.bpm ?? 110) / 110 * 0.22;
-    ctx.drawImage(background, 0, 0);
+    if (sky) ctx.drawImage(background, 0, 0);
     ctx.save(); ctx.globalCompositeOperation = 'screen';
     if (rear) ctx.drawImage(rear.canvas, 0, h * 0.006 * Math.sin(phase * 0.6 + bend));
     const sway = 0.003 + 0.009 * track.values.danceability;
@@ -203,4 +208,5 @@ export function makeAurora(w: number, h: number, track: AuroraSound, { landscape
     ctx.globalAlpha = 0.94 + 0.06 * Math.sin(phase * 1.7);
     ctx.drawImage(near, -w * 0.015, -h * 0.015, w * 1.03, h * 1.03); ctx.restore();
   };
+  return Object.assign(paint, { sky: background });
 }

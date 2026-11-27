@@ -13,17 +13,23 @@ const CURTAIN_CENTRE = 0.47;
  * curtains with the canvas, so a wide, short hero would flatten them into
  * bands; instead the sky is drawn square (as wide as the hero, or taller
  * where the hero is) and the hero shows a window through it, centred on the
- * curtains. It drifts only while on screen, the tab is visible and reduced
- * motion is off; otherwise it holds one still frame. Rebuilt (debounced)
- * when its size changes.
+ * curtains. Two layers: the night (sky and stars, drawn once) fades slowly
+ * into the page, while the lights above it are drawn in full and fade only
+ * at the very bottom, so the fade never cuts the curtains off. The lights
+ * drift only while on screen, the tab is visible and reduced motion is off;
+ * otherwise they hold one still frame. Rebuilt (debounced) when its size
+ * changes.
  */
 export const RaysAurora: React.FC<{ sound: AuroraSound }> = ({ sound }) => {
+  const skyRef = useRef<HTMLCanvasElement>(null);
   const ref = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     const canvas = ref.current;
+    const skyCanvas = skyRef.current;
     const ctx = canvas?.getContext('2d');
-    if (!canvas || !ctx) return;
+    const skyCtx = skyCanvas?.getContext('2d');
+    if (!canvas || !ctx || !skyCanvas || !skyCtx) return;
     let raf = 0;
     let rebuild = 0;
     let visible = false;
@@ -38,12 +44,19 @@ export const RaysAurora: React.FC<{ sound: AuroraSound }> = ({ sound }) => {
       const w = Math.max(1, Math.round(box.width * scale)), h = Math.max(1, Math.round(box.height * scale));
       if (render && canvas.width === w && canvas.height === h) return;
       canvas.width = w; canvas.height = h;
+      skyCanvas.width = w; skyCanvas.height = h;
       const sky = Math.max(h, Math.round(w * SKY_ASPECT));
       offset = Math.round(Math.min(Math.max(0, sky * CURTAIN_CENTRE - h / 2), sky - h));
-      // No landscape: the sky fades into the page below the hero.
-      render = makeAurora(w, sky, sound, { landscape: false });
+      // No landscape: the sky fades into the page below the hero. The night
+      // is drawn once on its own layer; the lights paint on a clear one.
+      render = makeAurora(w, sky, sound, { landscape: false, sky: false });
+      skyCtx.setTransform(1, 0, 0, 1, 0, -offset);
+      skyCtx.drawImage(render.sky, 0, 0);
+      skyCtx.setTransform(1, 0, 0, 1, 0, 0);
     };
     const draw = (time: number) => {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.setTransform(1, 0, 0, 1, 0, -offset);
       render?.(ctx, time);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -81,7 +94,8 @@ export const RaysAurora: React.FC<{ sound: AuroraSound }> = ({ sound }) => {
 
   return (
     <div className="rays-aurora" aria-hidden="true">
-      <canvas ref={ref} className="rays-aurora__canvas" />
+      <canvas ref={skyRef} className="rays-aurora__canvas rays-aurora__sky" />
+      <canvas ref={ref} className="rays-aurora__canvas rays-aurora__lights" />
     </div>
   );
 };
