@@ -236,7 +236,7 @@ export const UpcomingShows: React.FC<UpcomingShowsProps> = ({ events, loading, s
                     {[0, 1, 2].map(i => (
                         <div
                             key={i}
-                            className="h-[96px] min-w-[78vw] snap-start rounded-xl bg-[var(--color-surface-variant)] animate-pulse md:min-w-[calc((100%-1.5rem)/3)]"
+                            className="h-[96px] min-w-[78vw] snap-start rounded-xl bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none md:min-w-[calc((100%-1.5rem)/3)]"
                         />
                     ))}
                 </div>

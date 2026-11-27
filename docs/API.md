@@ -47,6 +47,16 @@ GET /api/v1/artists?limit=100&cursor=<nextCursor>
 
 Clients must not decode or construct cursors. `libraryRevision` is an opaque change detector, not an ordering key.
 
+### Reusing a complete catalog
+
+Authenticated clients can call `GET /api/v1/catalog/revision` to validate a saved copy of the paginated artist, album, and genre lists. The response uses the standard success envelope and sends `Cache-Control: no-store`. Treat `data.revision` as an opaque string and compare it for equality.
+
+1. Read the revision before fetching the lists. If it matches the revision saved with a complete snapshot for this server and account, reuse that snapshot.
+2. Otherwise, fetch all pages of all three lists and read the revision again. Save the completed snapshot only if both revisions match. A change during pagination means the pages may span different catalog states.
+3. If the revision endpoint is unavailable, fetch the lists normally. An unsuccessful check cannot establish that a saved snapshot is current.
+
+Use this endpoint for catalog metadata, including artist renames and album artwork changes. The public `GET /api/v1/meta` field `libraryRevision` describes the track-file inventory and can stay unchanged across those edits.
+
 ### Authentication
 
 Authenticated calls send either a web JWT or app key as a bearer token, plus stable client identity headers:
@@ -88,7 +98,7 @@ Pairing requests expire after ten minutes. Approval binds the request to the use
 | Group | Endpoints |
 | --- | --- |
 | Identity | `GET /me` |
-| Library | `GET /artists`, `/artists/:id`, `/albums`, `/albums/:id`, `/genres`, `/genres/:id`, `/tracks/:id`, `/tracks/:id/lyrics`, `/artwork/:hash` |
+| Library | `GET /catalog/revision`, `/artists`, `/artists/:id`, `/albums`, `/albums/:id`, `/genres`, `/genres/:id`, `/tracks/:id`, `/tracks/:id/lyrics`, `/artwork/:hash` |
 | Search | `GET /search?q=…&limit=…` (optional `artistLimit`/`albumLimit`/`trackLimit` override `limit` per type); `GET /search/ranked?q=…&limit=…&cursor=…` |
 | Playlists | `GET /playlists`, `/playlists/discover`, `/playlists/:id`, `/playlists/:id/suggestions`; create/update/state/share/delete and full track replacement |
 | Discovery | `GET /hub`, `/hub/smart`, `/hub/artist-radio/eligibility`; `POST /hub/regenerate`, `/hub/artist-radio`, `/hub/custom`, `/recommendations/next` |

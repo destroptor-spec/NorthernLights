@@ -1310,6 +1310,15 @@ export async function initDB(): Promise<Pool> {
         CREATE INDEX IF NOT EXISTS concert_events_event_date_idx ON concert_events(event_date);
         CREATE INDEX IF NOT EXISTS concert_events_artist_date_idx ON concert_events(artist_id, event_date);
 
+        CREATE TABLE IF NOT EXISTS artist_top_tracks_cache (
+          artist_key TEXT NOT NULL,
+          result_limit INTEGER NOT NULL,
+          provider_key TEXT NOT NULL,
+          tracks JSONB NOT NULL,
+          fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (artist_key, result_limit)
+        );
+
         -- Per-artist fetch marker so we know "we checked, nothing here" vs "never checked".
         -- Without this, an artist with zero upcoming shows would be re-fetched on every visit.
         CREATE TABLE IF NOT EXISTS artist_concerts_cache (
@@ -6589,6 +6598,31 @@ export async function getUserSetting(userId: string, key: string) {
   }
   userSettingCache.set(cacheKey, { value, expires: now + SYSTEM_SETTING_TTL_MS });
   return value;
+}
+
+/** Apply a settings form atomically, including its derived Hub invalidation. */
+export async function saveSettingsBatch(userId: string | undefined, system: Record<string, unknown>, user: Record<string, unknown>) {
+  const db = await initDB();
+  await db.query(`
+    WITH system_changes AS (
+      INSERT INTO system_settings (key, value)
+      SELECT key, value::text FROM jsonb_each($1::jsonb) ORDER BY key
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+      WHERE system_settings.value::jsonb IS DISTINCT FROM EXCLUDED.value::jsonb
+      RETURNING key
+    ), hub_stamp AS (
+      INSERT INTO system_settings (key, value)
+      SELECT 'systemPlaylistConfigUpdatedAt', $4 FROM system_changes WHERE key = 'systemPlaylistConfig'
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+    )
+    INSERT INTO user_settings (user_id, key, value)
+    SELECT $2, key, value::text FROM jsonb_each($3::jsonb) ORDER BY key
+    ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value
+    WHERE user_settings.value::jsonb IS DISTINCT FROM EXCLUDED.value::jsonb
+  `, [JSON.stringify(system), userId, JSON.stringify(user), String(Date.now())]);
+  for (const key of Object.keys(system)) systemSettingCache.delete(key);
+  if ('systemPlaylistConfig' in system) systemSettingCache.delete('systemPlaylistConfigUpdatedAt');
+  for (const key of Object.keys(user)) userSettingCache.delete(`${userId}:${key}`);
 }
 
 export async function setUserSetting(userId: string, key: string, value: any) {

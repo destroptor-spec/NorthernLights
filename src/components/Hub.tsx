@@ -229,7 +229,7 @@ function AnimatedTileSlot<T>({ value, signature, children }: AnimatedTileSlotPro
 }
 
 const HubCardSkeleton: React.FC = () => (
-  <div className="p-4 sm:p-5 bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-[var(--radius)] animate-pulse">
+  <div className="p-4 sm:p-5 bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-[var(--radius)] animate-pulse motion-reduce:animate-none">
     <div className="flex items-center gap-2 mb-3">
       <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg bg-[var(--color-surface-variant)]" />
       <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg bg-[var(--color-surface-variant)] -ml-2" />
@@ -240,59 +240,14 @@ const HubCardSkeleton: React.FC = () => (
   </div>
 );
 
-const HubLoadingSkeleton: React.FC = () => (
-  <div className="page-container space-y-8">
-    <header>
-      <div className="h-8 w-24 rounded bg-[var(--color-surface-variant)] animate-pulse" />
-      <div className="h-4 w-48 rounded bg-[var(--color-surface-variant)] animate-pulse mt-2" />
-    </header>
-
-    <section>
-      <div className="h-5 w-32 rounded bg-[var(--color-surface-variant)] animate-pulse mb-4" />
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
-        {[1, 2, 3, 4].map((i) => (
-          <div
-            key={i}
-            className="h-[64px] rounded-[var(--radius)] bg-[var(--glass-bg)] border border-[var(--glass-border)] overflow-hidden animate-pulse sm:h-[80px]"
-          >
-            <div className="h-full w-[56px] bg-[var(--color-surface-variant)] sm:w-[80px]" />
-          </div>
-        ))}
-      </div>
-    </section>
-
-    <section>
-      <div className="h-7 w-28 rounded bg-[var(--color-surface-variant)] animate-pulse mb-5" />
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5 lg:gap-6">
-        {[1, 2, 3].map((i) => (
-          <HubCardSkeleton key={i} />
-        ))}
-      </div>
-    </section>
-
-    <section>
-      <div className="h-7 w-40 rounded bg-[var(--color-surface-variant)] animate-pulse mb-5" />
-      <div className="flex gap-3 hide-scrollbar overflow-hidden sm:gap-5">
-        {[1, 2, 3, 4].map((i) => (
-          <div key={i} className="w-[min(52vw,200px)] shrink-0 sm:w-[190px]">
-            <div className="aspect-square rounded-[var(--radius)] bg-[var(--color-surface-variant)] animate-pulse" />
-            <div className="h-4 w-4/5 rounded bg-[var(--color-surface-variant)] animate-pulse mt-3" />
-            <div className="h-3 w-2/3 rounded bg-[var(--color-surface-variant)] animate-pulse mt-2" />
-          </div>
-        ))}
-      </div>
-    </section>
-  </div>
-);
-
 const JumpBackInSectionSkeleton: React.FC = () => (
   <section aria-hidden="true">
-    <div className="h-5 w-32 rounded bg-[var(--color-surface-variant)] animate-pulse mb-4" />
+    <div className="h-5 w-32 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mb-4" />
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
       {Array.from({ length: 8 }).map((_, i) => (
         <div
           key={i}
-          className="h-[64px] rounded-[var(--radius)] bg-[var(--glass-bg)] border border-[var(--glass-border)] overflow-hidden animate-pulse sm:h-[80px]"
+          className="h-[64px] rounded-[var(--radius)] bg-[var(--glass-bg)] border border-[var(--glass-border)] overflow-hidden animate-pulse motion-reduce:animate-none sm:h-[80px]"
         >
           <div className="h-full w-[56px] bg-[var(--color-surface-variant)] sm:w-[80px]" />
         </div>
@@ -303,13 +258,13 @@ const JumpBackInSectionSkeleton: React.FC = () => (
 
 const UniqueYoursSectionSkeleton: React.FC = () => (
   <section aria-hidden="true">
-    <div className="h-7 w-40 rounded bg-[var(--color-surface-variant)] animate-pulse mb-5" />
+    <div className="h-7 w-40 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mb-5" />
     <div className="flex overflow-x-auto snap-x snap-mandatory gap-3 hub-scroll-mobile hub-scroll-unique pb-1 sm:gap-5 sm:pb-2 hide-scrollbar">
       {Array.from({ length: 4 }).map((_, i) => (
         <div key={i} className="w-[min(52vw,200px)] shrink-0 snap-start sm:w-[190px]">
-          <div className="aspect-square rounded-[var(--radius)] bg-[var(--color-surface-variant)] animate-pulse" />
-          <div className="h-4 w-4/5 rounded bg-[var(--color-surface-variant)] animate-pulse mt-3" />
-          <div className="h-3 w-2/3 rounded bg-[var(--color-surface-variant)] animate-pulse mt-2" />
+          <div className="aspect-square rounded-[var(--radius)] bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
+          <div className="h-4 w-4/5 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mt-3" />
+          <div className="h-3 w-2/3 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mt-2" />
         </div>
       ))}
     </div>
@@ -318,12 +273,12 @@ const UniqueYoursSectionSkeleton: React.FC = () => (
 
 const DiscoverSectionSkeleton: React.FC = () => (
   <section aria-hidden="true">
-    <div className="h-7 w-32 rounded bg-[var(--color-surface-variant)] animate-pulse mb-5" />
+    <div className="h-7 w-32 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mb-5" />
     <div className="flex overflow-x-auto snap-x snap-mandatory gap-3 hub-scroll-mobile hub-scroll-unique pb-1 sm:gap-5 sm:pb-2 hide-scrollbar">
       {Array.from({ length: 4 }).map((_, i) => (
         <div key={i} className="w-[min(52vw,200px)] shrink-0 snap-start sm:w-[190px]">
-          <div className="aspect-square rounded-[var(--radius)] bg-[var(--color-surface-variant)] animate-pulse" />
-          <div className="h-4 w-3/4 rounded bg-[var(--color-surface-variant)] animate-pulse mt-3" />
+          <div className="aspect-square rounded-[var(--radius)] bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
+          <div className="h-4 w-3/4 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mt-3" />
         </div>
       ))}
     </div>
@@ -332,7 +287,7 @@ const DiscoverSectionSkeleton: React.FC = () => (
 
 const ForYouSectionSkeleton: React.FC = () => (
   <section aria-hidden="true">
-    <div className="h-7 w-28 rounded bg-[var(--color-surface-variant)] animate-pulse mb-5" />
+    <div className="h-7 w-28 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mb-5" />
     <div className="flex sm:grid sm:grid-cols-2 lg:grid-cols-3 overflow-x-auto snap-x snap-mandatory gap-4 sm:gap-5 lg:gap-6 hub-scroll-mobile hide-scrollbar">
       {[1, 2, 3].map((i) => (
         <HubCardSkeleton key={i} />
@@ -1333,9 +1288,6 @@ export const Hub: React.FC = () => {
     return true;
   });
 
-  if (isInitialLoading) {
-    return <HubLoadingSkeleton />;
-  }
 
   return (
     <div className="page-container space-y-8">

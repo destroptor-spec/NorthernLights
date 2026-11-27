@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { getRepresentativeReleaseMbid, getStoredRecordingPlaces, getSystemSetting, initDB, storeRecordingPlaces } from '../../database';
 import { mergeForDisplay, normaliseProviderTags, saveArtistTagsByName, type ProviderTag, type TagProvider, type WeightedTag } from '../genreTaxonomy/artistTags';
 import { scheduleTagMapping } from '../genreTaxonomy';
@@ -517,28 +518,51 @@ export async function getArtistData(
   return data;
 }
 
-export async function getArtistTopTracks(name: string, limit: number = 25): Promise<ArtistTopTrack[]> {
-  if (!name) return [];
-  const settings = await getProviderSettings();
-  if (!settings.lastFmApiKey) return [];
+const rankingRefreshes = new Map<string, Promise<ArtistTopTrack[]>>();
+const rankingRetryAfter = new Map<string, number>();
 
+export async function getArtistTopTracks(name: string, limit: number = 25): Promise<ArtistTopTrack[]> {
+  const artistKey = name.trim().toLowerCase();
+  if (!artistKey) return [];
+  const lastFmApiKey = await getSystemSetting('lastFmApiKey');
+  if (!lastFmApiKey) return [];
   const safeLimit = Math.max(1, Math.min(50, Math.floor(limit)));
-  try {
-    const tracks = await lastFmArtistTopTracks(name, settings.lastFmApiKey, safeLimit);
-    return tracks
-      .filter((track) => typeof track.name === 'string' && track.name.trim().length > 0)
-      .map((track) => ({
-        name: track.name.trim(),
-        playcount: track.playcount,
-        listeners: track.listeners,
-        mbid: track.mbid || undefined,
-        url: track.url || undefined,
-      }));
-  } catch (error) {
-    if (isRateLimitError(error)) return [];
-    console.warn('[Metadata] Last.fm artist top tracks fetch failed:', error);
-    return [];
+  const providerKey = createHash('sha256').update(lastFmApiKey).digest('hex');
+  const key = JSON.stringify([artistKey, safeLimit, providerKey]);
+  const db = await initDB();
+  const { rows: [cached] } = await db.query<{ tracks: ArtistTopTrack[]; fetched_at: Date }>(
+    'SELECT tracks, fetched_at FROM artist_top_tracks_cache WHERE artist_key=$1 AND result_limit=$2 AND provider_key=$3',
+    [artistKey, safeLimit, providerKey],
+  );
+  if (cached && Date.now() - cached.fetched_at.getTime() < (cached.tracks.length ? 3600000 : 300000)) return cached.tracks;
+  if ((rankingRetryAfter.get(key) ?? 0) > Date.now()) {
+    if (cached) return cached.tracks;
+    throw new Error('Last.fm ranking is temporarily unavailable');
   }
+  let refresh = rankingRefreshes.get(key);
+  if (!refresh) {
+    refresh = (async () => {
+      const response = await lastFmArtistTopTracks(name, lastFmApiKey, safeLimit);
+      const tracks = response.filter(track => track.name?.trim()).map(track => ({
+        name: track.name.trim(), playcount: track.playcount, listeners: track.listeners,
+        mbid: track.mbid || undefined, url: track.url || undefined,
+      }));
+      await db.query(`
+        INSERT INTO artist_top_tracks_cache (artist_key,result_limit,provider_key,tracks) VALUES ($1,$2,$3,$4)
+        ON CONFLICT (artist_key,result_limit) DO UPDATE SET tracks=EXCLUDED.tracks,
+          provider_key=EXCLUDED.provider_key, fetched_at=NOW()
+      `, [artistKey, safeLimit, providerKey, JSON.stringify(tracks)]);
+      return tracks;
+    })().catch(error => {
+      rankingRetryAfter.set(key, Date.now() + 60000);
+      setTimeout(() => rankingRetryAfter.delete(key), 60000).unref();
+      throw error;
+    }).finally(() => rankingRefreshes.delete(key));
+    rankingRefreshes.set(key, refresh);
+  }
+  if (!cached) return refresh;
+  void refresh.catch(() => {});
+  return cached.tracks;
 }
 
 /**

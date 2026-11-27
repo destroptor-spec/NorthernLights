@@ -20,6 +20,7 @@ export const GenAiTab: React.FC = () => {
     const llmConnected = usePlayerStore(state => state.llmConnected);
     const setSettings = usePlayerStore(state => state.setSettings);
     const saveSettings = usePlayerStore(state => state.saveSettings);
+    const reportSaveError = (error: unknown) => usePlayerStore.getState().addToast(error instanceof Error ? error.message : 'Could not save settings', 'error');
     const setLlmConnected = usePlayerStore(state => state.setLlmConnected);
     const getAuthHeader = usePlayerStore(state => state.getAuthHeader);
 
@@ -35,14 +36,14 @@ export const GenAiTab: React.FC = () => {
         onModelsReceived: (models) => {
             if (!llmModelName && models.length > 0) {
                 setSettings({ llmModelName: models[0] });
-                saveSettings();
+                void saveSettings().catch(reportSaveError);
             }
         },
     });
 
     // Auto-save when inputs change (debounced) and re-test connection
     const debouncedSaveAndTest = useRef(debounce(async () => {
-        await saveSettings();
+        try { await saveSettings(); } catch (error) { reportSaveError(error); return; }
         const state = usePlayerStore.getState();
         if (state.llmBaseUrl && state.llmModelName) {
             runConnectionTest(state.llmBaseUrl, state.llmApiKey || '');

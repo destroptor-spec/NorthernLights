@@ -150,13 +150,26 @@ const SimilarArtistsSection: React.FC<{ artists: SimilarArtist[]; loading: boole
     );
 };
 
-const ArtistDetailSkeleton: React.FC<{ onBack: () => void; hero?: ArtistHeroState }> = ({ onBack, hero }) => {
+const PopularTracksLoading = () => (
+    <section className="mb-12" aria-label="Loading popular tracks" aria-busy="true">
+        <h3 className="mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2 font-semibold text-xl tracking-wide text-[var(--color-text-secondary)]">Popular in your library</h3>
+        <div className="h-10 mb-1 border-b border-[var(--glass-border)]" />
+        {Array.from({ length: 5 }, (_, i) => (
+            <div key={i} aria-hidden="true" className="my-0.5 flex items-center gap-3 py-2 pl-9 md:pl-16 border-b border-[var(--glass-border)]">
+                <div className="h-10 w-10 md:h-11 md:w-11 rounded-lg bg-[var(--color-surface-variant)]" />
+                <div className="h-4 w-1/3 rounded bg-[var(--color-surface-variant)]" />
+            </div>
+        ))}
+    </section>
+);
+
+const ArtistDetailSkeleton: React.FC<React.PropsWithChildren<{ onBack: () => void; hero?: ArtistHeroState }>> = ({ onBack, hero, children }) => {
     const hasHero = !!hero && (!!hero.name || !!hero.imageUrl);
     return (
         <div className="artist-detail page-container relative">
             <div className="relative z-10">
                 <BackButton onClick={onBack} />
-                <section className="flex flex-col md:flex-row items-center gap-8 mb-10 md:mb-14">
+                <section className="flex flex-col md:flex-row items-start md:items-center gap-8 mb-8 md:mb-12">
                     {hasHero && hero?.imageUrl ? (
                         <div
                             className="w-48 h-48 md:w-64 md:h-64 rounded-full overflow-hidden shrink-0 shadow-[var(--shadow-md)] border-4 border-[var(--glass-border)] bg-[var(--glass-bg)]"
@@ -174,22 +187,23 @@ const ArtistDetailSkeleton: React.FC<{ onBack: () => void; hero?: ArtistHeroStat
                             className="w-48 h-48 md:w-64 md:h-64 rounded-full shrink-0 bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none"
                         />
                     )}
-                    <div className="flex-1 w-full space-y-4 text-center md:text-left">
+                    <div className="flex-1 w-full space-y-4 text-left">
                         {hasHero ? (
                             <>
-                                <h1 className="font-bold text-4xl md:text-5xl lg:text-6xl tracking-tight leading-tight text-[var(--color-text-primary)] line-clamp-2">
+                                <h1 className="font-bold text-4xl md:text-6xl lg:text-7xl tracking-tight leading-tight text-[var(--color-text-primary)] line-clamp-2">
                                     {hero?.name}
                                 </h1>
-                                <div className="h-12 w-56 rounded-full bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mx-auto md:mx-0" />
+                                <div className="h-12 w-56 rounded-full bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
                             </>
                         ) : (
                             <>
-                                <div className="h-12 md:h-16 w-3/4 max-w-xl rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mx-auto md:mx-0" />
-                                <div className="h-12 w-56 rounded-full bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mx-auto md:mx-0" />
+                                <div className="h-12 md:h-16 w-3/4 max-w-xl rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
+                                <div className="h-12 w-56 rounded-full bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
                             </>
                         )}
                     </div>
                 </section>
+                {children}
                 <div className="album-grid">
                     {Array.from({ length: 6 }).map((_, i) => <AlbumCardSkeleton key={i} />)}
                 </div>
@@ -202,6 +216,10 @@ const ArtistDetailSkeleton: React.FC<{ onBack: () => void; hero?: ArtistHeroStat
 
 export const ArtistDetail: React.FC = () => {
     const { artistId } = useParams<{ artistId: string }>();
+    return <ArtistPage key={artistId} artistId={artistId} />;
+};
+
+const ArtistPage = ({ artistId }: { artistId?: string }) => {
     const navigate = useNavigate();
     const location = useLocation();
     const heroState = useMemo(() => readArtistHeroState(location.state), [location.state]);
@@ -223,7 +241,7 @@ export const ArtistDetail: React.FC = () => {
     // server-side. Source for the album art/track maps below.
     // `ownedAlbums` is only populated for VA pseudo-artists: albums they own
     // as lean album rows, since shipping every VA comp track is untenable.
-    const { tracks: artistTracks, meta: artistMeta, loading: artistTracksLoading } = useApiV1EntityTracks<ArtistDetailMeta>(
+    const { tracks: artistTracks, meta: artistMeta, failure, retry, loading: artistTracksLoading } = useApiV1EntityTracks<ArtistDetailMeta>(
         artistId ? `/artists/${encodeURIComponent(artistId)}` : null,
     );
     // "Appears on" / collaborations — server-computed so it works without the
@@ -292,11 +310,16 @@ export const ArtistDetail: React.FC = () => {
         return owned?.mbAlbumArtistId || null;
     }, [artistTracks, library, artistId]);
 
-    const { imageUrl, artworkUrl, bio, disambiguation, area, type, lifeSpan, links, genres, communityTags, listeners, members, isLoading: artistLoading } = useArtistData(artistName, mbArtistId);
+    const { imageUrl: providerImageUrl, artworkUrl, bio, disambiguation, area, type, lifeSpan, links, genres, communityTags, listeners, members, isLoading: artistLoading } = useArtistData(artistName, mbArtistId);
+    const imageUrl = providerImageUrl || heroState?.imageUrl;
     const { onTour, events: upcomingEvents, loading: concertsLoading, stale: concertsStale } = useArtistConcerts(artistId);
     const { videos: musicVideos, loading: musicVideosLoading, stale: musicVideosStale } = useArtistMusicVideos(artistId);
-    const { tracks: externalTopTracks } = useArtistTopTracks(artistName, {
-        enabled: !!artistName,
+    const lastFmAvailable = usePlayerStore(s => s.currentUser?.role === 'admin' ? !!s.lastFmApiKey : s.hasLastFmKey);
+    const videosAvailable = usePlayerStore(s => s.youtubeEnabled && (s.currentUser?.role === 'admin' ? !!s.youtubeApiKey.trim() : s.hasYouTubeKey));
+    const showsAvailable = usePlayerStore(s => s.jambaseEnabled && s.hasJamBaseKey);
+    const topTrackArtist = artistName || heroState?.name || '';
+    const { tracks: externalTopTracks, isLoading: topTracksLoading } = useArtistTopTracks(topTrackArtist, {
+        enabled: lastFmAvailable !== false,
         limit: 30,
     });
     const [linksMenuOpen, setLinksMenuOpen] = useState(false);
@@ -755,14 +778,32 @@ export const ArtistDetail: React.FC = () => {
     const hasAnyContent = primaryTracks.length > 0 || collaborationTracks.length > 0 || featuredTracks.length > 0
         || (artistMeta?.ownedAlbums?.length || 0) > 0 || hasCreditContent;
 
+    const popularLoading = lastFmAvailable && topTrackArtist !== 'Unknown Artist' && (
+        !topTrackArtist || topTracksLoading || (artistTracksLoading && externalTopTracks.length > 0)
+    );
+    // Disabled providers can still return saved shows and videos. Only reserve
+    // their rail in advance when live lookup is available.
+    const mediaSections = <>
+        <MusicVideos videos={musicVideos} loading={videosAvailable && musicVideosLoading} stale={musicVideosStale} />
+        <UpcomingShows events={upcomingEvents} loading={showsAvailable && concertsLoading} stale={concertsStale} />
+    </>;
+
+    if (failure === 'failed' && !hasAnyContent) return (
+        <div className="page-container">
+            <BackButton onClick={() => navigate(-1)} />
+            <p>Could not load this artist.</p>
+            <button className="btn btn-ghost btn-sm mt-3" onClick={retry}>Retry</button>
+        </div>
+    );
+
     if ((isLibraryLoading || artistTracksLoading || creditsLoading) && (!artistName || !hasAnyContent)) {
-        return <ArtistDetailSkeleton onBack={() => navigate(-1)} hero={heroState} />;
+        return <ArtistDetailSkeleton onBack={() => navigate(-1)} hero={heroState}>
+            {(popularLoading || hasPopularInLibrary) && <PopularTracksLoading />}
+            {mediaSections}
+        </ArtistDetailSkeleton>;
     }
 
     if (!artistName || !hasAnyContent) {
-        if (heroState && (heroState.name || heroState.imageUrl)) {
-            return <ArtistDetailSkeleton onBack={() => navigate(-1)} hero={heroState} />;
-        }
         return (
             <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
                 <Users className="w-12 h-12 text-[var(--color-text-muted)] opacity-30 mb-4" />
@@ -889,6 +930,7 @@ export const ArtistDetail: React.FC = () => {
                     </div>
                 </div>
 
+                {popularLoading && !hasPopularInLibrary && <PopularTracksLoading />}
                 {hasPopularInLibrary && (
                     <section className="mb-12">
                         <div className="flex items-center justify-between gap-4 mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2">
@@ -1003,17 +1045,7 @@ export const ArtistDetail: React.FC = () => {
                     </section>
                 )}
 
-                <MusicVideos
-                    videos={musicVideos}
-                    loading={musicVideosLoading}
-                    stale={musicVideosStale}
-                />
-
-                <UpcomingShows
-                    events={upcomingEvents}
-                    loading={concertsLoading}
-                    stale={concertsStale}
-                />
+                {mediaSections}
 
                 {/* Role-filter chip row. The chip order mirrors the
                     user's library: a producer-credited artist sees

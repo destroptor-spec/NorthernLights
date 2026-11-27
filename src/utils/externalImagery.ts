@@ -122,14 +122,28 @@ export const fetchArtistData = (artistName: string, mbArtistId?: string | null):
     });
 };
 
-export const fetchArtistTopTracks = (artistName: string, limit: number = 25): Promise<ArtistTopTrackData[]> => {
-    if (!artistName) return Promise.resolve([]);
+const rankings = new Map<string, { tracks: ArtistTopTrackData[]; checkedAt: number }>();
+const rankingRequests = new Map<string, Promise<ArtistTopTrackData[]>>();
+const rankingKey = (name: string, limit: number) => JSON.stringify([name.trim().toLowerCase(), limit]);
 
-    return cachedLookup(`artist-top-tracks::${artistName}::${limit}`, async () => {
-        const params = new URLSearchParams({ name: artistName, limit: String(limit) });
-        const data = await serverFetch<{ tracks: ArtistTopTrackData[] }>(`/api/providers/external/artist-top-tracks?${params}`);
-        return data?.tracks || [];
+export const peekArtistTopTracks = (name: string, limit: number) => rankings.get(rankingKey(name, limit))?.tracks;
+
+export const fetchArtistTopTracks = (artistName: string, limit = 25): Promise<ArtistTopTrackData[]> => {
+    const key = rankingKey(artistName, limit);
+    const cached = rankings.get(key);
+    if (cached && Date.now() - cached.checkedAt < 60000) return Promise.resolve(cached.tracks);
+    const pending = rankingRequests.get(key);
+    if (pending) return pending;
+    const params = new URLSearchParams({ name: artistName, limit: String(limit) });
+    const request = serverFetch<{ tracks: ArtistTopTrackData[] }>(`/api/providers/external/artist-top-tracks?${params}`).then(data => {
+        if (!data || !Array.isArray(data.tracks)) throw new Error('Could not load popular tracks');
+        if (rankingRequests.get(key) === request) rankings.set(key, { tracks: data.tracks, checkedAt: Date.now() });
+        return data.tracks;
+    }).finally(() => {
+        if (rankingRequests.get(key) === request) rankingRequests.delete(key);
     });
+    rankingRequests.set(key, request);
+    return request;
 };
 
 interface AlbumData {
@@ -207,16 +221,13 @@ export const fetchLyrics = async (trackName: string, artistName: string): Promis
     return data || undefined;
 };
 
-/**
- * Clear all external imagery caches on the server (admin action).
- * No-op on client — server handles cache invalidation.
- */
-export const clearExternalCache = () => {
-    // Drop the client-side lookup cache so the next render forces a fresh
-    // server hit. The server-side cache clears via POST /api/providers/external/refresh
-    // (admin-only), so this client-side reset is what most callers actually need.
-    imageryLookupCache.clear();
-    // Server-side cache clearing is admin-only via POST /api/providers/external/refresh
-    // This function is kept for backward compatibility with store.saveSettings()
-    // The server cache is TTL-based and doesn't need client-side clearing
+export const clearExternalCache = (keys?: string[]) => {
+    const lastFm = !keys || keys.includes('lastFmApiKey');
+    if (lastFm) {
+        rankings.clear();
+        rankingRequests.clear();
+    }
+    if (lastFm || keys?.some(key => ['metadataProviderPriority', 'geniusApiKey', 'fanartTvApiKey', 'theAudioDbApiKey', 'musicBrainzEnabled', 'musicBrainzClientId', 'musicBrainzClientSecret'].includes(key))) {
+        imageryLookupCache.clear();
+    }
 };

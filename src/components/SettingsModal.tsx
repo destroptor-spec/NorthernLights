@@ -103,7 +103,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     const handleClose = useCallback(async () => {
         if (isClosing) return;
         setIsClosing(true);
-        await saveSettings();
+        try {
+            await saveSettings();
+        } catch (error) {
+            setIsClosing(false);
+            usePlayerStore.getState().addToast(error instanceof Error ? error.message : 'Could not save settings', 'error');
+            return;
+        }
         setTimeout(() => onClose(), 280); 
     }, [isClosing, onClose, saveSettings]);
 

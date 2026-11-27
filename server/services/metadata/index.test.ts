@@ -1,11 +1,11 @@
 /**
  * @jest-environment node
  */
-import { clearDiscArtCacheForTests, getAlbumDiscArt, getAlbumImage, getAlbumRecordingPlaces, getArtistData } from './index';
-import { getRepresentativeReleaseMbid, getStoredRecordingPlaces, getSystemSetting, storeRecordingPlaces } from '../../database';
+import { clearDiscArtCacheForTests, getAlbumDiscArt, getAlbumImage, getAlbumRecordingPlaces, getArtistData, getArtistTopTracks } from './index';
+import { initDB, getRepresentativeReleaseMbid, getStoredRecordingPlaces, getSystemSetting, storeRecordingPlaces } from '../../database';
 import { getCachedAlbum, getCachedArtist, upsertAlbumCache, upsertArtistCache } from './cache';
 import { geniusSearch, geniusGetArtist } from './providers/genius';
-import { lastFmAlbumInfo, lastFmArtistInfo, lastFmArtistTopTags, extractLastFmImage } from './providers/lastfm';
+import { lastFmArtistTopTracks, lastFmAlbumInfo, lastFmArtistInfo, lastFmArtistTopTags, extractLastFmImage } from './providers/lastfm';
 import { mbGetAlbumCover, mbGetArtist, mbGetReleaseGroupCover, mbReleaseGroupOfRelease, mbReleaseRecordingPlaces, mbSearchReleaseGroup } from './providers/musicbrainz';
 import { tadbAlbumByReleaseGroup, tadbArtistByMbid, tadbSearchArtist, tadbSearchAlbum } from './providers/theaudiodb';
 import { fanartAlbum, fanartArtist } from './providers/fanarttv';
@@ -13,6 +13,7 @@ import { ProviderError, RateLimitError } from './errors';
 
 jest.mock('../../database', () => ({
   getSystemSetting: jest.fn(),
+  initDB: jest.fn(),
   getStoredRecordingPlaces: jest.fn(),
   storeRecordingPlaces: jest.fn(async () => {}),
   getRepresentativeReleaseMbid: jest.fn(),
@@ -27,6 +28,7 @@ jest.mock('./cache', () => ({
 jest.mock('./providers/genius', () => ({ geniusSearch: jest.fn(), geniusGetArtist: jest.fn() }));
 jest.mock('./providers/lastfm', () => ({
   lastFmArtistInfo: jest.fn(),
+  lastFmArtistTopTracks: jest.fn(),
   lastFmArtistTopTags: jest.fn(),
   lastFmAlbumInfo: jest.fn(),
   extractLastFmImage: jest.fn(() => undefined),
@@ -636,5 +638,29 @@ describe('where an album was recorded', () => {
     expect(await getAlbumRecordingPlaces('al1')).toBeNull();
     expect(storeRecordingPlaces).not.toHaveBeenCalled();
     expect(mbReleaseRecordingPlaces).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('shared Last.fm ranking', () => {
+  const tracks = [{ name: 'First' }];
+  it('reads a fresh database entry without a provider request', async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [{ tracks, fetched_at: new Date() }] });
+    jest.mocked(initDB).mockResolvedValue({ query } as never);
+    expect(await getArtistTopTracks('Artist')).toEqual(tracks);
+    expect(lastFmArtistTopTracks).not.toHaveBeenCalled();
+  });
+
+  it('serves expired data during a single refresh and retains it on provider failure', async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [{ tracks, fetched_at: new Date(0) }] });
+    jest.mocked(initDB).mockResolvedValue({ query } as never);
+    let fail!: (reason: Error) => void;
+    jest.mocked(lastFmArtistTopTracks).mockReturnValue(new Promise((_, reject) => { fail = reject; }));
+    expect(await Promise.all([getArtistTopTracks('Same'), getArtistTopTracks('same')])).toEqual([tracks, tracks]);
+    expect(lastFmArtistTopTracks).toHaveBeenCalledTimes(1);
+    fail(new Error('provider offline'));
+    await new Promise(resolve => setImmediate(resolve));
+    expect(await getArtistTopTracks('Same')).toEqual(tracks);
+    expect(lastFmArtistTopTracks).toHaveBeenCalledTimes(1);
+    expect(query.mock.calls.every(([sql]) => sql.startsWith('SELECT'))).toBe(true);
   });
 });

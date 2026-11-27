@@ -215,6 +215,24 @@ export async function mapPlaylistV1(row: any, userId: string, prefetchedTracks?:
   };
 }
 
+/** Fingerprint the source rows for the three paginated lists in one MVCC snapshot.
+ * Catalog rows use their transaction version; tracks contribute only fields
+ * read by the album card aggregate, so playback-stat writes leave it alone.
+ */
+export async function getCatalogRevision(): Promise<string> {
+  const db = await initDB();
+  const { rows: [row] } = await db.query(`
+    SELECT
+      (SELECT bit_xor(hashtextextended(ROW(id,xmin)::text, 0)) FROM artists) AS artists,
+      (SELECT bit_xor(hashtextextended(ROW(id,xmin)::text, 0)) FROM albums) AS albums,
+      (SELECT bit_xor(hashtextextended(ROW(id,xmin)::text, 0)) FROM genres) AS genres,
+      (SELECT bit_xor(hashtextextended(ROW(track_id,genre_id)::text, 0)) FROM track_genres) AS memberships,
+      (SELECT bit_xor(hashtextextended(ROW(id,album_id,genre_id,year,art_hash,track_number,release_type)::text, 0))
+         FROM tracks WHERE album_id IS NOT NULL) AS album_tracks
+  `);
+  return crypto.createHash('sha256').update(JSON.stringify(row)).digest('base64url');
+}
+
 export async function getLibraryRevision(): Promise<string> {
   const db = await initDB();
   const result = await db.query(`

@@ -55,6 +55,7 @@ test('saved logging settings are loaded and excluded from dialog-close bulk save
   fetchMock.mockResolvedValue({ ok: true, json: async () => ({ scannerLoggingEnabled: true, analyzerLoggingEnabled: true, loudnessLoggingEnabled: true }) });
   await usePlayerStore.getState().loadSettings();
   expect(usePlayerStore.getState()).toMatchObject({ scannerLoggingEnabled: true, analyzerLoggingEnabled: true, loudnessLoggingEnabled: true });
+  usePlayerStore.setState({ loudnessPreampDb: -3 });
   await usePlayerStore.getState().saveSettings();
   const payload = JSON.parse(fetchMock.mock.calls.at(-1)[1].body);
   for (const key of Object.keys(SERVER_LOGGING_SETTINGS)) expect(payload).not.toHaveProperty(key);

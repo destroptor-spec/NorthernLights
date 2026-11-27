@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { usePlayerStore } from '../store/index';
-import { auroraApiRequest, type Track } from '../api/auroraApi';
+import { auroraApiRequest, AuroraApiError, type Track } from '../api/auroraApi';
 import { toPlayableTracks } from '../utils/playableTracks';
 import type { TrackInfo } from '../utils/fileSystem';
 
@@ -8,6 +8,7 @@ interface ApiV1TracksState<M> {
   tracks: TrackInfo[];
   meta: M | null;
   loading: boolean;
+  failure: 'missing' | 'failed' | null;
 }
 
 /**
@@ -19,22 +20,29 @@ interface ApiV1TracksState<M> {
 function useApiV1Tracks<D, M>(
   path: string | null,
   split: (data: D) => { tracks: Track[]; meta: M },
-): ApiV1TracksState<M> {
-  const [state, setState] = useState<ApiV1TracksState<M>>({ tracks: [], meta: null, loading: !!path });
+) {
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => setAttempt(previous => previous + 1), []);
+  const pending = useMemo(() => ({ tracks: [], meta: null, loading: !!path, failure: null }), [path]);
+  const [result, setResult] = useState<{ path: string; attempt: number; data: ApiV1TracksState<M> }>();
+  const state = result && result.path === path && result.attempt === attempt ? result.data : pending;
 
   useEffect(() => {
-    if (!path) { setState({ tracks: [], meta: null, loading: false }); return; }
+    if (!path) return;
     let cancelled = false;
-    setState((s) => ({ ...s, loading: true }));
     auroraApiRequest<D>(path, usePlayerStore.getState().getAuthHeader())
       .then((data) => {
         if (cancelled) return;
         const { tracks, meta } = split(data);
-        setState({ tracks: toPlayableTracks(tracks || []), meta, loading: false });
+        setResult({ path, attempt, data: { tracks: toPlayableTracks(tracks || []), meta, loading: false, failure: null } });
       })
-      .catch(() => { if (!cancelled) setState({ tracks: [], meta: null, loading: false }); });
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        const failure = error instanceof AuroraApiError && error.status === 404 ? 'missing' : 'failed';
+        setResult({ path, attempt, data: { tracks: [], meta: null, loading: false, failure } });
+      });
     return () => { cancelled = true; };
-  }, [path, split]);
+  }, [path, split, attempt]);
 
   // Optimistic loved-state toggles: these tracks live in component state, not
   // the store, so per-track hearts would otherwise wait for a refetch.
@@ -43,7 +51,7 @@ function useApiV1Tracks<D, M>(
     () => state.tracks.map((t) => (t.id in lovedOverlay ? { ...t, isLoved: lovedOverlay[t.id] } : t)),
     [state.tracks, lovedOverlay],
   );
-  return { ...state, tracks };
+  return { ...state, tracks, retry };
 }
 
 const splitTrackList = (tracks: Track[]) => ({ tracks, meta: null });
@@ -63,6 +71,6 @@ function splitEntity<M>({ tracks, ...meta }: { tracks: Track[] } & M) {
  * `/albums/:id`, `/artists/:id`). `meta` is everything except `tracks`.
  * The v1 counterpart of useEntityTracks. Pass null to fetch nothing.
  */
-export function useApiV1EntityTracks<M>(path: string | null): ApiV1TracksState<M> {
+export function useApiV1EntityTracks<M>(path: string | null) {
   return useApiV1Tracks<{ tracks: Track[] } & M, M>(path, splitEntity);
 }

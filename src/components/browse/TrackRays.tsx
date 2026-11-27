@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { RaysLoading } from '../DetailRouteLoading';
 import { mostVivid } from '../../utils/vividColor';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Check, ChevronDown, Loader2, Pause, Play, User2, X } from 'lucide-react';
@@ -371,6 +372,10 @@ const GenreMixChart: React.FC<{ mix: NonNullable<Rays['sound']>['genreMix'] }> =
  */
 export const TrackRays: React.FC = () => {
   const { trackId = '' } = useParams<{ trackId: string }>();
+  return <TrackRaysContent key={trackId} trackId={trackId} />;
+};
+
+const TrackRaysContent = ({ trackId }: { trackId: string }) => {
   const navigate = useNavigate();
   const isAdmin = usePlayerStore(s => s.currentUser?.role === 'admin');
   const [rays, setRays] = useState<Rays | null>(null);
@@ -453,6 +458,7 @@ export const TrackRays: React.FC = () => {
   const track = rays?.track;
   const artistName = track?.artist;
 
+  if (!rays && !error) return <RaysLoading />;
   return (
     <div className="genre-detail page-container browse rays relative">
       {rays && (banner || cover) && <FadedHeroImage src={(banner || cover)!} variant={banner ? 'wide' : 'standard'} />}
@@ -460,13 +466,6 @@ export const TrackRays: React.FC = () => {
       <BackButton onClick={() => navigate(-1)} />
 
       {error && (error.missing ? <p className="browse-empty">{error.message}</p> : <BrowseError message={error.message} onRetry={load} />)}
-      {!rays && !error && (
-        <div className="rays-hero" aria-hidden="true">
-          <div className="rays-hero__cover bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
-          <div className="h-16 w-2/3 max-w-xl rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
-        </div>
-      )}
-
       {rays && track && (
         <>
           <header className="rays-hero">

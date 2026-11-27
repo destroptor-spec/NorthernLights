@@ -67,8 +67,16 @@ function formatCount(raw: string | undefined): string | null {
 
 // ─── Skeleton ────────────────────────────────────────────────────────────────
 
+const TrackListHeading = () => (
+    <div className="grid grid-cols-[30px_1fr_40px] md:grid-cols-[40px_1fr_100px] px-2 md:px-4 py-3 border-b border-black/5 dark:border-white/10 font-semibold text-xs uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+        <div className="text-center md:text-left">#</div>
+        <div>Title</div>
+        <div className="text-right hidden md:block">Time</div>
+    </div>
+);
+
 const TrackRowSkeleton: React.FC = () => (
-    <div className="grid grid-cols-[30px_1fr_40px] md:grid-cols-[40px_1fr_100px] gap-2 px-2 md:px-4 py-2.5 animate-pulse">
+    <div className="grid grid-cols-[30px_1fr_40px] md:grid-cols-[40px_1fr_100px] gap-2 px-2 md:px-4 py-2 animate-pulse motion-reduce:animate-none">
         <div className="flex justify-center md:justify-start">
             <div className="h-4 w-4 rounded bg-[var(--color-surface-variant)]" />
         </div>
@@ -118,12 +126,13 @@ const AlbumDetailSkeleton: React.FC<{ onBack: () => void; hero?: AlbumHeroState 
                             <div className="h-4 w-16 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
                             <div className="h-10 w-3/4 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
                             <div className="h-5 w-1/2 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
-                            <div className="h-10 w-32 rounded-full bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mt-4" />
                         </>
                     )}
+                    <div className="h-10 w-32 rounded-full bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mt-4 mx-auto md:mx-0" />
                 </div>
             </div>
-            <div className="space-y-0.5">
+            <div className="mt-4 space-y-0.5">
+                <TrackListHeading />
                 {Array.from({ length: 8 }).map((_, i) => <TrackRowSkeleton key={i} />)}
             </div>
         </div>
@@ -521,7 +530,7 @@ export const AlbumDetail: React.FC = () => {
 
     // Album tracks come from the per-album endpoint instead of filtering the
     // in-memory library, so the album view no longer depends on the full track set.
-    const { tracks: albumTracks, meta: albumMeta, loading: albumTracksLoading } = useApiV1EntityTracks<AlbumDetailMeta>(
+    const { tracks: albumTracks, meta: albumMeta, failure, retry, loading: albumTracksLoading } = useApiV1EntityTracks<AlbumDetailMeta>(
         albumId ? `/albums/${encodeURIComponent(albumId)}` : null,
     );
     // The release as its files tag it (label, dates, medium), for At a glance and the disc.
@@ -894,20 +903,25 @@ export const AlbumDetail: React.FC = () => {
 
     // ── Navigation helpers ─────────────────────────────────────────────────
 
+    if (failure === 'failed') return (
+        <div className="page-container">
+            <BackButton onClick={() => navigate(-1)} />
+            <p>Could not load this album.</p>
+            <button className="btn btn-ghost btn-sm mt-3" onClick={retry}>Retry</button>
+        </div>
+    );
+
     if (!albumId || (albumTracksLoading && albumTracks.length === 0)) {
         return <AlbumDetailSkeleton onBack={() => navigate(-1)} hero={heroState} />;
     }
 
     if (albumTracks.length === 0) {
-        if (heroState && (heroState.title || heroState.artUrl)) {
-            return <AlbumDetailSkeleton onBack={() => navigate(-1)} hero={heroState} />;
-        }
         return <div className="flex-1 flex justify-center items-center text-[var(--color-text-muted)]">Album not found.</div>;
     }
 
     const albumTitle = albumInfo?.title || albumTracks[0]?.album || 'Unknown Album';
     const albumArtist = albumInfo?.artist_name || albumTracks[0]?.albumArtist || albumTracks[0]?.artist || 'Unknown Artist';
-    const artUrl = albumTracks.find(t => t.artUrl)?.artUrl;
+    const artUrl = albumTracks.find(t => t.artUrl)?.artUrl || heroState?.artUrl;
     const albumYear = albumTracks.find(t => t.year)?.year;
     const headerArtists = parseArtistsForDisplay(albumArtist, knownArtistKeys);
 
@@ -1205,11 +1219,7 @@ export const AlbumDetail: React.FC = () => {
             </div>
 
             <div className="mt-4 flex-1 min-h-0 flex flex-col pb-6">
-                <div className="grid grid-cols-[30px_1fr_40px] md:grid-cols-[40px_1fr_100px] px-2 md:px-4 py-3 border-b border-black/5 dark:border-white/10 font-semibold text-xs uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
-                    <div className="text-center md:text-left">#</div>
-                    <div>Title</div>
-                    <div className="text-right hidden md:block">Time</div>
-                </div>
+                <TrackListHeading />
                 <div ref={trackListRef} className="overflow-y-auto flex-1 min-h-0 hide-scrollbar">
                     {shouldVirtualizeAlbumRows ? (
                         <div

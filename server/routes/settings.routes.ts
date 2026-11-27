@@ -1,7 +1,7 @@
 import { isLogLevel, LOG_LEVELS, SERVER_LOGGING_SETTINGS } from '../../shared/logging';
 import { applyLoggingSettings, getLoggingSettings } from '../services/loggingConfig';
 import { Router } from 'express';
-import { getSystemSetting, setSystemSetting, getUserSetting, setUserSetting } from '../database';
+import { getSystemSetting, saveSettingsBatch, setSystemSetting, getUserSetting, setUserSetting } from '../database';
 import { requireAdmin } from '../middleware/auth';
 import OpenAI from 'openai';
 import { publishPlaybackSyncChanged } from '../services/playbackSync.service';
@@ -14,7 +14,7 @@ const router = Router();
 const userKeys = new Set(['discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'playedThresholdPercent', 'llmPlaylistDiversity', 'llmVetoMode', 'llmGenreCohesion', 'llmDiscoveryBias', 'llmArtistSpread', 'llmRecoveryStrength', 'llmAdjacentReach', 'llmTracksPerPlaylist', 'llmPlaylistCount', 'lastFmScrobbleEnabled', 'listenBrainzScrobbleEnabled', 'subsonicProviderScrobbleEnabled', 'subsonicProviderLoveSyncEnabled', 'concertsEnabled', 'concertsLat', 'concertsLng', 'concertsLocationLabel', 'concertsRadiusKm', 'concertsAutoAddEnabled', 'loudnessNormEnabled', 'loudnessTargetLufs', 'loudnessPreampDb', 'loudnessMode', 'playbackSyncEnabled', 'newBrowseEnabled']);
 const serverKeys = new Set(['metadataProviderPriority', 'theAudioDbApiKey', 'fanartTvApiKey', 'llmBaseUrl', 'llmApiKey', 'llmModelName', 'hubGenerationSchedule', 'systemPlaylistConfig', 'audioAnalysisCpu', 'scannerConcurrency', 'loudnessComputeMode', 'geniusApiKey', 'lastFmApiKey', 'lastFmSharedSecret', 'musicBrainzEnabled', 'musicBrainzClientId', 'musicBrainzClientSecret', 'musicBrainzRedirectUri', 'providerArtistImage', 'providerArtistArtwork', 'providerArtistBio', 'providerAlbumArt', 'autoFolderWalk', 'jambaseEnabled', 'jambaseMaxSubscriptionsPerUser', 'jambaseCacheTtlDays', 'jambaseMonthlyCap', 'jambaseHardStop', 'youtubeEnabled', 'youtubeApiKey', 'youtubeCacheTtlDays', 'youtubeDailyQuotaCap', 'youtubeHardStop', ...Object.keys(SERVER_LOGGING_SETTINGS), 'logLevel', 'openSubsonicEnabled', 'turnstileEnabled', 'turnstileSiteKey', 'turnstileSecretKey', 'playbackSyncMode']);
 const secretServerKeys = new Set(['theAudioDbApiKey', 'fanartTvApiKey', 'llmApiKey', 'geniusApiKey', 'lastFmApiKey', 'lastFmSharedSecret', 'musicBrainzClientSecret', 'youtubeApiKey', 'turnstileSecretKey']);
-const nonAdminReadableServerKeys = new Set(['hubGenerationSchedule', 'systemPlaylistConfig', 'musicBrainzEnabled', 'musicBrainzConnected', 'openSubsonicEnabled', 'youtubeEnabled', 'playbackSyncMode']);
+const nonAdminReadableServerKeys = new Set(['hubGenerationSchedule', 'systemPlaylistConfig', 'musicBrainzEnabled', 'musicBrainzConnected', 'openSubsonicEnabled', 'jambaseEnabled', 'youtubeEnabled', 'playbackSyncMode']);
 // Keys that are written by OAuth2/connect flows server-side, not exposed to frontend
 const protectedKeys = new Set(['musicBrainzAccessToken', 'musicBrainzRefreshToken', 'musicBrainzTokenExpiresAt', 'musicBrainzConnected', 'musicBrainzUsername', 'lastFmSessionKey', 'lastFmUsername', 'lastFmConnected', 'listenBrainzUserToken', 'listenBrainzUsername', 'listenBrainzConnected', 'jwtSecret']);
 
@@ -33,6 +33,10 @@ router.get('/settings', async (req, res) => {
       const stored = await getSystemSetting(k);
       settings[k] = stored ?? loggingSettings[k] ?? null;
     }
+    // Listeners need availability for the artist layout, while credentials stay server-side.
+    settings.hasLastFmKey = !!(isAdmin ? settings.lastFmApiKey : await getSystemSetting('lastFmApiKey'));
+    settings.hasYouTubeKey = !!String((isAdmin ? settings.youtubeApiKey : await getSystemSetting('youtubeApiKey')) || '').trim();
+    settings.hasJamBaseKey = !!process.env.JAMBASE_API_KEY?.trim();
     if (isAdmin) settings.metadataProviderPriority = await getMetadataProviderPriority();
 
     // User-level settings (includes Last.fm which is per-user)
@@ -131,19 +135,14 @@ router.post('/settings', async (req, res) => {
       return res.status(400).json({ error: `logLevel must be one of ${LOG_LEVELS.join(', ')}`, keys: ['logLevel'] });
     }
 
-    for (const [k, v] of Object.entries(settings)) {
-      if (userKeys.has(k)) {
-        await setUserSetting(userId!, k, v);
-      } else if (serverKeys.has(k)) {
-        await setSystemSetting(k, v);
-      }
-    }
-
-    // Stamp when the Hub system-playlist toggles change so the engine-playlist
-    // cache is treated as stale and re-enabled families regenerate on the next
-    // Hub load (see getHubCollections), rather than waiting out the schedule.
-    if (settings.systemPlaylistConfig !== undefined) {
-      await setSystemSetting('systemPlaylistConfigUpdatedAt', Date.now());
+    const entries = Object.entries(settings);
+    if (entries.length === 1 && entries[0][0] !== 'systemPlaylistConfig') {
+      const [key, value] = entries[0];
+      if (userKeys.has(key)) await setUserSetting(userId!, key, value);
+      else await setSystemSetting(key, value);
+    } else if (entries.length) {
+      await saveSettingsBatch(userId, Object.fromEntries(entries.filter(([key]) => serverKeys.has(key))),
+        Object.fromEntries(entries.filter(([key]) => userKeys.has(key))));
     }
 
     if (settings.audioAnalysisCpu !== undefined || settings.scannerConcurrency !== undefined) {

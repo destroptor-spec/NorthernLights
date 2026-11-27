@@ -222,8 +222,11 @@ export const MusicVideos: React.FC<MusicVideosProps> = ({ videos, loading, stale
                     {[0, 1, 2, 3].map(i => (
                         <div
                             key={i}
-                            className="aspect-video w-[70vw] shrink-0 animate-pulse rounded-xl bg-[var(--color-surface-variant)] sm:w-[260px] md:w-[300px]"
-                        />
+                            className="w-[70vw] shrink-0 animate-pulse motion-reduce:animate-none sm:w-[260px] md:w-[300px]"
+                        >
+                            <div className="aspect-video rounded-xl bg-[var(--color-surface-variant)]" />
+                            <div className="mt-2 h-5 w-2/3 rounded bg-[var(--color-surface-variant)]" />
+                        </div>
                     ))}
                 </div>
             </section>
