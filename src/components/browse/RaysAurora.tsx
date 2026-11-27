@@ -1,19 +1,20 @@
 import React, { useEffect, useRef } from 'react';
 import { makeAurora, type AuroraSound } from '../../utils/auroraSignature';
 
-/** The aurora is a soft backdrop: its square is drawn at most this many pixels a side, then scaled by CSS. */
-const MAX_SIDE = 1200;
-/** The sky's height against its width: tall enough for the curtains to keep the demo tiles' sweep. */
-const SKY_ASPECT = 0.75;
-/** Where the curtains gather in that sky (share of its height): the window is centred here. */
-const CURTAIN_CENTRE = 0.47;
+/** The aurora is a soft backdrop: drawn at most this many pixels on its long side, then scaled by CSS. */
+const MAX_SIDE = 1600;
+/** The curtains' frame may be this much wider than tall: wide enough to span the hero, close enough to square to keep the demo tiles' sweep. */
+const MAX_STRETCH = 1.5;
+/** On a tall (phone) hero the square frame sits this far down the spare height, behind the cover and title. */
+const TALL_OFFSET = 0.4;
 
 /**
  * The track's aurora signature behind the Rays hero. The renderer scales its
- * curtains with the canvas, so a wide, short hero would flatten them into
- * bands; instead the sky is drawn square (as wide as the hero, or taller
- * where the hero is) and the hero shows a window through it, centred on the
- * curtains. Two layers: the night (sky and stars, drawn once) fades slowly
+ * curtains with their frame, so laid out over the whole wide, short hero they
+ * flatten into bands, and drawn bigger and cropped they lose their shape.
+ * Instead the curtains get a frame as tall as the hero and at most 1.5× as
+ * wide, centred: the whole curtain fits, with the demo tiles' proportions,
+ * and the night fills the rest. Two layers: the night (sky and stars, drawn once) fades slowly
  * into the page, while the lights above it are drawn in full and fade only
  * at the very bottom, so the fade never cuts the curtains off. The lights
  * drift only while on screen, the tab is visible and reduced motion is off;
@@ -34,7 +35,6 @@ export const RaysAurora: React.FC<{ sound: AuroraSound }> = ({ sound }) => {
     let rebuild = 0;
     let visible = false;
     let render: ReturnType<typeof makeAurora> | undefined;
-    let offset = 0;
     const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
     const size = () => {
@@ -45,21 +45,20 @@ export const RaysAurora: React.FC<{ sound: AuroraSound }> = ({ sound }) => {
       if (render && canvas.width === w && canvas.height === h) return;
       canvas.width = w; canvas.height = h;
       skyCanvas.width = w; skyCanvas.height = h;
-      const sky = Math.max(h, Math.round(w * SKY_ASPECT));
-      offset = Math.round(Math.min(Math.max(0, sky * CURTAIN_CENTRE - h / 2), sky - h));
+      // The curtains' frame: as tall as the hero and up to 1.5× as wide on a
+      // wide hero; a square on a tall one, a little above the middle.
+      const tall = h > w;
+      const fh = tall ? w : h;
+      const fw = Math.min(w, Math.round(fh * MAX_STRETCH));
+      const frame = { x: Math.round((w - fw) / 2), y: tall ? Math.round((h - fh) * TALL_OFFSET) : 0, width: fw, height: fh };
       // No landscape: the sky fades into the page below the hero. The night
       // is drawn once on its own layer; the lights paint on a clear one.
-      render = makeAurora(w, sky, sound, { landscape: false, sky: false });
-      skyCtx.setTransform(1, 0, 0, 1, 0, -offset);
+      render = makeAurora(w, h, sound, { landscape: false, sky: false, frame });
       skyCtx.drawImage(render.sky, 0, 0);
-      skyCtx.setTransform(1, 0, 0, 1, 0, 0);
     };
     const draw = (time: number) => {
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.setTransform(1, 0, 0, 1, 0, -offset);
       render?.(ctx, time);
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
     };
     const tick = (now: number) => {
       draw(now / 1000);

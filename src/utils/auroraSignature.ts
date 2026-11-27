@@ -133,8 +133,17 @@ function filament(fold: string, veil: string, soft: number) {
  * `sky: false` leaves the night out of each frame (the lights then paint on a
  * transparent canvas); the night is still built and returned as `.sky`, for a
  * caller that layers and fades the two apart.
+ *
+ * `frame` lays the curtains out in a rectangle of the canvas instead of the
+ * whole of it ({x, y, width, height} in canvas pixels): their folds and rays
+ * scale with the frame, so a wide, short canvas can keep a square tile's
+ * proportions without cropping. The night still fills the canvas.
  */
-export function makeAurora(w: number, h: number, track: AuroraSound, { landscape = true, sky = true }: { landscape?: boolean; sky?: boolean } = {}) {
+export function makeAurora(
+  w: number, h: number, track: AuroraSound,
+  { landscape = true, sky = true, frame }: { landscape?: boolean; sky?: boolean; frame?: { x: number; y: number; width: number; height: number } } = {},
+) {
+  const fx = frame?.x ?? 0, fy = frame?.y ?? 0, fw = frame?.width ?? w, fh = frame?.height ?? h;
   const random = randomFor(track.id);
   const background = night(w, h, random, landscape);
   const palette = track.mix.slice(0, 2);
@@ -172,18 +181,18 @@ export function makeAurora(w: number, h: number, track: AuroraSound, { landscape
       const ribs = noise(u * (28 + 165 * percussiveness) + 5 * noise(u * 8));
       const fine = noise(u * 360 + phase);
       const swell = noise(u * 8 + phase);
-      const length = h * (0.44 - 0.24 * depth) * (0.71 + 0.79 * energy) * perspective
+      const length = fh * (0.44 - 0.24 * depth) * (0.71 + 0.79 * energy) * perspective
         * (0.70 + 0.34 * swell + 0.09 * Math.sin(wave + phase) + 0.10 * fine);
-      const width = w * (0.010 + 0.010 * softness) * (0.56 + 0.44 * perspective);
+      const width = fw * (0.010 + 0.010 * softness) * (0.56 + 0.44 * perspective);
       const taper = Math.min(1, u * 12, (1 - u) * 12);
       const opacity = (0.40 + 0.60 * ribs) * (0.62 + 0.38 * fine) * (0.31 + 0.45 * swell + 0.24 * Math.sin(wave - 0.4) ** 2);
       ctx.globalAlpha = taper * opacity * (0.55 + 0.40 * brightness) * (0.65 - 0.28 * depth) / (1 + softness);
       const lean = (mirror ? -1 : 1) * (0.20 + 0.32 * Math.sin(u * 3 + bend));
-      ctx.setTransform(1, 0, lean, 1, x * w, y * h);
+      ctx.setTransform(1, 0, lean, 1, fx + x * fw, fy + y * fh);
       ctx.drawImage(sprite, -width / 2, -0.88 * length, width, length);
     }
     const haze = surface(w, h);
-    haze.filter = `blur(${Math.max(1.4, h * 0.031)}px)`;
+    haze.filter = `blur(${Math.max(1.4, fh * 0.031)}px)`;
     haze.drawImage(ctx.canvas, 0, 0);
     ctx.resetTransform();
     ctx.globalAlpha = 0.67;
@@ -202,7 +211,7 @@ export function makeAurora(w: number, h: number, track: AuroraSound, { landscape
     const phase = time * (track.bpm ?? 110) / 110 * 0.22;
     if (sky) ctx.drawImage(background, 0, 0);
     ctx.save(); ctx.globalCompositeOperation = 'screen';
-    if (rear) ctx.drawImage(rear.canvas, 0, h * 0.006 * Math.sin(phase * 0.6 + bend));
+    if (rear) ctx.drawImage(rear.canvas, 0, fh * 0.006 * Math.sin(phase * 0.6 + bend));
     const sway = 0.003 + 0.009 * track.values.danceability;
     ctx.transform(1, sway * Math.sin(phase + bend), 0.007 * Math.cos(phase * 0.7), 1, 0, 0);
     ctx.globalAlpha = 0.94 + 0.06 * Math.sin(phase * 1.7);
