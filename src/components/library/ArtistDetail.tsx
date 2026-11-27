@@ -7,6 +7,7 @@ import { useKnownArtistKeys } from '../../hooks/useKnownArtistKeys';
 import { useEntityTracks } from '../../hooks/useEntityTracks';
 import { useApiV1EntityTracks } from '../../hooks/useApiV1TrackList';
 import { auroraApiRequest, type AlbumSummary, type ArtistSummary, type Playlist as ApiPlaylist } from '../../api/auroraApi';
+import { useProviderImages } from '../../hooks/useProviderImages';
 import { toPlayableTracks } from '../../utils/playableTracks';
 import { useArtistData } from '../../hooks/useArtistData';
 import { useArtistTopTracks } from '../../hooks/useArtistTopTracks';
@@ -87,7 +88,7 @@ const SimilarArtistRow: React.FC<{ artist: SimilarArtist }> = ({ artist }) => {
             onPointerEnter={prefetchArtistDetail}
             onPointerDown={prefetchArtistDetail}
             onFocus={prefetchArtistDetail}
-            className="group card-hover rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] p-3 transition-ui hover:border-primary/40 hover:bg-[var(--glass-bg-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
+            className="group card-hover rounded-xl bg-[var(--color-surface)] p-3 transition-ui hover:bg-[var(--color-surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
         >
             <div className="flex items-start gap-3">
                 <div
@@ -314,7 +315,8 @@ const ArtistPage = ({ artistId }: { artistId?: string }) => {
     // Callers only pass a real artist portrait as the hero image (never album
     // art), so it can stand in until, or instead of, the provider's.
     const imageUrl = providerImageUrl || heroState?.imageUrl;
-    const { onTour, events: upcomingEvents, loading: concertsLoading, stale: concertsStale } = useArtistConcerts(artistId);
+    const heroImages = useProviderImages(artistId ? `/artists/${encodeURIComponent(artistId)}/hero-images` : null);
+    const { onTour, events: upcomingEvents, loading: concertsLoading, stale: concertsStale, timeZone: concertsTimeZone } = useArtistConcerts(artistId);
     const { videos: musicVideos, loading: musicVideosLoading, stale: musicVideosStale } = useArtistMusicVideos(artistId);
     const lastFmAvailable = usePlayerStore(s => s.currentUser?.role === 'admin' ? !!s.lastFmApiKey : s.hasLastFmKey);
     const videosAvailable = usePlayerStore(s => s.youtubeEnabled && (s.currentUser?.role === 'admin' ? !!s.youtubeApiKey.trim() : s.hasYouTubeKey));
@@ -788,7 +790,7 @@ const ArtistPage = ({ artistId }: { artistId?: string }) => {
     // their rail in advance when live lookup is available.
     const mediaSections = <>
         <MusicVideos videos={musicVideos} loading={videosAvailable && musicVideosLoading} stale={musicVideosStale} />
-        <UpcomingShows events={upcomingEvents} loading={showsAvailable && concertsLoading} stale={concertsStale} />
+        <UpcomingShows events={upcomingEvents} loading={showsAvailable && concertsLoading} stale={concertsStale} timeZone={concertsTimeZone} />
     </>;
 
     if (failure === 'failed' && !hasAnyContent) return (
@@ -1065,9 +1067,9 @@ const ArtistPage = ({ artistId }: { artistId?: string }) => {
                                     key={r.role}
                                     type="button"
                                     onClick={() => setSelectedRole(r.role)}
-                                    className={`text-[10px] font-bold uppercase tracking-[0.15em] px-2.5 py-1 rounded-full backdrop-blur-sm border transition-ui ${
+                                    className={`text-[11px] font-bold uppercase tracking-[0.15em] px-2.5 py-1 rounded-full backdrop-blur-sm border transition-ui ${
                                         isActive
-                                            ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
+                                            ? 'bg-[var(--color-primary-fill)] text-[var(--color-on-primary)] border-[var(--color-primary-fill)]'
                                             : 'bg-black/5 dark:bg-white/5 text-[var(--color-text-secondary)] border-[var(--glass-border)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]'
                                     }`}
                                     aria-pressed={isActive}
@@ -1203,6 +1205,7 @@ const ArtistPage = ({ artistId }: { artistId?: string }) => {
                 stats={libraryStats}
                 listeners={listeners}
                 tags={mergedTags}
+                heroImages={heroImages}
             />
 
             <SimilarArtistsSection artists={similarArtists} loading={similarArtistsLoading} />

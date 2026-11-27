@@ -5,7 +5,9 @@ import type { TrackInfo } from '../../utils/fileSystem';
 
 // The "About {artist}" and "About {album}" cards: a plain surface lit by the
 // picture's own colour, the picture and name at the top, then small-headed
-// blocks stacked (never columns). Styles: `.about-card*` in index.css.
+// blocks stacked. With provider pictures (`gallery`, an AboutCarousel) the
+// text keeps to a column beside the picture frame (on top on phones).
+// Styles: `.about-card*` in index.css.
 
 const sectionTitle = 'font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2';
 
@@ -21,9 +23,11 @@ export const AboutCard: React.FC<{
     shape: 'round' | 'square';
     /** What fills the picture frame. */
     picture: React.ReactNode;
+    /** Provider pictures beside the text (an AboutCarousel); none, no frame. */
+    gallery?: React.ReactNode;
     className?: string;
     children?: React.ReactNode;
-}> = ({ title, name, kind, imageUrl, shape, picture, className = 'mb-12', children }) => {
+}> = ({ title, name, kind, imageUrl, shape, picture, gallery, className = 'mb-12', children }) => {
     // Its most vivid colour glows behind the picture and washes into the
     // card's corner, as a track's cover lights its rays page. Emerald when
     // the picture has no colour to give.
@@ -35,17 +39,22 @@ export const AboutCard: React.FC<{
         <section className={className} aria-label={title}>
             <h2 className={sectionTitle}>{title}</h2>
             <div className="about-card" style={glow ? ({ '--about-glow': glow } as React.CSSProperties) : undefined}>
-                <div className="flex items-start gap-4 md:items-center md:gap-5">
-                    <div className="about-card__portrait-wrap">
-                        <span className="about-card__glow" aria-hidden="true" data-shape={shape} />
-                        <div className="about-card__portrait" data-shape={shape}>{picture}</div>
+                <div className={gallery ? 'about-card__layout' : undefined}>
+                    <div className="about-card__main">
+                        <div className="flex items-start gap-4 md:items-center md:gap-5">
+                            <div className="about-card__portrait-wrap">
+                                <span className="about-card__glow" aria-hidden="true" data-shape={shape} />
+                                <div className="about-card__portrait" data-shape={shape}>{picture}</div>
+                            </div>
+                            <div className="min-w-0 flex-1">
+                                <p className="about-card__name">{name}</p>
+                                {kind && <p className="about-card__kind">{kind}</p>}
+                            </div>
+                        </div>
+                        {children}
                     </div>
-                    <div className="min-w-0 flex-1">
-                        <p className="about-card__name">{name}</p>
-                        {kind && <p className="about-card__kind">{kind}</p>}
-                    </div>
+                    {gallery && <div className="about-card__gallery">{gallery}</div>}
                 </div>
-                {children}
             </div>
         </section>
     );

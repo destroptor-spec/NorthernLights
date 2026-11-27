@@ -40,6 +40,13 @@ export interface TadbAlbum {
   strAlbum?: string | null;
   strArtist?: string | null;
   strAlbumThumb?: string | null;
+  /** The back cover. */
+  strAlbumThumbBack?: string | null;
+  /** The case, the flat sleeve and the face, as 3D renders. */
+  strAlbum3DCase?: string | null;
+  strAlbum3DFlat?: string | null;
+  strAlbum3DFace?: string | null;
+  strAlbumSpine?: string | null;
   /** The disc itself, a transparent PNG. */
   strAlbumCDart?: string | null;
   strMusicBrainzID?: string | null;

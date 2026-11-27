@@ -25,7 +25,7 @@ When releasing: bump `package.json`, add a dated entry to `MEMORY.md`, and updat
 
 Top-level layout — explore subdirectories with `ls` for current file inventories.
 
-- `src/components/` — UI components. Subfolders: `library/` (detail views + shared library primitives like `AlbumCard`, `FadedHeroImage`; the artist page's header is only name + Play/Radio/Links, the "About {artist}" and "About {album}" cards are built from `AboutCard.tsx` (card lit by the picture's colour, small-headed blocks, `CollapsibleText` Read more, `TagPills`; classes `.about-card*`) in `ArtistAboutSections.tsx` / `AlbumAboutSection.tsx`; artist and album pages end with `browse/StyleProfileSection` "Genres and styles"; on the album page both sit inside the track list's scroller, after the last track), `settings/` (modular settings tabs), `cast/` (`CastHealthToasts`). Cast has no button of its own: it lives in the Connect menu (`ConnectMenu.tsx`), which opens Chrome's device picker through `castManager.openCastPicker()`; Cast state comes from `useCastStatus`.
+- `src/components/` — UI components. Subfolders: `library/` (detail views + shared library primitives like `AlbumCard`, `FadedHeroImage`; the artist page's header is only name + Play/Radio/Links, the "About {artist}" and "About {album}" cards are built from `AboutCard.tsx` (card lit by the picture's colour, small-headed blocks, `CollapsibleText` Read more, `TagPills`; classes `.about-card*`) in `ArtistAboutSections.tsx` / `AlbumAboutSection.tsx`; with provider pictures the text keeps to a column beside an `AboutCarousel` frame (dots inside, swipe/arrow keys, never auto-advances; on top on phones), fed by `useProviderImages`: `GET /api/v1/artists/:id/hero-images` (banner + fanart.tv backgrounds + TheAudioDB fanart) and `/albums/:id/artwork-images` (artwork beyond the front cover: CAA scans, TheAudioDB back/case/disc, fanart.tv discs), only providers on the admin's Artist banner / Album art list, kept 90 days in `artists.hero_images` / `albums.artwork_images`; artist and album pages end with `browse/StyleProfileSection` "Genres and styles"; on the album page both sit inside the track list's scroller, after the last track), `settings/` (modular settings tabs), `cast/` (`CastHealthToasts`). Cast has no button of its own: it lives in the Connect menu (`ConnectMenu.tsx`), which opens Chrome's device picker through `castManager.openCastPicker()`; Cast state comes from `useCastStatus`.
 - `src/hooks/` — Custom React hooks (data fetching, gestures, dominant-color extraction, toasts).
 - `src/store/` — Zustand state with persistence middleware.
 - `src/utils/` — Pure utilities. Notable singletons: `PlaybackManager`, `CastManager`, `PreloadManager`.
@@ -44,7 +44,7 @@ Use the global button classes — do NOT write inline Tailwind button strings. C
 | Class | Purpose |
 |-------|---------|
 | `.btn` | Base — compact inline-flex, `8px 16px`, `0.875rem` |
-| `.btn-primary` | Filled purple action |
+| `.btn-primary` | Filled emerald action; label `--color-on-primary` on `--color-primary-fill` (AA in both themes) |
 | `.btn-danger` | Outlined red warning |
 | `.btn-danger-fill` | Filled red destructive |
 | `.btn-ghost` | Glass/neutral outlined |

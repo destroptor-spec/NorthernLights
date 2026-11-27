@@ -26,7 +26,7 @@ export interface ArtistTopTrackData {
 // ─── Helpers ────────────────────────────────────────────────────────
 
 /** Proxy an external image URL through the server to avoid CORS and enable caching */
-function proxyImageUrl(externalUrl: string): string {
+export function proxyImageUrl(externalUrl: string): string {
     return `/api/providers/external/proxy-image?url=${encodeURIComponent(externalUrl)}`;
 }
 

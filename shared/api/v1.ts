@@ -678,6 +678,14 @@ export const albumRecordingPlacesSchema = z.object({
   })).nullable().describe('MusicBrainz\'s "recorded at" places, most tracks first; [] when none are entered; null when it can\'t say now (MusicBrainz off or unreachable).'),
 }).meta({ id: 'AlbumRecordingPlaces' });
 
+export const providerImagesSchema = z.object({
+  images: z.array(z.object({
+    url: z.string().describe('The provider\'s image URL; show it through the external image proxy.'),
+    provider: z.string().nullable().describe('fanarttv, theaudiodb or musicbrainz (the Cover Art Archive); null for the banner the artist lookup chose.'),
+    label: z.string().nullable().describe('What the picture is ("Back", "Booklet", "Disc"), when the provider says.'),
+  })).nullable().describe('In the admin\'s provider order, at most 10; [] when there are none.'),
+}).meta({ id: 'ProviderImages' });
+
 export const genreDetailSchema = z.object({
   genre: genreSchema,
   tracks: z.array(trackSchema),
@@ -887,6 +895,7 @@ export type AlbumSummary = z.infer<typeof albumSummarySchema>;
 export type Genre = z.infer<typeof genreSchema>;
 export type ArtistDetail = z.infer<typeof artistDetailSchema>;
 export type AlbumRecordingPlaces = z.infer<typeof albumRecordingPlacesSchema>;
+export type ProviderImages = z.infer<typeof providerImagesSchema>;
 export type AlbumDetail = z.infer<typeof albumDetailSchema>;
 export type GenreDetail = z.infer<typeof genreDetailSchema>;
 export type PlaylistGenerationSource = z.infer<typeof playlistGenerationSourceSchema>;

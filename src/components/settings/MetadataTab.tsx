@@ -82,7 +82,7 @@ const CreditsImportPanel: React.FC<{ title: string; providerName: string; status
     }
     const showBar = !!status && status.eligible > 0 && (status.state === 'running' || status.state === 'paused');
     return (
-        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 mb-4 shadow-sm" role="status" aria-live="polite">
+        <div className="bg-[var(--color-surface)] rounded-2xl p-5 mb-4 shadow-sm"role="status"aria-live="polite">
             <div className="text-sm font-semibold text-[var(--color-text-primary)]">{title}</div>
             <div className="text-xs text-[var(--color-text-muted)] mt-1">{line}</div>
             {showBar && (
@@ -487,7 +487,7 @@ export const MetadataTab: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 flex flex-col gap-3 shadow-sm">
+                    <div className="bg-[var(--color-surface)] rounded-2xl p-5 flex flex-col gap-3 shadow-sm">
                         <input type="text" value={lastFmApiKey} onChange={e => setLastFmApiKey(e.target.value)} placeholder="API Key" className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-background text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" />
                         <input type="password" value={lastFmSharedSecret} onChange={e => setLastFmSharedSecret(e.target.value)} placeholder="Shared Secret" className="w-full p-3 rounded-xl border border-[var(--glass-border)] bg-background text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" />
                         <div className="flex flex-col gap-2 mt-2 pt-3 border-t border-[var(--glass-border)]">
@@ -576,7 +576,7 @@ export const MetadataTab: React.FC = () => {
                         <CreditsImportPanel title="Producer and writer credits" providerName="Genius" status={geniusCredits} />
                     )}
 
-                    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 flex flex-col gap-3 shadow-sm">
+                    <div className="bg-[var(--color-surface)] rounded-2xl p-5 flex flex-col gap-3 shadow-sm">
                         <div className="flex gap-2">
                             <input type="text" value={geniusApiKey} onChange={e => setGeniusApiKey(e.target.value)} placeholder="Access Token" className="flex-1 p-3 rounded-xl border border-[var(--glass-border)] bg-background text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" />
                             <button onClick={() => testGenius(geniusApiKey)} disabled={geniusStatus === 'testing' || !geniusApiKey} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">{geniusStatus === 'testing' ? 'Testing...' : 'Test Connection'}</button>
@@ -649,7 +649,7 @@ export const MetadataTab: React.FC = () => {
                         <CreditsImportPanel title="Role credits" providerName="MusicBrainz" status={mbCredits} />
                     )}
 
-                    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 flex flex-col shadow-sm">
+                    <div className="bg-[var(--color-surface)] rounded-2xl p-5 flex flex-col shadow-sm">
 
                         {/* Clarification Alert */}
                         <div className="bg-blue-500/5 dark:bg-blue-500/10 border border-blue-500/10 dark:border-blue-500/20 rounded-lg p-3 mb-4 text-xs text-blue-700 dark:text-blue-200">
@@ -792,7 +792,7 @@ export const MetadataTab: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 flex flex-col gap-3 shadow-sm">
+                    <div className="bg-[var(--color-surface)] rounded-2xl p-5 flex flex-col gap-3 shadow-sm">
                         <div className="flex gap-2">
                             <input type="text" value={theAudioDbApiKey} onChange={e => setSettings({ theAudioDbApiKey: e.target.value.trim() })} placeholder="API key" aria-label="TheAudioDB API key" className="flex-1 min-w-0 p-3 rounded-xl border border-[var(--glass-border)] bg-background text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" />
                             <button onClick={() => testTheAudioDb(theAudioDbApiKey)} disabled={theAudioDbStatus === 'testing' || !theAudioDbApiKey} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">{theAudioDbStatus === 'testing' ? 'Testing...' : 'Test Connection'}</button>
@@ -830,7 +830,7 @@ export const MetadataTab: React.FC = () => {
                         </p>
                     </div>
 
-                    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 flex flex-col gap-3 shadow-sm">
+                    <div className="bg-[var(--color-surface)] rounded-2xl p-5 flex flex-col gap-3 shadow-sm">
                         <div className="flex flex-col sm:flex-row gap-2">
                             <input type="text" value={fanartTvApiKey} onChange={e => setSettings({ fanartTvApiKey: e.target.value.trim() })} placeholder="Project API key" aria-label="fanart.tv project API key" className="flex-1 min-w-0 p-3 rounded-xl border border-[var(--glass-border)] bg-background text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors" />
                             <button onClick={() => testFanartTv(fanartTvApiKey)} disabled={fanartTvStatus === 'testing' || !fanartTvApiKey} className="btn btn-ghost btn-sm whitespace-nowrap disabled:opacity-50">{fanartTvStatus === 'testing' ? 'Testing...' : 'Test Connection'}</button>
@@ -881,7 +881,7 @@ export const MetadataTab: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 flex flex-col gap-4 shadow-sm">
+                    <div className="bg-[var(--color-surface)] rounded-2xl p-5 flex flex-col gap-4 shadow-sm">
                         {/* Note about API key location */}
                         <div className="bg-blue-500/5 dark:bg-blue-500/10 border border-blue-500/10 dark:border-blue-500/20 rounded-lg p-3 text-xs text-blue-700 dark:text-blue-200">
                             <strong>Note:</strong> Jambase is metered (1000 free calls / month, then $0.05 per call). Set <code className="font-mono">JAMBASE_API_KEY</code> in the server&apos;s <code className="font-mono">.env</code> — never paste it here. The key is read at request time and is not persisted in settings.
@@ -1073,7 +1073,7 @@ export const MetadataTab: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 flex flex-col gap-4 shadow-sm">
+                    <div className="bg-[var(--color-surface)] rounded-2xl p-5 flex flex-col gap-4 shadow-sm">
                         {/* Note about the key + quota */}
                         <div className="bg-blue-500/5 dark:bg-blue-500/10 border border-blue-500/10 dark:border-blue-500/20 rounded-lg p-3 text-xs text-blue-700 dark:text-blue-200">
                             <strong>Note:</strong> Use a <strong>YouTube Data API v3</strong> key from the Google Cloud console. Matching checks up to 100 recent uploads from the artist&apos;s linked channel against your library. Missing channel links can be fetched through MusicBrainz when enabled and an artist ID is available. A matching video is not guaranteed for every song.

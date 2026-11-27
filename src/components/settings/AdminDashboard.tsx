@@ -188,7 +188,7 @@ export const AdminDashboard: React.FC = () => {
                     </div>
     
                     {showCreateUser && (
-                        <div className="bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl p-4 shadow-sm">
+                        <div className="bg-[var(--color-surface)] rounded-xl p-4 shadow-sm">
                             <h4 className="font-medium text-[var(--color-text-primary)] mb-3 text-sm">Create New User Account</h4>
                             <form onSubmit={handleCreateUser} className="space-y-3">
                                 {createError && <div className="text-xs text-red-400 bg-red-400/10 p-2 rounded">{createError}</div>}
@@ -226,7 +226,7 @@ export const AdminDashboard: React.FC = () => {
                         </div>
                     )}
     
-                    <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--glass-border)] overflow-hidden">
+                    <div className="bg-[var(--color-surface)] rounded-xl overflow-hidden">
                         <table className="w-full text-left text-sm">
                             <thead className="bg-[var(--glass-bg)] border-b border-[var(--glass-border)]">
                                 <tr>
@@ -310,7 +310,7 @@ export const AdminDashboard: React.FC = () => {
                                 const invalid = isExpired || isUsedUp;
                                 
                                 return (
-                                    <div key={inv.token} className={`bg-[var(--color-surface)] border border-[var(--glass-border)] rounded-xl p-4 ${invalid ? 'opacity-60' : ''}`}>
+                                    <div key={inv.token} className={`bg-[var(--color-surface)] rounded-xl p-4 ${invalid ? 'opacity-60' : ''}`}>
                                         <div className="flex justify-between mb-3">
                                             <span className={`text-xs font-medium px-2 py-0.5 rounded ${invalid ? 'bg-red-500/10 text-red-500' : 'bg-green-500/10 text-green-500'}`}>
                                                 {isExpired ? 'Expired' : isUsedUp ? 'Used up' : 'Active'}

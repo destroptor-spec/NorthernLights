@@ -120,7 +120,7 @@ export const GenAiTab: React.FC = () => {
             </div>
 
             {/* Configuration Form */}
-            <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--glass-border)] p-5 mb-8">
+            <div className="bg-[var(--color-surface)] rounded-2xl p-5 mb-8">
                 <div className="flex flex-col gap-4">
                     <div>
                         <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">API Base URL</label>

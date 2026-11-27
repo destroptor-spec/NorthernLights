@@ -65,7 +65,7 @@ export const HorizontalScrollRail: React.FC<HorizontalScrollRailProps> = ({
     <div className={`relative ${className}`}>
       <div
         ref={viewportRef}
-        className={`hide-scrollbar ${viewportClassName}`}
+        className={`hide-scrollbar rail-lift-room ${viewportClassName}`}
         aria-label={ariaLabel}
         role={role}
       >

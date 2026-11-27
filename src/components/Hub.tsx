@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePlayerStore } from '../store';
-import { Play, Pin, PinOff, Disc3, Sparkles, Wand2, Radio, Repeat, Rewind, Sunrise, Sun, Moon, Sunset, User2, ListMusic, Loader2 } from 'lucide-react';
+import { Play, Pin, PinOff, Disc3, Wand2, Radio, Repeat, Rewind, Sunrise, Sun, Moon, Sunset, User2, ListMusic, Loader2 } from 'lucide-react';
 import type { TrackInfo } from '../utils/fileSystem';
 import { auroraApiRequest, type Track } from '../api/auroraApi';
 import { toPlayableTracks } from '../utils/playableTracks';
@@ -460,7 +460,7 @@ const JumpTileCard: React.FC<JumpTileCardProps> = ({
           onActivate(tile);
         }
       }}
-      className={`group relative flex h-[64px] cursor-pointer items-center gap-2 overflow-hidden rounded-[var(--radius)] border border-[var(--glass-border)] bg-[var(--glass-bg)] text-left backdrop-blur-sm transition-colors hover:bg-[var(--glass-bg-hover)] sm:h-[80px] sm:gap-3 ${motionClassName}`}
+      className={`group relative flex h-[64px] cursor-pointer items-center gap-2 overflow-hidden rounded-[var(--radius)] bg-[var(--color-surface)] text-left transition-colors hover:bg-[var(--color-surface-hover)] sm:h-[80px] sm:gap-3 ${motionClassName}`}
       aria-label={`open ${tile.title}`}
     >
       <div
@@ -1396,9 +1396,6 @@ export const Hub: React.FC = () => {
         <ForYouSectionSkeleton />
       ) : aiPlaylists.length === 0 && llmConfigured ? (
         <div className="flex flex-col items-center justify-center py-16 text-center">
-          <div className="w-16 h-16 rounded-full bg-[var(--color-surface-variant)] flex items-center justify-center mb-4">
-            <Sparkles className="w-8 h-8 text-[var(--color-primary)]" />
-          </div>
           <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-2 lowercase">
             no playlists yet
           </h3>
@@ -1411,10 +1408,8 @@ export const Hub: React.FC = () => {
             className="btn btn-primary btn-lg"
             aria-label="generate playlists"
           >
-            {isGenerating ? (
-              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            ) : (
-              <Sparkles className="w-5 h-5" />
+            {isGenerating && (
+              <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin motion-reduce:animate-none" />
             )}
             <span>{isGenerating ? 'generating…' : 'generate playlists'}</span>
           </button>
@@ -1434,7 +1429,7 @@ export const Hub: React.FC = () => {
           <h2 className="text-xl sm:text-2xl font-bold text-[var(--color-text-primary)] mb-5 lowercase">
             for you
           </h2>
-          <div className="flex sm:grid sm:grid-cols-2 lg:grid-cols-3 overflow-x-auto snap-x snap-mandatory gap-4 sm:gap-5 lg:gap-6 hub-scroll-mobile hide-scrollbar">
+          <div className="rail-lift-room flex sm:grid sm:grid-cols-2 lg:grid-cols-3 overflow-x-auto snap-x snap-mandatory gap-4 sm:gap-5 lg:gap-6 hub-scroll-mobile hide-scrollbar">
             {aiPlaylists.map((collection) => (
               <HubCard
                 key={collection.id}

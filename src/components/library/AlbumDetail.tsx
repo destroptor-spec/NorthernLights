@@ -7,6 +7,7 @@ import { AlbumArt } from '../AlbumArt';
 import { AlbumCoverDisc } from './AlbumCoverDisc';
 import { useApiV1EntityTracks } from '../../hooks/useApiV1TrackList';
 import { auroraApiRequest } from '../../api/auroraApi';
+import { useProviderImages } from '../../hooks/useProviderImages';
 import { parseArtistsForDisplay } from '../../utils/artistUtils';
 import { useKnownArtistKeys } from '../../hooks/useKnownArtistKeys';
 import { useContextMenuTrigger } from '../../hooks/useContextMenuTrigger';
@@ -547,6 +548,7 @@ export const AlbumDetail: React.FC = () => {
             .catch(() => {});
         return () => { live = false; };
     }, [albumId]);
+    const artworkImages = useProviderImages(albumId ? `/albums/${encodeURIComponent(albumId)}/artwork-images` : null);
     const discSubtitles = useMemo(
         () => new Map((release?.discSubtitles ?? []).map(d => [d.disc, d.subtitle] as const)),
         [release],
@@ -1299,6 +1301,7 @@ export const AlbumDetail: React.FC = () => {
                         tags={lfmTags}
                         release={release}
                         recordedAt={recordedAt}
+                        artworkImages={artworkImages}
                         className="mt-10"
                     />
                 </div>

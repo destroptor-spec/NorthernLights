@@ -53,16 +53,21 @@ export async function fanartAlbum(releaseGroupId: string, apiKey: string): Promi
   return fanartGet<FanartArtist>(`albums/${encodeURIComponent(releaseGroupId)}`, apiKey);
 }
 
-/** The most-liked https image of a list, preferring English or language-free ones. */
-export function bestFanartImage(images: FanartImage[] | undefined): string | undefined {
-  if (!Array.isArray(images)) return undefined;
+/** A list's https images, English or language-free first, then most liked. */
+export function rankedFanartImages(images: FanartImage[] | undefined): string[] {
+  if (!Array.isArray(images)) return [];
   const usable = images
     .map((image) => ({ image, url: typeof image?.url === 'string' ? image.url.replace(/^http:\/\//i, 'https://') : '' }))
     .filter(({ url }) => /^https:\/\/\S+$/.test(url));
   const langRank = (lang?: string) => (!lang || lang === 'en' || lang === '00' ? 0 : 1);
   usable.sort((a, b) =>
     langRank(a.image.lang) - langRank(b.image.lang) || Number(b.image.likes || 0) - Number(a.image.likes || 0));
-  return usable[0]?.url;
+  return usable.map(({ url }) => url);
+}
+
+/** The most-liked https image of a list, preferring English or language-free ones. */
+export function bestFanartImage(images: FanartImage[] | undefined): string | undefined {
+  return rankedFanartImages(images)[0];
 }
 
 /** Connection test: one well-known artist; 404 still proves the key works. */

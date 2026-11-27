@@ -39,7 +39,7 @@ const RestoreHelp: React.FC<{ latest: string | null }> = ({ latest }) => {
     }
   };
   return (
-    <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--glass-border)] p-4">
+    <div className="bg-[var(--color-surface)] rounded-xl p-4">
       <h4 className="text-lg font-semibold text-[var(--color-text-primary)]">Restoring an export</h4>
       <p className="text-sm text-[var(--color-text-muted)] mt-1">
         Restore on the server, from the Aurora folder. To move to a new server, copy the export's <code>.dump</code> and{' '}
@@ -158,7 +158,7 @@ export const DatabaseBackups: React.FC<{ pollIntervalMs?: number }> = ({ pollInt
 
   return (
     <div className="space-y-4">
-      <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--glass-border)] p-4">
+      <div className="bg-[var(--color-surface)] rounded-xl p-4">
         <div className="flex justify-between items-start gap-4 mb-4">
           <div>
             <h4 className="text-lg font-semibold text-[var(--color-text-primary)]">Database exports</h4>

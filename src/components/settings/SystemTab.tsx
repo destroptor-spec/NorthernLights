@@ -351,7 +351,7 @@ export const SystemTab: React.FC = () => {
                                 return (
                                     <div
                                         key={option.key}
-                                        className="flex items-start justify-between gap-4 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] p-4"
+                                        className="flex items-start justify-between gap-4 rounded-xl bg-[var(--color-surface)] p-4"
                                     >
                                         <div className="min-w-0">
                                             <p className="text-sm font-semibold text-[var(--color-text-primary)]">{option.title}</p>
@@ -382,7 +382,7 @@ export const SystemTab: React.FC = () => {
                                 return (
                                     <div
                                         key={option.key}
-                                        className="flex items-start justify-between gap-4 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] p-4"
+                                        className="flex items-start justify-between gap-4 rounded-xl bg-[var(--color-surface)] p-4"
                                     >
                                         <div className="min-w-0">
                                             <p className="text-sm font-semibold text-[var(--color-text-primary)]">{option.title}</p>
@@ -406,7 +406,7 @@ export const SystemTab: React.FC = () => {
 
             {activeSubTab === 'service' && (
                 <div>
-                    <div className="mb-6 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] p-4">
+                    <div className="mb-6 rounded-xl bg-[var(--color-surface)] p-4">
                         <h4 className="text-lg font-semibold text-[var(--color-text-primary)]">Sync playback across devices</h4>
                         <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]">
                             Share what a listener plays, and their queue, between all their devices: an idle device shows the queue and progress, and Play there continues from the same spot.
@@ -427,7 +427,7 @@ export const SystemTab: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="mb-6 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] p-4">
+                    <div className="mb-6 rounded-xl bg-[var(--color-surface)] p-4">
                         <div className="flex items-start justify-between gap-4">
                             <div className="min-w-0">
                                 <h4 className="text-lg font-semibold text-[var(--color-text-primary)]">OpenSubsonic API</h4>
@@ -489,7 +489,7 @@ export const SystemTab: React.FC = () => {
 
                         return (
                             <>
-                                <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--glass-border)] p-4 mb-4">
+                                <div className="bg-[var(--color-surface)] rounded-xl p-4 mb-4">
                                     <div className="flex flex-wrap items-center gap-2">
                                         <span className="text-sm font-medium text-[var(--color-text-primary)]">Current Runtime:</span>
                                         <span className={`text-xs px-2 py-1 rounded border ${runtimeBadge.cls}`}>{runtimeBadge.label}</span>
@@ -501,7 +501,7 @@ export const SystemTab: React.FC = () => {
                                     </div>
                                 </div>
 
-                                <div className={`bg-[var(--color-surface)] rounded-xl border p-4 mb-4 ${runtime === 'pm2' ? 'border-emerald-500/40' : 'border-[var(--glass-border)]'}`}>
+                                <div className={`bg-[var(--color-surface)] rounded-xl p-4 mb-4 ${runtime === 'pm2' ? 'border border-emerald-500/40' : ''}`}>
                                     <div className="flex items-center gap-2 mb-3 flex-wrap">
                                         <span className="text-sm font-medium text-[var(--color-text-primary)]">PM2:</span>
                                         <span className={`text-xs px-2 py-1 rounded border ${pm2Pill.cls}`}>{pm2Pill.label}</span>
@@ -521,7 +521,7 @@ export const SystemTab: React.FC = () => {
                                     </div>
                                 </div>
 
-                                <div className={`bg-[var(--color-surface)] rounded-xl border p-4 ${runtime === 'systemd' ? 'border-emerald-500/40' : 'border-[var(--glass-border)]'}`}>
+                                <div className={`bg-[var(--color-surface)] rounded-xl p-4 ${runtime === 'systemd' ? 'border border-emerald-500/40' : ''}`}>
                                     <div className="flex items-center gap-2 mb-3 flex-wrap">
                                         <span className="text-sm font-medium text-[var(--color-text-primary)]">systemd (user unit):</span>
                                         <span className={`text-xs px-2 py-1 rounded border ${systemdPill.cls}`}>{systemdPill.label}</span>
@@ -601,7 +601,7 @@ export const SystemTab: React.FC = () => {
                                 <p className="text-xs text-[var(--color-text-muted)] mt-1">Server-side only — never sent to visitors.</p>
                             </div>
 
-                            <div className="flex items-start justify-between gap-4 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] p-4">
+                            <div className="flex items-start justify-between gap-4 rounded-xl bg-[var(--color-surface)] p-4">
                                 <div className="min-w-0">
                                     <p className="text-sm font-semibold text-[var(--color-text-primary)]">Require captcha on sign-in</p>
                                     <p className="mt-1 text-xs leading-snug text-[var(--color-text-muted)]">

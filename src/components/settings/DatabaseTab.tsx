@@ -71,7 +71,7 @@ export const DatabaseTab: React.FC = () => {
 
             {dbTab === 'maintenance' && (
                 <div className="space-y-4">
-                    <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--glass-border)] p-4">
+                    <div className="bg-[var(--color-surface)] rounded-xl p-4">
                         <div className="flex justify-between items-center mb-4">
                             <div>
                                 <h4 className="text-lg font-semibold text-[var(--color-text-primary)]">Maintenance</h4>

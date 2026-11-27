@@ -3155,6 +3155,49 @@
           "places"
         ]
       },
+      "ProviderImages": {
+        "type": "object",
+        "properties": {
+          "images": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "description": "The provider's image URL; show it through the external image proxy."
+                },
+                "provider": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "fanarttv, theaudiodb or musicbrainz (the Cover Art Archive); null for the banner the artist lookup chose."
+                },
+                "label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "What the picture is (\"Back\", \"Booklet\", \"Disc\"), when the provider says."
+                }
+              },
+              "required": [
+                "url",
+                "provider",
+                "label"
+              ]
+            },
+            "description": "In the admin's provider order, at most 10; [] when there are none."
+          }
+        },
+        "required": [
+          "images"
+        ]
+      },
       "HubRegeneration": {
         "type": "object",
         "properties": {
@@ -6641,6 +6684,116 @@
                   "properties": {
                     "data": {
                       "$ref": "#/components/schemas/AlbumRecordingPlaces"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such album",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/artists/{id}/hero-images": {
+      "get": {
+        "summary": "An artist's hero images",
+        "description": "Wide pictures for the About card's carousel: the chosen banner, then fanart.tv backgrounds and TheAudioDB fanart, from the providers on the admin's Artist banner list. The first request per artist asks them; the answer is kept and asked again after 90 days.",
+        "tags": [
+          "Library"
+        ],
+        "security": [
+          {
+            "listenerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The images",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ProviderImages"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such artist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/albums/{id}/artwork-images": {
+      "get": {
+        "summary": "An album's artwork beyond its front cover",
+        "description": "For the About card's carousel: Cover Art Archive scans of the release its files name (back, booklet, disc), TheAudioDB's back cover, case and disc, and fanart.tv disc art, from the providers on the admin's Album art list. The first request per album asks them; the answer is kept and asked again after 90 days.",
+        "tags": [
+          "Library"
+        ],
+        "security": [
+          {
+            "listenerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The images",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ProviderImages"
                     }
                   },
                   "required": [

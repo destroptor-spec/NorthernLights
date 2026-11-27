@@ -63,7 +63,7 @@ export const LyricsPanel: React.FC<LyricsPanelProps> = ({ trackName, artistName,
       {!isLoading && lyricsData && (
         <div className="flex flex-col items-center gap-4">
           {lyricsData.thumbnailUrl && (
-            <div className="w-24 h-24 rounded-xl overflow-hidden bg-[var(--color-surface)] border border-[var(--glass-border)] shadow-sm">
+            <div className="w-24 h-24 rounded-xl overflow-hidden bg-[var(--color-surface)] shadow-sm">
               <img src={lyricsData.thumbnailUrl} alt="" className="w-full h-full object-cover" />
             </div>
           )}

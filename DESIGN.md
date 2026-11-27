@@ -12,9 +12,9 @@ product
 
 ## Theme
 
-Dark mode is the canonical atmosphere: deep night, luminous album art, emerald playback controls, and restrained aurora bloom. It is the default mental model for screenshots, TV, Cast receiver, and immersive playback.
+Dark mode is the canonical atmosphere: deep night, luminous album art, emerald playback controls, and colour that comes from the music (album art, playback) rather than from the page. It is the default mental model for screenshots, TV, Cast receiver, and immersive playback.
 
-Light mode is frosted daylight: pale blue-grey air, white glass, low-contrast bloom, and the same emerald playback anchor. It should feel like the same product in a brighter room, not a separate theme.
+Light mode is frosted daylight: pale blue-grey air, white glass and cards, and the same emerald playback anchor. It should feel like the same product in a brighter room, not a separate theme.
 
 Design dark first, then verify light parity.
 
@@ -30,9 +30,11 @@ Core brand roles:
 - `--aurora-blue`: cool atmospheric support.
 - `--aurora-pink`: rare red-shift accent for destructive or error states.
 - `--aurora-play-gradient`: the play button signature.
+- `--color-primary-fill` and `--color-on-primary`: a filled emerald surface (primary and Play buttons, active chips, checked boxes) and the text or icon on it. White on the deeper green in light, night on the bright green in dark; both meet WCAG AA. Never put white on `--color-primary`: it is 2.2:1 in dark.
+- `--color-tour-fill`: the "On tour" sticker only, a muted rose under a white label (4.6:1 in both themes). Rose 500 (`--color-accent` in dark) is 3.7:1 under white, so never put white text on the accent.
 - `--glass-bg`, `--glass-border`, `--glass-blur`, `--glass-shadow`: material system.
 
-Color strategy is restrained. Emerald is the active state, not a paint bucket. Most surfaces should be tinted neutrals, album-art color, or glass. The aurora spectrum should appear in progress fills, subtle page atmosphere, receiver backgrounds, and selected hero moments.
+Color strategy is restrained. Emerald is the active state, not a paint bucket. Most surfaces should be tinted neutrals, album-art color, or glass. The aurora spectrum should appear in progress fills, receiver backgrounds, and selected hero moments. The page backdrop is a plain field of `--color-background`: no gradient glows or blobs behind the content (removed 2026-11-27).
 
 Do not introduce new semantic colors casually. If a warning state is needed, prefer text, icon, and global toast behavior before adding another color role.
 
@@ -50,6 +52,8 @@ Rules:
 - PlayerControls titles and labels use regular weight (`400`) and `letter-spacing: 0.05em`; the Cal Sans title must not use synthetic bold.
 - Metadata should recede until active or hovered.
 - Time, bitrate, queue position, duration, and progress numerics must use tabular figures.
+- Functional text (labels, badges, chips, tabs) is never smaller than 11px.
+- Page and rail section headings ("Music videos", "favourites live near you") carry no icons; the heading text stands on its own. Modal titles may keep their icon badge.
 - Do not add a third font.
 - Do not use decorative gradient text for normal UI.
 
@@ -62,7 +66,8 @@ Use glass only when it supports hierarchy:
 - Player controls, mini players, modals, drawers, settings surfaces, queue surfaces, and receiver panels can use glass.
 - Avoid glass as decorative card filler.
 - Avoid stacking glass more than two levels deep.
-- Borders are hairline and low-alpha.
+- Borders are hairline and low-alpha, and belong to glass chrome (player, sidebar, header pills, menus, modals).
+- Cards (About cards, Hub tiles, concert tickets, rails) are a lifted surface, `--color-surface`, set apart from the page by tone. They don't need a hairline; drop it on cards that have one. In dark mode the surface is mixed about 6% toward white (menus 10%), with `--color-surface-variant` (about 8%) for fills inside a card and `--color-surface-hover` for a card under the pointer.
 - Shadows are soft lift or emerald glow, never hard separators.
 
 If a panel needs high readability, use the existing surface variant instead of increasing blur and opacity until the glass becomes muddy.
@@ -77,6 +82,7 @@ Playback controls are their own primitives, not generic buttons:
 
 - Secondary controls use small circular glass buttons.
 - The primary play button is an emerald disc with `--aurora-play-gradient` and glow.
+- Hero playback actions on detail pages (Play album, Play playlist, Play artist, artist radio) are `btn btn-play`: an emerald pill with the play glow and an AA label (`--color-on-primary` on `--color-primary-fill`).
 - Desktop and mobile should share the same visual language, with mobile sized down or up only for touch comfort.
 
 ### Cast (in the Connect menu)
@@ -175,7 +181,8 @@ Accessibility is part of the component contract.
 - Critical state cannot be color-only.
 - Touch targets should be at least 44px.
 - Reduced motion users should get equivalent state feedback.
-- Primary text must meet WCAG AA expectations in both themes.
+- Primary text must meet WCAG AA expectations in both themes, including text on filled emerald (use `--color-on-primary`).
+- Heading levels follow the page: the page title is `h1`, its sections `h2`, cards inside them `h3`.
 
 Muted metadata may recede visually, but never use muted styling for required instructions, errors, or current critical state.
 
