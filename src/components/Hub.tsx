@@ -460,7 +460,7 @@ const JumpTileCard: React.FC<JumpTileCardProps> = ({
           onActivate(tile);
         }
       }}
-      className={`group relative flex h-[64px] cursor-pointer items-center gap-2 overflow-hidden rounded-[var(--radius)] border border-[var(--glass-border)] bg-[var(--glass-bg)] text-left backdrop-blur-sm transition-colors hover:bg-[var(--glass-bg-hover)] sm:h-[80px] sm:gap-3 ${motionClassName}`}
+      className={`group relative flex h-[64px] cursor-pointer items-center gap-2 overflow-hidden rounded-[var(--radius)] bg-[var(--color-surface)] text-left transition-colors hover:bg-[var(--color-surface-hover)] sm:h-[80px] sm:gap-3 ${motionClassName}`}
       aria-label={`open ${tile.title}`}
     >
       <div

@@ -19,6 +19,8 @@
   --color-background: #F2F5F8; /* Soft blue-grey white */
   --color-surface: rgba(255, 255, 255, 0.6);
   --color-surface-variant: rgba(255, 255, 255, 0.8);
+  /* A card under the pointer: a step brighter than --color-surface. */
+  --color-surface-hover: rgba(255, 255, 255, 0.85);
   --color-primary: #059669; /* Emerald 600 - Readable on light */
   --color-primary-dark: #047857; 
   /* A filled emerald surface (active chip, checked box, Play) and what sits on
@@ -185,6 +187,7 @@
      inside them about 8%) so a card reads as a surface, not a hole. */
   --color-surface: rgba(21, 19, 32, 0.72);
   --color-surface-variant: rgba(33, 31, 50, 0.5);
+  --color-surface-hover: rgba(32, 30, 46, 0.8);
   --color-primary: #22C983; /* Oxygen Green */
   --color-primary-dark: #10B981;
   --color-primary-fill: #22C983;
