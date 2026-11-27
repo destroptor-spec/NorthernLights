@@ -183,6 +183,7 @@ import {
 } from '../services/browse.service';
 import type { BrowseAlbum, BrowseArtist } from '../../shared/api/v1';
 import { getTrackRays } from '../services/trackRays.service';
+import { getSoundMapView } from '../services/soundMap.service';
 import { hlsOutputSampleRate, probeSourceAudio } from '../services/sourceAudio.service';
 import { normalizeTargetCodec, planHlsOutput } from '../services/hlsStream.service';
 import { publishApiV1Event, replayApiV1Events, subscribeApiV1Events, noteClientListening, listConnectedDevices, isClientListening as isDeviceConnected } from '../services/apiV1Events.service';
@@ -864,6 +865,12 @@ router.get('/browse/search', async (req, res) => {
   const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
   if (!q || q.length > 100) return sendApiV1Error(req, res, 400, 'INVALID_SEARCH', 'Search needs 1 to 100 characters.');
   dataResponse(req, res, await searchBrowseStyles(await initDB(), q));
+});
+
+// The night sky behind a Rays page: a stable sample of the sound map and the
+// genres' places on it. Starts the map the first time (status 'building').
+router.get('/browse/sound-map', async (req, res) => {
+  dataResponse(req, res, await getSoundMapView());
 });
 
 router.get('/browse/unsorted', async (req, res) => {

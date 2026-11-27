@@ -48,6 +48,11 @@ const rays = (): Rays => ({
       entries: [{ genre: 'Electronic', styleId: 56, style: 'Downtempo', share: 0.8, trackCount: 4, albumCount: 1 }], listenerTags: ['chillout'] },
   ],
   soundsCloseTo: null,
+  fingerprint: {
+    ranks: { energy: 0.82, danceability: 0.9, acousticness: 0.12, instrumentalness: 0.7, brightness: 0.4, percussiveness: 0.99, loudness: 0.64 },
+    genre: { name: 'Electronic', trackCount: 10592, ranks: { energy: 0.61, danceability: 0.73, acousticness: 0.31, instrumentalness: 0.69, brightness: 0.54, percussiveness: 0.48, loudness: 0.57 } },
+  },
+  soundMap: null,
   release: {
     label: 'Pretty Lights Music', releaseDate: '2014-03-04', originalDate: '2006', media: 'Digital Media',
     catalogNumber: 'PLM006', barcode: '0700261412345', releaseStatus: 'official', copyright: '℗ 2006 Pretty Lights Music',
@@ -105,9 +110,13 @@ test('says where each genre and style came from, groups credits by person, and s
   expect(glitchBar.getAttribute('data-member')).toBe('true');
   expect(within(glitchBar).getByLabelText("One of this track's styles")).toBeTruthy();
   expect(screen.getByTitle('Downtempo (Electronic): clear, model score 0.31').getAttribute('data-member')).toBeNull();
-  // Both charts fill on the full scale, like the Sound meters: 20 % fills a fifth, 0.50 half.
-  expect((screen.getByTitle('Hip Hop: 20 % of the scores').querySelector('.rays-bar__fill') as HTMLElement).style.width).toBe('20%');
+  // The score fills on the full scale, like the Sound meters: 0.50 fills half.
   expect((glitchBar.querySelector('.rays-bar__fill') as HTMLElement).style.width).toBe('50%');
+  // The Fingerprint card beside them: library ranks on the radar, over the main genre's average.
+  const fingerprint = screen.getByRole('group', { name: 'Fingerprint' });
+  expect(within(fingerprint).getByRole('img').getAttribute('aria-label')).toBe(
+    'Library ranks of Finally Moving: Energy 82, Loudness 64, Percussion 99, Danceability 90, Brightness 40, Instrumental 70, Acoustic 12.');
+  expect(within(fingerprint).getByText('Electronic average')).toBeTruthy();
   expect(screen.getByRole('meter', { name: 'Brightness' }).getAttribute('aria-valuenow')).toBe('40');
   expect(screen.getByText('Glitch, where Downtempo leads Taking Up Your Precious Time (60 %).')).toBeTruthy();
   expect(screen.getByRole('meter', { name: 'Character' }).getAttribute('aria-valuenow')).toBe('90');
@@ -236,4 +245,14 @@ test('shows the release the file is tagged with, its links about the recording, 
   expect(links).toEqual(['https://musicbrainz.org/recording/rec-1', 'https://www.discogs.com/release/123-Pretty-Lights-Taking-Up']);
   expect(facts.getByText('℗ 2006 Pretty Lights Music')).toBeTruthy();
   expect(screen.getByLabelText('Explicit')).toBeTruthy();
+});
+
+test('the Styles card keeps to the five styles the model hears most', async () => {
+  const many = rays();
+  many.sound!.closestStyles = Array.from({ length: 12 }, (_, i) => ({ genre: 'Electronic', styleId: 100 + i, style: `Style ${i + 1}`, score: 0.6 - i * 0.04 }));
+  fetchMock.mockImplementation(async (url: RequestInfo | URL) => (String(url) === '/api/v1/tracks/t1/rays' ? ok(many) : ok({})));
+  renderRays();
+  const styles = await screen.findByRole('group', { name: 'Styles' });
+  expect(within(styles).getAllByText(/^Style \d+$/).map(el => el.textContent)).toEqual(['Style 1', 'Style 2', 'Style 3', 'Style 4', 'Style 5']);
+  expect(within(styles).getByRole('button', { name: /Advanced/ })).toBeTruthy();
 });

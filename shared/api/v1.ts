@@ -802,6 +802,25 @@ export const artistStyleProfileSchema = z.object({
   listenerTags: z.array(z.string()).describe('What listeners tag the artist with on Last.fm and MusicBrainz; empty without provider data.'),
 }).meta({ id: 'ArtistStyleProfile' });
 
+const libraryRanksSchema = z.object({
+  energy: z.number().min(0).max(1).nullable(),
+  danceability: z.number().min(0).max(1).nullable(),
+  acousticness: z.number().min(0).max(1).nullable(),
+  instrumentalness: z.number().min(0).max(1).nullable(),
+  brightness: z.number().min(0).max(1).nullable(),
+  percussiveness: z.number().min(0).max(1).nullable(),
+  loudness: z.number().min(0).max(1).nullable().describe('null when the track\'s loudness hasn\'t been measured.'),
+});
+
+export const soundMapSchema = z.object({
+  status: z.enum(['ready', 'building', 'empty']).describe('building: the first map is being made (ask again shortly); empty: nothing is analysed yet.'),
+  builtAt: ISO_DATE_TIME.nullable(),
+  trackCount: z.number().int().nonnegative().describe('Tracks on the map.'),
+  points: z.array(z.tuple([z.number(), z.number()])).describe('A stable sample of the map (up to 5,000 tracks) for drawing the sky; coordinates are the same as TrackRays.soundMap.'),
+  labels: z.array(z.object({ genre: z.string(), x: z.number(), y: z.number(), trackCount: z.number().int() }))
+    .describe('Where each main genre sits: the median position of its tracks; genres with few tracks are left out.'),
+}).meta({ id: 'SoundMap' });
+
 /** "Aurora rays from {title}": everything Aurora knows about one track. */
 const raysArtistSchema = z.object({
   id: z.string(), name: z.string(),
@@ -857,6 +876,19 @@ export const trackRaysSchema = z.object({
     styles: z.array(browseStyleRefSchema).describe('Styles whose centroids sit nearest the track\'s sound, its own styles left out, nearest first.'),
     tracks: z.array(trackSchema).describe('The nearest tracks by sound: none from its album or recording, one version of a song, at most two per artist; up to 12.'),
   }).nullable().describe('null for a track without a real audio embedding.'),
+  fingerprint: z.object({
+    ranks: libraryRanksSchema.describe('Where the track ranks in the library on each axis: the share of analysed tracks below it (0–1).'),
+    genre: z.object({
+      name: z.string().describe('The track\'s main genre: its strongest genre row.'),
+      trackCount: z.number().int().nonnegative().describe('Analysed tracks with this main genre.'),
+      ranks: libraryRanksSchema.describe('Their average rank on each axis.'),
+    }).nullable(),
+  }).nullable().describe('null before analysis, or for a track analysed without real audio.'),
+  soundMap: z.object({
+    x: z.number(), y: z.number(),
+    near: z.array(z.object({ trackId: z.string(), x: z.number(), y: z.number() }))
+      .describe('Where the tracks in soundsCloseTo sit, for those on the map.'),
+  }).nullable().describe('The track on the library\'s sound map (GET /browse/sound-map); null until the map includes it.'),
   release: z.object({
     label: z.string().nullable().describe('The record label, as the file tags it.'),
     releaseDate: z.string().nullable().describe('This release\'s date as tagged: "2011-04-12", "2011-04" or "2011".'),
@@ -895,6 +927,7 @@ export type BrowseGenreDetail = z.infer<typeof browseGenreDetailSchema>;
 export type BrowseStyleDetail = z.infer<typeof browseStyleDetailSchema>;
 export type BrowseSearchResult = z.infer<typeof browseSearchResultSchema>;
 export type BrowseUnsorted = z.infer<typeof browseUnsortedSchema>;
+export type SoundMap = z.infer<typeof soundMapSchema>;
 export type StyleProfileEntry = z.infer<typeof styleProfileEntrySchema>;
 export type AlbumStyleProfile = z.infer<typeof albumStyleProfileSchema>;
 export type ArtistStyleProfile = z.infer<typeof artistStyleProfileSchema>;

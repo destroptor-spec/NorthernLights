@@ -2092,9 +2092,42 @@ a:focus-visible > .genre-card .genre-card__label {
   .rays-hero {
     flex-direction: row;
     align-items: flex-end;
+    justify-content: center;
     gap: 2.25rem;
     text-align: left;
   }
+}
+
+/* With the aurora signature behind it the top of the page (back button and
+   hero) sits in a night sky in both themes, so the hero's ink is the dark
+   theme's. The aurora bleeds to the full width, starts above the back button
+   and dissolves into the page below the hero. */
+.rays-top { position: relative; }
+.rays-top--night { isolation: isolate; }
+.rays-top--night .rays-hero {
+  padding-bottom: 2rem;
+  --color-text-primary: #e6e9f5;
+  --color-text-secondary: #c9cfe0;
+  --color-text-muted: #c9cfe0;
+  --color-primary: #22c983;
+  color: var(--color-text-primary);
+}
+.rays-aurora {
+  position: absolute;
+  z-index: -1;
+  top: -3rem;
+  bottom: -3rem;
+  left: 50%;
+  width: 100vw;
+  transform: translateX(-50%);
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 74%, rgba(0, 0, 0, 0.6) 87%, transparent 100%);
+          mask-image: linear-gradient(to bottom, #000 0%, #000 74%, rgba(0, 0, 0, 0.6) 87%, transparent 100%);
+}
+.rays-aurora__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 /* The cover lights its own page: a soft glow in the cover's colour
@@ -2151,7 +2184,9 @@ a:focus-visible > .genre-card .genre-card__label {
 }
 
 @media (min-width: 768px) {
-  .rays-hero__text { justify-items: start; }
+  /* Capped, so the cover and text centre as a pair instead of the text
+     column stretching to the unwrapped title's width. */
+  .rays-hero__text { justify-items: start; max-width: 40rem; }
 }
 
 .rays-title {
@@ -3012,10 +3047,9 @@ button.rays-bar:focus-visible {
   color: var(--color-text-primary);
 }
 
-/* Styles card: the evidence (the model's style scores) on the left, the
-   genre mix on the right; one column below 1024px, in the same order. The
-   track's genres and styles, with their sources and the manual editor, wait
-   behind Advanced at the foot of the card and extend it when opened. */
+/* Styles card: the model's five strongest styles. The track's genres and
+   styles, with their sources and the manual editor, wait behind Advanced at
+   the foot of the card and extend it when opened. */
 .rays-styles {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -3023,18 +3057,147 @@ button.rays-bar:focus-visible {
   margin-top: 1.25rem;
 }
 
-@media (min-width: 1024px) {
-  .rays-styles {
-    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+
+/* Sound and style: Sound and Styles stacked on the left, the Fingerprint
+   (radar) card on the right from 1100px; stacked below that. */
+.rays-cards__main {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+@media (min-width: 1100px) {
+  .rays-cards--split {
+    grid-template-columns: minmax(0, 1fr) minmax(21rem, 25rem);
     align-items: start;
-    column-gap: 3rem;
   }
 }
 
-.rays-styles__summary {
-  display: grid;
-  gap: 2.5rem;
-  min-width: 0;
+/* Fingerprint: ranks in the library on seven spokes, over the main genre's
+   average (the context grey) and the library's median ring. */
+.rays-fingerprint__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  list-style: none;
+  color: var(--color-text-secondary);
+  font-size: 0.8125rem;
+}
+.rays-fingerprint__legend li { display: inline-flex; align-items: center; gap: 0.45rem; }
+.rays-fingerprint__key { display: inline-block; flex: none; }
+.rays-fingerprint__key--track { width: 10px; height: 10px; border-radius: 50%; background: var(--chart-emphasis); }
+.rays-fingerprint__key--genre { width: 14px; height: 11px; border-radius: 2px; background: color-mix(in srgb, var(--chart-context) 26%, transparent); box-shadow: inset 0 0 0 1px var(--chart-context); }
+.rays-fingerprint__key--median { width: 13px; height: 13px; border-radius: 50%; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-text-primary) 45%, transparent); }
+.rays-fingerprint__plot svg { display: block; width: 100%; height: auto; overflow: visible; }
+.rays-radar__ring { fill: none; stroke: color-mix(in srgb, var(--color-text-primary) 12%, transparent); stroke-width: 1; }
+.rays-radar__ring--median { stroke: color-mix(in srgb, var(--color-text-primary) 40%, transparent); }
+.rays-radar__spoke { stroke: color-mix(in srgb, var(--color-text-primary) 12%, transparent); stroke-width: 1; }
+.rays-radar__genre { fill: color-mix(in srgb, var(--chart-context) 26%, transparent); stroke: var(--chart-context); stroke-width: 1; stroke-linejoin: round; }
+.rays-radar__area { fill: color-mix(in srgb, var(--chart-emphasis) 14%, transparent); stroke: var(--chart-emphasis); stroke-width: 2; stroke-linejoin: round; }
+.rays-radar__dot { fill: var(--chart-emphasis); stroke: var(--color-background); stroke-width: 2; transition: r 120ms var(--ease-out); }
+/* SVG units: the card draws the plot at about 0.8×, so these land at 12–13px. */
+.rays-radar__label { fill: var(--color-text-primary); font-size: 16px; font-weight: 600; }
+.rays-radar__label.is-hover { fill: var(--chart-emphasis); }
+.rays-radar__value { fill: var(--color-text-secondary); font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.rays-radar__hit { fill: transparent; cursor: crosshair; }
+.rays-fingerprint__readout {
+  min-height: 2.6em;
+  margin: 0.5rem 0 0;
+  color: var(--color-text-secondary);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rays-radar__dot { transition: none; }
+}
+
+/* Your library as a night sky: the sound map centred on the track. A night
+   panel in both themes, as the aurora above; stars are the library's tracks. */
+.rays-sky {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  max-width: 72rem;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #060c21;
+  box-shadow: var(--shadow-sm);
+}
+@media (min-width: 640px) { .rays-sky { aspect-ratio: 16 / 9; } }
+.rays-sky__canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.rays-sky__lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.rays-sky__lines line { stroke: rgba(225, 232, 250, 0.32); stroke-width: 1; }
+.rays-sky__stars { position: absolute; inset: 0; margin: 0; padding: 0; list-style: none; }
+.rays-sky__star { position: absolute; width: 0; height: 0; }
+.rays-sky__dot {
+  position: absolute;
+  left: -14px;
+  top: -14px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+}
+.rays-sky__dot::before {
+  content: '';
+  position: absolute;
+  inset: 9px;
+  border-radius: 50%;
+  background: #eef2ff;
+  box-shadow: 0 0 0 2px #060c21, 0 0 10px rgba(225, 232, 250, 0.55);
+  transition: transform 140ms var(--ease-out), background-color 140ms var(--ease-out);
+}
+.rays-sky__dot:hover::before,
+.rays-sky__dot:focus-visible::before { transform: scale(1.35); background: #22c983; }
+.rays-sky__dot:focus-visible { outline: 2px solid #22c983; outline-offset: 2px; }
+.rays-sky__card {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  z-index: 2;
+  display: none;
+  align-items: center;
+  gap: 0.6rem;
+  width: max-content;
+  max-width: 16rem;
+  padding: 0.45rem 0.7rem 0.45rem 0.45rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--glass-border);
+  background: var(--menu-bg, var(--color-surface));
+  box-shadow: var(--shadow-md);
+  color: var(--color-text-primary);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.rays-sky__star.is-low .rays-sky__card { bottom: auto; top: calc(100% + 4px); }
+.rays-sky__dot:hover .rays-sky__card,
+.rays-sky__dot:focus-visible .rays-sky__card { display: flex; }
+.rays-sky__card img,
+.rays-sky__card-art { width: 44px; height: 44px; flex: none; border-radius: 0.4rem; object-fit: cover; background: var(--color-surface-variant); }
+.rays-sky__card-text { display: grid; gap: 0.1rem; min-width: 0; }
+.rays-sky__card-title { font-size: 0.875rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rays-sky__card-artist { font-size: 0.8125rem; color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rays-sky__here {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 50%;
+  overflow: hidden;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 2px #060c21, 0 0 0 4px #22c983, 0 0 28px 6px rgba(34, 201, 131, 0.45);
+  pointer-events: none;
+}
+.rays-sky__here img,
+.rays-sky__here-blank { display: block; width: 100%; height: 100%; object-fit: cover; background: #22c983; }
+.rays-sky__note {
+  margin: 0.75rem 0 0;
+  max-width: 72ch;
+  color: var(--color-text-secondary);
+  font-size: 0.8125rem;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rays-sky__dot::before { transition: none; }
 }
 
 .rays-card__lede {

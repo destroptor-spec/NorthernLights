@@ -9,6 +9,7 @@ import type {
   BrowseGenres,
   BrowseStyleDetail,
   BrowseUnsorted,
+  SoundMap,
   TrackRays,
 } from '../../shared/api/v1';
 
@@ -80,6 +81,9 @@ export const UNSORTED_PATH = '/library/browse/unsorted';
 /** "Aurora rays from {title}". */
 export const fetchTrackRays = (auth: Auth, trackId: string) =>
   auroraApiRequest<TrackRays>(`/tracks/${encodeURIComponent(trackId)}/rays`, auth);
+
+/** The library's sound map: a stable sample for the Rays page's night sky (status 'building' the first time). */
+export const fetchSoundMap = (auth: Auth) => auroraApiRequest<SoundMap>('/browse/sound-map', auth);
 
 export const raysPath = (trackId: string) => `/library/rays/${encodeURIComponent(trackId)}`;
 

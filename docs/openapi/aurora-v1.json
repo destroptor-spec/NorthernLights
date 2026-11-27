@@ -2269,6 +2269,81 @@
           "untaggedTrackCount"
         ]
       },
+      "SoundMap": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "building",
+              "empty"
+            ],
+            "description": "building: the first map is being made (ask again shortly); empty: nothing is analysed yet."
+          },
+          "builtAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "trackCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Tracks on the map."
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "description": "A stable sample of the map (up to 5,000 tracks) for drawing the sky; coordinates are the same as TrackRays.soundMap."
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "genre": {
+                  "type": "string"
+                },
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "trackCount": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "genre",
+                "x",
+                "y",
+                "trackCount"
+              ]
+            },
+            "description": "Where each main genre sits: the median position of its tracks; genres with few tracks are left out."
+          }
+        },
+        "required": [
+          "status",
+          "builtAt",
+          "trackCount",
+          "points",
+          "labels"
+        ]
+      },
       "AlbumStyleProfile": {
         "type": "object",
         "properties": {
@@ -2857,6 +2932,228 @@
             ],
             "description": "null for a track without a real audio embedding."
           },
+          "fingerprint": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "ranks": {
+                "type": "object",
+                "properties": {
+                  "energy": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "danceability": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "acousticness": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "instrumentalness": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "brightness": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "percussiveness": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "loudness": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "null when the track's loudness hasn't been measured."
+                  }
+                },
+                "required": [
+                  "energy",
+                  "danceability",
+                  "acousticness",
+                  "instrumentalness",
+                  "brightness",
+                  "percussiveness",
+                  "loudness"
+                ],
+                "description": "Where the track ranks in the library on each axis: the share of analysed tracks below it (0–1)."
+              },
+              "genre": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "The track's main genre: its strongest genre row."
+                  },
+                  "trackCount": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Analysed tracks with this main genre."
+                  },
+                  "ranks": {
+                    "type": "object",
+                    "properties": {
+                      "energy": {
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "danceability": {
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "acousticness": {
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "instrumentalness": {
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "brightness": {
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "percussiveness": {
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "loudness": {
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "minimum": 0,
+                        "maximum": 1,
+                        "description": "null when the track's loudness hasn't been measured."
+                      }
+                    },
+                    "required": [
+                      "energy",
+                      "danceability",
+                      "acousticness",
+                      "instrumentalness",
+                      "brightness",
+                      "percussiveness",
+                      "loudness"
+                    ],
+                    "description": "Their average rank on each axis."
+                  }
+                },
+                "required": [
+                  "name",
+                  "trackCount",
+                  "ranks"
+                ]
+              }
+            },
+            "required": [
+              "ranks",
+              "genre"
+            ],
+            "description": "null before analysis, or for a track analysed without real audio."
+          },
+          "soundMap": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "near": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "trackId": {
+                      "type": "string"
+                    },
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "trackId",
+                    "x",
+                    "y"
+                  ]
+                },
+                "description": "Where the tracks in soundsCloseTo sit, for those on the map."
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "near"
+            ],
+            "description": "The track on the library's sound map (GET /browse/sound-map); null until the map includes it."
+          },
           "release": {
             "type": "object",
             "properties": {
@@ -3019,6 +3316,8 @@
           "artist",
           "otherArtists",
           "soundsCloseTo",
+          "fingerprint",
+          "soundMap",
           "release",
           "otherAlbums"
         ]
@@ -9223,6 +9522,113 @@
                       "items": {
                         "$ref": "#/components/schemas/BrowseSearchResult"
                       }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "properties": {
+                        "requestId": {
+                          "type": "string",
+                          "description": "Request ID echoed in the X-Request-Id response header."
+                        }
+                      },
+                      "required": [
+                        "requestId"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Revision or state conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/browse/sound-map": {
+      "get": {
+        "summary": "The library's sound map",
+        "description": "Every analysed track's sound embedding flattened onto two dimensions (its principal components), for the Rays page's night sky: a stable sample of up to 5,000 tracks and where each main genre sits. The first request starts the map (status building); it is rebuilt in the background when the library has changed. A track's own position comes with its rays (TrackRays.soundMap).",
+        "tags": [
+          "Browse"
+        ],
+        "security": [
+          {
+            "listenerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/SoundMap"
                     },
                     "meta": {
                       "type": "object",

@@ -10,6 +10,9 @@ import { creditRoleRank } from '../../shared/trackCredits';
 import { splitArtistNames, splitAtFeaturing } from '../../shared/artistCredit';
 import { getAlbumStyleProfile, getArtistStyleProfile } from './browse.service';
 import { nearTrack } from './genreTaxonomy/centroids';
+import { getSoundMapPositions } from '../database';
+import { trackFingerprint } from './libraryRanks.service';
+import { ensureSoundMap } from './soundMap.service';
 
 const CLOSEST_STYLES = 12;
 const OTHER_ALBUMS = 20;
@@ -70,7 +73,7 @@ export async function getTrackRays(db: Pool, trackId: string): Promise<TrackRays
       FROM track_styles ts LEFT JOIN style s ON s.id = ts.style_id
       WHERE ts.track_id = $1
       ORDER BY (ts.style_id IS NOT NULL), ts.strength DESC, ts.genre, s.name`, [trackId]),
-    db.query(`SELECT acoustic_vector_8d::text AS vector, bpm, is_simulated FROM track_features WHERE track_id = $1`, [trackId]),
+    db.query(`SELECT acoustic_vector_8d::text AS vector, bpm, is_simulated, loudness_lufs FROM track_features WHERE track_id = $1`, [trackId]),
     db.query(`
       SELECT st.genre, st.id, st.name, u.score
       FROM track_style_scores ss
@@ -113,6 +116,14 @@ export async function getTrackRays(db: Pool, trackId: string): Promise<TrackRays
     genreMix: mix.rows.filter((r: any) => r.share !== null).map((r: any) => ({ genre: r.genre, share: unit(Number(r.share)) })),
   } : null;
 
+  // The radar and the aurora: ranks in the library, against the main genre's average.
+  const mainGenre = styles.rows.find((r: any) => r.style_id === null)?.genre ?? null;
+  const fingerprint = sound ? await trackFingerprint({
+    energy: sound.energy, danceability: sound.danceability, acousticness: sound.acousticness,
+    instrumentalness: sound.instrumentalness, brightness: sound.brightness, percussiveness: sound.percussiveness,
+    loudness: feature.loudness_lufs === null || feature.loudness_lufs === undefined ? null : Number(feature.loudness_lufs),
+  }, mainGenre).catch(() => null) : null;
+
   const albumRow = head.album_id
     ? (await db.query(`
         SELECT al.id, al.title,
@@ -134,7 +145,19 @@ export async function getTrackRays(db: Pool, trackId: string): Promise<TrackRays
     nearTrack(db, trackId),
   ]);
 
+  // The night sky: this track and its nearby tracks on the sound map. Starts
+  // the map in the background the first time; until then the sky is left out.
+  ensureSoundMap().catch(() => {});
+  const positions = await getSoundMapPositions([trackId, ...(soundsCloseTo?.trackIds ?? [])]).catch(() => new Map());
+  const own = positions.get(trackId);
+  const soundMap: TrackRays['soundMap'] = own ? {
+    x: own.x, y: own.y,
+    near: (soundsCloseTo?.trackIds ?? []).filter(id => positions.has(id)).map(id => ({ trackId: id, ...positions.get(id)! })),
+  } : null;
+
   return {
+    fingerprint,
+    soundMap,
     credits: [
       ...billed,
       ...credits.rows

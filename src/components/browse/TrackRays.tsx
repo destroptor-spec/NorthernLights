@@ -20,6 +20,10 @@ import { StylePicker, type GenreTaxonomy } from '../settings/StylePicker';
 import { BrowseError, CoverThumb, NearStyleCards, coverUrlFor, useBrowsePlayer } from './browseParts';
 import type { StreamFormat, StyleProfileEntry, TrackRays as Rays } from '../../../shared/api/v1';
 import { useStreamFormat } from '../../hooks/useStreamFormat';
+import { RaysAurora } from './RaysAurora';
+import { RaysFingerprint } from './RaysFingerprint';
+import { RaysSoundMap } from './RaysSoundMap';
+import type { AuroraSound } from '../../utils/auroraSignature';
 import { describeSource } from '../../utils/audioFormat';
 import { getLinkLabel } from '../../utils/linkLabels';
 import { trackReleaseFacts, trackReleaseLinks, type ReleaseFact } from '../../utils/trackRelease';
@@ -212,6 +216,9 @@ const ReleaseCard: React.FC<{ rays: Rays; format: StreamFormat | null }> = ({ ra
     </section>
   );
 };
+
+/** The Styles card shows the model's strongest few; the full picture waits behind Advanced. */
+const TOP_STYLES = 5;
 
 const OTHER_ARTIST_ROLE: Record<Rays['otherArtists'][number]['role'], string> = {
   artist: 'Artist',
@@ -406,35 +413,6 @@ const StyleScoreChart: React.FC<{
   );
 };
 
-/** How the model's scores split across genres: ranked bars, one hue, the tail folded into Other. */
-const GenreMixChart: React.FC<{ mix: NonNullable<Rays['sound']>['genreMix'] }> = ({ mix }) => {
-  // Up to 6 genres of at least 1 %; the rest fold into Other.
-  const shown = mix.filter(g => g.share >= 0.01).slice(0, 6);
-  const rest = mix.filter(g => !shown.includes(g)).reduce((sum, g) => sum + g.share, 0);
-  const rows = rest >= 0.005 ? [...shown, { genre: 'Other genres', share: rest }] : shown;
-  return (
-    <figure className="rays-chart">
-      <figcaption className="rays-chart__head">
-        <span className="rays-chart__title">Where those scores fall, by genre</span>
-        <span className="rays-chart__note">Each genre's share of the scores over all 400 styles.</span>
-      </figcaption>
-      <ul className="rays-bars">
-        {rows.map((r, index) => (
-          <li key={r.genre} style={{ '--i': index } as React.CSSProperties}>
-            <span className="rays-bar rays-bar--static" title={`${r.genre}: ${Math.round(r.share * 100)} % of the scores`}>
-              <span className="rays-bar__label"><span className="rays-bar__name">{r.genre}</span></span>
-              <span className="rays-bar__track" aria-hidden="true">
-                <span className="rays-bar__fill rays-bar__fill--single" style={{ width: fillWidth(r.share) }} />
-              </span>
-              <span className="rays-bar__value">{Math.round(r.share * 100)} %</span>
-            </span>
-          </li>
-        ))}
-      </ul>
-    </figure>
-  );
-};
-
 /**
  * "Aurora rays from {title}": everything Aurora knows about one track:
  * credits, its genres and styles and where each came from, how it sounds,
@@ -523,6 +501,18 @@ const TrackRaysContent = ({ trackId }: { trackId: string }) => {
   // vivid of its colours, not the most common (that is often near-black).
   const { colors: coverColors } = useDominantColor(playable);
   const glow = useMemo(() => mostVivid(coverColors), [coverColors]);
+  // The aurora signature: the sound's ranks in the library drive it (a rank not yet known reads as the middle).
+  const auroraSound = useMemo<AuroraSound | null>(() => {
+    if (!rays?.sound || !rays.fingerprint) return null;
+    const r = rays.fingerprint.ranks;
+    return {
+      id: rays.track.id,
+      bpm: rays.sound.bpm,
+      mix: rays.sound.genreMix,
+      values: { danceability: rays.sound.danceability, acousticness: rays.sound.acousticness },
+      percentiles: { energy: r.energy ?? 0.5, brightness: r.brightness ?? 0.5, danceability: r.danceability ?? 0.5, percussiveness: r.percussiveness ?? 0.5 },
+    };
+  }, [rays]);
 
   const credits = useMemo(() => (rays ? creditsByPerson(rays.credits) : []), [rays]);
   const memberStyleIds = useMemo(() => new Set((rays?.styles || []).filter(r => r.styleId !== null).map(r => r.styleId as number)), [rays]);
@@ -533,13 +523,13 @@ const TrackRaysContent = ({ trackId }: { trackId: string }) => {
   if (!rays && !error) return <RaysLoading />;
   return (
     <div className="genre-detail page-container browse rays relative">
-      {rays && (banner || cover) && <FadedHeroImage src={(banner || cover)!} variant={banner ? 'wide' : 'standard'} />}
+      {!auroraSound && rays && (banner || cover) && <FadedHeroImage src={(banner || cover)!} variant={banner ? 'wide' : 'standard'} />}
       <div className="relative z-10">
+      {/* The top of the page: the back button and the hero, the aurora signature behind both. */}
+      <div className={auroraSound ? 'rays-top rays-top--night' : 'rays-top'}>
+      {auroraSound && <RaysAurora sound={auroraSound} />}
       <BackButton onClick={() => navigate(-1)} />
-
-      {error && (error.missing ? <p className="browse-empty">{error.message}</p> : <BrowseError message={error.message} onRetry={load} />)}
       {rays && track && (
-        <>
           <header className="rays-hero">
             <div className="rays-hero__art" style={{ '--rays-glow': glow } as React.CSSProperties}>
               <span className="rays-hero__glow" aria-hidden="true" />
@@ -572,7 +562,12 @@ const TrackRaysContent = ({ trackId }: { trackId: string }) => {
               </div>
             </div>
           </header>
+      )}
+      </div>
 
+      {error && (error.missing ? <p className="browse-empty">{error.message}</p> : <BrowseError message={error.message} onRetry={load} />)}
+      {rays && track && (
+        <>
           {credits.length > 0 && (
             <section className="browse-section" aria-label="Credits">
               <h2 className="browse-section__title">Credits</h2>
@@ -631,7 +626,8 @@ const TrackRaysContent = ({ trackId }: { trackId: string }) => {
 
           <section className="browse-section" aria-label="Sound and style">
             <h2 className="browse-section__title">Sound and style</h2>
-            <div className="rays-cards">
+            <div className={rays.fingerprint ? 'rays-cards rays-cards--split' : 'rays-cards'}>
+              <div className="rays-cards__main">
               {rays.sound && (
                 <div className="rays-card" role="group" aria-labelledby="rays-sound-title">
                   <h3 className="rays-card__title" id="rays-sound-title">Sound</h3>
@@ -654,20 +650,13 @@ const TrackRaysContent = ({ trackId }: { trackId: string }) => {
                   {rays.sound && rays.sound.closestStyles.length > 0 && (
                     <RiseOnView className="rays-styles__evidence">
                       <StyleScoreChart
-                        scores={rays.sound.closestStyles}
+                        scores={rays.sound.closestStyles.slice(0, TOP_STYLES)}
                         memberIds={memberStyleIds}
                         saving={saving}
                         onToggle={isAdmin ? s => void change(s, memberStyleIds.has(s.styleId) ? 'remove' : 'add') : undefined}
                       />
                     </RiseOnView>
                   )}
-                  <div className="rays-styles__summary">
-                    {rays.sound && rays.sound.genreMix.length > 0 && (
-                      <RiseOnView className="rays-styles__mix">
-                        <GenreMixChart mix={rays.sound.genreMix} />
-                      </RiseOnView>
-                    )}
-                  </div>
                 </div>
                 <div className="rays-advanced">
                   <button
@@ -731,8 +720,14 @@ const TrackRaysContent = ({ trackId }: { trackId: string }) => {
                   )}
                 </div>
               </div>
+              </div>
+              {rays.fingerprint && <RaysFingerprint fingerprint={rays.fingerprint} title={track.title} />}
             </div>
           </section>
+
+          {rays.soundMap && rays.soundsCloseTo && (
+            <RaysSoundMap position={rays.soundMap} cover={cover} title={track.title} near={rays.soundsCloseTo.tracks} />
+          )}
 
           {rays.soundsCloseTo && (rays.soundsCloseTo.styles.length > 0 || rays.soundsCloseTo.tracks.length > 0) && (
             <section className="browse-section" aria-label="Sounds close to">
