@@ -28,7 +28,8 @@ export const RaysAurora: React.FC<{ sound: AuroraSound }> = ({ sound }) => {
       const w = Math.max(1, Math.round(box.width * scale)), h = Math.max(1, Math.round(box.height * scale));
       if (render && canvas.width === w && canvas.height === h) return;
       canvas.width = w; canvas.height = h;
-      render = makeAurora(w, h, sound);
+      // No landscape: the sky fades into the page below the hero.
+      render = makeAurora(w, h, sound, { landscape: false });
     };
     const tick = (now: number) => {
       render?.(ctx, now / 1000);

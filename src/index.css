@@ -2105,24 +2105,31 @@ a:focus-visible > .genre-card .genre-card__label {
 .rays-top { position: relative; }
 .rays-top--night { isolation: isolate; }
 .rays-top--night .rays-hero {
-  padding-bottom: 2rem;
+  /* Tall: the sky above the cover, and the slow fade below it (12rem, so
+     the words always sit on solid night). */
+  padding: 2.5rem 0 12rem;
   --color-text-primary: #e6e9f5;
   --color-text-secondary: #c9cfe0;
   --color-text-muted: #c9cfe0;
   --color-primary: #22c983;
   color: var(--color-text-primary);
 }
+/* A soft shadow of the night behind the words, so they hold over the brightest curtains. */
+.rays-top--night .rays-hero__text {
+  text-shadow: 0 1px 2px rgba(6, 12, 33, 0.55), 0 0 18px rgba(6, 12, 33, 0.55);
+}
 .rays-aurora {
   position: absolute;
   z-index: -1;
   top: -3rem;
-  bottom: -3rem;
+  bottom: 0;
   left: 50%;
   width: 100vw;
   transform: translateX(-50%);
   pointer-events: none;
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 74%, rgba(0, 0, 0, 0.6) 87%, transparent 100%);
-          mask-image: linear-gradient(to bottom, #000 0%, #000 74%, rgba(0, 0, 0, 0.6) 87%, transparent 100%);
+  /* The night sky dissolves slowly into the page over the last 12rem, below the words. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 12rem), rgba(0, 0, 0, 0.86) calc(100% - 9.6rem), rgba(0, 0, 0, 0.6) calc(100% - 7.2rem), rgba(0, 0, 0, 0.34) calc(100% - 4.8rem), rgba(0, 0, 0, 0.13) calc(100% - 2.4rem), transparent 100%);
+          mask-image: linear-gradient(to bottom, #000 calc(100% - 12rem), rgba(0, 0, 0, 0.86) calc(100% - 9.6rem), rgba(0, 0, 0, 0.6) calc(100% - 7.2rem), rgba(0, 0, 0, 0.34) calc(100% - 4.8rem), rgba(0, 0, 0, 0.13) calc(100% - 2.4rem), transparent 100%);
 }
 .rays-aurora__canvas {
   display: block;
@@ -2945,7 +2952,6 @@ button.rays-bar:focus-visible {
 .rays-cards {
   display: grid;
   gap: 1rem;
-  max-width: 72rem;
 }
 
 .rays-card {
@@ -3067,7 +3073,7 @@ button.rays-bar:focus-visible {
 }
 @media (min-width: 1100px) {
   .rays-cards--split {
-    grid-template-columns: minmax(0, 1fr) minmax(21rem, 25rem);
+    grid-template-columns: minmax(0, 1fr) minmax(22rem, 28rem);
     align-items: start;
   }
 }
@@ -3112,19 +3118,32 @@ button.rays-bar:focus-visible {
   .rays-radar__dot { transition: none; }
 }
 
-/* Your library as a night sky: the sound map centred on the track. A night
-   panel in both themes, as the aurora above; stars are the library's tracks. */
+/* Your library as a night sky: the sound map centred on the track, drawn as
+   part of the page rather than a card. The band reaches the edges of the
+   content column (through the page padding, so the track stays centred in
+   what is visible) and its night fades into the page on every side, as the
+   aurora above does. Only the drawing fades; stars, lines and cards don't. */
+.rays {
+  --rays-bleed: 1rem;
+}
+@media (min-width: 768px) { .rays { --rays-bleed: 2rem; } }
+@media (min-width: 1024px) { .rays { --rays-bleed: 3rem; } }
 .rays-sky {
   position: relative;
-  aspect-ratio: 1 / 1;
-  max-width: 72rem;
-  border-radius: var(--radius);
-  overflow: hidden;
-  background: #060c21;
-  box-shadow: var(--shadow-sm);
+  height: clamp(24rem, 64vh, 42rem);
+  margin-inline: calc(-1 * var(--rays-bleed));
 }
-@media (min-width: 640px) { .rays-sky { aspect-ratio: 16 / 9; } }
-.rays-sky__canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.rays-sky__canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 22%, #000 78%, transparent 100%), linear-gradient(to right, transparent 0%, #000 7%, #000 93%, transparent 100%);
+  -webkit-mask-composite: source-in;
+          mask-image: linear-gradient(to bottom, transparent 0%, #000 22%, #000 78%, transparent 100%), linear-gradient(to right, transparent 0%, #000 7%, #000 93%, transparent 100%);
+          mask-composite: intersect;
+}
 .rays-sky__lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .rays-sky__lines line { stroke: rgba(225, 232, 250, 0.32); stroke-width: 1; }
 .rays-sky__stars { position: absolute; inset: 0; margin: 0; padding: 0; list-style: none; }
@@ -3191,7 +3210,7 @@ button.rays-bar:focus-visible {
 .rays-sky__here img,
 .rays-sky__here-blank { display: block; width: 100%; height: 100%; object-fit: cover; background: #22c983; }
 .rays-sky__note {
-  margin: 0.75rem 0 0;
+  margin: 0.25rem 0 0;
   max-width: 72ch;
   color: var(--color-text-secondary);
   font-size: 0.8125rem;

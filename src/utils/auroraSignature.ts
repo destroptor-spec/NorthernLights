@@ -68,7 +68,7 @@ function surface(w: number, h: number) {
   return canvas.getContext('2d')!;
 }
 
-function night(w: number, h: number, random: () => number) {
+function night(w: number, h: number, random: () => number, landscape: boolean) {
   const ctx = surface(w, h);
   const sky = ctx.createLinearGradient(0, 0, w * 0.13, h);
   sky.addColorStop(0, '#060c21');
@@ -86,6 +86,8 @@ function night(w: number, h: number, random: () => number) {
   }
 
   // Two distant ridgelines give the eye a fixed horizon under the lights.
+  // Left out where the sky fades into the page instead (the Rays hero).
+  if (!landscape) return ctx.canvas;
   const terrain = noiseField(random);
   for (const [base, relief, colour] of [[0.90, 0.054, '#122131'], [0.97, 0.037, '#091522']] as const) {
     const peaks = Array.from({ length: 13 }, () => random());
@@ -127,9 +129,9 @@ function filament(fold: string, veil: string, soft: number) {
   return ctx.canvas;
 }
 
-export function makeAurora(w: number, h: number, track: AuroraSound) {
+export function makeAurora(w: number, h: number, track: AuroraSound, { landscape = true }: { landscape?: boolean } = {}) {
   const random = randomFor(track.id);
-  const background = night(w, h, random);
+  const background = night(w, h, random, landscape);
   const palette = track.mix.slice(0, 2);
   const weight = palette.reduce((sum, item) => sum + item.share, 0);
   const genreHue = weight ? palette.reduce((sum, item) => sum + (hues[item.genre] ?? 155) * item.share, 0) / weight : 155;

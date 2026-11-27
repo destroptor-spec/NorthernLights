@@ -32,13 +32,17 @@ function useSoundMap(): SoundMap | null {
   return map;
 }
 
-/** The view: centred on the track, wide enough for every neighbour, never closer than a slice of the whole map. */
+/**
+ * The view: centred on the track, wide enough for every neighbour, never
+ * closer than a slice of the whole map. Neighbours stay inside the band's
+ * solid middle, clear of its fading edges (more room across than down).
+ */
 function viewFor(map: SoundMap, centre: { x: number; y: number }, near: Array<{ x: number; y: number }>, aspect: number) {
   const q = (values: number[], f: number) => [...values].sort((a, b) => a - b)[Math.floor(f * (values.length - 1))] ?? 0;
   const xs = map.points.map(p => p[0]), ys = map.points.map(p => p[1]);
   const span = Math.max(q(xs, 0.99) - q(xs, 0.01), q(ys, 0.99) - q(ys, 0.01), 1e-6);
   let half = span * 0.16;
-  for (const p of near) half = Math.max(half, Math.abs(p.x - centre.x) / (0.84 * aspect), Math.abs(p.y - centre.y) / 0.84);
+  for (const p of near) half = Math.max(half, Math.abs(p.x - centre.x) / (0.8 * aspect), Math.abs(p.y - centre.y) / 0.6);
   half = Math.min(half, span * 0.8);
   return { halfX: half * aspect, halfY: half };
 }
