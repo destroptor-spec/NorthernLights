@@ -3099,6 +3099,15 @@ button.rays-bar:focus-visible {
 .rays-fingerprint__key--track { width: 10px; height: 10px; border-radius: 50%; background: var(--chart-emphasis); }
 .rays-fingerprint__key--genre { width: 14px; height: 11px; border-radius: 2px; background: color-mix(in srgb, var(--chart-context) 26%, transparent); box-shadow: inset 0 0 0 1px var(--chart-context); }
 .rays-fingerprint__key--median { width: 13px; height: 13px; border-radius: 50%; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-text-primary) 45%, transparent); }
+.rays-fingerprint__plot {
+  position: relative;
+  max-width: 30rem;
+  margin: 0 auto;
+}
+/* On a phone the labels reach past the plot's own box: give them room. */
+@media (max-width: 480px) {
+  .rays-fingerprint__plot { margin-inline: 1.25rem; }
+}
 .rays-fingerprint__plot svg { display: block; width: 100%; height: auto; overflow: visible; }
 .rays-radar__ring { fill: none; stroke: color-mix(in srgb, var(--color-text-primary) 12%, transparent); stroke-width: 1; }
 .rays-radar__ring--median { stroke: color-mix(in srgb, var(--color-text-primary) 40%, transparent); }
@@ -3106,10 +3115,23 @@ button.rays-bar:focus-visible {
 .rays-radar__genre { fill: color-mix(in srgb, var(--chart-context) 26%, transparent); stroke: var(--chart-context); stroke-width: 1; stroke-linejoin: round; }
 .rays-radar__area { fill: color-mix(in srgb, var(--chart-emphasis) 14%, transparent); stroke: var(--chart-emphasis); stroke-width: 2; stroke-linejoin: round; }
 .rays-radar__dot { fill: var(--chart-emphasis); stroke: var(--color-background); stroke-width: 2; transition: r 120ms var(--ease-out); }
-/* SVG units: the card draws the plot at about 0.8×, so these land at 12–13px. */
-.rays-radar__label { fill: var(--color-text-primary); font-size: 16px; font-weight: 600; }
-.rays-radar__label.is-hover { fill: var(--chart-emphasis); }
-.rays-radar__value { fill: var(--color-text-secondary); font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.rays-radar__labels { position: absolute; inset: 0; pointer-events: none; }
+.rays-radar__label {
+  position: absolute;
+  display: grid;
+  gap: 0.05rem;
+  color: var(--color-text-primary);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+  transform: translate(-50%, -50%);
+  text-align: center;
+}
+.rays-radar__label--start { transform: translate(0, -50%); text-align: left; }
+.rays-radar__label--end { transform: translate(-100%, -50%); text-align: right; }
+.rays-radar__label.is-hover { color: var(--chart-emphasis); }
+.rays-radar__value { color: var(--color-text-secondary); font-size: 0.75rem; font-weight: 500; font-variant-numeric: tabular-nums; }
 .rays-radar__hit { fill: transparent; cursor: crosshair; }
 .rays-fingerprint__readout {
   min-height: 2.6em;

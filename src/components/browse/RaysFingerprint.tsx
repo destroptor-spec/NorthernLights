@@ -60,22 +60,29 @@ export const RaysFingerprint: React.FC<{ fingerprint: Fingerprint; title: string
             const [x, y] = at(i, ranks[a.key] ?? 0);
             return <circle key={a.key} cx={x} cy={y} r={hover === i ? 6 : 4.5} className="rays-radar__dot" />;
           })}
-          {AXES.map((a, i) => {
-            const lx = CX + Math.cos(angle(i)) * (R + 24), ly = CY + Math.sin(angle(i)) * (R + 24);
-            const cos = Math.cos(angle(i));
-            const anchor = Math.abs(cos) < 0.25 ? 'middle' : cos > 0 ? 'start' : 'end';
-            const p = ranks[a.key];
-            return (
-              <text key={a.key} x={lx} y={ly} textAnchor={anchor} className={hover === i ? 'rays-radar__label is-hover' : 'rays-radar__label'}>
-                <tspan x={lx} dy="-0.15em">{a.label}</tspan>
-                <tspan x={lx} dy="1.25em" className="rays-radar__value">{p === null ? '–' : rankText(p)}</tspan>
-              </text>
-            );
-          })}
           {AXES.map((_, i) => (
             <path key={`hit${i}`} d={wedge(i)} className="rays-radar__hit" onPointerEnter={() => setHover(i)} onPointerLeave={() => setHover(null)} />
           ))}
         </svg>
+        {/* Labels as text over the plot, not inside the SVG: they keep the card's type sizes however wide the plot is drawn. */}
+        <div className="rays-radar__labels" aria-hidden="true">
+          {AXES.map((a, i) => {
+            const lx = CX + Math.cos(angle(i)) * (R + 18), ly = CY + Math.sin(angle(i)) * (R + 18);
+            const cos = Math.cos(angle(i));
+            const side = Math.abs(cos) < 0.25 ? 'middle' : cos > 0 ? 'start' : 'end';
+            const p = ranks[a.key];
+            return (
+              <span
+                key={a.key}
+                className={`rays-radar__label rays-radar__label--${side}${hover === i ? ' is-hover' : ''}`}
+                style={{ left: `${(lx / W) * 100}%`, top: `${(ly / H) * 100}%` }}
+              >
+                <span>{a.label}</span>
+                <span className="rays-radar__value">{p === null ? '–' : rankText(p)}</span>
+              </span>
+            );
+          })}
+        </div>
       </div>
       <p className="rays-fingerprint__readout" aria-live="polite">
         {hover === null ? 'Point at a quality for its rank.' : (() => {
