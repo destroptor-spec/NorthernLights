@@ -23,6 +23,8 @@ export { getArtistVideoUploads, saveArtistVideoCatalog, noteArtistVideoFailure }
 export { getArtistReviewEntries, getArtistReviewPreview, decideArtistReview, getRecentArtistReviewDecisions, undoArtistReviewDecision } from './artistReviews';
 export type { VideoUpload, VideoAssociation } from './musicVideos';
 export { getArtistHeroImageSource, storeArtistHeroImages, getAlbumArtworkImageSource, storeAlbumArtworkImages } from './providerImages';
+export { getSoundMapState, getSoundMapPoints, getSoundMapLabels, getSoundMapPositions, getEmbeddingSample, replaceSoundMap, getLibraryAxisValues, getGenreAverageRanks } from './soundMap';
+export type { SoundMapState, SoundMapLabel, LibraryAxis, GenreAverageRanks } from './soundMap';
 export type { StoredProviderImage, ArtistHeroImageSource, AlbumArtworkImageSource } from './providerImages';
 
 let pool: Pool | null = null;
@@ -656,6 +658,16 @@ export async function initDB(): Promise<Pool> {
         ALTER TABLE artists ADD COLUMN IF NOT EXISTS hero_images_read_at TIMESTAMPTZ;
         ALTER TABLE albums ADD COLUMN IF NOT EXISTS artwork_images JSONB;
         ALTER TABLE albums ADD COLUMN IF NOT EXISTS artwork_images_read_at TIMESTAMPTZ;
+        -- The library's sound map (the Rays page's night sky): each analysed
+        -- track's sound embedding projected onto its two principal components.
+        -- Rebuilt whole in the background when the library has changed
+        -- (soundMap.service.ts); a track without a row isn't on the map yet.
+        CREATE TABLE IF NOT EXISTS sound_map (
+          track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+          x REAL NOT NULL,
+          y REAL NOT NULL,
+          built_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
         CREATE INDEX IF NOT EXISTS albums_release_group_id_idx ON albums(release_group_id);
         CREATE INDEX IF NOT EXISTS albums_mb_release_group_id_idx ON albums(mb_release_group_id);
         CREATE INDEX IF NOT EXISTS albums_normalized_title_idx ON albums(normalized_title);

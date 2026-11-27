@@ -36,6 +36,8 @@ Core brand roles:
 
 Color strategy is restrained. Emerald is the active state, not a paint bucket. Most surfaces should be tinted neutrals, album-art color, or glass. The aurora spectrum should appear in progress fills, receiver backgrounds, and selected hero moments. The page backdrop is a plain field of `--color-background`: no gradient glows or blobs behind the content (removed 2026-11-27).
 
+The Rays page draws two things straight on the plain backdrop, both from the track's data: its aurora signature behind the hero and Credits rail (curtains over a sparse, even field of stars; in the dark theme the page itself is the night, in the light theme the curtains show as soft colour, and the text keeps the theme's own ink), and its "Your library as a night sky" map (only stars, in the theme's ink, fading out towards the edges). No sky gradient or panel behind either. The aurora drifts only on screen and holds still under reduced motion.
+
 Do not introduce new semantic colors casually. If a warning state is needed, prefer text, icon, and global toast behavior before adding another color role.
 
 ## Typography

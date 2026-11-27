@@ -13,6 +13,7 @@ import {
   browseSearchResultSchema,
   browseStyleDetailSchema,
   browseUnsortedSchema,
+  soundMapSchema,
   trackRaysSchema,
   appKeyCreateSchema,
   artistDetailSchema,
@@ -105,6 +106,7 @@ const schemas = {
   BrowseArtist: registry.register('BrowseArtist', browseArtistSchema),
   BrowseSearchResult: registry.register('BrowseSearchResult', browseSearchResultSchema),
   BrowseUnsorted: registry.register('BrowseUnsorted', browseUnsortedSchema),
+  SoundMap: registry.register('SoundMap', soundMapSchema),
   AlbumStyleProfile: registry.register('AlbumStyleProfile', albumStyleProfileSchema),
   ArtistStyleProfile: registry.register('ArtistStyleProfile', artistStyleProfileSchema),
   TrackRays: registry.register('TrackRays', trackRaysSchema),
@@ -216,6 +218,7 @@ path({ method: 'get', path: '/browse/mix', summary: 'What Shuffle plays: 15 to 3
 path({ method: 'get', path: '/browse/albums', summary: 'Albums most in a genre or style', tags: ['Browse'], security: authed, request: { query: browseList }, responses: paged(z.array(schemas.BrowseAlbum)) });
 path({ method: 'get', path: '/browse/artists', summary: 'Artists most in a genre or style, each album counted once', tags: ['Browse'], security: authed, request: { query: browseList }, responses: paged(z.array(schemas.BrowseArtist)) });
 path({ method: 'get', path: '/browse/search', summary: 'Find genres and styles by name or by a tag that maps to them', tags: ['Browse'], security: authed, request: { query: z.object({ q: z.string().min(1).max(100) }) }, responses: ok(z.array(schemas.BrowseSearchResult)) });
+path({ method: 'get', path: '/browse/sound-map', summary: 'The library\'s sound map', description: 'Every analysed track\'s sound embedding flattened onto two dimensions (its principal components), for the Rays page\'s night sky: a stable sample of up to 5,000 tracks and where each main genre sits. The first request starts the map (status building); it is rebuilt in the background when the library has changed. A track\'s own position comes with its rays (TrackRays.soundMap).', tags: ['Browse'], security: authed, responses: ok(schemas.SoundMap) });
 path({ method: 'get', path: '/browse/unsorted', summary: 'Genre tags on tracks without a genre', tags: ['Browse'], security: authed, responses: ok(schemas.BrowseUnsorted) });
 path({ method: 'get', path: '/albums/{id}/styles', summary: "An album's genres and styles, from its tracks", tags: ['Browse'], security: authed, request: { params: idParams }, responses: ok(schemas.AlbumStyleProfile) });
 path({ method: 'get', path: '/artists/{id}/styles', summary: "An artist's genres and styles, each album counted once, and listener tags", tags: ['Browse'], security: authed, request: { params: idParams }, responses: ok(schemas.ArtistStyleProfile) });

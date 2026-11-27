@@ -16,6 +16,7 @@ jest.mock('../services/browse.service', () => ({
   getAlbumStyleProfile: jest.fn(async () => ({ entries: [] })),
 }));
 jest.mock('../services/trackRays.service', () => ({ getTrackRays: jest.fn() }));
+jest.mock('../services/soundMap.service', () => ({ getSoundMapView: jest.fn() }));
 jest.mock('../services/apiV1Dto.service', () => ({
   ...jest.requireActual('../services/apiV1Dto.service'),
   getApiV1TracksByIds: jest.fn(),
@@ -27,6 +28,7 @@ import { getAlbumById } from '../database';
 import { getBrowseGenre, listBrowseAlbumRows, listBrowseTrackIds, pickBrowseMix } from '../services/browse.service';
 import { getApiV1TracksByIds, mapTrackV1 } from '../services/apiV1Dto.service';
 import { getTrackRays } from '../services/trackRays.service';
+import { getSoundMapView } from '../services/soundMap.service';
 
 async function get(path: string, query: Record<string, string> = {}, params: Record<string, string> = {}) {
   const layer = router.stack.find(l => l.route?.path === path && l.route.stack.some(h => h.method === 'get'))!;
@@ -105,11 +107,21 @@ describe('browse albums and genres', () => {
   });
 });
 
+describe('GET /browse/sound-map', () => {
+  it('answers with the map view as the service builds it', async () => {
+    const view = { status: 'ready' as const, builtAt: '2026-11-27T12:00:00.000Z', trackCount: 3, points: [[0.1, -0.2]] as Array<[number, number]>, labels: [{ genre: 'Rock', x: 0.1, y: 0, trackCount: 2 }] };
+    jest.mocked(getSoundMapView).mockResolvedValue(view);
+    const res = await get('/browse/sound-map', {}, {});
+    expect(body(res).data).toEqual(view);
+  });
+});
+
 describe('GET /tracks/:id/rays', () => {
   it('answers with the v1 track and its rays, or 404 for an unknown track', async () => {
     const near = { styles: [{ id: 5, genre: 'Rock', name: 'Grunge', trackCount: 9 }], trackIds: ['n2', 'n1'] };
     jest.mocked(getTrackRays).mockResolvedValue({ credits: [], tags: ['Rock'], styles: [], sound: null, album: null, artist: null, otherArtists: [], soundsCloseTo: near, otherAlbums: [],
-      release: { label: null, releaseDate: null, originalDate: null, media: null, catalogNumber: null, barcode: null, releaseStatus: null, copyright: null, discSubtitle: null, isrc: null, links: [] } });
+      release: { label: null, releaseDate: null, originalDate: null, media: null, catalogNumber: null, barcode: null, releaseStatus: null, copyright: null, discSubtitle: null, isrc: null, links: [] },
+      fingerprint: null, soundMap: null });
     const res = await get('/tracks/:id/rays', {}, { id: 't1' });
     expect(body(res).data).toMatchObject({ track: { id: 't1' }, tags: ['Rock'] });
     // Nearby tracks come back as v1 tracks, nearest first, without their paths.

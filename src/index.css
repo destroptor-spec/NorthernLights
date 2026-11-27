@@ -2092,9 +2092,46 @@ a:focus-visible > .genre-card .genre-card__label {
   .rays-hero {
     flex-direction: row;
     align-items: flex-end;
+    justify-content: center;
     gap: 2.25rem;
     text-align: left;
   }
+}
+
+/* The aurora signature behind the top of the page (back button, hero and
+   Credits rail), drawn straight on the page: in the dark theme the page is
+   the night, with a sparse field of stars; in the light theme the curtains
+   show as soft colour. It bleeds to the full width, starts above the back
+   button, and its stars thin out below the Credits rail. */
+.rays-top { position: relative; }
+.rays-top--aurora {
+  isolation: isolate;
+  padding-bottom: 4rem;
+}
+.rays-top--aurora .rays-hero { padding: 2.5rem 0 1rem; }
+/* Dark theme: a soft shadow of the night behind the words, so they hold over the brightest curtains. */
+.dark .rays-top--aurora .rays-hero__text {
+  text-shadow: 0 1px 2px rgba(3, 2, 8, 0.6), 0 0 18px rgba(3, 2, 8, 0.6);
+}
+.rays-aurora {
+  position: absolute;
+  z-index: -1;
+  top: -3rem;
+  bottom: 0;
+  left: 50%;
+  width: 100vw;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.rays-aurora__canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* The curtains end inside the hero; the stars thin out over the last 10rem. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 10rem), rgba(0, 0, 0, 0.6) calc(100% - 6rem), rgba(0, 0, 0, 0.22) calc(100% - 3rem), transparent 100%);
+          mask-image: linear-gradient(to bottom, #000 calc(100% - 10rem), rgba(0, 0, 0, 0.6) calc(100% - 6rem), rgba(0, 0, 0, 0.22) calc(100% - 3rem), transparent 100%);
 }
 
 /* The cover lights its own page: a soft glow in the cover's colour
@@ -2151,7 +2188,9 @@ a:focus-visible > .genre-card .genre-card__label {
 }
 
 @media (min-width: 768px) {
-  .rays-hero__text { justify-items: start; }
+  /* Capped, so the cover and text centre as a pair instead of the text
+     column stretching to the unwrapped title's width. */
+  .rays-hero__text { justify-items: start; max-width: 40rem; }
 }
 
 .rays-title {
@@ -2737,9 +2776,34 @@ button.rays-bar:focus-visible {
   grid-template-columns: minmax(7rem, 11rem) minmax(0, 1fr) 5.25rem;
 }
 
+/* Phones: the row is the bar. Its groove fills the whole row and the fill
+   grows from the left behind the name and the score, light enough to read
+   through; no narrow bar squeezed between them. */
 @media (max-width: 520px) {
-  .rays-bar { grid-template-columns: minmax(6rem, 8.5rem) minmax(0, 1fr) 2.5rem; gap: 0.5rem; }
-  .rays-bars--words .rays-bar { grid-template-columns: minmax(5.5rem, 8rem) minmax(0, 1fr) 4.5rem; }
+  .rays-bar,
+  .rays-bars--words .rays-bar {
+    position: relative;
+    isolation: isolate;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.75rem;
+    min-height: 2.5rem;
+    padding: 0 0.75rem;
+    overflow: hidden;
+  }
+  .rays-bars { gap: 4px; }
+  .rays-bar__track {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    height: auto;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
+  }
+  .rays-bar__fill {
+    border-radius: 0;
+    opacity: 0.3;
+  }
+  .rays-bar[data-member='true'] .rays-bar__fill { opacity: 0.38; }
   .rays-bars--words .rays-bar__value { font-size: 0.75rem; }
 }
 
@@ -2910,7 +2974,6 @@ button.rays-bar:focus-visible {
 .rays-cards {
   display: grid;
   gap: 1rem;
-  max-width: 72rem;
 }
 
 .rays-card {
@@ -3012,10 +3075,9 @@ button.rays-bar:focus-visible {
   color: var(--color-text-primary);
 }
 
-/* Styles card: the evidence (the model's style scores) on the left, the
-   genre mix on the right; one column below 1024px, in the same order. The
-   track's genres and styles, with their sources and the manual editor, wait
-   behind Advanced at the foot of the card and extend it when opened. */
+/* Styles card: the model's five strongest styles. The track's genres and
+   styles, with their sources and the manual editor, wait behind Advanced at
+   the foot of the card and extend it when opened. */
 .rays-styles {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -3023,18 +3085,186 @@ button.rays-bar:focus-visible {
   margin-top: 1.25rem;
 }
 
-@media (min-width: 1024px) {
-  .rays-styles {
-    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+
+/* Sound and style: Sound and Styles stacked on the left, the Fingerprint
+   (radar) card on the right from 1100px; stacked below that. */
+.rays-cards__main {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+@media (min-width: 1100px) {
+  .rays-cards--split {
+    grid-template-columns: minmax(0, 1fr) minmax(22rem, 28rem);
     align-items: start;
-    column-gap: 3rem;
   }
 }
+/* Full-width desktop: the radar takes a good share of the row. */
+@media (min-width: 1440px) {
+  .rays-cards--split { grid-template-columns: minmax(0, 3fr) minmax(26rem, 2fr); }
+}
 
-.rays-styles__summary {
+/* Fingerprint: ranks in the library on seven spokes, over the main genre's
+   average (the context grey) and the library's median ring. */
+.rays-fingerprint__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  list-style: none;
+  color: var(--color-text-secondary);
+  font-size: 0.8125rem;
+}
+.rays-fingerprint__legend li { display: inline-flex; align-items: center; gap: 0.45rem; }
+.rays-fingerprint__key { display: inline-block; flex: none; }
+.rays-fingerprint__key--track { width: 10px; height: 10px; border-radius: 50%; background: var(--chart-emphasis); }
+.rays-fingerprint__key--genre { width: 14px; height: 11px; border-radius: 2px; background: color-mix(in srgb, var(--chart-context) 26%, transparent); box-shadow: inset 0 0 0 1px var(--chart-context); }
+.rays-fingerprint__key--median { width: 13px; height: 13px; border-radius: 50%; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-text-primary) 45%, transparent); }
+.rays-fingerprint__plot {
+  position: relative;
+  max-width: 30rem;
+  margin: 0 auto;
+}
+/* On a phone the labels reach past the plot's own box: give them room. */
+@media (max-width: 480px) {
+  .rays-fingerprint__plot { margin-inline: 1.25rem; }
+}
+.rays-fingerprint__plot svg { display: block; width: 100%; height: auto; overflow: visible; }
+.rays-radar__ring { fill: none; stroke: color-mix(in srgb, var(--color-text-primary) 12%, transparent); stroke-width: 1; }
+.rays-radar__ring--median { stroke: color-mix(in srgb, var(--color-text-primary) 40%, transparent); }
+.rays-radar__spoke { stroke: color-mix(in srgb, var(--color-text-primary) 12%, transparent); stroke-width: 1; }
+.rays-radar__genre { fill: color-mix(in srgb, var(--chart-context) 26%, transparent); stroke: var(--chart-context); stroke-width: 1; stroke-linejoin: round; }
+.rays-radar__area { fill: color-mix(in srgb, var(--chart-emphasis) 14%, transparent); stroke: var(--chart-emphasis); stroke-width: 2; stroke-linejoin: round; }
+.rays-radar__dot { fill: var(--chart-emphasis); stroke: var(--color-background); stroke-width: 2; transition: r 120ms var(--ease-out); }
+.rays-radar__labels { position: absolute; inset: 0; pointer-events: none; }
+.rays-radar__label {
+  position: absolute;
   display: grid;
-  gap: 2.5rem;
-  min-width: 0;
+  gap: 0.05rem;
+  color: var(--color-text-primary);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+  transform: translate(-50%, -50%);
+  text-align: center;
+}
+.rays-radar__label--start { transform: translate(0, -50%); text-align: left; }
+.rays-radar__label--end { transform: translate(-100%, -50%); text-align: right; }
+.rays-radar__label.is-hover { color: var(--chart-emphasis); }
+.rays-radar__value { color: var(--color-text-secondary); font-size: 0.75rem; font-weight: 500; font-variant-numeric: tabular-nums; }
+.rays-radar__hit { fill: transparent; cursor: crosshair; }
+.rays-fingerprint__readout {
+  min-height: 2.6em;
+  margin: 0.5rem 0 0;
+  color: var(--color-text-secondary);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rays-radar__dot { transition: none; }
+}
+
+/* Your library as a night sky: the sound map centred on the track, drawn
+   straight on the page: only its stars, in the theme's ink. The field
+   reaches the edges of the content column (through the page padding, so the
+   track stays centred in what is visible) and the stars fade out towards
+   every side. Only the star field fades; points, lines and cards don't. */
+.rays {
+  --rays-bleed: 1rem;
+}
+@media (min-width: 768px) { .rays { --rays-bleed: 2rem; } }
+@media (min-width: 1024px) { .rays { --rays-bleed: 3rem; } }
+.rays-sky {
+  position: relative;
+  height: clamp(24rem, 64vh, 42rem);
+  margin-inline: calc(-1 * var(--rays-bleed));
+}
+.rays-sky__canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 22%, #000 78%, transparent 100%), linear-gradient(to right, transparent 0%, #000 7%, #000 93%, transparent 100%);
+  -webkit-mask-composite: source-in;
+          mask-image: linear-gradient(to bottom, transparent 0%, #000 22%, #000 78%, transparent 100%), linear-gradient(to right, transparent 0%, #000 7%, #000 93%, transparent 100%);
+          mask-composite: intersect;
+}
+.rays-sky__lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.rays-sky__lines line { stroke: color-mix(in srgb, var(--color-text-primary) 34%, transparent); stroke-width: 1; }
+.rays-sky__stars { position: absolute; inset: 0; margin: 0; padding: 0; list-style: none; }
+.rays-sky__star { position: absolute; width: 0; height: 0; }
+.rays-sky__dot {
+  position: absolute;
+  left: -14px;
+  top: -14px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+}
+.rays-sky__dot::before {
+  content: '';
+  position: absolute;
+  inset: 9px;
+  border-radius: 50%;
+  background: var(--color-text-primary);
+  box-shadow: 0 0 0 2px var(--color-background), 0 0 10px color-mix(in srgb, var(--color-text-primary) 45%, transparent);
+  transition: transform 140ms var(--ease-out), background-color 140ms var(--ease-out);
+}
+.rays-sky__dot:hover::before,
+.rays-sky__dot:focus-visible::before { transform: scale(1.35); background: var(--color-primary); }
+.rays-sky__dot:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.rays-sky__card {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  z-index: 2;
+  display: none;
+  align-items: center;
+  gap: 0.6rem;
+  width: max-content;
+  max-width: 16rem;
+  padding: 0.45rem 0.7rem 0.45rem 0.45rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--glass-border);
+  background: var(--menu-bg, var(--color-surface));
+  box-shadow: var(--shadow-md);
+  color: var(--color-text-primary);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.rays-sky__star.is-low .rays-sky__card { bottom: auto; top: calc(100% + 4px); }
+.rays-sky__dot:hover .rays-sky__card,
+.rays-sky__dot:focus-visible .rays-sky__card { display: flex; }
+.rays-sky__card img,
+.rays-sky__card-art { width: 44px; height: 44px; flex: none; border-radius: 0.4rem; object-fit: cover; background: var(--color-surface-variant); }
+.rays-sky__card-text { display: grid; gap: 0.1rem; min-width: 0; }
+.rays-sky__card-title { font-size: 0.875rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rays-sky__card-artist { font-size: 0.8125rem; color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rays-sky__here {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 50%;
+  overflow: hidden;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 2px var(--color-background), 0 0 0 4px var(--color-primary-fill), 0 0 28px 6px color-mix(in srgb, var(--color-primary) 40%, transparent);
+  pointer-events: none;
+}
+.rays-sky__here img,
+.rays-sky__here-blank { display: block; width: 100%; height: 100%; object-fit: cover; background: var(--color-primary-fill); }
+.rays-sky__note {
+  margin: 0.25rem 0 0;
+  max-width: 72ch;
+  color: var(--color-text-secondary);
+  font-size: 0.8125rem;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rays-sky__dot::before { transition: none; }
 }
 
 .rays-card__lede {
@@ -3390,6 +3620,35 @@ html.reduced-motion .rays-rise .rays-bar__fill {
   font-size: 0.75rem;
 }
 
+/* Phones: as the style rows, the bar fills its row, with the two ends inside
+   it over a translucent fill; the meter's name stays above the bar. The bar
+   and the ends share one grid cell, so no positioning is needed. */
+@media (max-width: 520px) {
+  .rays-sound { grid-template-columns: minmax(0, 1fr); gap: 0.75rem; }
+  .rays-meter {
+    grid-template-areas: "label" "bar";
+    gap: 0.35rem;
+  }
+  .rays-meter__label { grid-area: label; }
+  .rays-meter__bar {
+    grid-area: bar;
+    height: auto;
+    min-height: 2.25rem;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
+  }
+  .rays-meter__bar > span {
+    border-radius: 0;
+    opacity: 0.38;
+  }
+  .rays-meter__ends {
+    grid-area: bar;
+    align-self: center;
+    position: relative;
+    padding: 0 0.75rem;
+    pointer-events: none;
+  }
+}
 .rays-fact {
   margin: 1.25rem 0 0;
   color: var(--color-text-secondary);
