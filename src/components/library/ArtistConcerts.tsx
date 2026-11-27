@@ -78,14 +78,11 @@ export const OnTourSticker: React.FC<{ visible: boolean }> = ({ visible }) => {
     return (
         <span
             className="
+                on-tour-sticker
                 inline-flex items-center gap-1.5
                 px-3 py-1
                 rounded-full
                 text-[11px] font-bold uppercase tracking-[0.12em]
-                text-white
-                bg-[var(--color-accent)]
-                shadow-[0_2px_8px_rgba(244,63,94,0.35)]
-                animate-[pulse_3s_ease-in-out_infinite]
             "
             role="status"
             aria-label="Artist is currently on tour"

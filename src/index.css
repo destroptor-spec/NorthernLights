@@ -40,6 +40,7 @@
   --chart-context: #a3abb6;
   --color-border: rgba(0, 0, 0, 0.05); /* Soft glass borders */
   --color-accent: #E11D48; /* Rose 600 */
+  --color-tour-fill: #C34D5A; /* muted rose, white label 4.6:1 */
   --color-error: #FF3B30;
   --color-success: #34C759;
 
@@ -615,6 +616,36 @@ button :where(span),
 }
 @media (prefers-reduced-motion: reduce) {
   .btn-play:active:not(:disabled) { transform: none; }
+}
+
+/* "On tour" sticker on the artist header. A muted rose of its own (not
+   --color-accent: rose 500 under white is 3.7:1): chroma down 30% and just
+   dark enough for white to reach 4.6:1 in both themes. It breathes through a
+   glow behind it, never the label's own opacity, so the text keeps its
+   contrast; the glow is still under reduced motion. */
+.on-tour-sticker {
+  position: relative;
+  color: #fff;
+  background: var(--color-tour-fill);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--color-tour-fill) 35%, transparent);
+}
+.on-tour-sticker::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 14px 2px color-mix(in srgb, var(--color-tour-fill) 55%, transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .on-tour-sticker::after {
+    animation: on-tour-glow 3s ease-in-out infinite;
+  }
+}
+@keyframes on-tour-glow {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
 }
 
 /* Aurora CTA background (Generate/Create/Setup buttons). Referenced across

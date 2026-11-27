@@ -31,6 +31,7 @@ Core brand roles:
 - `--aurora-pink`: rare red-shift accent for destructive or error states.
 - `--aurora-play-gradient`: the play button signature.
 - `--color-primary-fill` and `--color-on-primary`: a filled emerald surface (primary and Play buttons, active chips, checked boxes) and the text or icon on it. White on the deeper green in light, night on the bright green in dark; both meet WCAG AA. Never put white on `--color-primary`: it is 2.2:1 in dark.
+- `--color-tour-fill`: the "On tour" sticker only, a muted rose under a white label (4.6:1 in both themes). Rose 500 (`--color-accent` in dark) is 3.7:1 under white, so never put white text on the accent.
 - `--glass-bg`, `--glass-border`, `--glass-blur`, `--glass-shadow`: material system.
 
 Color strategy is restrained. Emerald is the active state, not a paint bucket. Most surfaces should be tinted neutrals, album-art color, or glass. The aurora spectrum should appear in progress fills, receiver backgrounds, and selected hero moments. The page backdrop is a plain field of `--color-background`: no gradient glows or blobs behind the content (removed 2026-11-27).
