@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { RaysLoading } from '../DetailRouteLoading';
 import { mostVivid } from '../../utils/vividColor';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Check, ChevronDown, Loader2, Pause, Play, User2, X } from 'lucide-react';
+import { Check, ChevronDown, ExternalLink, Loader2, Pause, Play, User2, X } from 'lucide-react';
 import { HorizontalScrollRail } from '../HorizontalScrollRail';
 import { usePlayerStore } from '../../store/index';
 import { fetchTaxonomy, fetchTrackRays, genrePath, setTrackStyle, stylePath } from '../../api/browse';
@@ -18,7 +18,11 @@ import { ArtistInitial } from '../library/ArtistInitial';
 import { FadedHeroImage } from '../library/FadedHeroImage';
 import { StylePicker, type GenreTaxonomy } from '../settings/StylePicker';
 import { BrowseError, CoverThumb, NearStyleCards, coverUrlFor, useBrowsePlayer } from './browseParts';
-import type { StyleProfileEntry, TrackRays as Rays } from '../../../shared/api/v1';
+import type { StreamFormat, StyleProfileEntry, TrackRays as Rays } from '../../../shared/api/v1';
+import { useStreamFormat } from '../../hooks/useStreamFormat';
+import { describeSource } from '../../utils/audioFormat';
+import { getLinkLabel } from '../../utils/linkLabels';
+import { trackReleaseFacts, trackReleaseLinks, type ReleaseFact } from '../../utils/trackRelease';
 import type { GenreTarget } from '../../../shared/genreReview';
 
 type StyleRow = Rays['styles'][number];
@@ -143,6 +147,72 @@ const PersonCover: React.FC<{ name: string; imageUrl?: string | null }> = ({ nam
 };
 
 /** What an In context card says an artist other than the track's own is. */
+/**
+ * The file as it is: from the probe when it has answered ("FLAC" ·
+ * "24-bit/96 kHz"), else what the library row knows ("FLAC" · "Lossless",
+ * "MP3" · "320k").
+ */
+function fileFact(track: Rays['track'], format: StreamFormat | null): ReleaseFact | null {
+  const probed = format?.source ? describeSource(format.source) : null;
+  if (probed) return { key: 'file', label: 'File', value: probed.label, detail: probed.sub };
+  if (!track.format) return null;
+  const container = track.format.toLowerCase();
+  const name = container === 'm4a' || container === 'mp4' ? (track.lossless ? 'ALAC' : 'AAC') : track.format.toUpperCase();
+  const detail = track.lossless ? 'Lossless' : track.bitrate ? `${Math.round(track.bitrate / 1000)}k` : undefined;
+  return { key: 'file', label: 'File', value: name, detail };
+}
+
+/** The release as the file tags it: short facts, then the ℗ line and links about the recording. */
+const ReleaseCard: React.FC<{ rays: Rays; format: StreamFormat | null }> = ({ rays, format }) => {
+  const { release, track } = rays;
+  const facts = trackReleaseFacts(release, track);
+  const file = fileFact(track, format);
+  if (file) {
+    // After the medium, before the codes.
+    const codes = facts.findIndex(f => f.key === 'isrc' || f.key === 'barcode');
+    facts.splice(codes < 0 ? facts.length : codes, 0, file);
+  }
+  const links = trackReleaseLinks(release, track.musicBrainz?.recordingId);
+  if (facts.length === 0 && !release.copyright && links.length === 0) return null;
+  return (
+    <section className="browse-section" aria-label="Release">
+      <h2 className="browse-section__title">Release</h2>
+      <div className="rays-card rays-release">
+        {facts.length > 0 && (
+          <dl className="rays-release__facts">
+            {facts.map(f => (
+              <div key={f.key} className="rays-release__fact">
+                <dt>{f.label}</dt>
+                <dd>
+                  <span className={f.code ? 'rays-release__value rays-release__value--code' : 'rays-release__value'}>{f.value}</span>
+                  {f.detail && <span className="rays-release__detail">{f.detail}</span>}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
+        {(release.copyright || links.length > 0) && (
+          <div className="rays-release__foot">
+            {links.length > 0 && (
+              <ul className="rays-chips" aria-label="Links">
+                {links.map(link => (
+                  <li key={link.url}>
+                    <a href={link.url} target="_blank" rel="noopener noreferrer" className="rays-chip">
+                      {getLinkLabel(link.url, link.type)}
+                      <ExternalLink size={12} aria-hidden="true" className="self-center" />
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {release.copyright && <p className="rays-release__copyright">{release.copyright}</p>}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+};
+
 const OTHER_ARTIST_ROLE: Record<Rays['otherArtists'][number]['role'], string> = {
   artist: 'Artist',
   featured: 'Featured artist',
@@ -379,6 +449,8 @@ const TrackRaysContent = ({ trackId }: { trackId: string }) => {
   const navigate = useNavigate();
   const isAdmin = usePlayerStore(s => s.currentUser?.role === 'admin');
   const [rays, setRays] = useState<Rays | null>(null);
+  // The file as probed (depth and rate); the Release card falls back to the library row.
+  const sourceFormat = useStreamFormat(rays ? trackId : null, 'source');
   const [error, setError] = useState<{ message: string; missing: boolean } | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
   const [taxonomy, setTaxonomy] = useState<GenreTaxonomy | null>(null);
@@ -488,6 +560,7 @@ const TrackRaysContent = ({ trackId }: { trackId: string }) => {
                 ) : <span>{artistName}</span>}
                 {rays.album && <><span aria-hidden="true">·</span><Link to={`/library/album/${rays.album.id}`} className="rays-link">{rays.album.title}</Link></>}
                 {track.year ? <><span aria-hidden="true">·</span><span>{track.year}</span></> : null}
+                {track.explicit ? <span className="rays-explicit" title="Explicit" aria-label="Explicit">E</span> : null}
               </p>
               <div className="browse-hero__actions">
                 <button type="button" className="btn btn-primary" onClick={() => void play()}>
@@ -553,6 +626,8 @@ const TrackRaysContent = ({ trackId }: { trackId: string }) => {
               </HorizontalScrollRail>
             </section>
           )}
+
+          <ReleaseCard rays={rays} format={sourceFormat} />
 
           <section className="browse-section" aria-label="Sound and style">
             <h2 className="browse-section__title">Sound and style</h2>

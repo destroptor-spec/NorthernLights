@@ -44,17 +44,30 @@ const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 
 
 const KIND: Record<string, string> = { album: 'an album', ep: 'an EP', single: 'a single', compilation: 'a compilation' };
 
-/** "on 12 April 2011", "in April 2011", "in 2011". */
-function when(date: string): string | null {
+/** A tagged date in words: "12 April 2011", "April 2011", "2011"; null when it has no year. */
+export function taggedDate(date: string): string | null {
     const [year, month, day] = date.split('-').map(Number);
     if (!year) return null;
     const monthName = month ? MONTHS[month - 1] : undefined;
-    if (monthName && day) return `on ${day} ${monthName} ${year}`;
-    if (monthName) return `in ${monthName} ${year}`;
-    return `in ${year}`;
+    if (monthName && day) return `${day} ${monthName} ${year}`;
+    if (monthName) return `${monthName} ${year}`;
+    return `${year}`;
 }
 
-const yearOf = (date?: string | null) => (date ? Number(date.slice(0, 4)) || null : null);
+/** "on 12 April 2011", "in April 2011", "in 2011". */
+function when(date: string): string | null {
+    const text = taggedDate(date);
+    if (!text) return null;
+    return /^\d/.test(text) && text.includes(' ') ? `on ${text}` : `in ${text}`;
+}
+
+export const yearOf = (date?: string | null) => (date ? Number(date.slice(0, 4)) || null : null);
+
+/** The medium as a name: "CD", "12″ vinyl", "Digital". */
+export function mediumName(media: string): string {
+    const text = medium(media);
+    return text.charAt(0).toUpperCase() + text.slice(1);
+}
 
 /** The medium in words: "the CD", "the 12″ vinyl", "the digital". */
 function medium(media: string): string {
