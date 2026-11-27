@@ -1972,11 +1972,10 @@ a:focus-visible > .genre-card .genre-card__label {
   width: 100%;
   min-height: 48px;
   padding: 0.5rem 1rem;
-  border: 1px solid var(--glass-border);
+  /* A card row: lifted surface, no hairline or blur (DESIGN.md). */
+  border: 0;
   border-radius: var(--radius-sm);
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(4px);
-  backdrop-filter: blur(4px);
+  background: var(--color-surface);
   color: var(--color-text-primary);
   text-align: left;
   text-decoration: none;
@@ -1987,7 +1986,7 @@ a:focus-visible > .genre-card .genre-card__label {
 
 .browse-index__row:hover,
 .browse-index__row:focus-visible {
-  background: var(--glass-bg-hover);
+  background: var(--color-surface-hover);
   color: var(--color-primary);
   outline: none;
 }
@@ -2710,8 +2709,7 @@ button.rays-bar:focus-visible {
 .rays-bar__track {
   height: 0.5rem;
   border-radius: var(--radius-pill);
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
+  background: color-mix(in srgb, var(--color-text-primary) 9%, transparent);
   overflow: hidden;
 }
 
@@ -2758,9 +2756,9 @@ button.rays-bar:focus-visible {
   width: var(--rays-lead-w);
   overflow: hidden;
   scroll-snap-align: start;
-  border: 1px solid var(--glass-border);
+  /* A card: lifted surface, no hairline (DESIGN.md). */
   border-radius: var(--radius);
-  background: var(--glass-bg);
+  background: var(--color-surface);
   box-shadow: var(--shadow-sm);
 }
 
@@ -2842,7 +2840,7 @@ button.rays-bar:focus-visible {
 .rays-context-card--person {
   grid-template-columns: minmax(0, 1fr);
   width: 16rem;
-  /* The lead cards' height: their square artwork, 47.5 % of their width inside the border. */
+  /* The lead cards' height: their square artwork, 47.5 % of their width. */
   height: calc((var(--rays-lead-w) - 2px) * 0.475 + 2px);
 }
 
@@ -2918,9 +2916,9 @@ button.rays-bar:focus-visible {
 .rays-card {
   min-width: 0;
   padding: 1.25rem;
-  border: 1px solid var(--glass-border);
+  /* A card: lifted surface, no hairline (DESIGN.md). */
   border-radius: var(--radius);
-  background: var(--glass-bg);
+  background: var(--color-surface);
 }
 
 @media (min-width: 768px) {
@@ -3004,7 +3002,7 @@ button.rays-bar:focus-visible {
 
 .rays-card .browse-index__row:hover,
 .rays-card .browse-index__row:focus-visible {
-  background: var(--glass-bg-hover);
+  background: var(--color-surface-hover);
 }
 
 .rays-card .browse-index li {
@@ -3040,9 +3038,8 @@ button.rays-bar:focus-visible {
   gap: 0.75rem;
   min-height: 56px;
   padding: 0.5rem 0.75rem;
-  border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
-  background: var(--glass-bg);
+  background: var(--color-surface);
 }
 
 .disputed__what {
@@ -3255,8 +3252,7 @@ button.rays-bar:focus-visible {
 .rays-meter__bar {
   height: 0.5rem;
   border-radius: var(--radius-pill);
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
+  background: color-mix(in srgb, var(--color-text-primary) 9%, transparent);
   overflow: hidden;
 }
 
@@ -3366,16 +3362,16 @@ a.rays-chip:focus-visible {
   max-width: 28rem;
   min-height: 44px;
   padding: 0.75rem 1rem;
-  border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
+  background: var(--color-surface);
   color: var(--color-text-secondary);
   text-decoration: none;
-  transition: border-color 160ms ease-out, color 160ms ease-out;
+  transition: background-color 160ms ease-out, color 160ms ease-out;
 }
 
 .browse-row-link:hover,
 .browse-row-link:focus-visible {
-  border-color: var(--glass-border-hover);
+  background: var(--color-surface-hover);
   color: var(--color-primary);
   outline: none;
 }
