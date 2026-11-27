@@ -24,6 +24,31 @@ export interface ShowDate {
   time: string | null;
 }
 
+export interface ShowDateParts {
+  /** "Fri" */
+  weekday: string;
+  /** "5" */
+  day: string;
+  /** "Mar" */
+  month: string;
+  time: string | null;
+}
+
+/** The pieces for a calendar-style date block, in the server's convention. */
+export function showDateParts(eventDate: string, eventDateTime: string | null, timeZone: string | null | undefined): ShowDateParts {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(eventDate);
+  if (!m) return { weekday: '', day: eventDate.slice(0, 10) || '--', month: '', time: null };
+  const locale = showLocale(timeZone);
+  const at = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  const part = (options: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat(locale, { timeZone: 'UTC', ...options }).format(at);
+  return {
+    weekday: part({ weekday: 'short' }),
+    day: part({ day: 'numeric' }),
+    month: part({ month: 'short' }),
+    time: formatShowDate(eventDate, eventDateTime, timeZone).time,
+  };
+}
+
 export function formatShowDate(eventDate: string, eventDateTime: string | null, timeZone: string | null | undefined): ShowDate {
   const day = /^(\d{4})-(\d{2})-(\d{2})/.exec(eventDate);
   if (!day) return { dayAndDate: eventDate, date: eventDate, time: null };

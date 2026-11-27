@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { usePlayerStore } from '../../store/index';
 import { Ticket, MapPin, ArrowRight, AlertTriangle } from 'lucide-react';
 import { HorizontalScrollRail } from '../HorizontalScrollRail';
+import { showDateParts } from '../../utils/showDateFormat';
 
 export type ArtistEvent = {
     jambase_event_id: string;
@@ -28,6 +29,8 @@ type ArtistConcertsResp = {
     onTour: boolean;
     disabled?: boolean;
     lastFetchedAt: string | null;
+    /** The server's IANA time zone: show dates are written its way. */
+    timeZone?: string;
 };
 
 export function useArtistConcerts(artistId: string | undefined): {
@@ -36,6 +39,7 @@ export function useArtistConcerts(artistId: string | undefined): {
     events: ArtistEvent[];
     stale: boolean;
     disabled: boolean;
+    timeZone?: string;
 } {
     const getAuthHeader = usePlayerStore(s => s.getAuthHeader);
     const [state, setState] = useState<ArtistConcertsResp | null>(null);
@@ -65,6 +69,7 @@ export function useArtistConcerts(artistId: string | undefined): {
         events: state?.events || [],
         stale: !!state?.stale,
         disabled: !!state?.disabled,
+        timeZone: state?.timeZone,
     };
 }
 
@@ -91,38 +96,6 @@ export const OnTourSticker: React.FC<{ visible: boolean }> = ({ visible }) => {
     );
 };
 
-function parseCalendarDate(value: string | null | undefined): Date | null {
-    const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (!match) return null;
-    const [, y, m, d] = match;
-    const date = new Date(Number(y), Number(m) - 1, Number(d));
-    return Number.isFinite(date.getTime()) ? date : null;
-}
-
-function extractWallTime(value: string | null | undefined): string | null {
-    const match = value?.match(/T(\d{2}):(\d{2})/);
-    if (!match) return null;
-    const [, hh, mm] = match;
-    if (hh === '00' && mm === '00') return null;
-    const hour = parseInt(hh, 10);
-    if (!Number.isFinite(hour)) return null;
-    const ampm = hour >= 12 ? 'pm' : 'am';
-    const h12 = hour % 12 || 12;
-    return `${h12}:${mm}${ampm}`;
-}
-
-function formatDateParts(dateStr: string, datetime: string | null): { weekday: string; month: string; day: string; time: string | null } {
-    const d = parseCalendarDate(dateStr) || parseCalendarDate(datetime);
-    if (!d) {
-        return { weekday: '', month: '', day: dateStr.slice(0, 10) || '--', time: null };
-    }
-    const weekday = d.toLocaleDateString(undefined, { weekday: 'short' });
-    const month = d.toLocaleDateString(undefined, { month: 'short' });
-    const day = String(d.getDate());
-    const time = extractWallTime(datetime) || extractWallTime(dateStr);
-    return { weekday, month, day, time };
-}
-
 function formatPrice(min: number | null, max: number | null, currency: string | null): string | null {
     if (min == null && max == null) return null;
     const cur = (currency || 'USD').toUpperCase();
@@ -131,8 +104,8 @@ function formatPrice(min: number | null, max: number | null, currency: string | 
     return `from ${symbol}${Math.round((min ?? max)!)}`;
 }
 
-const MiniEventCard: React.FC<{ event: ArtistEvent }> = ({ event }) => {
-    const { weekday, month, day, time } = formatDateParts(event.event_date, event.event_datetime);
+const MiniEventCard: React.FC<{ event: ArtistEvent; timeZone?: string }> = ({ event, timeZone }) => {
+    const { weekday, month, day, time } = showDateParts(event.event_date, event.event_datetime, timeZone);
     const price = formatPrice(event.price_min, event.price_max, event.price_currency);
     const locality = [event.venue_city, event.venue_region || event.venue_country].filter(Boolean).join(', ');
 
@@ -140,29 +113,27 @@ const MiniEventCard: React.FC<{ event: ArtistEvent }> = ({ event }) => {
         <div className="
             relative flex min-h-[96px] items-stretch gap-2.5 md:gap-3
             bg-[var(--color-surface)]
-            border border-[var(--glass-border)]
             rounded-xl
             p-2.5 md:p-3
-            hover:border-primary/40 hover:shadow-sm
+            hover:bg-[var(--color-surface-hover)]
             transition-ui
         ">
             {/* Date block — calendar/poster style */}
             <div className="
                 flex flex-col items-center justify-center
                 shrink-0 w-14 md:w-16
-                bg-background
+                bg-[var(--color-surface-variant)]
                 rounded-lg
-                border border-[var(--glass-border)]
                 py-2 px-1
                 text-center
             ">
-                <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-primary)]">
+                <span className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-primary-fill)]">
                     {weekday}
                 </span>
                 <span className="text-2xl font-bold text-[var(--color-text-primary)] tabular-nums leading-none mt-0.5">
                     {day}
                 </span>
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mt-0.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mt-0.5">
                     {month}
                 </span>
             </div>
@@ -203,8 +174,8 @@ const MiniEventCard: React.FC<{ event: ArtistEvent }> = ({ event }) => {
                         self-center flex items-center justify-center
                         min-h-[44px] min-w-[44px] px-3
                         rounded-full
-                        text-[var(--color-primary)] hover:text-white
-                        bg-primary/10 hover:bg-[var(--color-primary)]
+                        text-[var(--color-primary-fill)] hover:text-[var(--color-on-primary)]
+                        bg-primary/10 hover:bg-[var(--color-primary-fill)]
                         transition-colors
                         flex-shrink-0
                     "
@@ -221,9 +192,10 @@ interface UpcomingShowsProps {
     events: ArtistEvent[];
     loading: boolean;
     stale: boolean;
+    timeZone?: string;
 }
 
-export const UpcomingShows: React.FC<UpcomingShowsProps> = ({ events, loading, stale }) => {
+export const UpcomingShows: React.FC<UpcomingShowsProps> = ({ events, loading, stale, timeZone }) => {
     if (loading) {
         return (
             <section className="mb-12">
@@ -257,7 +229,7 @@ export const UpcomingShows: React.FC<UpcomingShowsProps> = ({ events, loading, s
                     </span>
                 </h2>
                 {stale && (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">
                         <AlertTriangle size={12} />
                         May be out of date
                     </span>
@@ -269,7 +241,7 @@ export const UpcomingShows: React.FC<UpcomingShowsProps> = ({ events, loading, s
             >
                 {visible.map(e => (
                     <div key={e.jambase_event_id} className="min-w-[78vw] snap-start md:min-w-[calc((100%-1.5rem)/3)]">
-                        <MiniEventCard event={e} />
+                        <MiniEventCard event={e} timeZone={timeZone} />
                     </div>
                 ))}
             </HorizontalScrollRail>

@@ -316,7 +316,7 @@ const ArtistPage = ({ artistId }: { artistId?: string }) => {
     // art), so it can stand in until, or instead of, the provider's.
     const imageUrl = providerImageUrl || heroState?.imageUrl;
     const heroImages = useProviderImages(artistId ? `/artists/${encodeURIComponent(artistId)}/hero-images` : null);
-    const { onTour, events: upcomingEvents, loading: concertsLoading, stale: concertsStale } = useArtistConcerts(artistId);
+    const { onTour, events: upcomingEvents, loading: concertsLoading, stale: concertsStale, timeZone: concertsTimeZone } = useArtistConcerts(artistId);
     const { videos: musicVideos, loading: musicVideosLoading, stale: musicVideosStale } = useArtistMusicVideos(artistId);
     const lastFmAvailable = usePlayerStore(s => s.currentUser?.role === 'admin' ? !!s.lastFmApiKey : s.hasLastFmKey);
     const videosAvailable = usePlayerStore(s => s.youtubeEnabled && (s.currentUser?.role === 'admin' ? !!s.youtubeApiKey.trim() : s.hasYouTubeKey));
@@ -790,7 +790,7 @@ const ArtistPage = ({ artistId }: { artistId?: string }) => {
     // their rail in advance when live lookup is available.
     const mediaSections = <>
         <MusicVideos videos={musicVideos} loading={videosAvailable && musicVideosLoading} stale={musicVideosStale} />
-        <UpcomingShows events={upcomingEvents} loading={showsAvailable && concertsLoading} stale={concertsStale} />
+        <UpcomingShows events={upcomingEvents} loading={showsAvailable && concertsLoading} stale={concertsStale} timeZone={concertsTimeZone} />
     </>;
 
     if (failure === 'failed' && !hasAnyContent) return (

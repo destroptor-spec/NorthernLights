@@ -298,6 +298,8 @@ router.get('/concerts/artist/:artistId', requireAuth, async (req, res) => {
       stale,
       onTour: events.length > 0,
       lastFetchedAt: cache?.fetched_at || null,
+      // Show dates are written the way they are where the server runs (see /concerts/hub).
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
