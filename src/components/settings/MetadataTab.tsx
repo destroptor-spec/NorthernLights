@@ -22,6 +22,8 @@ type YoutubeStatusResp = {
   enabled: boolean;
   hasKey: boolean;
   usage: { day: string; count: number; lastCallAt: string | null; cap: number; hardStopActive: boolean; stopped: boolean };
+  /** Google refused the stored key on its last call (invalid, restricted, API off). */
+  keyProblem?: { message: string; since: string } | null;
 };
 
 /** A provider's automatic credit import, as the server reports it (GET /api/library/credits/import/:provider). */
@@ -293,11 +295,14 @@ export const MetadataTab: React.FC = () => {
                     : 'Integration currently disabled'}
         />
     );
+    const youtubeKeyProblem = youtubeEnabled && youtubeApiKey ? youtubeStatus?.keyProblem : null;
     const youtubeBadge = (
         <DependencyBadge
             label="YouTube Integration"
-            status={youtubeEnabled && youtubeApiKey ? 'available' : (youtubeEnabled ? 'partial' : 'unavailable')}
-            message={youtubeEnabled && youtubeApiKey
+            status={youtubeKeyProblem ? 'unavailable' : youtubeEnabled && youtubeApiKey ? 'available' : (youtubeEnabled ? 'partial' : 'unavailable')}
+            message={youtubeKeyProblem
+                ? `Google rejected the API key: ${youtubeKeyProblem.message}`
+                : youtubeEnabled && youtubeApiKey
                 ? 'Configured for artist videos and mobile backgrounds'
                 : youtubeEnabled
                     ? 'Requires a YouTube Data API key'

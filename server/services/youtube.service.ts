@@ -42,6 +42,67 @@ export class YoutubeConfigError extends Error {
   }
 }
 
+// Google refused the key itself (invalid, restricted, API off, project
+// suspended). It holds for every artist, so it is remembered server-wide.
+export class YoutubeKeyRejectedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'YoutubeKeyRejectedError';
+  }
+}
+
+// Reasons Google gives for the key or project rather than for one request.
+const KEY_REJECTION_REASONS = new Set([
+  'keyInvalid', 'keyExpired', 'accessNotConfigured', 'ipRefererBlocked',
+  'API_KEY_INVALID', 'API_KEY_EXPIRED', 'ACCESS_DENIED', 'SERVICE_DISABLED', 'CONSUMER_INVALID',
+  'API_KEY_SERVICE_BLOCKED', 'API_KEY_IP_ADDRESS_BLOCKED', 'API_KEY_HTTP_REFERRER_BLOCKED',
+  'API_KEY_ANDROID_APP_BLOCKED', 'API_KEY_IOS_APP_BLOCKED',
+]);
+
+export function classifyYoutubeError(status: number, body: string): Error {
+  let error: any = null;
+  try { error = JSON.parse(body)?.error ?? null; } catch { /* not JSON */ }
+  const reasons: string[] = [
+    ...(Array.isArray(error?.errors) ? error.errors : []),
+    ...(Array.isArray(error?.details) ? error.details : []),
+  ].map((entry: any) => entry?.reason).filter((reason: unknown): reason is string => typeof reason === 'string');
+  const message = typeof error?.message === 'string' && error.message ? error.message : body.slice(0, 300);
+  if (status === 403 && (/quota/i.test(body) || reasons.some(reason => /dailyLimitExceeded|rateLimitExceeded/.test(reason)))) {
+    return new YoutubeBudgetError();
+  }
+  if ((status === 400 || status === 403) && reasons.some(reason => KEY_REJECTION_REASONS.has(reason))) {
+    return new YoutubeKeyRejectedError(message);
+  }
+  return new Error(`YouTube HTTP ${status}: ${message}`);
+}
+
+// After a rejection, artist refreshes skip Google (and the quota counter) for a
+// while; a key change, a successful call or Save & Test ends the pause.
+const KEY_REJECTION_PAUSE_MS = 30 * 60_000;
+let keyRejection: { keyHash: string; message: string; at: number } | null = null;
+const keyHash = (key: string) => createHash('sha256').update(key).digest('hex');
+
+function noteKeyRejected(apiKey: string, message: string) {
+  const hash = keyHash(apiKey);
+  if (keyRejection?.keyHash !== hash || keyRejection.message !== message) {
+    console.warn(`[YouTube] Google rejected the API key: ${message}. Music videos are served from cache until the key works.`);
+  }
+  keyRejection = { keyHash: hash, message, at: Date.now() };
+}
+
+function noteKeyAccepted() {
+  if (!keyRejection) return;
+  console.info('[YouTube] Google accepts the API key again.');
+  keyRejection = null;
+}
+
+/** The current key's last rejection by Google, if any (for Settings → Metadata → YouTube). */
+export async function getYoutubeKeyProblem(): Promise<{ message: string; since: string } | null> {
+  const apiKey = await getApiKey();
+  if (!apiKey || !keyRejection || keyRejection.keyHash !== keyHash(apiKey)) return null;
+  return { message: keyRejection.message, since: new Date(keyRejection.at).toISOString() };
+}
+
 let lastRequestAt = 0;
 let queueRunning = false;
 type QueueItem = { fn: () => Promise<any>; resolve: (v: any) => void; reject: (e: any) => void };
@@ -96,9 +157,13 @@ async function ytFetch<T = any>(
   endpoint: string,
   params: Record<string, string | number | undefined> = {},
   units = 1,
+  options: { force?: boolean } = {},
 ): Promise<T> {
   const apiKey = await getApiKey();
   if (!apiKey) throw new YoutubeConfigError();
+  if (!options.force && keyRejection?.keyHash === keyHash(apiKey) && Date.now() - keyRejection.at < KEY_REJECTION_PAUSE_MS) {
+    throw new YoutubeKeyRejectedError(keyRejection.message);
+  }
 
   const cap = await getCap();
   const newCount = await incrementYoutubeApiUsage({ cap, units });
@@ -122,12 +187,12 @@ async function ytFetch<T = any>(
         });
         if (!res.ok) {
           const body = await res.text().catch(() => '');
-          // 403 with quotaExceeded → treat as budget so callers serve cache.
-          if (res.status === 403 && /quota/i.test(body)) {
-            throw new YoutubeBudgetError();
-          }
-          throw new Error(`YouTube HTTP ${res.status}: ${body.slice(0, 300)}`);
+          // Quota → budget error so callers serve cache; key problems pause all refreshes.
+          const error = classifyYoutubeError(res.status, body);
+          if (error instanceof YoutubeKeyRejectedError) noteKeyRejected(apiKey, error.message);
+          throw error;
         }
+        noteKeyAccepted();
         return res.json() as Promise<T>;
       },
       resolve,
@@ -317,19 +382,17 @@ async function refreshArtistVideosOnce(artistId: string, ttlDays?: number): Prom
   }
   if (fresh && !cache.last_error) return { refreshed: false, reason: 'fresh' };
   const retryAfterMs = cache?.attempt_source_key === source ? new Date(cache.retry_after ?? 0).getTime() - Date.now() : 0;
-  if (retryAfterMs > 0) return { refreshed: false, reason: cache.last_error === 'metadata-pending' ? 'pending' : 'temporary-error', retryAfterMs };
+  if (retryAfterMs > 0) return { refreshed: false, reason: 'temporary-error', retryAfterMs };
 
   try {
-    let metadataLoaded = false;
     if (!parseArtistLinks(artist).length && !isCompilationArtistName(artist.name)) {
-      metadataLoaded = await loadArtistVideoLinks(artistId, mbid);
+      await loadArtistVideoLinks(artistId, mbid);
       artist = await getArtistById(artistId) ?? artist;
       source = sourceKey(artist, mbid);
     }
-    if (!parseArtistLinks(artist).length && !metadataLoaded && !isCompilationArtistName(artist.name)) {
-      await noteArtistVideoFailure(artistId, source, 'metadata-pending', RETRY_MS);
-      return { refreshed: false, reason: 'pending', retryAfterMs: RETRY_MS };
-    }
+    // Still no links: MusicBrainz is off, there is no artist MBID, or MusicBrainz
+    // lists none (its failures throw). Cache "no channel"; links that arrive
+    // later change the source key and refresh straight away.
     const resolved = isCompilationArtistName(artist.name) ? { channelId: null }
       : cache?.source_key === source && cache.youtube_channel_id ? { channelId: cache.youtube_channel_id }
       : await resolveArtistChannelId(artist);
@@ -339,7 +402,13 @@ async function refreshArtistVideosOnce(artistId: string, ttlDays?: number): Prom
     });
     return { refreshed: true, reason: 'refreshed' };
   } catch (error) {
-    await noteArtistVideoFailure(artistId, source, error instanceof YoutubeBudgetError ? 'quota-exhausted' : 'provider-error', RETRY_MS);
+    const reason = error instanceof YoutubeBudgetError ? 'quota-exhausted'
+      : error instanceof YoutubeKeyRejectedError ? 'key-rejected' : 'provider-error';
+    // Key rejections are logged once by ytFetch; anything else would vanish.
+    if (reason === 'provider-error') {
+      console.warn(`[YouTube] Could not refresh music videos for "${artist.name}": ${error instanceof Error ? error.message : String(error)}`);
+    }
+    await noteArtistVideoFailure(artistId, source, reason, RETRY_MS);
     throw error;
   }
 }
@@ -384,13 +453,17 @@ export async function testYouTubeConnection(): Promise<{ ok: boolean; error?: st
   }
   try {
     // Cheap 1-unit call against a known handle to validate the key.
-    const data: any = await ytFetch('channels', { part: 'snippet', forHandle: '@YouTube' }, 1);
+    // Forced: an admin testing a key must reach Google even during a rejection pause.
+    const data: any = await ytFetch('channels', { part: 'snippet', forHandle: '@YouTube' }, 1, { force: true });
     const title = data?.items?.[0]?.snippet?.title;
     if (!title) return { ok: false, error: 'Unexpected API response' };
     return { ok: true, sample: String(title) };
   } catch (err: any) {
     if (err instanceof YoutubeBudgetError) {
       return { ok: false, error: 'Daily API quota exhausted — cannot test' };
+    }
+    if (err instanceof YoutubeKeyRejectedError) {
+      return { ok: false, error: `Google rejected the key: ${err.message}` };
     }
     return { ok: false, error: err.message || 'Network error' };
   }
