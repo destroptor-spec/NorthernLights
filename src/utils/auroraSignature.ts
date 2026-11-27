@@ -201,23 +201,63 @@ export function makeAurora(
     ctx.drawImage(haze.canvas, 0, 0);
     return ctx.canvas;
   }
-  const near = curtain(0);
-  // Bake the rear streams into one layer so a four-stream sky animates as
-  // cheaply as a two-stream sky.
-  const rear = streams > 1 ? surface(w, h) : null;
-  if (rear) {
-    rear.globalCompositeOperation = 'screen';
-    for (let layer = streams - 1; layer > 0; layer--) rear.drawImage(curtain(layer), 0, 0);
-  }
+  // Every stream keeps its own layer so each can move on its own. Built in
+  // the same order as before (front, then back to front), so each track's
+  // curtains keep their shape.
+  const layers: Array<{ canvas: HTMLCanvasElement; depth: number }> = [{ canvas: curtain(0), depth: 0 }];
+  for (let layer = streams - 1; layer > 0; layer--) layers.push({ canvas: curtain(layer), depth: layer / (streams - 1) });
+  layers.sort((a, b) => b.depth - a.depth);
+  // Each stream's own rhythm: phases drawn after the curtains, so they change
+  // nothing about their shape. Rear streams move slower and less (depth).
+  const motion = layers.map(({ depth }) => ({
+    depth,
+    speed: 1 - 0.35 * depth,
+    reach: 1 - 0.5 * depth,
+    sway: random() * 2 * Math.PI,
+    drift: random() * 2 * Math.PI,
+    rise: random() * 2 * Math.PI,
+    ripple: random() * 2 * Math.PI,
+    waves: 1.1 + random() * 0.9,
+  }));
+  /**
+   * Each stream is drawn in vertical strips, each lifted by a wave that
+   * travels along it: the folds undulate instead of moving as one sheet. The
+   * strips are put together on a scratch canvas at whole-pixel edges (no
+   * overlap, no gaps, no blending), and the finished stream is then screened
+   * on once, so no seam can show. Only the rows the curtains reach are drawn.
+   */
+  const STRIPS = 40;
+  const edges = Array.from({ length: STRIPS + 1 }, (_, i) => Math.round((i * w) / STRIPS));
+  const rows = Math.min(h, Math.ceil(fy + fh * 1.1));
+  const scratch = surface(w, rows);
+  const dance = track.values.danceability;
+
   const paint = (ctx: CanvasRenderingContext2D, time: number) => {
     const phase = time * (track.bpm ?? 110) / 110 * 0.22;
     if (background) ctx.drawImage(background, 0, 0);
-    ctx.save(); ctx.globalCompositeOperation = 'screen';
-    if (rear) ctx.drawImage(rear.canvas, 0, fh * 0.006 * Math.sin(phase * 0.6 + bend));
-    const sway = 0.003 + 0.009 * track.values.danceability;
-    ctx.transform(1, sway * Math.sin(phase + bend), 0.007 * Math.cos(phase * 0.7), 1, 0, 0);
-    ctx.globalAlpha = 0.94 + 0.06 * Math.sin(phase * 1.7);
-    ctx.drawImage(near, -w * 0.015, -h * 0.015, w * 1.03, h * 1.03); ctx.restore();
+    layers.forEach(({ canvas }, index) => {
+      const m = motion[index];
+      const t = phase * m.speed;
+      const lift = fh * (0.006 + 0.006 * dance) * m.reach;
+      scratch.clearRect(0, 0, w, rows);
+      for (let i = 0; i < STRIPS; i++) {
+        const x0 = edges[i], width = edges[i + 1] - x0;
+        const wave = Math.sin((i / STRIPS) * m.waves * 2 * Math.PI - t * 1.3 + m.ripple);
+        scratch.drawImage(canvas, x0, 0, width, rows, x0, lift * wave, width, rows);
+      }
+      const sway = (0.003 + 0.009 * dance) * m.reach * Math.sin(t + m.sway);
+      const lean = 0.007 * m.reach * Math.cos(t * 0.7 + m.drift);
+      const dx = w * 0.008 * m.reach * Math.sin(t * 0.45 + m.drift);
+      const dy = fh * 0.006 * m.reach * Math.sin(t * 0.6 + m.rise);
+      // The front stream is drawn 3 % larger, as before, so its edges never show as it moves.
+      const grow = m.depth === 0 ? 1.03 : 1;
+      ctx.save();
+      ctx.globalCompositeOperation = 'screen';
+      ctx.transform(1, sway, lean, 1, dx, dy);
+      ctx.globalAlpha = 0.92 + 0.08 * Math.sin(t * 1.7 + m.sway);
+      ctx.drawImage(scratch.canvas, -w * (grow - 1) / 2, -h * (grow - 1) / 2, w * grow, rows * grow);
+      ctx.restore();
+    });
   };
   return paint;
 }
