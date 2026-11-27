@@ -1,6 +1,9 @@
 /** @jest-environment node */
 import * as db from '../database';
-import { getMusicVideoForTrack, lookupMusicVideoForTrack, refreshArtistVideosIfStale } from './youtube.service';
+import {
+  classifyYoutubeError, getMusicVideoForTrack, getYoutubeKeyProblem, lookupMusicVideoForTrack,
+  refreshArtistVideosIfStale, testYouTubeConnection, YoutubeBudgetError, YoutubeKeyRejectedError,
+} from './youtube.service';
 import { loadArtistVideoLinks } from './metadata/videoLinks';
 import type { VideoUpload, VideoAssociation } from '../database/musicVideos';
 
@@ -115,10 +118,12 @@ test('metadata is resolved using a library MusicBrainz ID before declaring no ma
   expect(loadArtistVideoLinks).toHaveBeenCalledWith('artist', 'mb-artist');
 });
 
-test('missing metadata is pending and newly available links bypass the retry cooldown', async () => {
+test('an artist MusicBrainz cannot describe is cached as no channel, and links that arrive later refresh it', async () => {
   artist.links = [];
-  expect((await lookupMusicVideoForTrack('track')).status).toBe('pending');
+  expect((await lookupMusicVideoForTrack('track')).status).toBe('no-match');
   expect(fetchMock).not.toHaveBeenCalled();
+  expect(mocked.noteArtistVideoFailure).not.toHaveBeenCalled();
+  expect(await refreshArtistVideosIfStale('artist')).toEqual({ refreshed: false, reason: 'fresh' });
   artist.links = [{ url: 'https://www.youtube.com/channel/UCtest' }];
   expect((await lookupMusicVideoForTrack('track')).status).toBe('matched');
 });
@@ -145,4 +150,65 @@ test('disabled integration and exhausted budget never call YouTube', async () =>
   expect(fetchMock).not.toHaveBeenCalled();
   mocked.getSystemSetting.mockResolvedValue(false);
   expect((await lookupMusicVideoForTrack('track')).status).toBe('disabled');
+});
+
+const googleError = (status: number, reason: string, message = 'Permission denied on the service.') => JSON.stringify({
+  error: { code: status, message, errors: [{ message, domain: 'global', reason: 'forbidden' }],
+    details: [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason, domain: 'googleapis.com' }] },
+});
+
+test('Google errors are told apart: quota, a rejected key, and one request', () => {
+  expect(classifyYoutubeError(403, JSON.stringify({ error: { message: 'over', errors: [{ reason: 'quotaExceeded', domain: 'youtube.quota' }] } })))
+    .toBeInstanceOf(YoutubeBudgetError);
+  const rejected = classifyYoutubeError(403, googleError(403, 'ACCESS_DENIED'));
+  expect(rejected).toBeInstanceOf(YoutubeKeyRejectedError);
+  expect(rejected.message).toBe('Permission denied on the service.');
+  expect(classifyYoutubeError(400, JSON.stringify({ error: { message: 'API key not valid.', errors: [{ reason: 'badRequest' }],
+    details: [{ reason: 'API_KEY_INVALID' }] } }))).toBeInstanceOf(YoutubeKeyRejectedError);
+  const playlist = classifyYoutubeError(403, JSON.stringify({ error: { message: 'private', errors: [{ reason: 'playlistItemsNotAccessible' }] } }));
+  expect(playlist).not.toBeInstanceOf(YoutubeKeyRejectedError);
+  expect(playlist.message).toBe('YouTube HTTP 403: private');
+});
+
+// Last: the rejection pause is module state, cleared here by a successful test call.
+test('a rejected key pauses every artist without spending quota until Save & Test succeeds', async () => {
+  const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  const info = jest.spyOn(console, 'info').mockImplementation(() => {});
+  const body = googleError(403, 'ACCESS_DENIED');
+  fetchMock.mockResolvedValue({ ok: false, status: 403, text: async () => body });
+
+  await expect(refreshArtistVideosIfStale('artist')).rejects.toBeInstanceOf(YoutubeKeyRejectedError);
+  expect(mocked.noteArtistVideoFailure).toHaveBeenLastCalledWith('artist', expect.any(String), 'key-rejected', 60_000);
+  expect(await getYoutubeKeyProblem()).toEqual({ message: 'Permission denied on the service.', since: expect.any(String) });
+  expect(warn).toHaveBeenCalledTimes(1);
+
+  // Another artist: no call to Google, no quota unit.
+  cache = null;
+  fetchMock.mockClear();
+  mocked.incrementYoutubeApiUsage.mockClear();
+  await expect(refreshArtistVideosIfStale('other')).rejects.toBeInstanceOf(YoutubeKeyRejectedError);
+  expect(fetchMock).not.toHaveBeenCalled();
+  expect(mocked.incrementYoutubeApiUsage).not.toHaveBeenCalled();
+
+  // A newly saved key is tried at once (and rejected too, here).
+  mocked.getSystemSetting.mockImplementation(async key => ({
+    youtubeEnabled: true, youtubeApiKey: 'new-key', youtubeCacheTtlDays: 14,
+    youtubeDailyQuotaCap: 9000, youtubeHardStop: true,
+  })[key as 'youtubeEnabled'] ?? null);
+  cache = null;
+  await expect(refreshArtistVideosIfStale('third')).rejects.toBeInstanceOf(YoutubeKeyRejectedError);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(warn).toHaveBeenCalledTimes(2);
+
+  // Save & Test reaches Google anyway and reports the reason.
+  fetchMock.mockClear();
+  expect(await testYouTubeConnection()).toEqual({ ok: false, error: 'Google rejected the key: Permission denied on the service.' });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(warn).toHaveBeenCalledTimes(2);
+
+  fetchMock.mockResolvedValue({ ok: true, json: async () => ({ items: [{ snippet: { title: 'YouTube' } }] }) });
+  expect(await testYouTubeConnection()).toEqual({ ok: true, sample: 'YouTube' });
+  expect(await getYoutubeKeyProblem()).toBeNull();
+  expect(info).toHaveBeenCalledWith('[YouTube] Google accepts the API key again.');
+  warn.mockRestore(); info.mockRestore();
 });

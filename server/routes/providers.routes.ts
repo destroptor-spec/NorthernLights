@@ -35,6 +35,7 @@ import {
   getCurrentDayUsage as getYoutubeDayUsage,
   YoutubeBudgetError,
   YoutubeConfigError,
+  getYoutubeKeyProblem,
 } from '../services/youtube.service';
 
 const router = Router();
@@ -956,7 +957,8 @@ router.get('/providers/youtube/status', requireAdmin, async (_req, res) => {
     const apiKey = await getSystemSetting('youtubeApiKey');
     const enabled = await getSystemSetting('youtubeEnabled');
     const usage = await getYoutubeDayUsage();
-    res.json({ hasKey: !!apiKey, enabled: !!enabled, usage });
+    const keyProblem = await getYoutubeKeyProblem();
+    res.json({ hasKey: !!apiKey, enabled: !!enabled, usage, keyProblem });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

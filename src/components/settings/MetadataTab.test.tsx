@@ -105,6 +105,13 @@ test('a late response from an earlier tab visit cannot replace the latest quota'
   expect(screen.getByText('25')).toBeTruthy();
 });
 
+test('a key Google rejected shows in the provider status with Google\'s reason', async () => {
+  statusResponse = async () => response({ ...quota(), keyProblem: { message: 'Permission denied on the service.', since: '2026-11-27T08:00:00Z' } });
+  openYouTube();
+  await screen.findByText('Google rejected the API key: Permission denied on the service.');
+  expect(screen.queryByText('Configured for artist videos and mobile backgrounds')).toBeNull();
+});
+
 const creditStatus = (over: Record<string, unknown>) => ({
   state: 'running', eligible: 30000, lookedUp: 12345, withCredits: 8021, withoutCredits: 4000, failed: 324,
   creditRows: 40210, remaining: 17655, resumesAt: null, pauseReason: null, lastFinishedAt: null, ...over,
