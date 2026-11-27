@@ -644,14 +644,14 @@ describe('where an album was recorded', () => {
 describe('shared Last.fm ranking', () => {
   const tracks = [{ name: 'First' }];
   it('reads a fresh database entry without a provider request', async () => {
-    const query = jest.fn().mockResolvedValue({ rows: [{ tracks, fetched_at: new Date() }] });
+    const query = jest.fn().mockResolvedValue({ rows: [{ api_key: 'test-key', revision: '42', tracks, fetched_at: new Date() }] });
     jest.mocked(initDB).mockResolvedValue({ query } as never);
     expect(await getArtistTopTracks('Artist')).toEqual(tracks);
     expect(lastFmArtistTopTracks).not.toHaveBeenCalled();
   });
 
   it('serves expired data during a single refresh and retains it on provider failure', async () => {
-    const query = jest.fn().mockResolvedValue({ rows: [{ tracks, fetched_at: new Date(0) }] });
+    const query = jest.fn().mockResolvedValue({ rows: [{ api_key: 'test-key', revision: '42', tracks, fetched_at: new Date(0) }] });
     jest.mocked(initDB).mockResolvedValue({ query } as never);
     let fail!: (reason: Error) => void;
     jest.mocked(lastFmArtistTopTracks).mockReturnValue(new Promise((_, reject) => { fail = reject; }));
