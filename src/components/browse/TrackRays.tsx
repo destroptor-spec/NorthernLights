@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RaysLoading } from '../DetailRouteLoading';
 import { mostVivid } from '../../utils/vividColor';
 import { Link, useNavigate, useParams } from 'react-router-dom';
@@ -502,6 +502,7 @@ const TrackRaysContent = ({ trackId }: { trackId: string }) => {
   const { colors: coverColors } = useDominantColor(playable);
   const glow = useMemo(() => mostVivid(coverColors), [coverColors]);
   // The aurora signature: the sound's ranks in the library drive it (a rank not yet known reads as the middle).
+  const heroRef = useRef<HTMLElement>(null);
   const auroraSound = useMemo<AuroraSound | null>(() => {
     if (!rays?.sound || !rays.fingerprint) return null;
     const r = rays.fingerprint.ranks;
@@ -527,10 +528,10 @@ const TrackRaysContent = ({ trackId }: { trackId: string }) => {
       <div className="relative z-10">
       {/* The top of the page: the back button and the hero, the aurora signature behind both. */}
       <div className={auroraSound ? 'rays-top rays-top--night' : 'rays-top'}>
-      {auroraSound && <RaysAurora sound={auroraSound} />}
+      {auroraSound && <RaysAurora sound={auroraSound} heroRef={heroRef} />}
       <BackButton onClick={() => navigate(-1)} />
       {rays && track && (
-          <header className="rays-hero">
+          <header className="rays-hero" ref={heroRef}>
             <div className="rays-hero__art" style={{ '--rays-glow': glow } as React.CSSProperties}>
               <span className="rays-hero__glow" aria-hidden="true" />
               <div className="rays-hero__cover">
@@ -563,12 +564,8 @@ const TrackRaysContent = ({ trackId }: { trackId: string }) => {
             </div>
           </header>
       )}
-      </div>
-
-      {error && (error.missing ? <p className="browse-empty">{error.message}</p> : <BrowseError message={error.message} onRetry={load} />)}
-      {rays && track && (
-        <>
-          {credits.length > 0 && (
+      {/* Credits sit under the same night: it fades into the page below them, not over the hero. */}
+      {rays && track && credits.length > 0 && (
             <section className="browse-section" aria-label="Credits">
               <h2 className="browse-section__title">Credits</h2>
               <HorizontalScrollRail
@@ -578,8 +575,12 @@ const TrackRaysContent = ({ trackId }: { trackId: string }) => {
                 {credits.map(p => <CreditCard key={p.key} person={p} />)}
               </HorizontalScrollRail>
             </section>
-          )}
+      )}
+      </div>
 
+      {error && (error.missing ? <p className="browse-empty">{error.message}</p> : <BrowseError message={error.message} onRetry={load} />)}
+      {rays && track && (
+        <>
           {(rays.album || rays.artist || rays.otherArtists.length > 0) && (
             <section className="browse-section" aria-label="In context">
               <h2 className="browse-section__title">In context</h2>

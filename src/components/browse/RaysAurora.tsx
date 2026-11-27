@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, type RefObject } from 'react';
 import { makeAurora, type AuroraSound } from '../../utils/auroraSignature';
 
 /** The aurora is a soft backdrop: drawn at most this many pixels on its long side, then scaled by CSS. */
@@ -21,7 +21,11 @@ const TALL_OFFSET = 0.4;
  * otherwise they hold one still frame. Rebuilt (debounced) when its size
  * changes.
  */
-export const RaysAurora: React.FC<{ sound: AuroraSound }> = ({ sound }) => {
+export const RaysAurora: React.FC<{
+  sound: AuroraSound;
+  /** The hero: the curtains are laid out over it alone, however far the night reaches below. */
+  heroRef?: RefObject<HTMLElement | null>;
+}> = ({ sound, heroRef }) => {
   const skyRef = useRef<HTMLCanvasElement>(null);
   const ref = useRef<HTMLCanvasElement>(null);
 
@@ -35,6 +39,7 @@ export const RaysAurora: React.FC<{ sound: AuroraSound }> = ({ sound }) => {
     let rebuild = 0;
     let visible = false;
     let render: ReturnType<typeof makeAurora> | undefined;
+    let lastArea = 0;
     const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
     const size = () => {
@@ -42,15 +47,19 @@ export const RaysAurora: React.FC<{ sound: AuroraSound }> = ({ sound }) => {
       const side = Math.max(box.width, box.height);
       const scale = Math.min(1, MAX_SIDE / Math.max(1, side));
       const w = Math.max(1, Math.round(box.width * scale)), h = Math.max(1, Math.round(box.height * scale));
-      if (render && canvas.width === w && canvas.height === h) return;
+      // The curtains' area: from the top of the sky to the foot of the hero.
+      const hero = heroRef?.current?.getBoundingClientRect();
+      const area = hero ? Math.max(1, Math.min(h, Math.round((hero.bottom - box.top) * scale))) : h;
+      if (render && canvas.width === w && canvas.height === h && lastArea === area) return;
+      lastArea = area;
       canvas.width = w; canvas.height = h;
       skyCanvas.width = w; skyCanvas.height = h;
-      // The curtains' frame: as tall as the hero and up to 1.5× as wide on a
+      // The curtains' frame: as tall as that area and up to 1.5× as wide on a
       // wide hero; a square on a tall one, a little above the middle.
-      const tall = h > w;
-      const fh = tall ? w : h;
+      const tall = area > w;
+      const fh = tall ? w : area;
       const fw = Math.min(w, Math.round(fh * MAX_STRETCH));
-      const frame = { x: Math.round((w - fw) / 2), y: tall ? Math.round((h - fh) * TALL_OFFSET) : 0, width: fw, height: fh };
+      const frame = { x: Math.round((w - fw) / 2), y: tall ? Math.round((area - fh) * TALL_OFFSET) : 0, width: fw, height: fh };
       // No landscape: the sky fades into the page below the hero. The night
       // is drawn once on its own layer; the lights paint on a clear one.
       render = makeAurora(w, h, sound, { landscape: false, sky: false, frame });
@@ -79,6 +88,7 @@ export const RaysAurora: React.FC<{ sound: AuroraSound }> = ({ sound }) => {
       rebuild = window.setTimeout(() => { size(); paint(); }, 180);
     });
     resize.observe(canvas);
+    if (heroRef?.current) resize.observe(heroRef.current);
     motion.addEventListener('change', paint);
     document.addEventListener('visibilitychange', paint);
     return () => {
@@ -89,7 +99,7 @@ export const RaysAurora: React.FC<{ sound: AuroraSound }> = ({ sound }) => {
       motion.removeEventListener('change', paint);
       document.removeEventListener('visibilitychange', paint);
     };
-  }, [sound]);
+  }, [sound, heroRef]);
 
   return (
     <div className="rays-aurora" aria-hidden="true">
