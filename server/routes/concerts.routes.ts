@@ -251,7 +251,10 @@ router.get('/concerts/hub', requireAuth, async (req, res) => {
     });
 
     const usage = await getCurrentMonthUsage();
-    res.json({ events, stale: usage.stopped, usage: { stopped: usage.stopped } });
+    // The server's time zone, so the Hub writes show dates and times the way
+    // they're written where Aurora runs (24-hour in Europe). Show times
+    // themselves stay the venue's own wall clock.
+    res.json({ events, stale: usage.stopped, usage: { stopped: usage.stopped }, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

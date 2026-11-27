@@ -7,6 +7,7 @@ import { auroraApiRequest, type Track } from '../api/auroraApi';
 import { toPlayableTracks } from '../utils/playableTracks';
 import { shuffled } from '../utils/shuffle';
 import { eventProximity } from '../utils/eventProximity';
+import { formatShowDate } from '../utils/showDateFormat';
 
 type HubEvent = {
     jambase_event_id: string;
@@ -30,33 +31,11 @@ type HubEvent = {
 
 type HubResponse = {
     events: HubEvent[];
+    /** The server's IANA time zone: show dates are written its way. */
+    timeZone?: string;
     disabled?: boolean;
     stale?: boolean;
 };
-
-// Compact human date — relies on Intl rather than a formatting lib so we get
-// locale-aware weekday names without bringing in date-fns.
-function formatEventDate(dateStr: string, datetime: string | null): { weekday: string; date: string; time: string | null } {
-    const d = new Date(datetime || `${dateStr}T00:00:00`);
-    if (!Number.isFinite(d.getTime())) {
-        return { weekday: '', date: dateStr, time: null };
-    }
-    const weekday = d.toLocaleDateString(undefined, { weekday: 'short' });
-    const datePart = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    let time: string | null = null;
-    if (datetime && datetime.length > 10) {
-        // Jambase returns local-to-venue wall clock without timezone — use it raw.
-        const hh = datetime.slice(11, 13);
-        const mm = datetime.slice(14, 16);
-        if (hh && mm && !(hh === '00' && mm === '00')) {
-            const hour = parseInt(hh, 10);
-            const ampm = hour >= 12 ? 'pm' : 'am';
-            const h12 = hour % 12 || 12;
-            time = `${h12}:${mm} ${ampm}`;
-        }
-    }
-    return { weekday, date: datePart, time };
-}
 
 function formatPrice(min: number | null, max: number | null, currency: string | null): string | null {
     if (min == null && max == null) return null;
@@ -81,6 +60,7 @@ function venueLine(e: HubEvent): string {
 
 interface TicketCardProps {
     event: HubEvent;
+    timeZone?: string;
 }
 
 /**
@@ -132,15 +112,16 @@ export const WarmUpButton: React.FC<{ artistId: string; artistName: string }> = 
     );
 };
 
-const TicketCard: React.FC<TicketCardProps> = ({ event }) => {
-    const { weekday, date, time } = formatEventDate(event.event_date, event.event_datetime);
+const TicketCard: React.FC<TicketCardProps> = ({ event, timeZone }) => {
+    const { dayAndDate, date, time } = formatShowDate(event.event_date, event.event_datetime, timeZone);
     const price = formatPrice(event.price_min, event.price_max, event.price_currency);
     const venue = venueLine(event);
-    // "tonight", "tomorrow", "this saturday", "in 9 days"; nothing further out.
+    // "Tonight", "Tomorrow", "This Saturday", "In 9 days"; nothing further out.
     const soon = eventProximity(event.event_date, event.event_datetime);
-    const imminent = soon === 'tonight' || soon === 'today' || soon === 'tomorrow';
-    // "this saturday" and the first three name the day already.
-    const showWeekday = !soon || soon.startsWith('in ');
+    const imminent = soon === 'Tonight' || soon === 'Today' || soon === 'Tomorrow';
+    // "This Saturday" and the first three name the day already.
+    const shownDate = soon && !soon.startsWith('In ') ? date : dayAndDate;
+    const when = [soon, shownDate, time].filter(Boolean).join(', ');
 
     return (
         <article
@@ -151,7 +132,7 @@ const TicketCard: React.FC<TicketCardProps> = ({ event }) => {
                 bg-[var(--color-surface)]
                 rounded-2xl overflow-hidden
             "
-            aria-label={`${event.artist_name}${soon ? `, ${soon},` : ''} on ${weekday} ${date} at ${event.venue_name || 'venue'}`}
+            aria-label={`${event.artist_name}, ${when}, at ${event.venue_name || 'venue'}`}
         >
             <div className="relative flex">
                 {/* Stub: artist image, with Warm up beside the link (a button can't sit inside one) */}
@@ -159,7 +140,7 @@ const TicketCard: React.FC<TicketCardProps> = ({ event }) => {
                     {/* The artist's name is the keyboard and screen-reader link; this is the pointer's. */}
                     <Link
                         to={`/library/artist/${event.artist_id}`}
-                        className="group relative block h-full w-full"
+                        className="relative block h-full w-full"
                         tabIndex={-1}
                         aria-hidden="true"
                     >
@@ -169,7 +150,7 @@ const TicketCard: React.FC<TicketCardProps> = ({ event }) => {
                                 src={event.artist_image_url}
                                 alt=""
                                 loading="lazy"
-                                className="relative w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                                className="relative w-full h-full object-cover"
                             />
                         ) : (
                             <div className="relative w-full h-full flex items-center justify-center text-[var(--color-text-muted)]">
@@ -193,27 +174,24 @@ const TicketCard: React.FC<TicketCardProps> = ({ event }) => {
                 <div className="flex-1 min-w-0 p-4 flex flex-col gap-2">
                     <div className="flex items-baseline gap-2">
                         <Calendar size={14} className="text-[var(--color-primary)] flex-shrink-0 self-center" />
-                        <div className="flex flex-wrap items-baseline gap-x-1.5 min-w-0">
+                        {/* One size and one case for the whole line: "Tonight · 5 Mar · 20:00". */}
+                        <p className="flex flex-wrap items-baseline gap-x-1.5 min-w-0 text-sm tabular-nums">
                             {soon && (
-                                <span className={`concert-soon whitespace-nowrap text-xs font-semibold ${imminent ? 'text-[var(--color-primary-fill)]' : 'text-[var(--color-text-secondary)]'}`}>
-                                    {soon}
-                                </span>
+                                <>
+                                    <span className={`concert-soon whitespace-nowrap font-medium ${imminent ? 'text-[var(--color-primary-fill)]' : 'text-[var(--color-text-secondary)]'}`}>
+                                        {soon}
+                                    </span>
+                                    <span className="text-[var(--color-text-muted)]" aria-hidden="true">·</span>
+                                </>
                             )}
-                            {soon && <span className="text-xs text-[var(--color-text-muted)]" aria-hidden="true">·</span>}
-                            {showWeekday && (
-                                <span className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] tabular-nums">
-                                    {weekday}
-                                </span>
-                            )}
-                            <span className="text-sm font-bold text-[var(--color-text-primary)] tabular-nums">
-                                {date}
-                            </span>
+                            <span className="whitespace-nowrap font-medium text-[var(--color-text-primary)]">{shownDate}</span>
                             {time && (
-                                <span className="text-xs text-[var(--color-text-muted)] tabular-nums truncate">
-                                    · {time}
-                                </span>
+                                <>
+                                    <span className="text-[var(--color-text-muted)]" aria-hidden="true">·</span>
+                                    <span className="whitespace-nowrap text-[var(--color-text-secondary)]">{time}</span>
+                                </>
                             )}
-                        </div>
+                        </p>
                     </div>
 
                     <h3 className="text-base font-bold text-[var(--color-text-primary)] line-clamp-1 leading-tight">
@@ -240,11 +218,11 @@ const TicketCard: React.FC<TicketCardProps> = ({ event }) => {
                             </span>
                         ) : event.status === 'scheduled' ? (
                             <span className="text-xs text-[var(--color-text-muted)]">
-                                tickets available
+                                Tickets available
                             </span>
                         ) : (
                             <span className="text-xs text-[var(--color-text-muted)]">
-                                {event.status}
+                                {event.status ? event.status.charAt(0).toUpperCase() + event.status.slice(1) : null}
                             </span>
                         )}
                         {event.ticket_url ? (
@@ -254,13 +232,13 @@ const TicketCard: React.FC<TicketCardProps> = ({ event }) => {
                                 target="_blank"
                                 rel="noreferrer noopener"
                                 className="btn btn-sm !rounded-full min-h-[36px] shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
-                                aria-label={`get tickets for ${event.artist_name} on ${weekday} ${date} (opens the ticket site)`}
+                                aria-label={`Get tickets for ${event.artist_name}, ${shownDate} (opens the ticket site)`}
                             >
-                                get tickets
+                                Get tickets
                                 <ArrowRight size={12} />
                             </a>
                         ) : (
-                            <span className="text-xs text-[var(--color-text-muted)]">no ticket link</span>
+                            <span className="text-xs text-[var(--color-text-muted)]">No ticket link</span>
                         )}
                     </div>
                 </div>
@@ -382,7 +360,7 @@ export const LiveConcertsHubSection: React.FC = () => {
             >
                 {data.events.map(event => (
                     <div role="listitem" key={event.jambase_event_id}>
-                        <TicketCard event={event} />
+                        <TicketCard event={event} timeZone={data.timeZone} />
                     </div>
                 ))}
             </HorizontalScrollRail>
