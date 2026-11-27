@@ -47,8 +47,6 @@ function viewFor(map: SoundMap, centre: { x: number; y: number }, near: Array<{ 
   return { halfX: half * aspect, halfY: half };
 }
 
-const NIGHT_TOP = '#060c21', NIGHT_BOTTOM = '#142339';
-
 /** A cover that falls back to a plain tile when it has none or it fails to load. */
 const SkyArt: React.FC<{ src: string | undefined; className: string; lazy?: boolean }> = ({ src, className, lazy = false }) => {
   const [failed, setFailed] = useState(false);
@@ -72,6 +70,13 @@ export const RaysSoundMap: React.FC<{
   const frame = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [box, setBox] = useState<{ w: number; h: number } | null>(null);
+  // The stars wear the theme's ink, so they redraw when the theme changes.
+  const [theme, setTheme] = useState(() => document.documentElement.className);
+  useEffect(() => {
+    const mo = new MutationObserver(() => setTheme(document.documentElement.className));
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme'] });
+    return () => mo.disconnect();
+  }, []);
 
   const stars = useMemo(() => {
     const byId = new Map(near.map(t => [t.id, t]));
@@ -102,9 +107,11 @@ export const RaysSoundMap: React.FC<{
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     el.width = Math.round(box.w * dpr); el.height = Math.round(box.h * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const sky = ctx.createLinearGradient(0, 0, box.w * 0.13, box.h);
-    sky.addColorStop(0, NIGHT_TOP); sky.addColorStop(1, NIGHT_BOTTOM);
-    ctx.fillStyle = sky; ctx.fillRect(0, 0, box.w, box.h);
+    ctx.clearRect(0, 0, box.w, box.h);
+    const styles = getComputedStyle(document.documentElement);
+    const ink = styles.getPropertyValue('--color-text-primary').trim() || '#d8d8e8';
+    const muted = styles.getPropertyValue('--color-text-secondary').trim() || ink;
+    const dark = document.documentElement.classList.contains('dark');
     const px = (x: number) => box.w / 2 + ((x - position.x) / view.halfX) * (box.w / 2);
     const py = (y: number) => box.h / 2 - ((y - position.y) / view.halfY) * (box.h / 2);
     map.points.forEach(([x, y], i) => {
@@ -112,19 +119,21 @@ export const RaysSoundMap: React.FC<{
       if (sx < -2 || sy < -2 || sx > box.w + 2 || sy > box.h + 2) return;
       // A steady, uneven brightness per star, so the sky isn't a uniform dot screen.
       const twinkle = ((i * 2654435761) >>> 0) / 4294967296;
-      ctx.fillStyle = `rgba(221, 232, 255, ${0.22 + twinkle * 0.5})`;
+      ctx.globalAlpha = (dark ? 0.2 : 0.16) + twinkle * (dark ? 0.5 : 0.36);
+      ctx.fillStyle = ink;
       ctx.beginPath(); ctx.arc(sx, sy, twinkle > 0.92 ? 1.6 : 1.1, 0, Math.PI * 2); ctx.fill();
     });
+    ctx.globalAlpha = 1;
     const font = getComputedStyle(document.documentElement).getPropertyValue('--font-body').trim() || 'sans-serif';
     ctx.font = `600 12px ${font}`;
     ctx.textAlign = 'center';
-    ctx.fillStyle = 'rgba(214, 224, 245, 0.72)';
+    ctx.fillStyle = muted;
     for (const label of map.labels) {
       const sx = px(label.x), sy = py(label.y);
       if (sx < 40 || sx > box.w - 40 || sy < 16 || sy > box.h - 10) continue;
       ctx.fillText(label.genre, sx, sy);
     }
-  }, [map, box, view, position]);
+  }, [map, box, view, position, theme]);
 
   if (!map) return null;
   return (

@@ -3077,6 +3077,10 @@ button.rays-bar:focus-visible {
     align-items: start;
   }
 }
+/* Full-width desktop: the radar takes a good share of the row. */
+@media (min-width: 1440px) {
+  .rays-cards--split { grid-template-columns: minmax(0, 3fr) minmax(26rem, 2fr); }
+}
 
 /* Fingerprint: ranks in the library on seven spokes, over the main genre's
    average (the context grey) and the library's median ring. */
@@ -3118,11 +3122,11 @@ button.rays-bar:focus-visible {
   .rays-radar__dot { transition: none; }
 }
 
-/* Your library as a night sky: the sound map centred on the track, drawn as
-   part of the page rather than a card. The band reaches the edges of the
-   content column (through the page padding, so the track stays centred in
-   what is visible) and its night fades into the page on every side, as the
-   aurora above does. Only the drawing fades; stars, lines and cards don't. */
+/* Your library as a night sky: the sound map centred on the track, drawn
+   straight on the page: only its stars, in the theme's ink. The field
+   reaches the edges of the content column (through the page padding, so the
+   track stays centred in what is visible) and the stars fade out towards
+   every side. Only the star field fades; points, lines and cards don't. */
 .rays {
   --rays-bleed: 1rem;
 }
@@ -3145,7 +3149,7 @@ button.rays-bar:focus-visible {
           mask-composite: intersect;
 }
 .rays-sky__lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-.rays-sky__lines line { stroke: rgba(225, 232, 250, 0.32); stroke-width: 1; }
+.rays-sky__lines line { stroke: color-mix(in srgb, var(--color-text-primary) 34%, transparent); stroke-width: 1; }
 .rays-sky__stars { position: absolute; inset: 0; margin: 0; padding: 0; list-style: none; }
 .rays-sky__star { position: absolute; width: 0; height: 0; }
 .rays-sky__dot {
@@ -3161,13 +3165,13 @@ button.rays-bar:focus-visible {
   position: absolute;
   inset: 9px;
   border-radius: 50%;
-  background: #eef2ff;
-  box-shadow: 0 0 0 2px #060c21, 0 0 10px rgba(225, 232, 250, 0.55);
+  background: var(--color-text-primary);
+  box-shadow: 0 0 0 2px var(--color-background), 0 0 10px color-mix(in srgb, var(--color-text-primary) 45%, transparent);
   transition: transform 140ms var(--ease-out), background-color 140ms var(--ease-out);
 }
 .rays-sky__dot:hover::before,
-.rays-sky__dot:focus-visible::before { transform: scale(1.35); background: #22c983; }
-.rays-sky__dot:focus-visible { outline: 2px solid #22c983; outline-offset: 2px; }
+.rays-sky__dot:focus-visible::before { transform: scale(1.35); background: var(--color-primary); }
+.rays-sky__dot:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 .rays-sky__card {
   position: absolute;
   bottom: calc(100% + 4px);
@@ -3204,11 +3208,11 @@ button.rays-bar:focus-visible {
   border-radius: 50%;
   overflow: hidden;
   transform: translate(-50%, -50%);
-  box-shadow: 0 0 0 2px #060c21, 0 0 0 4px #22c983, 0 0 28px 6px rgba(34, 201, 131, 0.45);
+  box-shadow: 0 0 0 2px var(--color-background), 0 0 0 4px var(--color-primary-fill), 0 0 28px 6px color-mix(in srgb, var(--color-primary) 40%, transparent);
   pointer-events: none;
 }
 .rays-sky__here img,
-.rays-sky__here-blank { display: block; width: 100%; height: 100%; object-fit: cover; background: #22c983; }
+.rays-sky__here-blank { display: block; width: 100%; height: 100%; object-fit: cover; background: var(--color-primary-fill); }
 .rays-sky__note {
   margin: 0.25rem 0 0;
   max-width: 72ch;
