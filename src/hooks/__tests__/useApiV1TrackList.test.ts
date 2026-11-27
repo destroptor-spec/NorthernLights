@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { useApiV1EntityTracks, useApiV1TrackList } from '../useApiV1TrackList';
 import { usePlayerStore } from '../../store';
 
@@ -70,6 +70,23 @@ describe('useApiV1EntityTracks', () => {
     expect(result.current.tracks.map((t) => t.id)).toEqual(['a']);
     expect(result.current.tracks[0].url).toContain('media');
     expect(result.current.meta).toEqual({ artist: { id: 'a1', name: 'Tove Lo' }, ownedAlbums: [] });
+  });
+
+  it('drops the previous entity immediately and lets a failed destination retry', async () => {
+    fetchMock.mockResolvedValueOnce(ok({ tracks: [apiTrack('first')] }))
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(ok({ tracks: [apiTrack('second')] }));
+    const { result, rerender } = renderHook(({ path }) => useApiV1EntityTracks(path), {
+      initialProps: { path: '/albums/first' },
+    });
+    await waitFor(() => expect(result.current.tracks[0]?.id).toBe('first'));
+    rerender({ path: '/albums/second' });
+    expect(result.current.loading).toBe(true);
+    expect(result.current.tracks).toEqual([]);
+    await waitFor(() => expect(result.current.failure).toBe('failed'));
+    act(() => result.current.retry());
+    await waitFor(() => expect(result.current.tracks[0]?.id).toBe('second'));
+    expect(result.current.failure).toBeNull();
   });
 
   it('clears meta on a failed request', async () => {

@@ -112,6 +112,7 @@ import {
   getApiV1TrackById,
   getApiV1TracksByIds,
   getLibraryRevision,
+  getCatalogRevision,
   mapAlbumSummaryV1,
   mapArtistSummaryV1,
   mapGenreV1,
@@ -623,6 +624,11 @@ router.get('/me/recently-played', async (req, res) => {
   const page = databasePage(rows.map((row) => ({ ...row, id: row.trackId })), pagination.limit, (row) => row.playedKey);
   const tracks = await getApiV1TracksByIds(userId, page.items.map((row) => row.trackId));
   res.json({ data: tracks, page: page.page, meta: { requestId: req.requestId } });
+});
+
+router.get('/catalog/revision', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  dataResponse(req, res, { revision: await getCatalogRevision() });
 });
 
 router.get('/artists', async (req, res) => {

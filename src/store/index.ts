@@ -1,3 +1,4 @@
+import { loadCatalogSnapshot } from '../utils/catalogSnapshot';
 import { resolveLoggingPreferences } from '../utils/loggingPreferences';
 import { normalizeHubPlaylistCount } from '../../shared/hubPlaylists';
 import { DEFAULT_LOG_LEVEL, isLogLevel, type LogLevel, type ServerLoggingSetting } from '../../shared/logging';
@@ -204,6 +205,34 @@ function applyLoudnessForTrack(get: () => PlayerState, track: TrackInfo, generat
     }
   });
 }
+
+const settingsFields = [
+  'discoveryLevel', 'genreStrictness', 'artistAmnesiaLimit', 'playedThresholdPercent',
+  'llmPlaylistDiversity', 'llmVetoMode', 'llmGenreCohesion', 'llmDiscoveryBias',
+  'llmArtistSpread', 'llmRecoveryStrength', 'llmAdjacentReach', 'llmTracksPerPlaylist',
+  'llmPlaylistCount', 'audioAnalysisCpu', 'scannerConcurrency', 'loudnessComputeMode',
+  'hubGenerationSchedule', 'systemPlaylistConfig', 'openSubsonicEnabled', 'loudnessNormEnabled',
+  'loudnessTargetLufs', 'loudnessPreampDb', 'loudnessMode', 'llmBaseUrl',
+  'llmApiKey', 'llmModelName', 'lastFmApiKey', 'lastFmSharedSecret',
+  'lastFmScrobbleEnabled', 'listenBrainzScrobbleEnabled', 'subsonicProviderScrobbleEnabled', 'subsonicProviderLoveSyncEnabled',
+  'geniusApiKey', 'musicBrainzEnabled', 'musicBrainzClientId', 'musicBrainzClientSecret',
+  'musicBrainzRedirectUri', 'metadataProviderPriority', 'theAudioDbApiKey', 'fanartTvApiKey',
+  'autoFolderWalk', 'turnstileEnabled', 'turnstileSiteKey', 'turnstileSecretKey',
+  'jambaseEnabled', 'jambaseMaxSubscriptionsPerUser', 'jambaseCacheTtlDays', 'jambaseMonthlyCap',
+  'jambaseHardStop', 'youtubeEnabled', 'youtubeApiKey', 'youtubeCacheTtlDays',
+  'youtubeDailyQuotaCap', 'youtubeHardStop', 'concertsEnabled', 'concertsLat',
+  'concertsLng', 'concertsLocationLabel', 'concertsRadiusKm', 'concertsAutoAddEnabled',
+] as const satisfies readonly (keyof PlayerState)[];
+const settingsBaseline = (state: PlayerState) => ({
+  token: state.authToken,
+  values: Object.fromEntries(settingsFields.map(key => [key, JSON.stringify(state[key])])) as Record<string, string | undefined>,
+});
+let savedSettings: ReturnType<typeof settingsBaseline>;
+let settingsSaveQueue: Promise<void> = Promise.resolve();
+let settingsLoadGeneration = 0;
+// Bumped when a settings save starts and again when it ends. A load whose GET
+// overlapped a save may hold values from before it, so it reads again.
+let settingsSaveCount = 0;
 
 // In-flight dedup + cancellation for the library/playlist fetches. The init
 // sequence and the 10s health poller both fire these unawaited; without dedup a
@@ -816,6 +845,9 @@ export interface PlayerState {
   turnstileSecretKey: string;
 
   // Concerts / Jambase (system-level, admin)
+  hasLastFmKey: boolean | null;
+  hasYouTubeKey: boolean;
+  hasJamBaseKey: boolean;
   jambaseEnabled: boolean;
   jambaseMaxSubscriptionsPerUser: number;
   jambaseCacheTtlDays: number;
@@ -1511,6 +1543,9 @@ export const usePlayerStore = create<PlayerState>()(
         metadataProviderPriority: normaliseMetadataProviderPriority(null),
         theAudioDbApiKey: '',
         fanartTvApiKey: '',
+        hasLastFmKey: null,
+        hasYouTubeKey: false,
+        hasJamBaseKey: false,
         jambaseEnabled: false as boolean,
         jambaseMaxSubscriptionsPerUser: 10,
         jambaseCacheTtlDays: 7,
@@ -1796,6 +1831,7 @@ export const usePlayerStore = create<PlayerState>()(
         clearAuthToken: () => {
           const emptyQueue = haltPlaybackForSignOut();
           abortInFlightLibraryFetches();
+          clearExternalCache();
           clearSessionAuth();
           set({
             ...emptyQueue,
@@ -1864,6 +1900,7 @@ export const usePlayerStore = create<PlayerState>()(
           // logout and repopulate state with the previous session's data.
           const emptyQueue = haltPlaybackForSignOut();
           abortInFlightLibraryFetches();
+          clearExternalCache();
           clearSessionAuth();
           set((state: PlayerState) => ({
           ...emptyQueue,
@@ -2029,12 +2066,25 @@ export const usePlayerStore = create<PlayerState>()(
         },
 
         loadSettings: async () => {
+          const generation = ++settingsLoadGeneration;
+          const token = get().authToken;
+          // Only the newest load for this sign-in applies its result.
+          const superseded = () => generation !== settingsLoadGeneration || token !== get().authToken;
           try {
-            const authHeaders = get().getAuthHeader();
-            const res = await fetch('/api/settings', { headers: authHeaders });
-            if (res.ok) {
+            for (let attempt = 0; ; attempt++) {
+              await settingsSaveQueue;
+              if (superseded()) return;
+              const initial = get();
+              const saves = settingsSaveCount;
+              const authHeaders = get().getAuthHeader();
+              const res = await fetch('/api/settings', { headers: authHeaders });
+              if (!res.ok) return;
               const data = await res.json();
-              set({
+              if (superseded()) return;
+              // A save overlapped the GET: read again rather than apply values
+              // from before it (or drop the load). After three tries, apply.
+              if (saves !== settingsSaveCount && attempt < 2) continue;
+              const loaded = {
                 discoveryLevel: data.discoveryLevel !== undefined ? data.discoveryLevel : 50,
                 genreStrictness: data.genreStrictness !== undefined ? data.genreStrictness : 50,
                 artistAmnesiaLimit: data.artistAmnesiaLimit !== undefined ? data.artistAmnesiaLimit : 50,
@@ -2094,6 +2144,9 @@ export const usePlayerStore = create<PlayerState>()(
                 turnstileEnabled: data.turnstileEnabled === true,
                 turnstileSiteKey: data.turnstileSiteKey || '',
                 turnstileSecretKey: data.turnstileSecretKey || '',
+                hasLastFmKey: data.hasLastFmKey ?? null,
+                hasYouTubeKey: data.hasYouTubeKey ?? false,
+                hasJamBaseKey: data.hasJamBaseKey ?? false,
                 jambaseEnabled: data.jambaseEnabled ?? false,
                 jambaseMaxSubscriptionsPerUser: typeof data.jambaseMaxSubscriptionsPerUser === 'number' ? data.jambaseMaxSubscriptionsPerUser : 10,
                 jambaseCacheTtlDays: typeof data.jambaseCacheTtlDays === 'number' ? data.jambaseCacheTtlDays : 7,
@@ -2110,7 +2163,15 @@ export const usePlayerStore = create<PlayerState>()(
                 concertsLocationLabel: data.concertsLocationLabel || '',
                 concertsRadiusKm: typeof data.concertsRadiusKm === 'number' ? data.concertsRadiusKm : 50,
                 concertsAutoAddEnabled: data.concertsAutoAddEnabled ?? false
-              });
+              } satisfies Partial<PlayerState>;
+              const merged: Partial<PlayerState> = { ...loaded };
+              const values: Record<string, string | undefined> = {};
+              for (const key of settingsFields) {
+                values[key] = JSON.stringify(loaded[key]);
+                if (initial[key] !== get()[key]) delete merged[key];
+              }
+              savedSettings = { token: initial.authToken, values };
+              set(merged);
 
               // Auto-validate LLM connection if credentials exist
               if (data.llmBaseUrl && data.llmModelName) {
@@ -2126,6 +2187,7 @@ export const usePlayerStore = create<PlayerState>()(
                   set({ llmConnected: false });
                 }
               }
+              return;
             }
           } catch (e) {
             console.error('Failed to load DB settings', e);
@@ -2161,81 +2223,33 @@ export const usePlayerStore = create<PlayerState>()(
         },
 
         saveSettings: async () => {
-           try {
-              const state = get();
-              const authHeaders = state.getAuthHeader();
-              const payload = {
-                discoveryLevel: state.discoveryLevel,
-                genreStrictness: state.genreStrictness,
-                artistAmnesiaLimit: state.artistAmnesiaLimit,
-                playedThresholdPercent: state.playedThresholdPercent,
-                llmPlaylistDiversity: state.llmPlaylistDiversity,
-                llmVetoMode: state.llmVetoMode,
-                llmGenreCohesion: state.llmGenreCohesion,
-                llmDiscoveryBias: state.llmDiscoveryBias,
-                llmArtistSpread: state.llmArtistSpread,
-                llmRecoveryStrength: state.llmRecoveryStrength,
-                llmAdjacentReach: state.llmAdjacentReach,
-                llmTracksPerPlaylist: state.llmTracksPerPlaylist,
-                llmPlaylistCount: state.llmPlaylistCount,
-                audioAnalysisCpu: state.audioAnalysisCpu,
-                scannerConcurrency: state.scannerConcurrency,
-                loudnessComputeMode: state.loudnessComputeMode,
-                hubGenerationSchedule: state.hubGenerationSchedule,
-                systemPlaylistConfig: state.systemPlaylistConfig,
-                openSubsonicEnabled: state.openSubsonicEnabled,
-                loudnessNormEnabled: state.loudnessNormEnabled,
-                loudnessTargetLufs: state.loudnessTargetLufs,
-                loudnessPreampDb: state.loudnessPreampDb,
-                loudnessMode: state.loudnessMode,
-                llmBaseUrl: state.llmBaseUrl,
-                llmApiKey: state.llmApiKey,
-                llmModelName: state.llmModelName,
-                lastFmApiKey: state.lastFmApiKey,
-                lastFmSharedSecret: state.lastFmSharedSecret,
-                lastFmScrobbleEnabled: state.lastFmScrobbleEnabled,
-                listenBrainzScrobbleEnabled: state.listenBrainzScrobbleEnabled,
-                subsonicProviderScrobbleEnabled: state.subsonicProviderScrobbleEnabled,
-                subsonicProviderLoveSyncEnabled: state.subsonicProviderLoveSyncEnabled,
-                geniusApiKey: state.geniusApiKey,
-                musicBrainzEnabled: state.musicBrainzEnabled,
-                musicBrainzClientId: state.musicBrainzClientId,
-                musicBrainzClientSecret: state.musicBrainzClientSecret,
-                musicBrainzRedirectUri: state.musicBrainzRedirectUri,
-                metadataProviderPriority: state.metadataProviderPriority,
-                theAudioDbApiKey: state.theAudioDbApiKey,
-                fanartTvApiKey: state.fanartTvApiKey,
-                autoFolderWalk: state.autoFolderWalk,
-                turnstileEnabled: state.turnstileEnabled,
-                turnstileSiteKey: state.turnstileSiteKey,
-                turnstileSecretKey: state.turnstileSecretKey,
-                jambaseEnabled: state.jambaseEnabled,
-                jambaseMaxSubscriptionsPerUser: state.jambaseMaxSubscriptionsPerUser,
-                jambaseCacheTtlDays: state.jambaseCacheTtlDays,
-                jambaseMonthlyCap: state.jambaseMonthlyCap,
-                jambaseHardStop: state.jambaseHardStop,
-                youtubeEnabled: state.youtubeEnabled,
-                youtubeApiKey: state.youtubeApiKey,
-                youtubeCacheTtlDays: state.youtubeCacheTtlDays,
-                youtubeDailyQuotaCap: state.youtubeDailyQuotaCap,
-                youtubeHardStop: state.youtubeHardStop,
-                concertsEnabled: state.concertsEnabled,
-                concertsLat: state.concertsLat,
-                concertsLng: state.concertsLng,
-                concertsLocationLabel: state.concertsLocationLabel,
-                concertsRadiusKm: state.concertsRadiusKm,
-                concertsAutoAddEnabled: state.concertsAutoAddEnabled
-              };
-              await fetch('/api/settings', {
-                 method: 'POST',
-                 headers: { 'Content-Type': 'application/json', ...authHeaders },
-                 body: JSON.stringify(payload)
+          const token = get().authToken;
+          const save = async () => {
+            if (get().authToken !== token) return;
+            const baseline = savedSettings;
+            const state = get();
+            const patch = Object.fromEntries(settingsFields
+              .filter(key => JSON.stringify(state[key]) !== baseline.values[key])
+              .map(key => [key, state[key]]));
+            if (!Object.keys(patch).length) return;
+            ++settingsSaveCount;
+            let res: Response;
+            try {
+              res = await fetch('/api/settings', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', ...state.getAuthHeader() },
+                body: JSON.stringify(patch),
               });
-              // Clear cached external imagery when provider settings change
-              clearExternalCache();
-           } catch(e) {
-              console.error('Failed to save settings', e);
-           }
+            } finally {
+              ++settingsSaveCount;
+            }
+            if (!res.ok) throw new Error(await getResponseError(res, 'Could not save settings'));
+            if (get().authToken !== token || savedSettings?.token !== token) return;
+            for (const key of Object.keys(patch)) savedSettings.values[key] = JSON.stringify(patch[key]);
+            clearExternalCache(Object.keys(patch));
+          };
+          const pending = settingsSaveQueue.then(save);
+          settingsSaveQueue = pending.catch(() => {});
+          return pending;
         },
         toggleInfinityMode: () => {
           const state = get();
@@ -2425,24 +2439,58 @@ export const usePlayerStore = create<PlayerState>()(
           const run = (async () => {
           try {
             const authHeaders = get().getAuthHeader();
-            // Cold loads publish each page. Refreshes retain the complete old
-            // list until its replacement is ready, avoiding shrinking filters.
+            // Publish the first cold page immediately. Limit copies of the growing
+            // list during fast page walks; refreshes keep the old list until complete.
             const loadEntities = async <T, U>(
               path: string, map: (value: T) => U, hasExisting: boolean,
               publish: (values: U[]) => void,
             ) => {
               const values: U[] = [];
+              let lastPublish = -Infinity;
               await auroraApiAllPages<T>(path, authHeaders, ac.signal, (items, complete) => {
                 values.push(...items.map(map));
-                if (!hasExisting || complete) publish([...values]);
+                const now = performance.now();
+                if (complete || (!hasExisting && now - lastPublish >= 150)) {
+                  publish([...values]);
+                  lastPublish = now;
+                }
               });
             };
             // A slow or failed list must not hold back the other lists. Keep
             // the deduplication lock until every chain settles, even on error.
+            const loadCatalog = async () => {
+              const userId = get().currentUser?.id;
+              const route = typeof location !== 'undefined' ? location.pathname : '';
+              const validation = userId && typeof indexedDB !== 'undefined'
+                ? loadCatalogSnapshot(userId, authHeaders, ac.signal).catch(() => undefined) : undefined;
+              if (route === '/library' || /^\/(library\/(artist|album)\/|playlists\/)/.test(route)) {
+                const routes = await import('../utils/routePrefetch');
+                const warm = route === '/library' ? routes.prefetchHub
+                  : route.startsWith('/playlists/') ? routes.prefetchPlaylistDetail
+                  : route.startsWith('/library/artist/') ? routes.prefetchArtistDetail : routes.prefetchAlbumDetail;
+                await warm().catch(() => {});
+              }
+              const cache = validation ? await validation : undefined;
+              ac.signal.throwIfAborted();
+              if (cache?.catalog) {
+                const { artists, albums, genres } = cache.catalog;
+                set({ artists, albums, genres });
+                return;
+              }
+              const lists = await Promise.allSettled([
+                loadEntities('/artists', mapApiV1Artist, get().artists.length > 0, artists => set({ artists })),
+                loadEntities('/albums', mapApiV1Album, get().albums.length > 0, albums => set({ albums })),
+                loadEntities('/genres', mapApiV1Genre, get().genres.length > 0, genres => set({ genres })),
+              ]);
+              const failure = lists.find(result => result.status === 'rejected');
+              if (failure?.status === 'rejected') throw failure.reason;
+              if (cache && !ac.signal.aborted) {
+                const { artists, albums, genres } = get();
+                void cache.save({ artists, albums, genres }).catch(() => {});
+              }
+            };
             const results = await Promise.allSettled([
-              loadEntities('/artists', mapApiV1Artist, get().artists.length > 0, artists => set({ artists })),
-              loadEntities('/albums', mapApiV1Album, get().albums.length > 0, albums => set({ albums })),
-              loadEntities('/genres', mapApiV1Genre, get().genres.length > 0, genres => set({ genres })),
+              loadCatalog(),
               (async () => {
                 const res = await fetch('/api/library/directories', { headers: authHeaders, signal: ac.signal });
                 const data = res.ok ? await res.json() : { directories: [] };
@@ -3735,6 +3783,13 @@ export const usePlayerStore = create<PlayerState>()(
     }
   )
 );
+
+// Keep edits made before the settings GET resolves distinguishable from the
+// persisted starting values, including on a session-only sign-in.
+savedSettings = settingsBaseline(usePlayerStore.getState());
+usePlayerStore.subscribe((state, previous) => {
+  if (state.authToken !== previous.authToken) savedSettings = settingsBaseline(state);
+});
 
 // Follow OS light/dark changes live while the theme preference is 'system'.
 // Attached once at module scope; setTheme re-resolves against matchMedia.

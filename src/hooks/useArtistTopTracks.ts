@@ -1,48 +1,36 @@
 import { useEffect, useState } from 'react';
-import { fetchArtistTopTracks, type ArtistTopTrackData } from '../utils/externalImagery';
+import { fetchArtistTopTracks, peekArtistTopTracks, type ArtistTopTrackData } from '../utils/externalImagery';
+
+const emptyTracks: ArtistTopTrackData[] = [];
 
 export const useArtistTopTracks = (
   artistName: string,
-  options?: { enabled?: boolean; limit?: number; debounceMs?: number }
+  options?: { enabled?: boolean; limit?: number }
 ) => {
   const enabled = options?.enabled !== false;
   const limit = options?.limit ?? 25;
-  const debounceMs = options?.debounceMs ?? 200;
-  const [tracks, setTracks] = useState<ArtistTopTrackData[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | undefined>();
+  const eligible = enabled && !!artistName && artistName !== 'Unknown Artist';
+  const [result, setResult] = useState<{
+    artistName: string; limit: number; tracks: ArtistTopTrackData[]; error?: string;
+  }>();
 
   useEffect(() => {
-    if (!artistName || !enabled || artistName === 'Unknown Artist') {
-      setTracks([]);
-      setIsLoading(false);
+    if (!eligible) {
+      setResult(undefined);
       return;
     }
-
-    let mounted = true;
-    const timer = setTimeout(() => {
-      setIsLoading(true);
-      fetchArtistTopTracks(artistName, limit)
-        .then((result) => {
-          if (!mounted) return;
-          setTracks(result);
-          setError(undefined);
-        })
-        .catch((err) => {
-          if (!mounted) return;
-          setError(err?.message || 'Failed to load popular tracks');
-          setTracks([]);
-        })
-        .finally(() => {
-          if (mounted) setIsLoading(false);
-        });
-    }, debounceMs);
-
+    let active = true;
+    fetchArtistTopTracks(artistName, limit).then(tracks => {
+      if (active) setResult({ artistName, limit, tracks });
+    }).catch((err: unknown) => {
+      if (active) setResult({ artistName, limit, tracks: [], error: err instanceof Error ? err.message : 'Failed to load popular tracks' });
+    });
     return () => {
-      mounted = false;
-      clearTimeout(timer);
+      active = false;
     };
-  }, [artistName, enabled, limit, debounceMs]);
+  }, [artistName, eligible, limit]);
 
-  return { tracks, isLoading, error };
+  const current = eligible && result?.artistName === artistName && result.limit === limit ? result : undefined;
+  const cached = eligible ? peekArtistTopTracks(artistName, limit) : undefined;
+  return { tracks: cached ?? current?.tracks ?? emptyTracks, isLoading: eligible && !current && !cached, error: current?.error };
 };

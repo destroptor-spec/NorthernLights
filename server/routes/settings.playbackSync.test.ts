@@ -61,3 +61,15 @@ test('every user reads the mode and their own choice, never the admin fallback f
   const asAdmin = await request('get', {}, 'admin');
   expect(asAdmin.json.mock.calls[0][0].playbackSyncEnabled).toBeUndefined();
 });
+
+test('listeners can predict artist sections without receiving provider credentials', async () => {
+  const configured: Record<string, string | boolean> = {
+    lastFmApiKey: 'lastfm-test', youtubeApiKey: 'youtube-test', youtubeEnabled: true, jambaseEnabled: true,
+  };
+  jest.mocked(getSystemSetting).mockImplementation(async key => configured[key] ?? null);
+  const res = await request('get');
+  const payload = res.json.mock.calls[0][0];
+  expect(payload).toMatchObject({ hasLastFmKey: true, hasYouTubeKey: true, youtubeEnabled: true, jambaseEnabled: true });
+  expect(payload).not.toHaveProperty('lastFmApiKey');
+  expect(payload).not.toHaveProperty('youtubeApiKey');
+});

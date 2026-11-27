@@ -704,6 +704,11 @@ router.get('/providers/external/artist-top-tracks', requireAuth, async (req, res
     const tracks = await getArtistTopTracks(name, Number.isFinite(limit) ? limit : 25);
     res.json({ tracks });
   } catch (err: any) {
+    // Rate limits (Last.fm's or our back-off) are expected: no log line per page.
+    if (isRateLimitError(err)) {
+      res.set('Retry-After', '60');
+      return res.status(503).json({ error: 'Popular tracks are temporarily unavailable' });
+    }
     console.error('[ExternalMeta] artist top tracks error:', err.message);
     res.status(502).json({ error: 'Failed to fetch artist top tracks' });
   }

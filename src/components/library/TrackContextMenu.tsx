@@ -508,7 +508,7 @@ export const TrackContextMenu: React.FC = () => {
                             <ContextMenuButton
                                 icon={<Galaxy size={15} />}
                                 label={<>Aurora rays <span className="menu-beta-tag">Beta</span></>}
-                                onClick={() => { navigate(raysPath(track.id)); closeContextMenu(); }}
+                                onClick={() => { navigate(raysPath(track.id), { state: { trackId: track.id, title: track.title, artist: track.artist, album: track.album, year: track.year, artUrl: track.artUrl } }); closeContextMenu(); }}
                             />
                         )}
 

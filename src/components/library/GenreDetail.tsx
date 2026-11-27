@@ -3,30 +3,14 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { usePlayerStore } from '../../store/index';
 import { useApiV1EntityTracks } from '../../hooks/useApiV1TrackList';
 import { TrackInfo } from '../../utils/fileSystem';
-import { AlbumCard, AlbumCardSkeleton } from './AlbumCard';
+import { AlbumCard } from './AlbumCard';
 import { BackButton } from './BackButton';
 import { FadedHeroImage } from './FadedHeroImage';
 import { useExternalImage } from '../../hooks/useExternalImage';
 import { fetchGenreImage, fetchGenreInfo } from '../../utils/externalImagery';
 import { Music } from 'lucide-react';
 
-const GenreDetailSkeleton: React.FC<{ onBack: () => void }> = ({ onBack }) => (
-    <div className="genre-detail page-container relative">
-        <div className="relative z-10">
-            <BackButton onClick={onBack} />
-            <div className="h-14 md:h-20 w-2/3 max-w-lg rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mb-4 md:mb-6" />
-            <div className="max-w-3xl mb-6 md:mb-8 space-y-2">
-                <div className="h-4 w-full rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
-                <div className="h-4 w-4/5 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
-                <div className="h-4 w-3/5 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none" />
-            </div>
-            <div className="h-7 w-56 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mb-4 md:mb-6" />
-            <div className="album-grid">
-                {Array.from({ length: 8 }).map((_, i) => <AlbumCardSkeleton key={i} />)}
-            </div>
-        </div>
-    </div>
-);
+import { GenreLoading, genreHeadingClass } from '../DetailRouteLoading';
 
 export const GenreDetail: React.FC = () => {
     const { genreId } = useParams<{ genreId: string }>();
@@ -35,28 +19,24 @@ export const GenreDetail: React.FC = () => {
 
     // Find genre info from entity list
     const genreInfo = useMemo(() => genres.find(g => g.id === genreId), [genres, genreId]);
-    const genreName = genreInfo?.name || '';
 
     // Tracks come from the canonical primary + secondary association endpoint,
     // not from raw-tag substring matching or the in-memory library.
-    const { tracks: genreTracks, loading: genreTracksLoading } = useApiV1EntityTracks(
+    const { tracks: genreTracks, meta, failure, retry, loading: genreTracksLoading } = useApiV1EntityTracks<{ genre: { name: string } }>(
         genreId ? `/genres/${encodeURIComponent(genreId)}` : null,
     );
 
+    const genreName = genreInfo?.name || meta?.genre.name || '';
     const { imageUrl } = useExternalImage(() => genreName ? fetchGenreImage(genreName) : Promise.resolve(undefined), [genreName]);
 
-    const [genreSummary, setGenreSummary] = useState<string | undefined>();
-    const [summaryLoading, setSummaryLoading] = useState(false);
-
+    const [summary, setSummary] = useState<{ name: string; text: string }>();
     useEffect(() => {
-        if (genreName) {
-            setGenreSummary(undefined);
-            setSummaryLoading(true);
-            fetchGenreInfo(genreName)
-                .then(data => { if (data?.summary) setGenreSummary(data.summary); })
-                .catch(() => {})
-                .finally(() => setSummaryLoading(false));
-        }
+        if (!genreName) return;
+        let active = true;
+        fetchGenreInfo(genreName).then(data => {
+            if (active && data?.summary) setSummary({ name: genreName, text: data.summary });
+        }).catch(() => {});
+        return () => { active = false; };
     }, [genreName]);
 
     // Group genre tracks by album
@@ -82,8 +62,16 @@ export const GenreDetail: React.FC = () => {
         return Array.from(albumMap.values()).sort((a, b) => a.title.localeCompare(b.title));
     }, [genreTracks]);
 
+    if (failure === 'failed') return (
+        <div className="page-container">
+            <BackButton onClick={() => navigate(-1)} />
+            <p>Could not load this genre.</p>
+            <button className="btn btn-ghost btn-sm mt-3" onClick={retry}>Retry</button>
+        </div>
+    );
+
     if (genreTracksLoading && genreTracks.length === 0) {
-        return <GenreDetailSkeleton onBack={() => navigate(-1)} />;
+        return <GenreLoading />;
     }
 
     if (!genreName || genreTracks.length === 0) return (
@@ -100,32 +88,14 @@ export const GenreDetail: React.FC = () => {
             <div className="relative z-10">
                 <BackButton onClick={() => navigate(-1)} />
 
-                <h1 className="font-bold text-4xl md:text-5xl lg:text-7xl tracking-tight mb-4 md:mb-6 text-[var(--color-primary)] drop-shadow-md">
+                <h1 className={genreHeadingClass}>
                     {genreName}
                 </h1>
-                {summaryLoading && (
-                    <div className="max-w-3xl mb-6 md:mb-8 space-y-2">
-                        <div className="h-4 w-full rounded bg-[var(--color-bg-tertiary)] animate-pulse" />
-                        <div className="h-4 w-4/5 rounded bg-[var(--color-bg-tertiary)] animate-pulse" />
-                        <div className="h-4 w-3/5 rounded bg-[var(--color-bg-tertiary)] animate-pulse" />
-                    </div>
-                )}
-                {!summaryLoading && genreSummary && (
-                    <p className="text-sm md:text-base text-[var(--color-text-secondary)] leading-relaxed max-w-3xl mb-6 md:mb-8 line-clamp-4 hover:line-clamp-none transition-ui duration-300 motion-reduce:transition-none">
-                        {genreSummary}
-                    </p>
-                )}
-
                 <h3 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2">
                     Albums in this Genre ({albums.length})
                 </h3>
-                {albums.length === 0 && !summaryLoading ? (
-                    <div className="album-grid">
-                        {Array.from({ length: 6 }).map((_, i) => <AlbumCardSkeleton key={i} />)}
-                    </div>
-                ) : (
-                    <div className="album-grid">
-                        {albums.map(album => (
+                <div className="album-grid">
+                    {albums.map(album => (
                         <AlbumCard
                             key={album.albumId || `${album.title}-${album.artist}`}
                             title={album.title}
@@ -138,7 +108,11 @@ export const GenreDetail: React.FC = () => {
                             onPlay={() => setPlaylist(album.tracks, 0)}
                         />
                     ))}
-                    </div>
+                </div>
+                {summary?.name === genreName && (
+                    <p className="mt-6 max-w-3xl text-sm md:text-base text-[var(--color-text-secondary)] leading-relaxed">
+                        {summary.text}
+                    </p>
                 )}
             </div>
         </div>

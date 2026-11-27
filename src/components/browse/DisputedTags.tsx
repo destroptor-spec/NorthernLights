@@ -5,7 +5,7 @@ import { usePlayerStore } from '../../store/index';
 import { auroraApiRequest, type Track } from '../../api/auroraApi';
 import { fetchDisputedStyles, raysPath, setTrackStyle } from '../../api/browse';
 import { toPlayableTracks } from '../../utils/playableTracks';
-import { BrowseError, CoverThumb } from './browseParts';
+import { BrowseError, coverUrlFor, CoverThumb } from './browseParts';
 import type { DisputedTrack } from '../../../shared/genreReview';
 
 const PAGE = 50;
@@ -131,7 +131,7 @@ export const DisputedTags: React.FC = () => {
                     </button>
                     <CoverThumb artworkId={d.artworkId} title={d.album || d.title} artist={d.artist} />
                     <span className="disputed__what">
-                      <Link to={raysPath(d.trackId)} className="disputed__title">{d.title}</Link>
+                      <Link to={raysPath(d.trackId)} state={{ trackId: d.trackId, title: d.title, artist: d.artist, album: d.album, artUrl: coverUrlFor(d.artworkId) }} className="disputed__title">{d.title}</Link>
                       <span className="disputed__meta">{[d.artist, d.album].filter(Boolean).join(' · ')}</span>
                     </span>
                     <span className="disputed__answer">

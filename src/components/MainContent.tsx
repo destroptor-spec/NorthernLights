@@ -1,4 +1,5 @@
 import React from 'react';
+import { GenreLoading, RaysLoading } from './DetailRouteLoading';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { usePlayerStore } from '../store/index';
 import { usePlayerPlacement } from '../hooks/usePlayerPlacement';
@@ -125,11 +126,11 @@ export const MainContent: React.FC = () => {
               <Route path="/library/albums" element={<LibraryHome section="albums" />} />
               <Route path="/library/album/:albumId" element={<AlbumDetail />} />
               <Route path="/library/genres" element={<GenresRoute />} />
-              <Route path="/library/genre/:genreId" element={<GenreDetail />} />
+              <Route path="/library/genre/:genreId" element={<React.Suspense fallback={<GenreLoading />}><GenreDetail /></React.Suspense>} />
               <Route path="/library/browse/genre/:genre" element={<BrowseGenrePage />} />
               <Route path="/library/browse/style/:styleId" element={<BrowseStylePage />} />
               <Route path="/library/browse/unsorted" element={<BrowseUnsorted />} />
-              <Route path="/library/rays/:trackId" element={<TrackRays />} />
+              <Route path="/library/rays/:trackId" element={<React.Suspense fallback={<RaysLoading />}><TrackRays /></React.Suspense>} />
               <Route path="/search" element={<SearchResultsPage />} />
               <Route path="/playlists" element={<Playlists />} />
               <Route path="/playlists/:playlistId" element={<PlaylistDetail />} />

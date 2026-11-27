@@ -214,6 +214,18 @@ const InlineEditableText: React.FC<InlineEditableTextProps> = ({
   );
 };
 
+const PlaylistTrackHeading = () => (
+  <div className="grid grid-cols-[30px_44px_minmax(0,1fr)_40px] md:grid-cols-[34px_52px_minmax(0,1.4fr)_minmax(0,1fr)_120px_92px_40px] gap-2 md:gap-3 px-2 md:px-4 py-3 border-b border-black/5 dark:border-white/10 font-semibold text-xs uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+    <div className="text-center md:text-left">#</div>
+    <div aria-hidden="true" />
+    <div>Title</div>
+    <div className="hidden md:block">Album</div>
+    <div className="hidden md:block">Date Added</div>
+    <div className="hidden md:block md:text-left">Time</div>
+    <div aria-hidden="true" />
+  </div>
+);
+
 const PlaylistDetailSkeleton: React.FC<{ onBack: () => void; hero?: PlaylistHeroState }> = ({ onBack, hero }) => {
   const heroArt = (hero?.artUrls || []).slice(0, 4);
   const hasHero = !!hero && (!!hero.title || heroArt.length > 0);
@@ -275,13 +287,14 @@ const PlaylistDetailSkeleton: React.FC<{ onBack: () => void; hero?: PlaylistHero
                 <div className="h-4 w-20 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mx-auto md:mx-0" />
                 <div className="h-10 w-3/4 max-w-xl rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mx-auto md:mx-0" />
                 <div className="h-5 w-56 rounded bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mx-auto md:mx-0" />
-                <div className="h-10 w-32 rounded-full bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mx-auto md:mx-0 mt-4" />
               </>
             )}
+            <div className="h-10 w-32 rounded-full bg-[var(--color-surface-variant)] animate-pulse motion-reduce:animate-none mx-auto md:mx-0 mt-4" />
           </div>
         </div>
         <div className="space-y-0.5">
-          {Array.from({ length: 8 }).map((_, i) => (
+          <PlaylistTrackHeading />
+          {Array.from({ length: Math.min(hero?.trackCount ?? 8, 8) }).map((_, i) => (
             <div
               key={i}
               className="grid grid-cols-[30px_44px_minmax(0,1fr)_40px] md:grid-cols-[34px_52px_minmax(0,1.4fr)_minmax(0,1fr)_120px_92px_40px] gap-2 md:gap-3 px-2 md:px-4 py-2 items-center animate-pulse motion-reduce:animate-none"
@@ -1025,15 +1038,7 @@ export const PlaylistDetail: React.FC = () => {
         </div>
 
         <div className="mb-8">
-          <div className="grid grid-cols-[30px_44px_minmax(0,1fr)_40px] md:grid-cols-[34px_52px_minmax(0,1.4fr)_minmax(0,1fr)_120px_92px_40px] gap-2 md:gap-3 px-2 md:px-4 py-3 border-b border-black/5 dark:border-white/10 font-semibold text-xs uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
-            <div className="text-center md:text-left">#</div>
-            <div aria-hidden="true" />
-            <div>Title</div>
-            <div className="hidden md:block">Album</div>
-            <div className="hidden md:block">Date Added</div>
-            <div className="hidden md:block md:text-left">Time</div>
-            <div aria-hidden="true" />
-          </div>
+          <PlaylistTrackHeading />
 
           {playlistTracks.length === 0 ? (
             <div className="px-6 py-12 text-center text-[var(--color-text-secondary)] border-b border-black/5 dark:border-white/5">

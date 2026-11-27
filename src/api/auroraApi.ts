@@ -79,6 +79,7 @@ export async function auroraApiPage<T>(
   path: string,
   authHeaders: Record<string, string>,
   signal?: AbortSignal,
+  priority?: RequestPriority,
 ): Promise<PageEnvelope<T>> {
   const response = await fetch(`/api/v1${path}`, {
     headers: {
@@ -87,6 +88,7 @@ export async function auroraApiPage<T>(
       ...authHeaders,
     },
     signal,
+    priority,
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
@@ -115,6 +117,7 @@ export async function auroraApiAllPages<T>(
       `${path}${separator}limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
       authHeaders,
       signal,
+      typeof location !== 'undefined' && location.pathname === `/library${path}` && !cursor ? 'auto' : 'low',
     );
     signal?.throwIfAborted();
     values.push(...pageResult.data);
