@@ -98,7 +98,7 @@ export const SharedPlaylistView: React.FC = () => {
               </p>
             </header>
 
-            <ol className="flex flex-col divide-y divide-[var(--glass-border)] rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] overflow-hidden">
+            <ol className="flex flex-col divide-y divide-[var(--glass-border)] rounded-xl bg-[var(--color-surface)] overflow-hidden">
               {playlist.tracks.map((t, i) => (
                 <li key={i} className="flex items-center gap-3 px-4 py-3">
                   <span className="w-6 text-right text-xs text-[var(--color-text-muted)] tabular-nums flex-shrink-0">{i + 1}</span>

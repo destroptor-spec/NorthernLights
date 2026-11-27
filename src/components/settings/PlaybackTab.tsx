@@ -195,7 +195,7 @@ export const PlaybackTab: React.FC = () => {
                         </p>
                     </div>
 
-                    <div className="mb-6 p-4 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)]">
+                    <div className="mb-6 p-4 rounded-xl bg-[var(--color-surface)]">
                         <label className="flex justify-between text-sm font-medium text-[var(--color-text-primary)] mb-2">
                             <span>Count as played after</span>
                             <span>{playedThresholdPercent}%</span>
@@ -217,7 +217,7 @@ export const PlaybackTab: React.FC = () => {
 
                     {/* Only when the admin left it to each user (Settings → System). */}
                     {playbackSyncMode === 'user' && (
-                    <div className="mb-6 p-4 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)]">
+                    <div className="mb-6 p-4 rounded-xl bg-[var(--color-surface)]">
                         <div className="flex items-center justify-between">
                             <div className="pr-4">
                                 <p className="text-sm font-medium text-[var(--color-text-primary)]">Sync playback across devices</p>
@@ -237,7 +237,7 @@ export const PlaybackTab: React.FC = () => {
                     </div>
                     )}
 
-                    <div className="mb-6 p-4 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)]">
+                    <div className="mb-6 p-4 rounded-xl bg-[var(--color-surface)]">
                         <div className="flex items-center justify-between">
                             <div className="pr-4">
                                 <p className="text-sm font-medium text-[var(--color-text-primary)]">Loudness Normalization</p>
@@ -316,7 +316,7 @@ export const PlaybackTab: React.FC = () => {
                     <PlaybackLoggingSettings />
 
                     {playbackDebugLogging && (
-                        <div className="mb-6 p-3 rounded-lg bg-[var(--color-surface)] border border-[var(--glass-border)]">
+                        <div className="mb-6 p-3 rounded-lg bg-[var(--color-surface)]">
                             <p className="text-xs font-medium text-[var(--color-text-muted)] mb-2">Playback Telemetry</p>
                             <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
                                 <div className="flex justify-between gap-3">
@@ -399,7 +399,7 @@ export const PlaybackTab: React.FC = () => {
                     )}
 
                     {/* Network info indicator */}
-                    <div className="p-3 rounded-lg bg-[var(--color-surface)] border border-[var(--glass-border)]">
+                    <div className="p-3 rounded-lg bg-[var(--color-surface)]">
                         <p className="text-xs font-medium text-[var(--color-text-muted)] mb-2">Network Status</p>
                         <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
                             <div className="flex justify-between">
@@ -458,7 +458,7 @@ export const PlaybackTab: React.FC = () => {
                         </select>
 
                         {audioOutputSupported && !castConnected && audioOutputPermission === 'denied' ? (
-                            <div className="mt-3 p-4 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)]">
+                            <div className="mt-3 p-4 rounded-xl bg-[var(--color-surface)]">
                                 <p className="text-sm text-[var(--color-text-primary)]">
                                     Aurora needs one-time microphone permission to name your speakers and route audio to them. Audio is never recorded.
                                 </p>
@@ -643,7 +643,7 @@ export const PlaybackTab: React.FC = () => {
                         <p className="text-xs text-[var(--color-text-muted)] mt-1.5"><strong>Step 7:</strong> Controls how LLM banned genres are enforced. Hard veto keeps excluded styles out entirely; adaptive penalty can recover sparse libraries by treating banned genres as heavily penalized fallback candidates.</p>
                     </div>
 
-                    <div className="mb-6 rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] p-4">
+                    <div className="mb-6 rounded-xl bg-[var(--color-surface)] p-4">
                         <div className="flex items-center justify-between gap-4">
                             <div>
                                 <p className="text-sm font-medium text-[var(--color-text-primary)]">Advanced Tuning</p>

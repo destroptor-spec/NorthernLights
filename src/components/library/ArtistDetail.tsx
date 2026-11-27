@@ -88,7 +88,7 @@ const SimilarArtistRow: React.FC<{ artist: SimilarArtist }> = ({ artist }) => {
             onPointerEnter={prefetchArtistDetail}
             onPointerDown={prefetchArtistDetail}
             onFocus={prefetchArtistDetail}
-            className="group card-hover rounded-xl border border-[var(--glass-border)] bg-[var(--color-surface)] p-3 transition-ui hover:border-primary/40 hover:bg-[var(--glass-bg-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
+            className="group card-hover rounded-xl bg-[var(--color-surface)] p-3 transition-ui hover:bg-[var(--color-surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
         >
             <div className="flex items-start gap-3">
                 <div

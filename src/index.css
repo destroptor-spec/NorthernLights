@@ -2131,8 +2131,8 @@ a:focus-visible > .genre-card .genre-card__label {
   position: relative;
   isolation: isolate;
   overflow: hidden;
+  /* A card: set apart by its lifted surface, no hairline (DESIGN.md). */
   background: var(--color-surface);
-  border: 1px solid var(--glass-border);
   border-radius: 1rem;
   padding: 1.25rem;
 }

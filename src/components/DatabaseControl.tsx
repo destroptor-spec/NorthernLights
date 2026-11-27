@@ -292,34 +292,34 @@ export function DatabaseControl({ onReady, inline = false, variant = 'full' }: D
                     <StatCard label="Indexes" value={dbStats.indexes} icon={RotateCcw} colorClass="text-[var(--color-primary)]" />
                 </div>
                 <div className="grid grid-cols-4 gap-2">
-                    <div className="text-center p-2 rounded-lg bg-[var(--color-surface)] border border-[var(--glass-border)]">
+                    <div className="text-center p-2 rounded-lg bg-[var(--color-surface)]">
                         <p className="text-[9px] uppercase text-[var(--color-text-muted)]">Tracks</p>
                         <p className="text-sm font-bold text-green-500">{dbStats.tracks}</p>
                     </div>
-                    <div className="text-center p-2 rounded-lg bg-[var(--color-surface)] border border-[var(--glass-border)]">
+                    <div className="text-center p-2 rounded-lg bg-[var(--color-surface)]">
                         <p className="text-[9px] uppercase text-[var(--color-text-muted)]">Artists</p>
                         <p className="text-sm font-bold text-blue-500">{dbStats.artists}</p>
                     </div>
-                    <div className="text-center p-2 rounded-lg bg-[var(--color-surface)] border border-[var(--glass-border)]">
+                    <div className="text-center p-2 rounded-lg bg-[var(--color-surface)]">
                         <p className="text-[9px] uppercase text-[var(--color-text-muted)]">Albums</p>
                         <p className="text-sm font-bold text-purple-500">{dbStats.albums}</p>
                     </div>
-                    <div className="text-center p-2 rounded-lg bg-[var(--color-surface)] border border-[var(--glass-border)]">
+                    <div className="text-center p-2 rounded-lg bg-[var(--color-surface)]">
                         <p className="text-[9px] uppercase text-[var(--color-text-muted)]">Genres</p>
                         <p className="text-sm font-bold text-amber-500">{dbStats.genres}</p>
                     </div>
                 </div>
                 {dbStats.pool && (
                     <div className="grid grid-cols-3 gap-2">
-                        <div className="text-center p-2 rounded-lg bg-[var(--color-surface)] border border-[var(--glass-border)]">
+                        <div className="text-center p-2 rounded-lg bg-[var(--color-surface)]">
                             <p className="text-[9px] uppercase text-[var(--color-text-muted)]">Pool Total</p>
                             <p className="text-sm font-bold text-[var(--color-primary)]">{dbStats.pool.total}</p>
                         </div>
-                        <div className="text-center p-2 rounded-lg bg-[var(--color-surface)] border border-[var(--glass-border)]">
+                        <div className="text-center p-2 rounded-lg bg-[var(--color-surface)]">
                             <p className="text-[9px] uppercase text-[var(--color-text-muted)]">Idle</p>
                             <p className="text-sm font-bold text-green-500">{dbStats.pool.idle}</p>
                         </div>
-                        <div className="text-center p-2 rounded-lg bg-[var(--color-surface)] border border-[var(--glass-border)]">
+                        <div className="text-center p-2 rounded-lg bg-[var(--color-surface)]">
                             <p className="text-[9px] uppercase text-[var(--color-text-muted)]">Waiting</p>
                             <p className={`text-sm font-bold ${dbStats.pool.waiting > 0 ? 'text-red-500' : 'text-green-500'}`}>{dbStats.pool.waiting}</p>
                         </div>

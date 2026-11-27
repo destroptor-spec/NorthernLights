@@ -373,7 +373,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     <div ref={sectionScrollRef} className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 lg:px-10 py-5 sm:py-7 lg:py-10 pb-[calc(1rem+var(--safe-area-bottom))]">
                         <div className="max-w-3xl lg:max-w-2xl mx-auto w-full relative z-10">
                             {!isCompactLayout && filteredTabs.length === 0 ? (
-                                <div className="rounded-2xl border border-[var(--glass-border)] bg-[var(--color-surface)] p-5 shadow-lg" role="status">
+                                <div className="rounded-2xl bg-[var(--color-surface)] p-5 shadow-lg"role="status">
                                     <h3 className="text-lg font-semibold text-[var(--color-text-primary)]">No matching settings</h3>
                                     <p className="mt-2 text-sm text-[var(--color-text-secondary)]">Try a tab name like Playback, Library, Metadata, or GenAI.</p>
                                 </div>
