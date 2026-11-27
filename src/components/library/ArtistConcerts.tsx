@@ -170,9 +170,9 @@ const MiniEventCard: React.FC<{ event: ArtistEvent }> = ({ event }) => {
             {/* Body */}
             <div className="flex-1 min-w-0 flex flex-col justify-center gap-1">
                 {event.venue_name && (
-                    <h4 className="text-sm font-semibold text-[var(--color-text-primary)] line-clamp-1 leading-snug">
+                    <h3 className="text-sm font-semibold text-[var(--color-text-primary)] line-clamp-1 leading-snug">
                         {event.venue_name}
-                    </h4>
+                    </h3>
                 )}
                 {locality && (
                     <div className="flex items-center gap-1 text-xs text-[var(--color-text-muted)]">
@@ -228,9 +228,9 @@ export const UpcomingShows: React.FC<UpcomingShowsProps> = ({ events, loading, s
         return (
             <section className="mb-12">
                 <div className="flex items-center justify-between gap-4 mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2">
-                    <h3 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] flex items-center gap-2">
+                    <h2 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] flex items-center gap-2">
                         Upcoming shows
-                    </h3>
+                    </h2>
                 </div>
                 <div className="flex gap-3 overflow-x-auto pb-1 snap-x snap-mandatory hide-scrollbar">
                     {[0, 1, 2].map(i => (
@@ -250,12 +250,12 @@ export const UpcomingShows: React.FC<UpcomingShowsProps> = ({ events, loading, s
     return (
         <section className="mb-12">
             <div className="flex items-center justify-between gap-4 mb-4 md:mb-6 border-b border-[var(--glass-border)] pb-2">
-                <h3 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] flex items-center gap-2">
+                <h2 className="font-semibold text-xl tracking-wide text-[var(--color-text-secondary)] flex items-center gap-2">
                     Upcoming shows
                     <span className="text-xs font-normal text-[var(--color-text-muted)] ml-1 tabular-nums">
                         ({events.length})
                     </span>
-                </h3>
+                </h2>
                 {stale && (
                     <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">
                         <AlertTriangle size={12} />

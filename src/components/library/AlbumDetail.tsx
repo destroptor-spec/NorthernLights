@@ -1013,7 +1013,7 @@ export const AlbumDetail: React.FC = () => {
                     <div className="mt-2 flex flex-wrap justify-center md:justify-start gap-3 w-full md:w-auto">
                         <button
                             onClick={handlePlayAll}
-                            className="flex items-center justify-center gap-2 px-8 py-3.5 bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white font-bold text-sm tracking-widest uppercase rounded-full shadow-[0_4px_24px_rgba(16,185,129,0.3)] hover:shadow-[0_8px_32px_rgba(16,185,129,0.4)] active:scale-95 motion-reduce:transition-none transition-ui duration-300 w-full md:w-auto"
+                            className="btn btn-play w-full md:w-auto"
                         >
                             <Play size={18} fill="currentColor" className="ml-1" />
                             PLAY {releaseType.toUpperCase()}

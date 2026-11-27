@@ -51,7 +51,7 @@ const MobileBottomTabs: React.FC = () => {
               }`}
             >
               <Icon size={20} strokeWidth={isActive ? 2.2 : 1.8} />
-              <span className="text-[10px] font-medium leading-none">{tab.label}</span>
+              <span className="text-[11px] font-medium leading-none">{tab.label}</span>
             </NavLink>
           );
         })}

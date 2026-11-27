@@ -26,12 +26,12 @@ describe('About {artist}', () => {
     }));
 
     const section = screen.getByRole('region', { name: 'About Daysend' });
-    expect(within(section).getByRole('heading', { level: 3, name: 'About Daysend' })).toBeTruthy();
+    expect(within(section).getByRole('heading', { level: 2, name: 'About Daysend' })).toBeTruthy();
     const kind = within(section).getByText('Group', { exact: false, selector: '.about-card__kind' });
     expect(kind.textContent).toBe('Group – Australian metal band');
 
     // The blocks, in order, each with its small heading.
-    expect(within(section).getAllByRole('heading', { level: 4 }).map(h => h.textContent)).toEqual(['At a glance', 'Biography', 'Members', 'Tags']);
+    expect(within(section).getAllByRole('heading', { level: 3 }).map(h => h.textContent)).toEqual(['At a glance', 'Biography', 'Members', 'Tags']);
     expect(within(section).getByText(/^Daysend is a group/).textContent).toBe(
       'Daysend is a group from Sydney, Australia, active from 2002 to 2011. '
       + 'Your library has 11 tracks from 1 album (46 min), where Daysend is credited as performer and composer. '
@@ -51,7 +51,7 @@ describe('About {artist}', () => {
 
   it('leaves out the blocks it has nothing for', () => {
     render(about({ bio: 'Short.', type: 'Group', lifeSpan: { begin: '1983' } }));
-    expect(screen.getAllByRole('heading', { level: 4 }).map(h => h.textContent)).toEqual(['At a glance', 'Biography']);
+    expect(screen.getAllByRole('heading', { level: 3 }).map(h => h.textContent)).toEqual(['At a glance', 'Biography']);
     expect(screen.getByText('Daysend is a group, formed in 1983.')).toBeTruthy();
   });
 

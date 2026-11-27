@@ -20,7 +20,7 @@ it('is a card like the artist’s: the cover, the title with kind, artist and ye
   expect(container.querySelector('.about-card__portrait[data-shape="square"] img')?.getAttribute('src')).toBe('/api/art/abc');
   expect(within(section).getByText('Wasting Light', { selector: '.about-card__name' })).toBeTruthy();
   expect(within(section).getByText('Album · Foo Fighters · 2011')).toBeTruthy();
-  expect(within(section).getAllByRole('heading', { level: 4 }).map(h => h.textContent)).toEqual(['Description', 'Tags']);
+  expect(within(section).getAllByRole('heading', { level: 3 }).map(h => h.textContent)).toEqual(['Description', 'Tags']);
   expect(within(section).getByText('The seventh studio album by Foo Fighters.')).toBeTruthy();
 
   // The files' genres first, then Last.fm's tags, each once (Rock and rock are one).
@@ -32,7 +32,7 @@ it('is a card like the artist’s: the cover, the title with kind, artist and ye
 
 it('leaves out what it has nothing for, and the whole card with neither text nor tags', () => {
   const { rerender } = render(album({ description: 'Short.' }));
-  expect(screen.getAllByRole('heading', { level: 4 }).map(h => h.textContent)).toEqual(['Description']);
+  expect(screen.getAllByRole('heading', { level: 3 }).map(h => h.textContent)).toEqual(['Description']);
   expect(screen.getByText('Album · Foo Fighters')).toBeTruthy();
 
   rerender(album());
@@ -44,7 +44,7 @@ it('opens with At a glance, written from the release its files are tagged with',
     description: 'The seventh studio album.',
     release: { label: 'RCA Records', releaseDate: '2011-04-12', originalDate: '2011-04-12', media: 'CD' },
   }));
-  expect(screen.getAllByRole('heading', { level: 4 }).map(h => h.textContent)).toEqual(['At a glance', 'Description']);
+  expect(screen.getAllByRole('heading', { level: 3 }).map(h => h.textContent)).toEqual(['At a glance', 'Description']);
   expect(screen.getByText(/^Wasting Light is an album/).textContent)
     .toBe('Wasting Light is an album by Foo Fighters, released on 12 April 2011 by RCA Records. Your copy is the CD release.');
 });

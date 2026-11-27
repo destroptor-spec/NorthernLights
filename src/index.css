@@ -571,6 +571,45 @@ button :where(span),
   color: white;
 }
 
+/* Play — the hero playback action (album, artist, playlist): an emerald pill
+   with the play glow. The label is white on the light theme's deeper green and
+   night-dark on the dark theme's bright green, so it meets WCAG AA in both
+   (white on #22c983 was 2.2:1). Combine with .btn: `btn btn-play`. */
+.btn-play,
+.dark .btn-play {
+  background: var(--color-primary-dark);
+  border-color: transparent;
+  color: #fff;
+  border-radius: var(--radius-pill);
+  padding: 14px 32px;
+  text-transform: uppercase;
+  box-shadow: var(--aurora-play-glow);
+}
+.dark .btn-play {
+  background: var(--color-primary);
+  color: var(--color-background);
+}
+/* Hover stays at AA: darker under white (light), the deeper green (dark). */
+.btn-play:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+  border-color: transparent;
+  filter: brightness(0.9);
+}
+.dark .btn-play:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+  filter: none;
+}
+.btn-play:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.btn-play:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-play:active:not(:disabled) { transform: none; }
+}
+
 /* Aurora CTA background (Generate/Create/Setup buttons). Referenced across
    modals but was never defined — those buttons rendered with no background.
    Reuses the play-button gradient so all emerald actions share one signature. */
@@ -9027,7 +9066,7 @@ a.rays-chip:focus-visible {
   background: rgba(34, 201, 131, 0.12);
   color: var(--color-primary);
   font-family: var(--font-body);
-  font-size: 0.65rem;
+  font-size: 0.6875rem; /* 11px: the floor for functional text */
   font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -10693,17 +10732,12 @@ a.rays-chip:focus-visible {
   backdrop-filter: blur(var(--glass-blur));
   -webkit-backdrop-filter: blur(var(--glass-blur));
   border: 1px solid var(--glass-border);
+  /* Float <-> dock switches its layout in one step (animating width, left and
+     padding re-laid out the player, and re-read the waveform, every frame);
+     PlayerShell slides and fades the bar into its new place instead. */
   transition:
-    left 240ms var(--ease-out),
-    right 240ms var(--ease-out),
-    bottom 240ms var(--ease-out),
-    width 240ms var(--ease-out),
-    max-width 240ms var(--ease-out),
-    transform 240ms var(--ease-out),
     border-radius 240ms var(--ease-out),
-    box-shadow 240ms var(--ease-out),
-    padding 200ms var(--ease-out);
-  will-change: transform, border-radius;
+    box-shadow 240ms var(--ease-out);
 }
 
 .player-shell--float {
@@ -11721,7 +11755,7 @@ button.connect-line:disabled {
   list-style: none;
   padding: 18px 6px 8px;
 }
-.queue-section-heading h4 {
+.queue-section-heading h3 {
   margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
