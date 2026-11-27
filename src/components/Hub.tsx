@@ -1434,7 +1434,7 @@ export const Hub: React.FC = () => {
           <h2 className="text-xl sm:text-2xl font-bold text-[var(--color-text-primary)] mb-5 lowercase">
             for you
           </h2>
-          <div className="flex sm:grid sm:grid-cols-2 lg:grid-cols-3 overflow-x-auto snap-x snap-mandatory gap-4 sm:gap-5 lg:gap-6 hub-scroll-mobile hide-scrollbar">
+          <div className="rail-lift-room flex sm:grid sm:grid-cols-2 lg:grid-cols-3 overflow-x-auto snap-x snap-mandatory gap-4 sm:gap-5 lg:gap-6 hub-scroll-mobile hide-scrollbar">
             {aiPlaylists.map((collection) => (
               <HubCard
                 key={collection.id}

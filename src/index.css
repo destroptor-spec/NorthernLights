@@ -3409,6 +3409,16 @@ a.rays-chip:focus-visible {
   color: var(--color-primary);
 }
 
+/* Room for a card's hover lift and focus ring in a sideways rail:
+   overflow-x:auto computes overflow-y to auto, which clips anything that
+   rises above the rail. Space above the cards, cancelled by a negative margin
+   so nothing moves. Zero specificity (:where), so a rail's own padding (the
+   genre rail below, a pt-* utility) wins. HorizontalScrollRail adds it. */
+:where(.rail-lift-room) {
+  padding-top: 6px;
+  margin-top: -6px;
+}
+
 /* padding-block gives the card's hover lift and glow room: overflow-x:auto
    computes overflow-y to auto, which would otherwise clip the lift and add a
    stray vertical scrollbar. */
