@@ -22,6 +22,8 @@ export { splitArtistNames };
 export { getArtistVideoUploads, saveArtistVideoCatalog, noteArtistVideoFailure } from './musicVideos';
 export { getArtistReviewEntries, getArtistReviewPreview, decideArtistReview, getRecentArtistReviewDecisions, undoArtistReviewDecision } from './artistReviews';
 export type { VideoUpload, VideoAssociation } from './musicVideos';
+export { getArtistHeroImageSource, storeArtistHeroImages, getAlbumArtworkImageSource, storeAlbumArtworkImages } from './providerImages';
+export type { StoredProviderImage, ArtistHeroImageSource, AlbumArtworkImageSource } from './providerImages';
 
 let pool: Pool | null = null;
 let initPromise: Promise<Pool> | null = null;
@@ -646,6 +648,14 @@ export async function initDB(): Promise<Pool> {
         -- read_at says when, so it's asked again after a while.
         ALTER TABLE albums ADD COLUMN IF NOT EXISTS recording_places JSONB;
         ALTER TABLE albums ADD COLUMN IF NOT EXISTS recording_places_read_at TIMESTAMPTZ;
+        -- Picture sets from the metadata providers for the About cards'
+        -- carousels ([{url, provider, label}]): an artist's hero images and an
+        -- album's artwork beyond its front cover, looked up when its page is
+        -- first opened; read_at says when, so they're asked again after a while.
+        ALTER TABLE artists ADD COLUMN IF NOT EXISTS hero_images JSONB;
+        ALTER TABLE artists ADD COLUMN IF NOT EXISTS hero_images_read_at TIMESTAMPTZ;
+        ALTER TABLE albums ADD COLUMN IF NOT EXISTS artwork_images JSONB;
+        ALTER TABLE albums ADD COLUMN IF NOT EXISTS artwork_images_read_at TIMESTAMPTZ;
         CREATE INDEX IF NOT EXISTS albums_release_group_id_idx ON albums(release_group_id);
         CREATE INDEX IF NOT EXISTS albums_mb_release_group_id_idx ON albums(mb_release_group_id);
         CREATE INDEX IF NOT EXISTS albums_normalized_title_idx ON albums(normalized_title);

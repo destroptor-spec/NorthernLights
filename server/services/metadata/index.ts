@@ -1,4 +1,7 @@
-import { getRepresentativeReleaseMbid, getStoredRecordingPlaces, getSystemSetting, initDB, storeRecordingPlaces } from '../../database';
+import {
+  getAlbumArtworkImageSource, getArtistHeroImageSource, getRepresentativeReleaseMbid, getStoredRecordingPlaces, getSystemSetting,
+  initDB, storeAlbumArtworkImages, storeArtistHeroImages, storeRecordingPlaces, type StoredProviderImage,
+} from '../../database';
 import { mergeForDisplay, normaliseProviderTags, saveArtistTagsByName, type ProviderTag, type TagProvider, type WeightedTag } from '../genreTaxonomy/artistTags';
 import { scheduleTagMapping } from '../genreTaxonomy';
 import { RateLimitError, ProviderError, isRateLimitError, isProviderError } from './errors';
@@ -25,12 +28,12 @@ import {
   testLastFm,
 } from './providers/lastfm';
 import { geniusSearch, geniusGetArtist } from './providers/genius';
-import { extractMbLinks, extractMbMembers, mbGetArtist, mbGetAlbumCover, mbGetReleaseGroupCover, mbReleaseGroupOfRelease, mbReleaseRecordingPlaces, mbSearchReleaseGroup, type RecordingPlace } from './providers/musicbrainz';
+import { caaGetReleaseImages, extractMbLinks, extractMbMembers, mbGetArtist, mbGetAlbumCover, mbGetReleaseGroupCover, mbReleaseGroupOfRelease, mbReleaseRecordingPlaces, mbSearchReleaseGroup, type RecordingPlace } from './providers/musicbrainz';
 import { countryCode } from '../../../shared/places';
 import { isGeniusPlaceholderImage, type MetadataItem, type MetadataProvider, type MetadataProviderPriority } from '../../../shared/metadataProviders';
 import { getMetadataProviderPriority } from './providerPriority';
 import { tadbAlbumByReleaseGroup, tadbArtistByMbid, tadbSearchArtist, tadbSearchAlbum, tadbImage, type TadbAlbum, type TadbArtist } from './providers/theaudiodb';
-import { fanartArtist, fanartAlbum, bestFanartImage } from './providers/fanarttv';
+import { fanartArtist, fanartAlbum, bestFanartImage, rankedFanartImages } from './providers/fanarttv';
 import { mergeLinks, sameArtistName, sameName, theAudioDbFacts, withDisplayTags } from './theAudioDbFacts';
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -675,6 +678,138 @@ export async function getAlbumRecordingPlaces(albumId: string): Promise<Recordin
     console.warn('[Metadata] Recording places lookup failed:', error instanceof Error ? error.message : error);
     return null;
   }
+}
+
+// The About cards' carousels: an artist's hero images (wide backgrounds) and an
+// album's artwork beyond its front cover. Asked of the providers on the admin's
+// Artist banner / Album art list when the page is first opened, kept on the row,
+// and asked again after this long (art gets added). Never in a background
+// sweep: the providers are free and rate-limited. A lookup where a provider
+// failed isn't kept, so it is asked again next time.
+const PROVIDER_IMAGES_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+const PROVIDER_IMAGES_MAX = 10;
+const providerImageLookups = new Map<string, Promise<StoredProviderImage[] | null>>();
+
+function isFreshImageSet(images: unknown, readAt: Date | null): images is StoredProviderImage[] {
+  return Array.isArray(images) && !!readAt && Date.now() - new Date(readAt).getTime() < PROVIDER_IMAGES_TTL_MS;
+}
+
+// TheAudioDB mirrors fanart.tv's pictures under the same file name on its own
+// host, so a picture is the same one when its URL or its file name matches.
+function imageFileName(url: string): string {
+  try { return new URL(url).pathname.split('/').pop()?.toLowerCase() || url; } catch { return url; }
+}
+
+function addImage(images: StoredProviderImage[], url: string | undefined | null, provider: string | null, label: string | null = null) {
+  if (!url || images.length >= PROVIDER_IMAGES_MAX) return;
+  const name = imageFileName(url);
+  if (images.some(image => image.url === url || imageFileName(image.url) === name)) return;
+  images.push({ url, provider, label });
+}
+
+/** One lookup per artist or album at a time, however many pages ask. */
+function sharedImageLookup(key: string, lookup: () => Promise<StoredProviderImage[] | null>) {
+  let pending = providerImageLookups.get(key);
+  if (!pending) {
+    pending = lookup().finally(() => providerImageLookups.delete(key));
+    providerImageLookups.set(key, pending);
+  }
+  return pending;
+}
+
+/**
+ * An artist's hero images: the banner the artist lookup chose, then fanart.tv's
+ * backgrounds (most liked first) and TheAudioDB's fanart, in the admin's Artist
+ * banner order and only from providers on it. [] when there are none (or the
+ * banner list is empty); null for an unknown artist.
+ */
+export async function getArtistHeroImages(artistId: string): Promise<StoredProviderImage[] | null> {
+  const source = await getArtistHeroImageSource(artistId);
+  if (!source) return null;
+  if (isFreshImageSet(source.images, source.readAt)) return source.images;
+  return sharedImageLookup(`artist:${artistId}`, async () => {
+    const settings = await getProviderSettings();
+    if (settings.priority.artistBanner.length === 0) return [];
+    const images: StoredProviderImage[] = [];
+    addImage(images, source.artworkUrl, null);
+    let failed = false;
+    for (const api of usableProviders(settings, 'artistBanner')) {
+      try {
+        if (api === 'fanarttv' && isMusicBrainzUuid(source.mbid)) {
+          const fanart = await fanartArtist(source.mbid, settings.fanartTvApiKey);
+          for (const url of rankedFanartImages(fanart?.artistbackground)) addImage(images, url, 'fanarttv');
+        } else if (api === 'theaudiodb') {
+          let artist = isMusicBrainzUuid(source.mbid)
+            ? await tadbArtistByMbid(source.mbid, settings.theAudioDbApiKey)
+            : await tadbSearchArtist(source.name, settings.theAudioDbApiKey);
+          if (artist && !isMusicBrainzUuid(source.mbid) && !sameArtistName(artist, source.name)) artist = null;
+          for (const value of [artist?.strArtistFanart, artist?.strArtistFanart2, artist?.strArtistFanart3, artist?.strArtistFanart4, artist?.strArtistWideThumb]) {
+            addImage(images, tadbImage(value), 'theaudiodb');
+          }
+        }
+      } catch (error) {
+        failed = true;
+        console.warn(`[Metadata] Hero images from ${api} failed:`, error instanceof Error ? error.message : error);
+      }
+    }
+    if (!failed) await storeArtistHeroImages(artistId, images);
+    return images;
+  });
+}
+
+/**
+ * An album's artwork beyond its front cover (the card's portrait shows that):
+ * the Cover Art Archive's scans of the release its files name (back, booklet,
+ * disc…), TheAudioDB's back cover, case and disc, and fanart.tv's disc art, in
+ * the admin's Album art order and only from providers on it. [] when there is
+ * none; null for an unknown album.
+ */
+export async function getAlbumArtworkImages(albumId: string): Promise<StoredProviderImage[] | null> {
+  const source = await getAlbumArtworkImageSource(albumId);
+  if (!source) return null;
+  if (isFreshImageSet(source.images, source.readAt)) return source.images;
+  return sharedImageLookup(`album:${albumId}`, async () => {
+    const settings = await getProviderSettings();
+    const images: StoredProviderImage[] = [];
+    const releaseId = isMusicBrainzUuid(source.releaseId) ? source.releaseId : null;
+    let releaseGroupId = isMusicBrainzUuid(source.releaseGroupId) ? source.releaseGroupId : null;
+    let failed = false;
+    for (const api of usableProviders(settings, 'albumArt')) {
+      try {
+        if (api === 'musicbrainz' && releaseId) {
+          const scans = (await caaGetReleaseImages(releaseId, { strict: true }))
+            .filter(image => !image.front && !(image.types ?? []).includes('Front'));
+          for (const image of scans) {
+            const label = (image.types ?? []).filter(type => type !== 'Raw/Unedited').join(', ') || null;
+            addImage(images, image.thumbnails?.['1200'] || image.thumbnails?.large || image.image, 'musicbrainz', label);
+          }
+        } else if (api === 'theaudiodb' && source.artist) {
+          const album = releaseGroupId
+            ? await tadbAlbumByReleaseGroup(releaseGroupId, settings.theAudioDbApiKey)
+            : (await tadbSearchAlbum(source.artist, source.title, settings.theAudioDbApiKey)).find(a => sameName(a.strAlbum, source.title)) ?? null;
+          if (!releaseGroupId && isMusicBrainzUuid(album?.strMusicBrainzID)) releaseGroupId = album!.strMusicBrainzID!;
+          addImage(images, tadbImage(album?.strAlbumThumbBack), 'theaudiodb', 'Back');
+          addImage(images, tadbImage(album?.strAlbum3DCase), 'theaudiodb', 'Case');
+          addImage(images, tadbImage(album?.strAlbum3DFlat), 'theaudiodb', 'Sleeve');
+          addImage(images, tadbImage(album?.strAlbum3DFace), 'theaudiodb', 'Case front');
+          addImage(images, tadbImage(album?.strAlbumCDart), 'theaudiodb', 'Disc');
+        } else if (api === 'fanarttv') {
+          if (!releaseGroupId && releaseId && settings.musicBrainzEnabled) {
+            releaseGroupId = await mbReleaseGroupOfRelease(releaseId);
+          }
+          if (releaseGroupId) {
+            const fanart = await fanartAlbum(releaseGroupId, settings.fanartTvApiKey);
+            for (const url of rankedFanartImages(fanart?.albums?.[releaseGroupId]?.cdart).slice(0, 2)) addImage(images, url, 'fanarttv', 'Disc');
+          }
+        }
+      } catch (error) {
+        failed = true;
+        console.warn(`[Metadata] Album artwork from ${api} failed:`, error instanceof Error ? error.message : error);
+      }
+    }
+    if (!failed) await storeAlbumArtworkImages(albumId, images);
+    return images;
+  });
 }
 
 // Disc images found (or not) per album and disc: the album page asks on every

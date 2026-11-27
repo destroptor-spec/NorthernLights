@@ -197,6 +197,9 @@ export async function clearExternalCache(): Promise<void> {
   await db.query('UPDATE artists SET last_updated = 0, image_url = NULL, artwork_url = NULL, bio = NULL WHERE last_updated > 0 OR image_url IS NOT NULL OR artwork_url IS NOT NULL OR bio IS NOT NULL');
   await db.query('UPDATE albums SET last_updated = 0, image_url = NULL WHERE last_updated > 0 OR image_url IS NOT NULL');
   await db.query('UPDATE genres SET last_updated = 0, image_url = NULL, description = NULL WHERE last_updated > 0 OR image_url IS NOT NULL OR description IS NOT NULL');
+  // The About cards' picture sets are looked up again on the next page view.
+  await db.query('UPDATE artists SET hero_images = NULL, hero_images_read_at = NULL WHERE hero_images_read_at IS NOT NULL');
+  await db.query('UPDATE albums SET artwork_images = NULL, artwork_images_read_at = NULL WHERE artwork_images_read_at IS NOT NULL');
 }
 
 export { isCacheFresh, CACHE_TTL };

@@ -892,6 +892,8 @@ describeDb('database read queries', () => {
         getTrackById: [`${TRACK_ID}0`],
         getAlbumById: [seeded.albumId],
         getArtistById: [seeded.artistId],
+        getArtistHeroImageSource: [seeded.artistId],
+        getAlbumArtworkImageSource: [seeded.albumId],
         getAlbumCardsByIds: [[seeded.albumId]],
         getArtistCardsByIds: [[seeded.artistId]],
         getGenreById: [seeded.genreId],

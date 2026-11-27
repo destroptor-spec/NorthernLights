@@ -156,17 +156,24 @@ export interface CaaImage {
   approved?: boolean;
 }
 
-/** Full typed image list for a *release* MBID (not release-group). [] on 404/error. */
-export async function caaGetReleaseImages(releaseMbid: string): Promise<CaaImage[]> {
+/**
+ * Full typed image list for a *release* MBID (not release-group). [] on 404;
+ * on other failures [] too, unless `strict` (then it throws, so a caller that
+ * keeps the answer doesn't keep "no art" for a passing outage).
+ */
+export async function caaGetReleaseImages(releaseMbid: string, options: { strict?: boolean } = {}): Promise<CaaImage[]> {
   if (!CAA_RELEASE_RE.test(releaseMbid)) return [];
   try {
     const res = await fetch(`https://coverartarchive.org/release/${encodeURIComponent(releaseMbid)}`, {
       headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(15000),
     });
-    if (!res.ok) return [];               // 404 = no art for this release
+    if (res.status === 404) return [];    // no art for this release
+    if (!res.ok) throw new ProviderError('coverartarchive', `HTTP ${res.status}`, res.status);
     const data = await res.json();
     return Array.isArray(data?.images) ? data.images : [];
-  } catch {
+  } catch (error) {
+    if (options.strict) throw error;
     return [];
   }
 }

@@ -3,6 +3,7 @@ import { formatDuration } from '../../utils/formatTime';
 import { ArtistInitial } from './ArtistInitial';
 import { artistSummary } from '../../utils/artistSummary';
 import { AboutBlock, AboutCard, CollapsibleText, TagPills } from './AboutCard';
+import { AboutCarousel, type CarouselImage } from './AboutCarousel';
 
 // The artist page's "About {artist}" section, above Similar artists. (Its
 // "Genres and styles", below them, is browse/StyleProfileSection.) The header
@@ -45,7 +46,9 @@ export const ArtistAboutSection: React.FC<{
     stats: { totalTracks: number; totalAlbums: number; totalDuration: number };
     listeners?: string;
     tags: ArtistTag[];
-}> = ({ artistName, imageUrl, bio, loading, members, roles, type, disambiguation, area, lifeSpan, stats, listeners, tags }) => {
+    /** Wide pictures from the providers for the card's carousel (GET /artists/:id/hero-images). */
+    heroImages?: CarouselImage[] | null;
+}> = ({ artistName, imageUrl, bio, loading, members, roles, type, disambiguation, area, lifeSpan, stats, listeners, tags, heroImages }) => {
     // "At a glance": a short summary written from the facts (utils/artistSummary).
     const glance = artistSummary({
         name: artistName,
@@ -73,6 +76,9 @@ export const ArtistAboutSection: React.FC<{
                 </>
             )}
             imageUrl={imageUrl}
+            gallery={heroImages?.length
+                ? <AboutCarousel images={heroImages} label={`Pictures of ${artistName}`} shape="wide" />
+                : undefined}
             shape="round"
             picture={imageUrl
                 ? <img src={imageUrl} alt="" className="h-full w-full object-cover" />

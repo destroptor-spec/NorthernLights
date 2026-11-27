@@ -1,6 +1,7 @@
 import React from 'react';
 import { AlbumArt } from '../AlbumArt';
 import { AboutBlock, AboutCard, CollapsibleText, TagPills } from './AboutCard';
+import { AboutCarousel, type CarouselImage } from './AboutCarousel';
 import { albumSummary } from '../../utils/albumSummary';
 
 /**
@@ -28,8 +29,10 @@ export const AlbumAboutSection: React.FC<{
     } | null;
     /** Where it was recorded (GET /albums/:id/recording-places). */
     recordedAt?: Array<{ name: string; area: string | null }> | null;
+    /** Artwork beyond the front cover, for the card's carousel (GET /albums/:id/artwork-images). */
+    artworkImages?: CarouselImage[] | null;
     className?: string;
-}> = ({ title, artist, releaseType, year, artUrl, description, genres, tags = [], release, recordedAt, className }) => {
+}> = ({ title, artist, releaseType, year, artUrl, description, genres, tags = [], release, recordedAt, artworkImages, className }) => {
     const glance = albumSummary({ title, artist, releaseType, ...release, recordedAt });
     // The files' genres first, then Last.fm's tags (its top five), each once.
     const seen = new Set<string>();
@@ -52,6 +55,9 @@ export const AlbumAboutSection: React.FC<{
             name={title}
             kind={[releaseType, artist, year].filter(Boolean).join(' · ')}
             imageUrl={artUrl}
+            gallery={artworkImages?.length
+                ? <AboutCarousel images={artworkImages} label={`Artwork of ${title}`} shape="square" />
+                : undefined}
             shape="square"
             picture={<AlbumArt artUrl={artUrl} album={title} artist={artist} size={160} className="h-full w-full object-cover" />}
             className={className}

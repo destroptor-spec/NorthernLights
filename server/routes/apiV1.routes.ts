@@ -94,7 +94,7 @@ import {
   OPAQUE_ID,
 } from '../../shared/api/v1';
 import { requestArtistImages } from '../services/artistImageEnrichment.service';
-import { getAlbumRecordingPlaces } from '../services/metadata';
+import { getAlbumArtworkImages, getAlbumRecordingPlaces, getArtistHeroImages } from '../services/metadata';
 import {
   approvePairingRequest,
   cancelPairingRequest,
@@ -704,6 +704,20 @@ router.get('/albums/:id/recording-places', async (req, res) => {
   const album = await getAlbumById(req.params.id);
   if (!album) return sendApiV1Error(req, res, 404, 'ALBUM_NOT_FOUND', 'Album not found.');
   dataResponse(req, res, { places: await getAlbumRecordingPlaces(req.params.id) });
+});
+
+// Pictures for the About cards' carousels. Their own requests after the page
+// has loaded: the first per artist or album asks the providers.
+router.get('/artists/:id/hero-images', async (req, res) => {
+  const images = await getArtistHeroImages(req.params.id);
+  if (!images) return sendApiV1Error(req, res, 404, 'ARTIST_NOT_FOUND', 'Artist not found.');
+  dataResponse(req, res, { images });
+});
+
+router.get('/albums/:id/artwork-images', async (req, res) => {
+  const images = await getAlbumArtworkImages(req.params.id);
+  if (!images) return sendApiV1Error(req, res, 404, 'ALBUM_NOT_FOUND', 'Album not found.');
+  dataResponse(req, res, { images });
 });
 
 router.get('/genres', async (req, res) => {

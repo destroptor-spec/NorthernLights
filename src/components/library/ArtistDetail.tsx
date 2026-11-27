@@ -7,6 +7,7 @@ import { useKnownArtistKeys } from '../../hooks/useKnownArtistKeys';
 import { useEntityTracks } from '../../hooks/useEntityTracks';
 import { useApiV1EntityTracks } from '../../hooks/useApiV1TrackList';
 import { auroraApiRequest, type AlbumSummary, type ArtistSummary, type Playlist as ApiPlaylist } from '../../api/auroraApi';
+import { useProviderImages } from '../../hooks/useProviderImages';
 import { toPlayableTracks } from '../../utils/playableTracks';
 import { useArtistData } from '../../hooks/useArtistData';
 import { useArtistTopTracks } from '../../hooks/useArtistTopTracks';
@@ -314,6 +315,7 @@ const ArtistPage = ({ artistId }: { artistId?: string }) => {
     // Callers only pass a real artist portrait as the hero image (never album
     // art), so it can stand in until, or instead of, the provider's.
     const imageUrl = providerImageUrl || heroState?.imageUrl;
+    const heroImages = useProviderImages(artistId ? `/artists/${encodeURIComponent(artistId)}/hero-images` : null);
     const { onTour, events: upcomingEvents, loading: concertsLoading, stale: concertsStale } = useArtistConcerts(artistId);
     const { videos: musicVideos, loading: musicVideosLoading, stale: musicVideosStale } = useArtistMusicVideos(artistId);
     const lastFmAvailable = usePlayerStore(s => s.currentUser?.role === 'admin' ? !!s.lastFmApiKey : s.hasLastFmKey);
@@ -1203,6 +1205,7 @@ const ArtistPage = ({ artistId }: { artistId?: string }) => {
                 stats={libraryStats}
                 listeners={listeners}
                 tags={mergedTags}
+                heroImages={heroImages}
             />
 
             <SimilarArtistsSection artists={similarArtists} loading={similarArtistsLoading} />

@@ -1,12 +1,15 @@
 /**
  * @jest-environment node
  */
-import { clearDiscArtCacheForTests, getAlbumDiscArt, getAlbumImage, getAlbumRecordingPlaces, getArtistData, getArtistTopTracks } from './index';
-import { initDB, getRepresentativeReleaseMbid, getStoredRecordingPlaces, getSystemSetting, storeRecordingPlaces } from '../../database';
+import { clearDiscArtCacheForTests, getAlbumArtworkImages, getAlbumDiscArt, getAlbumImage, getAlbumRecordingPlaces, getArtistData, getArtistHeroImages, getArtistTopTracks } from './index';
+import {
+  initDB, getAlbumArtworkImageSource, getArtistHeroImageSource, getRepresentativeReleaseMbid, getStoredRecordingPlaces, getSystemSetting,
+  storeAlbumArtworkImages, storeArtistHeroImages, storeRecordingPlaces,
+} from '../../database';
 import { getCachedAlbum, getCachedArtist, upsertAlbumCache, upsertArtistCache } from './cache';
 import { geniusSearch, geniusGetArtist } from './providers/genius';
 import { lastFmArtistTopTracks, lastFmAlbumInfo, lastFmArtistInfo, lastFmArtistTopTags, extractLastFmImage } from './providers/lastfm';
-import { mbGetAlbumCover, mbGetArtist, mbGetReleaseGroupCover, mbReleaseGroupOfRelease, mbReleaseRecordingPlaces, mbSearchReleaseGroup } from './providers/musicbrainz';
+import { caaGetReleaseImages, mbGetAlbumCover, mbGetArtist, mbGetReleaseGroupCover, mbReleaseGroupOfRelease, mbReleaseRecordingPlaces, mbSearchReleaseGroup } from './providers/musicbrainz';
 import { tadbAlbumByReleaseGroup, tadbArtistByMbid, tadbSearchArtist, tadbSearchAlbum } from './providers/theaudiodb';
 import { fanartAlbum, fanartArtist } from './providers/fanarttv';
 import { ProviderError, RateLimitError } from './errors';
@@ -17,6 +20,10 @@ jest.mock('../../database', () => ({
   getStoredRecordingPlaces: jest.fn(),
   storeRecordingPlaces: jest.fn(async () => {}),
   getRepresentativeReleaseMbid: jest.fn(),
+  getArtistHeroImageSource: jest.fn(),
+  storeArtistHeroImages: jest.fn(async () => {}),
+  getAlbumArtworkImageSource: jest.fn(),
+  storeAlbumArtworkImages: jest.fn(async () => {}),
 }));
 jest.mock('./cache', () => ({
   getCachedArtist: jest.fn(),
@@ -42,6 +49,7 @@ jest.mock('./providers/musicbrainz', () => ({
   mbSearchReleaseGroup: jest.fn(async () => []),
   mbReleaseGroupOfRelease: jest.fn(async () => null),
   mbReleaseRecordingPlaces: jest.fn(async () => []),
+  caaGetReleaseImages: jest.fn(async () => []),
 }));
 jest.mock('./providers/theaudiodb', () => ({
   ...jest.requireActual('./providers/theaudiodb'),
@@ -678,5 +686,101 @@ describe('shared Last.fm ranking', () => {
     await expect(getArtistTopTracks('Backoff')).rejects.toThrow('provider offline');
     await expect(getArtistTopTracks('Backoff')).rejects.toBeInstanceOf(RateLimitError);
     expect(lastFmArtistTopTracks).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('About card picture sets', () => {
+  const MBID = 'cc197bad-dc9c-440d-a5b5-d52ba2e14234';
+  const RELEASE = '1b022e01-4da6-387b-8658-8678046e4cef';
+  const artistSource = (patch: Record<string, unknown> = {}) => ({
+    name: 'Nirvana', mbid: MBID, artworkUrl: 'https://images.genius.com/banner.jpg', images: null, readAt: null, ...patch,
+  });
+  beforeEach(() => {
+    // clearAllMocks keeps resolved values: start each test from empty providers.
+    jest.mocked(fanartArtist).mockResolvedValue(null);
+    jest.mocked(tadbArtistByMbid).mockResolvedValue(null);
+    jest.mocked(tadbSearchAlbum).mockResolvedValue([]);
+    jest.mocked(caaGetReleaseImages).mockResolvedValue([]);
+    Object.assign(settings, { fanartTvApiKey: 'fanart-key', theAudioDbApiKey: '123', musicBrainzEnabled: true });
+    priority({ artistBanner: ['genius', 'fanarttv', 'theaudiodb'], albumArt: ['musicbrainz', 'theaudiodb'] });
+  });
+
+  it('serves a kept artist set without asking a provider', async () => {
+    const kept = [{ url: 'https://assets.fanart.tv/a.jpg', provider: 'fanarttv', label: null }];
+    jest.mocked(getArtistHeroImageSource).mockResolvedValue(artistSource({ images: kept, readAt: new Date() }));
+    expect(await getArtistHeroImages('ar1')).toEqual(kept);
+    expect(fanartArtist).not.toHaveBeenCalled();
+  });
+
+  it('puts the chosen banner first, then fanart.tv by likes and TheAudioDB, each once, and keeps them', async () => {
+    jest.mocked(getArtistHeroImageSource).mockResolvedValue(artistSource());
+    jest.mocked(fanartArtist).mockResolvedValue({ artistbackground: [
+      { id: '1', url: 'https://assets.fanart.tv/a.jpg', likes: '1' },
+      { id: '2', url: 'https://assets.fanart.tv/b.jpg', likes: '5' },
+    ] } as never);
+    jest.mocked(tadbArtistByMbid).mockResolvedValue({
+      strArtistFanart: 'https://r2.theaudiodb.com/f1.jpg', strArtistFanart2: 'https://assets.fanart.tv/b.jpg',
+    } as never);
+    const images = await getArtistHeroImages('ar1');
+    expect(images?.map(image => [image.url, image.provider])).toEqual([
+      ['https://images.genius.com/banner.jpg', null],
+      ['https://assets.fanart.tv/b.jpg', 'fanarttv'],
+      ['https://assets.fanart.tv/a.jpg', 'fanarttv'],
+      ['https://r2.theaudiodb.com/f1.jpg', 'theaudiodb'],
+    ]);
+    expect(storeArtistHeroImages).toHaveBeenCalledWith('ar1', images);
+    expect(geniusSearch).not.toHaveBeenCalled();
+  });
+
+  it('counts TheAudioDB\'s copy of a fanart.tv picture (same file name) as the same picture', async () => {
+    jest.mocked(getArtistHeroImageSource).mockResolvedValue(artistSource({ artworkUrl: 'https://r2.theaudiodb.com/images/media/artist/fanart/zeds-dead-4f02b08ba5493.jpg' }));
+    jest.mocked(fanartArtist).mockResolvedValue({ artistbackground: [{ id: '1', url: 'https://assets.fanart.tv/fanart/zeds-dead-4f02b08ba5493.jpg', likes: '3' }] } as never);
+    expect((await getArtistHeroImages('ar1'))?.map(image => image.url)).toEqual(['https://r2.theaudiodb.com/images/media/artist/fanart/zeds-dead-4f02b08ba5493.jpg']);
+  });
+
+  it('does not keep a set when a provider failed, so it is asked again', async () => {
+    jest.mocked(getArtistHeroImageSource).mockResolvedValue(artistSource());
+    jest.mocked(fanartArtist).mockRejectedValue(new ProviderError('fanarttv', 'HTTP 503', 503));
+    expect((await getArtistHeroImages('ar1'))?.map(image => image.url)).toEqual(['https://images.genius.com/banner.jpg']);
+    expect(storeArtistHeroImages).not.toHaveBeenCalled();
+  });
+
+  it('asks nobody when the admin turned artist banners off, and says null for an unknown artist', async () => {
+    priority({ artistBanner: [] });
+    jest.mocked(getArtistHeroImageSource).mockResolvedValue(artistSource());
+    expect(await getArtistHeroImages('ar1')).toEqual([]);
+    expect(fanartArtist).not.toHaveBeenCalled();
+    jest.mocked(getArtistHeroImageSource).mockResolvedValue(null);
+    expect(await getArtistHeroImages('nobody')).toBeNull();
+  });
+
+  it('takes an album\'s scans other than the front, then TheAudioDB\'s back and disc, labelled', async () => {
+    jest.mocked(getAlbumArtworkImageSource).mockResolvedValue({
+      title: 'Nevermind', artist: 'Nirvana', releaseId: RELEASE, releaseGroupId: null, images: null, readAt: null,
+    });
+    jest.mocked(caaGetReleaseImages).mockResolvedValue([
+      { types: ['Front'], front: true, image: 'https://coverartarchive.org/f.jpg', thumbnails: {} },
+      { types: ['Back'], front: false, image: 'https://coverartarchive.org/b.jpg', thumbnails: { 1200: 'https://coverartarchive.org/b-1200.jpg' } },
+      { types: ['Booklet'], front: false, image: 'https://coverartarchive.org/k.jpg', thumbnails: {} },
+    ]);
+    jest.mocked(tadbSearchAlbum).mockResolvedValue([{ strAlbum: 'Nevermind', strAlbumThumbBack: 'https://r2.theaudiodb.com/back.jpg', strAlbumCDart: 'https://r2.theaudiodb.com/cd.png' }]);
+    const images = await getAlbumArtworkImages('al1');
+    expect(images).toEqual([
+      { url: 'https://coverartarchive.org/b-1200.jpg', provider: 'musicbrainz', label: 'Back' },
+      { url: 'https://coverartarchive.org/k.jpg', provider: 'musicbrainz', label: 'Booklet' },
+      { url: 'https://r2.theaudiodb.com/back.jpg', provider: 'theaudiodb', label: 'Back' },
+      { url: 'https://r2.theaudiodb.com/cd.png', provider: 'theaudiodb', label: 'Disc' },
+    ]);
+    expect(caaGetReleaseImages).toHaveBeenCalledWith(RELEASE, { strict: true });
+    expect(storeAlbumArtworkImages).toHaveBeenCalledWith('al1', images);
+  });
+
+  it('does not keep an album set when the Cover Art Archive could not answer', async () => {
+    jest.mocked(getAlbumArtworkImageSource).mockResolvedValue({
+      title: 'Nevermind', artist: 'Nirvana', releaseId: RELEASE, releaseGroupId: null, images: null, readAt: null,
+    });
+    jest.mocked(caaGetReleaseImages).mockRejectedValue(new ProviderError('coverartarchive', 'HTTP 502', 502));
+    expect(await getAlbumArtworkImages('al1')).toEqual([]);
+    expect(storeAlbumArtworkImages).not.toHaveBeenCalled();
   });
 });
