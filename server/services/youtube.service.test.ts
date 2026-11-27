@@ -190,10 +190,21 @@ test('a rejected key pauses every artist without spending quota until Save & Tes
   expect(fetchMock).not.toHaveBeenCalled();
   expect(mocked.incrementYoutubeApiUsage).not.toHaveBeenCalled();
 
+  // A newly saved key is tried at once (and rejected too, here).
+  mocked.getSystemSetting.mockImplementation(async key => ({
+    youtubeEnabled: true, youtubeApiKey: 'new-key', youtubeCacheTtlDays: 14,
+    youtubeDailyQuotaCap: 9000, youtubeHardStop: true,
+  })[key as 'youtubeEnabled'] ?? null);
+  cache = null;
+  await expect(refreshArtistVideosIfStale('third')).rejects.toBeInstanceOf(YoutubeKeyRejectedError);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(warn).toHaveBeenCalledTimes(2);
+
   // Save & Test reaches Google anyway and reports the reason.
+  fetchMock.mockClear();
   expect(await testYouTubeConnection()).toEqual({ ok: false, error: 'Google rejected the key: Permission denied on the service.' });
   expect(fetchMock).toHaveBeenCalledTimes(1);
-  expect(warn).toHaveBeenCalledTimes(1);
+  expect(warn).toHaveBeenCalledTimes(2);
 
   fetchMock.mockResolvedValue({ ok: true, json: async () => ({ items: [{ snippet: { title: 'YouTube' } }] }) });
   expect(await testYouTubeConnection()).toEqual({ ok: true, sample: 'YouTube' });

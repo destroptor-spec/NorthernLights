@@ -79,15 +79,15 @@ export function classifyYoutubeError(status: number, body: string): Error {
 // After a rejection, artist refreshes skip Google (and the quota counter) for a
 // while; a key change, a successful call or Save & Test ends the pause.
 const KEY_REJECTION_PAUSE_MS = 30 * 60_000;
-let keyRejection: { keyHash: string; message: string; at: number } | null = null;
-const keyHash = (key: string) => createHash('sha256').update(key).digest('hex');
+// Holds the rejected key itself (in memory only, like every getApiKey() call)
+// so that saving a different key ends the pause.
+let keyRejection: { apiKey: string; message: string; at: number } | null = null;
 
 function noteKeyRejected(apiKey: string, message: string) {
-  const hash = keyHash(apiKey);
-  if (keyRejection?.keyHash !== hash || keyRejection.message !== message) {
+  if (keyRejection?.apiKey !== apiKey || keyRejection.message !== message) {
     console.warn(`[YouTube] Google rejected the API key: ${message}. Music videos are served from cache until the key works.`);
   }
-  keyRejection = { keyHash: hash, message, at: Date.now() };
+  keyRejection = { apiKey, message, at: Date.now() };
 }
 
 function noteKeyAccepted() {
@@ -99,7 +99,7 @@ function noteKeyAccepted() {
 /** The current key's last rejection by Google, if any (for Settings → Metadata → YouTube). */
 export async function getYoutubeKeyProblem(): Promise<{ message: string; since: string } | null> {
   const apiKey = await getApiKey();
-  if (!apiKey || !keyRejection || keyRejection.keyHash !== keyHash(apiKey)) return null;
+  if (!apiKey || !keyRejection || keyRejection.apiKey !== apiKey) return null;
   return { message: keyRejection.message, since: new Date(keyRejection.at).toISOString() };
 }
 
@@ -161,7 +161,7 @@ async function ytFetch<T = any>(
 ): Promise<T> {
   const apiKey = await getApiKey();
   if (!apiKey) throw new YoutubeConfigError();
-  if (!options.force && keyRejection?.keyHash === keyHash(apiKey) && Date.now() - keyRejection.at < KEY_REJECTION_PAUSE_MS) {
+  if (!options.force && keyRejection?.apiKey === apiKey && Date.now() - keyRejection.at < KEY_REJECTION_PAUSE_MS) {
     throw new YoutubeKeyRejectedError(keyRejection.message);
   }
 
