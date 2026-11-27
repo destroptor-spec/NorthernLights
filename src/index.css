@@ -359,12 +359,9 @@ h4 {
   pointer-events: none;
   transform: translateZ(0);
   will-change: transform;
+  /* A plain field: the aurora glows that sat here (green, sky, rose) were
+     taken out on 2026-11-27; colour comes from album art and playback. */
   background-color: var(--color-background);
-  background-image: 
-    radial-gradient(circle at 15% 50%, rgba(5, 150, 105, 0.1), transparent 25%),
-    radial-gradient(circle at 85% 30%, rgba(6, 182, 212, 0.1), transparent 25%),
-    radial-gradient(circle at 50% 80%, rgba(225, 29, 72, 0.05), transparent 30%);
-  background-size: cover;
 }
 
 .dark body {
@@ -374,10 +371,6 @@ h4 {
 
 .dark .app-backdrop {
   background-color: #050510;
-  background-image: 
-    radial-gradient(circle at 15% 50%, rgba(34, 201, 131, 0.15), transparent 25%),
-    radial-gradient(circle at 85% 30%, rgba(14, 165, 233, 0.15), transparent 25%),
-    radial-gradient(circle at 50% 80%, rgba(244, 63, 94, 0.1), transparent 30%);
 }
 
 #root {
