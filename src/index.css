@@ -2355,8 +2355,6 @@ a:focus-visible > .genre-card .genre-card__label {
   aspect-ratio: 16 / 9;
   overflow: hidden;
   border-radius: 0.75rem;
-  border: 1px solid var(--glass-border);
-  background: var(--color-surface-variant);
   touch-action: pan-y;
 }
 .about-carousel[data-shape="square"] {
