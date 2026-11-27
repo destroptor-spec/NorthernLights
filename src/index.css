@@ -565,15 +565,21 @@ button :where(span),
    as plain glass buttons in dark mode. */
 .btn-primary,
 .dark .btn-primary {
-  background: var(--color-primary);
-  color: white;
-  border-color: var(--color-primary);
+  background: var(--color-primary-fill);
+  color: var(--color-on-primary);
+  border-color: var(--color-primary-fill);
 }
-.btn-primary:hover,
-.dark .btn-primary:hover {
+/* Hover stays at AA: darker under white (light), the deeper green (dark). */
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-primary-fill);
+  border-color: var(--color-primary-fill);
+  color: var(--color-on-primary);
+  filter: brightness(0.9);
+}
+.dark .btn-primary:hover:not(:disabled) {
   background: var(--color-primary-dark);
   border-color: var(--color-primary-dark);
-  color: white;
+  filter: none;
 }
 
 /* Play — the hero playback action (album, artist, playlist): an emerald pill

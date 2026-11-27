@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { usePlayerStore } from '../store';
-import { Ticket, MapPin, Calendar, ArrowRight, Headphones, AlertTriangle } from 'lucide-react';
+import { MapPin, Calendar, ArrowRight, Headphones, AlertTriangle } from 'lucide-react';
 import { HorizontalScrollRail } from './HorizontalScrollRail';
 
 type HubEvent = {
@@ -90,7 +90,6 @@ const TicketCard: React.FC<TicketCardProps> = ({ event }) => {
                 relative flex-shrink-0 snap-start
                 w-[85vw] max-w-[380px] sm:w-[340px] md:w-[380px]
                 bg-[var(--color-surface)]
-                border border-[var(--glass-border)]
                 rounded-2xl overflow-hidden
                 shadow-sm hover:shadow-md
                 transition-all duration-200
@@ -221,8 +220,7 @@ const TicketCard: React.FC<TicketCardProps> = ({ event }) => {
 
 const LiveConcertsSkeleton: React.FC = () => (
     <section aria-hidden="true">
-        <div className="flex items-center gap-2 mb-4">
-            <Ticket className="w-5 h-5 text-[var(--color-text-muted)] opacity-50" />
+        <div className="mb-4">
             <div className="h-5 w-44 rounded bg-[var(--color-surface-variant)] animate-pulse" />
         </div>
         <div className="flex gap-3 sm:gap-4 overflow-hidden hide-scrollbar pb-2">
@@ -238,12 +236,9 @@ const LiveConcertsSkeleton: React.FC = () => (
 
 const LiveConcertsHeader: React.FC<{ stale?: boolean }> = ({ stale }) => (
     <div className="flex items-center justify-between gap-2 mb-4">
-        <div className="flex items-center gap-2">
-            <Ticket className="w-5 h-5 text-[var(--color-primary)]" />
-            <h2 id="live-concerts-heading" className="text-lg font-semibold text-[var(--color-text-secondary)] lowercase">
-                favourites live near you
-            </h2>
-        </div>
+        <h2 id="live-concerts-heading" className="text-lg font-semibold text-[var(--color-text-secondary)] lowercase">
+            favourites live near you
+        </h2>
         {stale && (
             <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-warning)]">
                 <AlertTriangle size={12} />

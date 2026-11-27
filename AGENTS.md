@@ -44,7 +44,7 @@ Use the global button classes — do NOT write inline Tailwind button strings. C
 | Class | Purpose |
 |-------|---------|
 | `.btn` | Base — compact inline-flex, `8px 16px`, `0.875rem` |
-| `.btn-primary` | Filled purple action |
+| `.btn-primary` | Filled emerald action; label `--color-on-primary` on `--color-primary-fill` (AA in both themes) |
 | `.btn-danger` | Outlined red warning |
 | `.btn-danger-fill` | Filled red destructive |
 | `.btn-ghost` | Glass/neutral outlined |

@@ -1412,7 +1412,7 @@ export const Hub: React.FC = () => {
             aria-label="generate playlists"
           >
             {isGenerating ? (
-              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin motion-reduce:animate-none" />
             ) : (
               <Sparkles className="w-5 h-5" />
             )}
