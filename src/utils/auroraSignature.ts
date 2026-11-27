@@ -233,7 +233,8 @@ export function makeAurora(
   const dance = track.values.danceability;
 
   const paint = (ctx: CanvasRenderingContext2D, time: number) => {
-    const phase = time * (track.bpm ?? 110) / 110 * 0.22;
+    // The aurora's pace: slow and calm, still quicker for a faster track.
+    const phase = time * (track.bpm ?? 110) / 110 * 0.11;
     if (background) ctx.drawImage(background, 0, 0);
     layers.forEach(({ canvas }, index) => {
       const m = motion[index];
