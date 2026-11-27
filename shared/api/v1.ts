@@ -857,6 +857,20 @@ export const trackRaysSchema = z.object({
     styles: z.array(browseStyleRefSchema).describe('Styles whose centroids sit nearest the track\'s sound, its own styles left out, nearest first.'),
     tracks: z.array(trackSchema).describe('The nearest tracks by sound: none from its album or recording, one version of a song, at most two per artist; up to 12.'),
   }).nullable().describe('null for a track without a real audio embedding.'),
+  release: z.object({
+    label: z.string().nullable().describe('The record label, as the file tags it.'),
+    releaseDate: z.string().nullable().describe('This release\'s date as tagged: "2011-04-12", "2011-04" or "2011".'),
+    originalDate: z.string().nullable().describe('When the music first came out, as tagged; differs from releaseDate for a reissue.'),
+    media: z.string().nullable().describe('The medium as tagged: "CD", "12\\" Vinyl", "Digital Media".'),
+    catalogNumber: z.string().nullable(),
+    barcode: z.string().nullable().describe('UPC or EAN, digits only.'),
+    releaseStatus: z.string().nullable().describe('MusicBrainz\'s release status, lowercase: official, promotion, bootleg, withdrawn, pseudo-release.'),
+    copyright: z.string().nullable().describe('The ℗ / © line.'),
+    discSubtitle: z.string().nullable().describe('The subtitle of the track\'s disc ("B-Sides").'),
+    isrc: z.string().nullable().describe('The recording\'s ISRC.'),
+    links: z.array(z.object({ url: z.string(), type: z.string() }))
+      .describe('Every link in the file (artist and label sites too); a client picks the ones about the release or the track.'),
+  }).describe('The release as the track\'s file tags it. Fields are null until the file has been read or when the tag is missing.'),
   otherAlbums: z.array(z.object({
     trackId: z.string(),
     albumId: z.string().nullable(),

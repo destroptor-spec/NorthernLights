@@ -2925,6 +2925,87 @@ button.rays-bar:focus-visible {
   .rays-card { padding: 1.5rem 1.75rem; }
 }
 
+/* Release: the file's release tags as short facts, a quiet second line each
+   (catalog number, disc, "First released 1997"), then links and the ℗ line. */
+.rays-release__facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 8.5rem), 1fr));
+  gap: 1.125rem 1.5rem;
+  margin: 0;
+}
+.rays-release__fact {
+  display: grid;
+  align-content: start;
+  gap: 0.2rem;
+  min-width: 0;
+}
+.rays-release__fact dt {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.rays-release__fact dd {
+  display: grid;
+  gap: 0.1rem;
+  margin: 0;
+  min-width: 0;
+}
+.rays-release__value {
+  color: var(--color-text-primary);
+  font-size: 0.95rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.rays-release__value--code {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+.rays-release__detail {
+  color: var(--color-text-secondary);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.rays-release__foot {
+  display: grid;
+  gap: 0.875rem;
+  margin-top: 1.25rem;
+}
+.rays-release__facts:empty + .rays-release__foot,
+.rays-release > .rays-release__foot:first-child {
+  margin-top: 0;
+}
+.rays-release .rays-chip {
+  align-items: center;
+  border-color: transparent;
+  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+  transition: background-color 140ms ease-out, color 140ms ease-out;
+}
+.rays-release a.rays-chip:hover,
+.rays-release a.rays-chip:focus-visible {
+  background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+  color: var(--color-text-primary);
+}
+.rays-release__copyright {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+/* The file's explicit rating, after the year in the hero line. */
+.rays-explicit {
+  display: inline-grid;
+  place-items: center;
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: 0.25rem;
+  background: color-mix(in srgb, var(--color-text-primary) 14%, transparent);
+  color: var(--color-text-primary);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .rays-card__title {
   margin: 0 0 0.25rem;
   font-size: 1.2rem;

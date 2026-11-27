@@ -2857,6 +2857,113 @@
             ],
             "description": "null for a track without a real audio embedding."
           },
+          "release": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The record label, as the file tags it."
+              },
+              "releaseDate": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "This release's date as tagged: \"2011-04-12\", \"2011-04\" or \"2011\"."
+              },
+              "originalDate": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "When the music first came out, as tagged; differs from releaseDate for a reissue."
+              },
+              "media": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The medium as tagged: \"CD\", \"12\\\" Vinyl\", \"Digital Media\"."
+              },
+              "catalogNumber": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "barcode": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "UPC or EAN, digits only."
+              },
+              "releaseStatus": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "MusicBrainz's release status, lowercase: official, promotion, bootleg, withdrawn, pseudo-release."
+              },
+              "copyright": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The ℗ / © line."
+              },
+              "discSubtitle": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The subtitle of the track's disc (\"B-Sides\")."
+              },
+              "isrc": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The recording's ISRC."
+              },
+              "links": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "url",
+                    "type"
+                  ]
+                },
+                "description": "Every link in the file (artist and label sites too); a client picks the ones about the release or the track."
+              }
+            },
+            "required": [
+              "label",
+              "releaseDate",
+              "originalDate",
+              "media",
+              "catalogNumber",
+              "barcode",
+              "releaseStatus",
+              "copyright",
+              "discSubtitle",
+              "isrc",
+              "links"
+            ],
+            "description": "The release as the track's file tags it. Fields are null until the file has been read or when the tag is missing."
+          },
           "otherAlbums": {
             "type": "array",
             "items": {
@@ -2912,6 +3019,7 @@
           "artist",
           "otherArtists",
           "soundsCloseTo",
+          "release",
           "otherAlbums"
         ]
       },

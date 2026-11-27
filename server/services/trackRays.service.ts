@@ -24,6 +24,20 @@ const parseVector = (value: unknown): number[] | null => {
   if (typeof value !== 'string') return null;
   try { return (JSON.parse(value) as unknown[]).map(Number); } catch { return null; }
 };
+/** A tag as stored, trimmed; null when empty. */
+const text = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value.trim() : null);
+
+/** tracks.raw_urls ([{url, type}] as JSON text), keeping well-formed http(s) links only. */
+function fileLinks(value: unknown): Array<{ url: string; type: string }> {
+  let parsed: unknown = value;
+  if (typeof value === 'string') {
+    try { parsed = JSON.parse(value); } catch { return []; }
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((l: any) => l && typeof l.url === 'string' && /^https?:\/\//i.test(l.url))
+    .map((l: any) => ({ url: String(l.url), type: typeof l.type === 'string' ? l.type : '' }));
+}
 const unit = (n: number | undefined) => (Number.isFinite(n) ? Math.max(0, Math.min(1, n as number)) : 0);
 
 /** The rays as the service builds them: the route adds the v1 track and turns nearby track ids into v1 tracks. */
@@ -34,7 +48,10 @@ export type TrackRaysRows = Omit<TrackRays, 'track' | 'soundsCloseTo'> & {
 /** Everything but the v1 track itself (the route adds it); null for an unknown track. */
 export async function getTrackRays(db: Pool, trackId: string): Promise<TrackRaysRows | null> {
   const head = (await db.query(
-    `SELECT id, title, artist, artists, album_id, artist_id, mb_recording_id FROM tracks WHERE id = $1`, [trackId])).rows[0];
+    `SELECT id, title, artist, artists, album_id, artist_id, mb_recording_id,
+            label, release_date, original_date, media, catalog_number, barcode, release_status,
+            copyright, disc_subtitle, isrc, raw_urls
+     FROM tracks WHERE id = $1`, [trackId])).rows[0];
   if (!head) return null;
   const billed = await billedArtists(db, head);
 
@@ -148,6 +165,19 @@ export async function getTrackRays(db: Pool, trackId: string): Promise<TrackRays
     } : null,
     otherArtists,
     soundsCloseTo,
+    release: {
+      label: text(head.label),
+      releaseDate: text(head.release_date),
+      originalDate: text(head.original_date),
+      media: text(head.media),
+      catalogNumber: text(head.catalog_number),
+      barcode: text(head.barcode),
+      releaseStatus: text(head.release_status)?.toLowerCase() ?? null,
+      copyright: text(head.copyright),
+      discSubtitle: text(head.disc_subtitle),
+      isrc: text(head.isrc)?.toUpperCase() ?? null,
+      links: fileLinks(head.raw_urls),
+    },
     otherAlbums: others.rows.map((r: any) => ({
       trackId: String(r.id),
       albumId: r.album_id ? String(r.album_id) : null,

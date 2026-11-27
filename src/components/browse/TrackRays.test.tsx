@@ -17,7 +17,7 @@ const ok = (data: unknown) => ({ ok: true, status: 200, json: async () => ({ dat
 const originalFetch = global.fetch;
 
 const rays = (): Rays => ({
-  track: { id: 't1', title: 'Finally Moving', artist: 'Pretty Lights', year: 2006 } as Rays['track'],
+  track: { id: 't1', title: 'Finally Moving', artist: 'Pretty Lights', year: 2006, format: 'flac', lossless: true, bitrate: 900000, discNumber: 1, explicit: true, musicBrainz: { recordingId: 'rec-1' } } as Rays['track'],
   credits: [
     { role: 'artist', artistId: 'a3', name: 'Pretty Lights', detail: null, imageUrl: null },
     { role: 'featured', artistId: null, name: 'Guest Unknown', detail: null, imageUrl: null },
@@ -48,6 +48,15 @@ const rays = (): Rays => ({
       entries: [{ genre: 'Electronic', styleId: 56, style: 'Downtempo', share: 0.8, trackCount: 4, albumCount: 1 }], listenerTags: ['chillout'] },
   ],
   soundsCloseTo: null,
+  release: {
+    label: 'Pretty Lights Music', releaseDate: '2014-03-04', originalDate: '2006', media: 'Digital Media',
+    catalogNumber: 'PLM006', barcode: '0700261412345', releaseStatus: 'official', copyright: '℗ 2006 Pretty Lights Music',
+    discSubtitle: null, isrc: 'USA2P0600001',
+    links: [
+      { url: 'https://www.prettylightsmusic.com/', type: 'official homepage' },
+      { url: 'https://www.discogs.com/release/123-Pretty-Lights-Taking-Up', type: 'discogs' },
+    ],
+  },
   otherAlbums: [{ trackId: 't9', albumId: 'al9', albumTitle: 'Best Of', artistName: 'Pretty Lights', year: 2015, artworkId: 'hash9' }],
 });
 
@@ -87,9 +96,9 @@ test('says where each genre and style came from, groups credits by person, and s
   const derek = screen.getByRole('link', { name: 'Derek Vincent Smith: Producer' });
   expect(derek.getAttribute('href')).toBe('/library/artist/a1');
   expect(derek.querySelector('img')!.getAttribute('src')).toBe('/img/derek.jpg');
-  // Sections in order: Credits, In context, Sound and style, Also on.
+  // Sections in order: Credits, In context, Release, Sound and style, Also on.
   expect([...document.querySelectorAll('section')].map(el => el.getAttribute('aria-label')))
-    .toEqual(['Credits', 'In context', 'Sound and style', 'Also on']);
+    .toEqual(['Credits', 'In context', 'Release', 'Sound and style', 'Also on']);
   // The model's scores: Glitch is one of the track's styles (check), Downtempo only close to it.
   const glitchBar = screen.getByTitle("Glitch (Electronic): strong, model score 0.50, one of this track's styles");
   expect(within(glitchBar).getByText('Strong')).toBeTruthy();
@@ -203,5 +212,28 @@ test('sounds close to: nearby styles as cards, and nearby tracks that play from 
   expect(((setPlaylist.mock.calls[0] as unknown[])[0] as Array<{ id: string }>).map(t => t.id)).toEqual(['n1', 'n2']);
   // Sections in order: Sounds close to sits between Sound and style and Also on.
   expect([...document.querySelectorAll('section')].map(el => el.getAttribute('aria-label')))
-    .toEqual(['Credits', 'In context', 'Sound and style', 'Sounds close to', 'Also on']);
+    .toEqual(['Credits', 'In context', 'Release', 'Sound and style', 'Sounds close to', 'Also on']);
+});
+
+test('shows the release the file is tagged with, its links about the recording, and the explicit rating', async () => {
+  renderRays();
+  const release = await screen.findByRole('region', { name: 'Release' });
+  const facts = within(release);
+  // A reissue: this release's date, and when the music first came out.
+  expect(facts.getByText('4 March 2014')).toBeTruthy();
+  expect(facts.getByText('First released 2006')).toBeTruthy();
+  // The label with its catalog number; the medium by name; the file from the library row.
+  expect(facts.getByText('Pretty Lights Music')).toBeTruthy();
+  expect(facts.getByText('PLM006')).toBeTruthy();
+  expect(facts.getByText('Digital')).toBeTruthy();
+  expect(facts.getByText('FLAC')).toBeTruthy();
+  expect(facts.getByText('Lossless')).toBeTruthy();
+  expect(facts.getByText('USA2P0600001')).toBeTruthy();
+  // Official is the usual: no status fact.
+  expect(facts.queryByText('Status')).toBeNull();
+  // MusicBrainz's recording and the Discogs release; the artist's homepage stays off.
+  const links = facts.getAllByRole('link').map(a => a.getAttribute('href'));
+  expect(links).toEqual(['https://musicbrainz.org/recording/rec-1', 'https://www.discogs.com/release/123-Pretty-Lights-Taking-Up']);
+  expect(facts.getByText('℗ 2006 Pretty Lights Music')).toBeTruthy();
+  expect(screen.getByLabelText('Explicit')).toBeTruthy();
 });

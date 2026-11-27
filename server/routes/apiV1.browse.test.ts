@@ -108,7 +108,8 @@ describe('browse albums and genres', () => {
 describe('GET /tracks/:id/rays', () => {
   it('answers with the v1 track and its rays, or 404 for an unknown track', async () => {
     const near = { styles: [{ id: 5, genre: 'Rock', name: 'Grunge', trackCount: 9 }], trackIds: ['n2', 'n1'] };
-    jest.mocked(getTrackRays).mockResolvedValue({ credits: [], tags: ['Rock'], styles: [], sound: null, album: null, artist: null, otherArtists: [], soundsCloseTo: near, otherAlbums: [] });
+    jest.mocked(getTrackRays).mockResolvedValue({ credits: [], tags: ['Rock'], styles: [], sound: null, album: null, artist: null, otherArtists: [], soundsCloseTo: near, otherAlbums: [],
+      release: { label: null, releaseDate: null, originalDate: null, media: null, catalogNumber: null, barcode: null, releaseStatus: null, copyright: null, discSubtitle: null, isrc: null, links: [] } });
     const res = await get('/tracks/:id/rays', {}, { id: 't1' });
     expect(body(res).data).toMatchObject({ track: { id: 't1' }, tags: ['Rock'] });
     // Nearby tracks come back as v1 tracks, nearest first, without their paths.
