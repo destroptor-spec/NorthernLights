@@ -2098,28 +2098,20 @@ a:focus-visible > .genre-card .genre-card__label {
   }
 }
 
-/* With the aurora signature behind it the top of the page (back button and
-   hero) sits in a night sky in both themes, so the hero's ink is the dark
-   theme's. The aurora bleeds to the full width, starts above the back button
-   and dissolves into the page below the hero. */
+/* The aurora signature behind the top of the page (back button, hero and
+   Credits rail), drawn straight on the page: in the dark theme the page is
+   the night, with a sparse field of stars; in the light theme the curtains
+   show as soft colour. It bleeds to the full width, starts above the back
+   button, and its stars thin out below the Credits rail. */
 .rays-top { position: relative; }
-.rays-top--night {
+.rays-top--aurora {
   isolation: isolate;
-  /* Room below the Credits rail for the night's long fade into the page. */
-  padding-bottom: 9rem;
+  padding-bottom: 4rem;
 }
-.rays-top--night .rays-hero,
-.rays-top--night > .browse-section {
-  --color-text-primary: #e6e9f5;
-  --color-text-secondary: #c9cfe0;
-  --color-text-muted: #c9cfe0;
-  --color-primary: #22c983;
-  color: var(--color-text-primary);
-}
-.rays-top--night .rays-hero { padding: 2.5rem 0 1rem; }
-/* A soft shadow of the night behind the words, so they hold over the brightest curtains. */
-.rays-top--night .rays-hero__text {
-  text-shadow: 0 1px 2px rgba(6, 12, 33, 0.55), 0 0 18px rgba(6, 12, 33, 0.55);
+.rays-top--aurora .rays-hero { padding: 2.5rem 0 1rem; }
+/* Dark theme: a soft shadow of the night behind the words, so they hold over the brightest curtains. */
+.dark .rays-top--aurora .rays-hero__text {
+  text-shadow: 0 1px 2px rgba(3, 2, 8, 0.6), 0 0 18px rgba(3, 2, 8, 0.6);
 }
 .rays-aurora {
   position: absolute;
@@ -2137,19 +2129,9 @@ a:focus-visible > .genre-card .genre-card__label {
   display: block;
   width: 100%;
   height: 100%;
-}
-/* The night stays whole behind the hero and the Credits rail, then dissolves
-   into the page below the rail over 11rem, on an eased curve so it has no
-   visible edge. */
-.rays-aurora__sky {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 11rem), rgba(0, 0, 0, 0.97) calc(100% - 9.9rem), rgba(0, 0, 0, 0.9) calc(100% - 8.8rem), rgba(0, 0, 0, 0.79) calc(100% - 7.7rem), rgba(0, 0, 0, 0.65) calc(100% - 6.6rem), rgba(0, 0, 0, 0.5) calc(100% - 5.5rem), rgba(0, 0, 0, 0.35) calc(100% - 4.4rem), rgba(0, 0, 0, 0.21) calc(100% - 3.3rem), rgba(0, 0, 0, 0.1) calc(100% - 2.2rem), rgba(0, 0, 0, 0.03) calc(100% - 1.1rem), transparent 100%);
-          mask-image: linear-gradient(to bottom, #000 calc(100% - 11rem), rgba(0, 0, 0, 0.97) calc(100% - 9.9rem), rgba(0, 0, 0, 0.9) calc(100% - 8.8rem), rgba(0, 0, 0, 0.79) calc(100% - 7.7rem), rgba(0, 0, 0, 0.65) calc(100% - 6.6rem), rgba(0, 0, 0, 0.5) calc(100% - 5.5rem), rgba(0, 0, 0, 0.35) calc(100% - 4.4rem), rgba(0, 0, 0, 0.21) calc(100% - 3.3rem), rgba(0, 0, 0, 0.1) calc(100% - 2.2rem), rgba(0, 0, 0, 0.03) calc(100% - 1.1rem), transparent 100%);
-}
-/* The lights are laid out over the hero alone and taper on their own; they
-   share the night's fade only where they reach down that far. */
-.rays-aurora__lights {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 11rem), transparent 100%);
-          mask-image: linear-gradient(to bottom, #000 calc(100% - 11rem), transparent 100%);
+  /* The curtains end inside the hero; the stars thin out over the last 10rem. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 10rem), rgba(0, 0, 0, 0.6) calc(100% - 6rem), rgba(0, 0, 0, 0.22) calc(100% - 3rem), transparent 100%);
+          mask-image: linear-gradient(to bottom, #000 calc(100% - 10rem), rgba(0, 0, 0, 0.6) calc(100% - 6rem), rgba(0, 0, 0, 0.22) calc(100% - 3rem), transparent 100%);
 }
 
 /* The cover lights its own page: a soft glow in the cover's colour

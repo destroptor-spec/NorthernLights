@@ -527,7 +527,7 @@ const TrackRaysContent = ({ trackId }: { trackId: string }) => {
       {!auroraSound && rays && (banner || cover) && <FadedHeroImage src={(banner || cover)!} variant={banner ? 'wide' : 'standard'} />}
       <div className="relative z-10">
       {/* The top of the page: the back button and the hero, the aurora signature behind both. */}
-      <div className={auroraSound ? 'rays-top rays-top--night' : 'rays-top'}>
+      <div className={auroraSound ? 'rays-top rays-top--aurora' : 'rays-top'}>
       {auroraSound && <RaysAurora sound={auroraSound} heroRef={heroRef} />}
       <BackButton onClick={() => navigate(-1)} />
       {rays && track && (
@@ -564,7 +564,7 @@ const TrackRaysContent = ({ trackId }: { trackId: string }) => {
             </div>
           </header>
       )}
-      {/* Credits sit under the same night: it fades into the page below them, not over the hero. */}
+      {/* Credits share the hero's sky: the stars thin out below them. */}
       {rays && track && credits.length > 0 && (
             <section className="browse-section" aria-label="Credits">
               <h2 className="browse-section__title">Credits</h2>

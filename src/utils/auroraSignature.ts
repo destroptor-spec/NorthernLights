@@ -130,9 +130,8 @@ function filament(fold: string, veil: string, soft: number) {
 }
 
 /**
- * `sky: false` leaves the night out of each frame (the lights then paint on a
- * transparent canvas); the night is still built and returned as `.sky`, for a
- * caller that layers and fades the two apart.
+ * `sky: false` leaves the night out (it isn't built): the lights paint on a
+ * transparent canvas, over whatever is behind it.
  *
  * `frame` lays the curtains out in a rectangle of the canvas instead of the
  * whole of it ({x, y, width, height} in canvas pixels): their folds and rays
@@ -145,7 +144,10 @@ export function makeAurora(
 ) {
   const fx = frame?.x ?? 0, fy = frame?.y ?? 0, fw = frame?.width ?? w, fh = frame?.height ?? h;
   const random = randomFor(track.id);
-  const background = night(w, h, random, landscape);
+  const background = sky ? night(w, h, random, landscape) : null;
+  // Without the night, still use up its random draws (360 stars × 3), so a
+  // track's curtains keep the same shape with or without a sky behind them.
+  if (!sky) for (let i = 0; i < 360 * 3; i++) random();
   const palette = track.mix.slice(0, 2);
   const weight = palette.reduce((sum, item) => sum + item.share, 0);
   const genreHue = weight ? palette.reduce((sum, item) => sum + (hues[item.genre] ?? 155) * item.share, 0) / weight : 155;
@@ -209,7 +211,7 @@ export function makeAurora(
   }
   const paint = (ctx: CanvasRenderingContext2D, time: number) => {
     const phase = time * (track.bpm ?? 110) / 110 * 0.22;
-    if (sky) ctx.drawImage(background, 0, 0);
+    if (background) ctx.drawImage(background, 0, 0);
     ctx.save(); ctx.globalCompositeOperation = 'screen';
     if (rear) ctx.drawImage(rear.canvas, 0, fh * 0.006 * Math.sin(phase * 0.6 + bend));
     const sway = 0.003 + 0.009 * track.values.danceability;
@@ -217,5 +219,5 @@ export function makeAurora(
     ctx.globalAlpha = 0.94 + 0.06 * Math.sin(phase * 1.7);
     ctx.drawImage(near, -w * 0.015, -h * 0.015, w * 1.03, h * 1.03); ctx.restore();
   };
-  return Object.assign(paint, { sky: background });
+  return paint;
 }
